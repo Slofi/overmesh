@@ -24,13 +24,14 @@ A self-hosted Meshtastic dashboard. Runs on your machine, no cloud, no account, 
 
 - Python 3.9+
 - A Meshtastic node connected via USB serial
+- **Platform:** Linux ✓ — Windows support coming soon
 
 ---
 
 ## Install
 
 ```bash
-git clone https://github.com/yourusername/overmesh.git
+git clone https://github.com/Slofi/overmesh.git
 cd overmesh
 pip install -r requirements.txt
 cp config.example.json config.json
@@ -94,3 +95,7 @@ See [ABOUT.md](ABOUT.md) for the background story.
 ## License
 
 MIT
+
+---
+
+[![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/slofi)

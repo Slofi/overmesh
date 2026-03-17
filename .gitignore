@@ -1,0 +1,23 @@
+# User config (copy config.example.json to get started)
+config.json
+
+# Per-radio bot configs (generated at runtime)
+bot_config*.json
+
+# Databases (message history, prefs, waypoints)
+*.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+venv/
+.venv/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

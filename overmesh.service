@@ -1,0 +1,14 @@
+[Unit]
+Description=OverMesh Meshtastic Dashboard
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/USER/overmesh
+ExecStart=/usr/bin/python3 /home/USER/overmesh/app.py
+Restart=always
+RestartSec=5
+KillMode=control-group
+
+[Install]
+WantedBy=default.target

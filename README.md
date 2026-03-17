@@ -46,9 +46,13 @@ A self-hosted Meshtastic dashboard. Runs on your machine, no cloud, no account, 
 ```bash
 git clone https://github.com/Slofi/overmesh.git
 cd overmesh
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 cp config.example.json config.json
 ```
+
+> **Note:** A virtual environment is recommended — modern Linux distros (Fedora, Ubuntu 23.04+, Bazzite, etc.) block system-wide `pip install` by default. Do **not** run with `sudo`.
 
 Edit `config.json` and set your node's serial port (`/dev/ttyUSB0`, `/dev/ttyACM0`, or `COM3` on Windows) and a name for it.
 

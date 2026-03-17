@@ -2,7 +2,18 @@
 
 A self-hosted Meshtastic dashboard. Runs on your machine, no cloud, no account, no subscription.
 
-*(screenshots coming soon)*
+> **Active development** — OverMesh is being actively developed and tested. Expect rough edges, and feel free to open an issue if you find one.
+
+---
+
+![Mesh Sense and map view](screenshots/sense-map.png)
+*Mesh Sense overlay — passive listening, live response log, node map*
+
+![Settings — radios and node config](screenshots/settings-radios.png)
+*Multi-radio management and node configuration*
+
+![Settings — app and offline maps](screenshots/settings-app.png)
+*App settings, accent theming, and offline map tile caching*
 
 ---
 
@@ -14,8 +25,10 @@ A self-hosted Meshtastic dashboard. Runs on your machine, no cloud, no account, 
 - **Mesh Sense**: passive listening and active scan overlay; detects nodes without querying them
 - **Marks**: create, send, and delete waypoints over the mesh (syncs to Android MT app)
 - **Bot**: automated replies (ping, sitrep, relay, joke...), scheduled MOTD broadcast
+- **Traceroute**: hop-by-hop route visualization with SNR per link
 - **Multi-radio**: connect several nodes simultaneously, switch active radio from the header
 - **Node settings**: configure identity, LoRa, channels, fixed position directly from the UI
+- **Browser notifications**: new messages and node online events
 - **Theming**: accent color picker, zoom scaling, dark UI throughout
 
 ---

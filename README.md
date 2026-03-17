@@ -44,7 +44,7 @@ A self-hosted Meshtastic dashboard. Runs on your machine, no cloud, no account, 
 ## Install
 
 ```bash
-git clone https://github.com/Slofi/Overmash.git
+git clone https://github.com/Slofi/overmesh.git
 cd overmesh
 pip install -r requirements.txt
 cp config.example.json config.json

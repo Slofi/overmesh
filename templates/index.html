@@ -3229,7 +3229,7 @@
     const _initZoom   = _savedMapView ? _savedMapView.zoom : 9;
     leafletMap = L.map('map', { zoomSnap: 0.5, zoomDelta: 0.5 }).setView(_initCenter, _initZoom);
     new OfflineTileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© <a href="https://www.openstreetmap.org/copyright">OSM</a>',
+      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
       maxZoom: 19,
     }).addTo(leafletMap);
 
@@ -4952,11 +4952,13 @@
       const lp      = document.getElementById('sense-log-panel');
       if (!panel || !toolbar) return;
       const h = panel.offsetHeight - toolbar.offsetHeight;
-      if (h > 0) {
-        if (body) body.style.height = h + 'px';
-        if (mvm)  mvm.style.height  = h + 'px';
-        if (sp)   sp.style.height   = h + 'px';
-        if (lp)   lp.style.height   = h + 'px';
+      const maxH = window.innerHeight - (toolbar ? toolbar.getBoundingClientRect().bottom : 48);
+      const clampedH = Math.min(h, maxH);
+      if (clampedH > 0) {
+        if (body) body.style.height = clampedH + 'px';
+        if (mvm)  mvm.style.height  = clampedH + 'px';
+        if (sp)   sp.style.height   = clampedH + 'px';
+        if (lp)   lp.style.height   = clampedH + 'px';
       }
       leafletMap && leafletMap.invalidateSize();
     });
@@ -6080,6 +6082,8 @@
   const savedTab = localStorage.getItem('activeTab');
   if (savedTab && savedTab !== 'nodes') switchTab(savedTab);
   else updatePipVisibility();
+  // Recalculate map height on browser resize so attribution stays visible
+  window.addEventListener('resize', resizeMapView);
 </script>
 
 </body>

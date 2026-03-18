@@ -1239,15 +1239,34 @@
       <div id="settings-nodes-list"></div>
 
       <h3 class="settings-subtitle">Add radio</h3>
-      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
-        <div>
-          <label class="settings-label">Port</label>
-          <select id="settings-port-select" class="settings-select" style="min-width:160px"></select>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+        <label class="settings-label" style="margin:0">Type:</label>
+        <div class="view-toggle">
+          <div class="btn active" id="add-type-serial" onclick="settingsSetAddType('serial')">Serial</div>
+          <div class="btn"        id="add-type-tcp"    onclick="settingsSetAddType('tcp')">TCP / WiFi</div>
         </div>
-        <button class="btn" onclick="settingsScanPorts()" title="Rescan ports" style="margin-bottom:0">↻</button>
+      </div>
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+        <div id="add-serial-fields" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+          <div>
+            <label class="settings-label">Port</label>
+            <select id="settings-port-select" class="settings-select" style="min-width:160px"></select>
+          </div>
+          <button class="btn" onclick="settingsScanPorts()" title="Rescan ports" style="margin-bottom:0">↻</button>
+        </div>
+        <div id="add-tcp-fields" style="display:none;gap:8px;align-items:flex-end;flex-wrap:wrap">
+          <div>
+            <label class="settings-label">IP / Hostname</label>
+            <input id="settings-tcp-host" class="settings-input" placeholder="192.168.1.100" style="width:160px">
+          </div>
+          <div>
+            <label class="settings-label">Port</label>
+            <input id="settings-tcp-port" class="settings-input" placeholder="4403" style="width:70px" value="4403">
+          </div>
+        </div>
         <div>
           <label class="settings-label">Name</label>
-          <input id="settings-node-name" class="settings-input" placeholder="e.g. External" maxlength="30" style="width:160px">
+          <input id="settings-node-name" class="settings-input" placeholder="e.g. Home Node" maxlength="30" style="width:160px">
         </div>
         <button class="btn" onclick="settingsAddNode()">Add</button>
       </div>
@@ -3314,8 +3333,8 @@
         const div = L.DomUtil.create('div', 'map-legend');
         div.innerHTML = `
           <div class="map-legend-title">Nodes</div>
-          <div class="map-legend-row"><span class="map-legend-dot" style="background:var(--accent-fresh)"></span>Fresh &lt;30m</div>
-          <div class="map-legend-row"><span class="map-legend-dot" style="background:#d29922"></span>Recent &lt;2h</div>
+          <div class="map-legend-row"><span class="map-legend-dot" style="background:#86efac"></span>Fresh &lt;30m</div>
+          <div class="map-legend-row"><span class="map-legend-dot" style="background:#e07b30"></span>Recent &lt;2h</div>
           <div class="map-legend-row"><span class="map-legend-dot" style="background:#f85149"></span>Old &gt;2h</div>
           <div class="map-legend-row"><span class="map-legend-dot" style="background:#6e7681"></span>Unknown</div>
           <div class="map-legend-row" style="margin-top:4px"><span class="map-legend-dot" style="background:#3b82f6;outline:2px solid #3b82f6;outline-offset:2px"></span>You</div>`;
@@ -4319,8 +4338,8 @@
     if (node.is_local) return '#3b82f6';   // blue — local node
     if (!node.last_heard_ts) return '#6e7681';
     const age = Date.now() / 1000 - node.last_heard_ts;
-    if (age < 1800)  return _accentFreshColor; // <30m — bright fresh
-    if (age < 7200)  return '#d29922';     // <2h  yellow
+    if (age < 1800)  return '#86efac';     // <30m — fresh green
+    if (age < 7200)  return '#e07b30';     // <2h  orange
     return '#f85149';                       // old  red
   }
 
@@ -4877,28 +4896,45 @@
     }).catch(e => { sel.innerHTML = '<option value="">Scan failed</option>'; console.error('Port scan failed:', e); });
   }
 
+  let _addNodeType = 'serial';
+
+  function settingsSetAddType(type) {
+    _addNodeType = type;
+    document.getElementById('add-type-serial').classList.toggle('active', type === 'serial');
+    document.getElementById('add-type-tcp').classList.toggle('active', type === 'tcp');
+    document.getElementById('add-serial-fields').style.display = type === 'serial' ? 'flex' : 'none';
+    document.getElementById('add-tcp-fields').style.display    = type === 'tcp'    ? 'flex' : 'none';
+  }
+
   function settingsAddNode() {
-    const sel  = document.getElementById('settings-port-select');
-    const val  = sel.value;
-    const port = sel.options[sel.selectedIndex]?.dataset?.port || val;
     const name = document.getElementById('settings-node-name').value.trim();
     const err  = document.getElementById('settings-add-error');
     err.textContent = '';
-    if (!val)  { err.textContent = 'Select a device.'; return; }
     if (!name) { err.textContent = 'Enter a name.'; return; }
-    // val is usb_serial if device has one, otherwise the port path
-    const isSerial = val && !val.startsWith('/');
+    let body = { name, type: _addNodeType };
+    if (_addNodeType === 'tcp') {
+      const host     = document.getElementById('settings-tcp-host').value.trim();
+      const tcp_port = parseInt(document.getElementById('settings-tcp-port').value.trim()) || 4403;
+      if (!host) { err.textContent = 'Enter an IP address or hostname.'; return; }
+      body.host     = host;
+      body.tcp_port = tcp_port;
+    } else {
+      const sel  = document.getElementById('settings-port-select');
+      const val  = sel.value;
+      const port = sel.options[sel.selectedIndex]?.dataset?.port || val;
+      if (!val) { err.textContent = 'Select a device.'; return; }
+      const isSerial = val && !val.startsWith('/');
+      body.usb_serial = isSerial ? val : '';
+      body.port       = port;
+    }
     fetch('/api/settings/nodes/add', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        usb_serial: isSerial ? val : '',
-        port:       port,
-        name,
-      })
+      body: JSON.stringify(body)
     }).then(r => r.json()).then(data => {
       if (data.error) { err.textContent = data.error; return; }
       document.getElementById('settings-node-name').value = '';
+      if (_addNodeType === 'tcp') document.getElementById('settings-tcp-host').value = '';
       settingsLoadNodes();
       settingsScanPorts();
     }).catch(e => { err.textContent = 'Request failed.'; console.error('settingsAddNode failed:', e); });

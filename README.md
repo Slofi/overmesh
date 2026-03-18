@@ -65,7 +65,7 @@ pip install -r requirements.txt
 copy config.example.json config.json
 ```
 
-Edit `config.json` and set your node's serial port (`/dev/ttyUSB0`, `/dev/ttyACM0` on Linux, or `COM3` on Windows) and a name for it.
+Edit `config.json` and set your node's serial port (`/dev/ttyUSB0`, `/dev/ttyACM0` on Linux, or `COM3` on Windows) and a name for it. TCP/WiFi nodes can be added directly from the Settings → Radios UI after startup — no manual config editing needed.
 
 **Linux / macOS:**
 ```bash
@@ -91,12 +91,19 @@ Open [http://localhost:8081](http://localhost:8081).
 | `nodes[].port` | Serial port of the node | `/dev/ttyUSB0` |
 | `nodes[].name` | Display name | `MyNode` |
 | `nodes[].enabled` | Include this node on startup | `true` |
+| `nodes[].type` | `serial` or `tcp` | `serial` |
+| `nodes[].host` | IP or hostname (TCP nodes only) | — |
+| `nodes[].tcp_port` | TCP port (TCP nodes only) | `4403` |
 | `port` | Web server port | `8081` |
 | `app.zoom` | UI zoom level (75–125) | `100` |
 | `app.accent_color` | Hex accent color | `#4ade80` |
 | `sense_passive` | Start passive Sense listening on launch | `false` |
 
-Nodes can also be added and configured through **Settings → Radios** in the UI — no need to edit the file manually after the first run.
+Nodes can be added and configured through **Settings → Radios** in the UI — no need to edit the file manually after the first run.
+
+### TCP / WiFi nodes
+
+Nodes with WiFi (T-Beam, Heltec WiFi, etc.) can be connected over the network instead of USB. In **Settings → Radios → Add radio**, switch the type toggle to **TCP / WiFi**, enter the node's IP address, and click Add. The default port is `4403` (Meshtastic standard). The node must have WiFi configured and be reachable on your network.
 
 ---
 

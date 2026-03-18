@@ -20,6 +20,7 @@ from pubsub import pub
 
 import meshtastic
 import meshtastic.serial_interface
+import meshtastic.tcp_interface
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -611,20 +612,44 @@ def connect_node(node_cfg):
     node_id = node_cfg["id"]
     with connections_lock:
         connections[node_id] = {"iface": None, "status": "connecting", "config": node_cfg}
-    usb_serial = node_cfg.get("usb_serial")
-    if usb_serial:
-        port = find_port_by_usb_serial(usb_serial)
-        if not port:
-            log.info(f"[{node_id}] Device (USB serial {usb_serial}) not found, will retry")
+    node_type  = node_cfg.get("type", "serial")
+    iface = None
+    if node_type == "tcp":
+        host     = node_cfg.get("host", "").strip()
+        tcp_port = int(node_cfg.get("tcp_port") or 4403)
+        if not host:
+            log.warning(f"[{node_id}] TCP node has no host configured")
+            with connections_lock:
+                connections[node_id]["status"] = "disconnected"
+            return
+        log.info(f"[{node_id}] Connecting to {host}:{tcp_port} (TCP)...")
+        try:
+            iface = meshtastic.tcp_interface.TCPInterface(hostname=host, portNumber=tcp_port)
+        except Exception as e:
+            log.warning(f"[{node_id}] TCP connection failed: {e}")
             with connections_lock:
                 connections[node_id]["status"] = "disconnected"
             return
     else:
-        port = node_cfg.get("port", "")
-    log.info(f"[{node_id}] Connecting to {port}...")
-    iface = None
+        usb_serial = node_cfg.get("usb_serial")
+        if usb_serial:
+            port = find_port_by_usb_serial(usb_serial)
+            if not port:
+                log.info(f"[{node_id}] Device (USB serial {usb_serial}) not found, will retry")
+                with connections_lock:
+                    connections[node_id]["status"] = "disconnected"
+                return
+        else:
+            port = node_cfg.get("port", "")
+        log.info(f"[{node_id}] Connecting to {port} (serial)...")
+        try:
+            iface = meshtastic.serial_interface.SerialInterface(port)
+        except Exception as e:
+            log.warning(f"[{node_id}] Serial connection failed: {e}")
+            with connections_lock:
+                connections[node_id]["status"] = "disconnected"
+            return
     try:
-        iface = meshtastic.serial_interface.SerialInterface(port)
         # Set up msgs_db BEFORE marking connected — prevents save_message() race
         # where a packet arrives between status="connected" and msgs_db being set.
         msgs_db = None
@@ -2071,25 +2096,37 @@ def api_settings_nodes():
 
 @app.route("/api/settings/nodes/add", methods=["POST"])
 def api_settings_nodes_add():
-    data = request.get_json(silent=True) or {}
-    usb_serial = (data.get("usb_serial") or "").strip()
-    port       = (data.get("port") or "").strip()
-    name       = (data.get("name") or "").strip()
+    data      = request.get_json(silent=True) or {}
+    name      = (data.get("name") or "").strip()
+    node_type = (data.get("type") or "serial").strip()
     if not name:
         return jsonify({"error": "Name is required"}), 400
-    if not usb_serial and not port:
-        return jsonify({"error": "Select a device"}), 400
-    if usb_serial and any(n.get("usb_serial") == usb_serial for n in CONFIG["nodes"]):
-        return jsonify({"error": "This device is already configured"}), 400
-    if not usb_serial and any(n.get("port") == port and not n.get("usb_serial") for n in CONFIG["nodes"]):
-        return jsonify({"error": f"Port {port} is already in use"}), 400
     node_id  = f"node_{int(time.time())}"
-    new_node = {"id": node_id, "name": name, "enabled": True}
-    if usb_serial:
-        new_node["usb_serial"] = usb_serial
-        new_node["port"] = port  # kept for display only
+    new_node = {"id": node_id, "name": name, "enabled": True, "type": node_type}
+    if node_type == "tcp":
+        host     = (data.get("host") or "").strip()
+        tcp_port = int(data.get("tcp_port") or 4403)
+        if not host:
+            return jsonify({"error": "Enter an IP address or hostname"}), 400
+        if any(n.get("host") == host and n.get("type") == "tcp" for n in CONFIG["nodes"]):
+            return jsonify({"error": f"{host} is already configured"}), 400
+        new_node["host"]     = host
+        new_node["tcp_port"] = tcp_port
+        new_node["port"]     = f"{host}:{tcp_port}"  # display only
     else:
-        new_node["port"] = port
+        usb_serial = (data.get("usb_serial") or "").strip()
+        port       = (data.get("port") or "").strip()
+        if not usb_serial and not port:
+            return jsonify({"error": "Select a device"}), 400
+        if usb_serial and any(n.get("usb_serial") == usb_serial for n in CONFIG["nodes"]):
+            return jsonify({"error": "This device is already configured"}), 400
+        if not usb_serial and any(n.get("port") == port and not n.get("usb_serial") for n in CONFIG["nodes"]):
+            return jsonify({"error": f"Port {port} is already in use"}), 400
+        if usb_serial:
+            new_node["usb_serial"] = usb_serial
+            new_node["port"]       = port  # display only
+        else:
+            new_node["port"] = port
     CONFIG["nodes"].append(new_node)
     save_config()
     threading.Thread(target=connect_node, args=(new_node,), daemon=True).start()

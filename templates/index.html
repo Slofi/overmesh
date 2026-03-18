@@ -6620,16 +6620,16 @@
         <button id="cpm-hex" class="cpicker-mbtn active" onclick="cpickerSetMode('hex')">HEX</button>
         <button id="cpm-rgb" class="cpicker-mbtn" onclick="cpickerSetMode('rgb')">RGB</button>
         <button id="cpm-hsl" class="cpicker-mbtn" onclick="cpickerSetMode('hsl')">HSL</button>
-        <div id="cpicker-field-hex" style="display:flex;flex:1">
+        <div id="cpicker-field-hex">
           <input id="cp-hex" class="cpicker-inp" style="flex:1;font-family:monospace"
                  placeholder="#4ade80" maxlength="7" oninput="cpickerFromHex()">
         </div>
-        <div id="cpicker-field-rgb" style="flex:1">
+        <div id="cpicker-field-rgb">
           <input id="cp-r" class="cpicker-inp" type="number" min="0" max="255" placeholder="R" oninput="cpickerFromRgb()">
           <input id="cp-g" class="cpicker-inp" type="number" min="0" max="255" placeholder="G" oninput="cpickerFromRgb()">
           <input id="cp-b" class="cpicker-inp" type="number" min="0" max="255" placeholder="B" oninput="cpickerFromRgb()">
         </div>
-        <div id="cpicker-field-hsl" style="flex:1">
+        <div id="cpicker-field-hsl">
           <input id="cp-h" class="cpicker-inp" type="number" min="0" max="360" placeholder="H" oninput="cpickerFromHsl()">
           <input id="cp-s" class="cpicker-inp" type="number" min="0" max="100" placeholder="S" oninput="cpickerFromHsl()">
           <input id="cp-l" class="cpicker-inp" type="number" min="0" max="100" placeholder="L" oninput="cpickerFromHsl()">

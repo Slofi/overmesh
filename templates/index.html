@@ -1536,7 +1536,10 @@
           </div>
           <div>
             <label class="settings-label">Password</label>
-            <input id="node-cfg-wifi-psk" type="password" class="settings-input" placeholder="(leave blank to keep)" style="width:180px">
+            <div style="display:flex;gap:4px;align-items:center">
+              <input id="node-cfg-wifi-psk" type="password" class="settings-input" style="width:160px">
+              <button type="button" id="node-cfg-wifi-psk-eye" onclick="togglePwdVis('node-cfg-wifi-psk','node-cfg-wifi-psk-eye')" style="background:none;border:1px solid var(--border);border-radius:4px;padding:2px 6px;cursor:pointer;color:var(--muted);font-size:13px" title="Show/hide password">👁</button>
+            </div>
           </div>
         </div>
         <p style="font-size:11px;color:var(--muted);margin:6px 0 0">Note: enabling WiFi disables Bluetooth on ESP32 nodes. Reboot required after saving.</p>
@@ -5779,11 +5782,13 @@
         btModeChange();
 
         // Network
-        document.getElementById('node-cfg-wifi-enabled').checked   = !!d.wifi_enabled;
+        document.getElementById('node-cfg-wifi-enabled').checked  = !!d.wifi_enabled;
         document.getElementById('node-cfg-wifi-ap-mode').checked  = !!d.wifi_ap_mode;
-        document.getElementById('node-cfg-wifi-ssid').value        = d.wifi_ssid || '';
-        document.getElementById('node-cfg-wifi-psk').value         = '';
-        document.getElementById('node-cfg-wifi-psk').placeholder   = d.wifi_pwd_set ? '(set — leave blank to keep)' : '(not set)';
+        document.getElementById('node-cfg-wifi-ssid').value       = d.wifi_ssid || '';
+        document.getElementById('node-cfg-wifi-psk').value        = d.wifi_psk_val || '';
+        document.getElementById('node-cfg-wifi-psk').type         = 'password';
+        const eye = document.getElementById('node-cfg-wifi-psk-eye');
+        if (eye) eye.style.opacity = '0.5';
       })
       .catch(e => {
         err.innerHTML = `<span style="color:var(--red)">Load failed: ${escHtml(String(e))}. Press ↻ Reload to retry.</span>`;
@@ -6137,13 +6142,24 @@
     }).catch(e => nodeCfgStatus('mqtt', 'Error: ' + e, false));
   }
 
+  function togglePwdVis(inputId, btnId) {
+    const inp = document.getElementById(inputId);
+    const btn = document.getElementById(btnId);
+    if (!inp) return;
+    inp.type = inp.type === 'password' ? 'text' : 'password';
+    if (btn) btn.style.opacity = inp.type === 'text' ? '1' : '0.5';
+  }
+
   function btModeChange() {
-    const mode = parseInt(document.getElementById('node-cfg-bt-mode').value);
-    document.getElementById('node-cfg-bt-pin-wrap').style.display = mode === 1 ? '' : 'none';
+    const modeEl = document.getElementById('node-cfg-bt-mode');
+    const pinWrap = document.getElementById('node-cfg-bt-pin-wrap');
+    if (!modeEl || !pinWrap) return;
+    pinWrap.style.display = parseInt(modeEl.value) === 1 ? '' : 'none';
   }
 
   function saveNodeBluetooth() {
-    const radioId = _selectedNodeId;
+    if (!_nodeCfgData) { nodeCfgStatus('bluetooth', 'Reload config first.', false); return; }
+    const radioId     = _selectedNodeId;
     const bt_enabled  = document.getElementById('node-cfg-bt-enabled').checked;
     const bt_mode     = parseInt(document.getElementById('node-cfg-bt-mode').value);
     const bt_fixed_pin = parseInt(document.getElementById('node-cfg-bt-pin').value) || 0;
@@ -6152,27 +6168,37 @@
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({bt_enabled, bt_mode, bt_fixed_pin})
-    }).then(r => r.json()).then(d => {
+    }).then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    }).then(d => {
       nodeCfgStatus('bluetooth', d.error || 'Saved. Reboot to apply.', !d.error);
     }).catch(e => nodeCfgStatus('bluetooth', 'Error: ' + escHtml(String(e)), false));
   }
 
   function saveNodeNetwork() {
-    const radioId = _selectedNodeId;
-    const wifi_enabled  = document.getElementById('node-cfg-wifi-enabled').checked;
-    const wifi_ap_mode  = document.getElementById('node-cfg-wifi-ap-mode').checked;
-    const wifi_ssid     = document.getElementById('node-cfg-wifi-ssid').value.trim();
-    const wifi_psk      = document.getElementById('node-cfg-wifi-psk').value;
+    if (!_nodeCfgData) { nodeCfgStatus('network', 'Reload config first.', false); return; }
+    const radioId    = _selectedNodeId;
+    const wifi_enabled = document.getElementById('node-cfg-wifi-enabled').checked;
+    const wifi_ap_mode = document.getElementById('node-cfg-wifi-ap-mode').checked;
+    const wifi_ssid    = document.getElementById('node-cfg-wifi-ssid').value.trim();
+    const wifi_psk     = document.getElementById('node-cfg-wifi-psk').value;
     nodeCfgStatus('network', 'Saving…', true);
     fetch(`/api/radio/${encodeURIComponent(radioId)}/config/network`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({wifi_enabled, wifi_ap_mode, wifi_ssid, wifi_psk})
-    }).then(r => r.json()).then(d => {
+    }).then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    }).then(d => {
       nodeCfgStatus('network', d.error || 'Saved. Reboot to apply.', !d.error);
-      if (!d.error && wifi_psk) {
-        document.getElementById('node-cfg-wifi-psk').value = '';
-        document.getElementById('node-cfg-wifi-psk').placeholder = '(set — leave blank to keep)';
+      if (!d.error) {
+        // Keep field showing the saved value; reset to password type
+        document.getElementById('node-cfg-wifi-psk').type = 'password';
+        const eye = document.getElementById('node-cfg-wifi-psk-eye');
+        if (eye) eye.style.opacity = '0.5';
+        _nodeCfgData.wifi_psk_val = wifi_psk;
       }
     }).catch(e => nodeCfgStatus('network', 'Error: ' + escHtml(String(e)), false));
   }

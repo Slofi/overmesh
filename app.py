@@ -2363,7 +2363,7 @@ def api_radio_config_get(radio_id):
         wifi_enabled  = _bool(lc, "network", "wifi_enabled")
         wifi_ap_mode  = _bool(lc, "network", "wifi_ap_mode")
         wifi_ssid     = _str(lc,  "network", "wifi_ssid")
-        wifi_pwd_set  = bool(_str(lc, "network", "wifi_psk"))
+        wifi_psk_val  = _str(lc,  "network", "wifi_psk")
 
         return jsonify({
             "long_name":    user.get("longName",  ""),
@@ -2415,7 +2415,7 @@ def api_radio_config_get(radio_id):
             "wifi_enabled":  wifi_enabled,
             "wifi_ap_mode":  wifi_ap_mode,
             "wifi_ssid":     wifi_ssid,
-            "wifi_pwd_set":  wifi_pwd_set,
+            "wifi_psk_val":  wifi_psk_val,
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -2648,6 +2648,13 @@ def api_radio_config_bluetooth(radio_id):
     if not iface:
         return jsonify({"error": "Radio not connected"}), 503
     data = request.get_json(silent=True) or {}
+    if "bt_mode" in data:
+        if int(data["bt_mode"]) not in (0, 1, 2):
+            return jsonify({"error": "bt_mode must be 0, 1 or 2"}), 400
+    if "bt_fixed_pin" in data:
+        pin = int(data["bt_fixed_pin"])
+        if not (0 <= pin <= 999999):
+            return jsonify({"error": "bt_fixed_pin must be 0–999999"}), 400
     try:
         bt = iface.localNode.localConfig.bluetooth
         if "bt_enabled"   in data: bt.enabled   = bool(data["bt_enabled"])
@@ -2665,12 +2672,14 @@ def api_radio_config_network(radio_id):
     if not iface:
         return jsonify({"error": "Radio not connected"}), 503
     data = request.get_json(silent=True) or {}
+    if "wifi_ssid" in data and len(str(data["wifi_ssid"])) > 32:
+        return jsonify({"error": "SSID too long (max 32 characters)"}), 400
     try:
         net = iface.localNode.localConfig.network
         if "wifi_enabled" in data: net.wifi_enabled  = bool(data["wifi_enabled"])
         if "wifi_ap_mode" in data: net.wifi_ap_mode  = bool(data["wifi_ap_mode"])
         if "wifi_ssid"    in data: net.wifi_ssid      = str(data["wifi_ssid"])
-        if data.get("wifi_psk"):   net.wifi_psk       = str(data["wifi_psk"])
+        if "wifi_psk"     in data: net.wifi_psk       = str(data["wifi_psk"])
         iface.localNode.writeConfig("network")
         return jsonify({"ok": True})
     except Exception as e:

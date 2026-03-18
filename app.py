@@ -624,7 +624,7 @@ def connect_node(node_cfg):
     log.info(f"[{node_id}] Connecting to {port}...")
     iface = None
     try:
-        iface = meshtastic.serial_interface.SerialInterface(port)
+        iface = meshtastic.serial_interface.SerialInterface() # On Windows it works out of the box, searches for the right serial connection.
         # Set up msgs_db BEFORE marking connected — prevents save_message() race
         # where a packet arrives between status="connected" and msgs_db being set.
         msgs_db = None
@@ -3270,6 +3270,7 @@ def startup():
 
 
 if __name__ == "__main__":
-    signal.signal(signal.SIGHUP, signal.SIG_IGN)  # ignore serial port hangup (USB disconnect)
+    # signal.signal(signal.SIGSIGHUP, signal.SIG_IGN)  # ignore serial port hangup (USB disconnect)
     startup()
-    app.run(host="0.0.0.0", port=CONFIG.get("port", 8081), debug=False)
+    # for LAN access change config.json "local_interface": "0.0.0.0"
+    app.run(host=CONFIG.get("local_interface", "127.0.0.1"), port=CONFIG.get("port", 8081), debug=False) 

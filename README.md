@@ -37,30 +37,30 @@ A self-hosted Meshtastic dashboard. Runs on your machine, no cloud, no account, 
 
 - Python 3.9+
 - A Meshtastic node connected via USB serial
-- **Platform:** Linux ✓ — Windows support coming soon
+- **Platform:** Linux or Windows
+- uv - Install from https://docs.astral.sh/uv/
 
 ---
 
 ## Install
 
 ```bash
-git clone https://github.com/Slofi/overmesh.git
+git clone https://github.com/dermotte/overmesh.git
 cd overmesh
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-cp config.example.json config.json
+uv sync
+cat config.example.json > config.json 
+uv run app.py
 ```
 
-> **Note:** A virtual environment is recommended — modern Linux distros (Fedora, Ubuntu 23.04+, Bazzite, etc.) block system-wide `pip install` by default. Do **not** run with `sudo`.
+> **Note:** Do **not** run with `sudo`.
 
 Edit `config.json` and set your node's serial port (`/dev/ttyUSB0`, `/dev/ttyACM0`, or `COM3` on Windows) and a name for it.
 
 ```bash
-python3 app.py
+uv run app.py
 ```
 
-Open [http://localhost:8081](http://localhost:8081).
+Open [http://127.0.0.1:8081](http://127.0.0.1:8081).
 
 ---
 
@@ -70,10 +70,11 @@ Open [http://localhost:8081](http://localhost:8081).
 
 | Key | Description | Default |
 |-----|-------------|---------|
-| `nodes[].port` | Serial port of the node | `/dev/ttyUSB0` |
+| `nodes[].port` | Serial port of the node | `/dev/ttyUSB0` .. deprecated, serial port is chosen automatically.|
 | `nodes[].name` | Display name | `MyNode` |
 | `nodes[].enabled` | Include this node on startup | `true` |
 | `port` | Web server port | `8081` |
+| `local_interface` | Web server interface | `127.0.0.1` .. set to `0.0.0.0` to access from other computers. |
 | `app.zoom` | UI zoom level (75–125) | `100` |
 | `app.accent_color` | Hex accent color | `#4ade80` |
 | `sense_passive` | Start passive Sense listening on launch | `false` |

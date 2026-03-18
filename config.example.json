@@ -8,6 +8,7 @@
     }
   ],
   "port": 8081,
+  "local_interface": "127.0.0.1",
   "app": {
     "zoom": 100,
     "accent_color": "#4ade80"

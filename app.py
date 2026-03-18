@@ -3270,6 +3270,7 @@ def startup():
 
 
 if __name__ == "__main__":
-    signal.signal(signal.SIGHUP, signal.SIG_IGN)  # ignore serial port hangup (USB disconnect)
+    if hasattr(signal, "SIGHUP"):  # Linux/macOS only — not available on Windows
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
     startup()
     app.run(host="0.0.0.0", port=CONFIG.get("port", 8081), debug=False)

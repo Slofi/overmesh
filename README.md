@@ -37,12 +37,13 @@ A self-hosted Meshtastic dashboard. Runs on your machine, no cloud, no account, 
 
 - Python 3.9+
 - A Meshtastic node connected via USB serial
-- **Platform:** Linux ✓ — Windows support coming soon
+- **Platform:** Linux ✓ Windows ✓
 
 ---
 
 ## Install
 
+**Linux / macOS:**
 ```bash
 git clone https://github.com/Slofi/overmesh.git
 cd overmesh
@@ -54,11 +55,28 @@ cp config.example.json config.json
 
 > **Note:** A virtual environment is recommended — modern Linux distros (Fedora, Ubuntu 23.04+, Bazzite, etc.) block system-wide `pip install` by default. Do **not** run with `sudo`.
 
-Edit `config.json` and set your node's serial port (`/dev/ttyUSB0`, `/dev/ttyACM0`, or `COM3` on Windows) and a name for it.
+**Windows:**
+```bat
+git clone https://github.com/Slofi/overmesh.git
+cd overmesh
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+copy config.example.json config.json
+```
 
+Edit `config.json` and set your node's serial port (`/dev/ttyUSB0`, `/dev/ttyACM0` on Linux, or `COM3` on Windows) and a name for it.
+
+**Linux / macOS:**
 ```bash
 python3 app.py
 ```
+
+**Windows:**
+```bat
+start-overmesh.bat
+```
+Or simply: `python app.py`
 
 Open [http://localhost:8081](http://localhost:8081).
 

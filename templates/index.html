@@ -2572,7 +2572,7 @@
       prevNodeIds = curIds;
       notifReady  = true;
     }).catch(e => console.error('loadLive failed', e));
-    fetch('/api/status').then(r => r.json()).then(status => {
+    fetch('/api/status').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(status => {
       updateRadioSelector(status);
       if (currentTab === 'settings') settingsRefresh();
     }).catch(e => console.error('status poll failed', e));
@@ -3124,7 +3124,7 @@
     resultsEl.innerHTML = '<div style="padding:6px 10px;color:var(--muted)">Searching…</div>';
     fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=6`, {
       headers: { 'Accept-Language': 'en' }
-    }).then(r => r.json()).then(results => {
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(results => {
       if (!results.length) {
         resultsEl.innerHTML = '<div style="padding:6px 10px;color:var(--muted)">No results.</div>';
         return;
@@ -3502,14 +3502,14 @@
     const markerRows = WP_EMOJIS.map(row =>
       `<div style="display:flex;gap:3px;flex-wrap:wrap">${row.map(e => {
         const sel = e === _wpMarkerEmoji;
-        return `<button onclick="selectWpMarker('${e}')" data-marker-emoji="${e}"
+        return `<button onclick="selectWpMarker('${jsSafe(e)}')" data-marker-emoji="${e}"
           style="font-size:15px;padding:2px 3px;background:${sel?'var(--accent-dim)':'var(--bg3)'};border:1px solid ${sel?'var(--accent)':'var(--border)'};border-radius:4px;cursor:pointer;line-height:1.4">${e}</button>`;
       }).join('')}</div>`
     ).join('');
 
     const textRows = WP_EMOJIS.map(row =>
       `<div style="display:flex;gap:3px;flex-wrap:wrap">${row.map(e =>
-        `<button onclick="insertWpEmoji('${e}')" style="font-size:15px;padding:2px 3px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;line-height:1.4">${e}</button>`
+        `<button onclick="insertWpEmoji('${jsSafe(e)}')" style="font-size:15px;padding:2px 3px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;line-height:1.4">${e}</button>`
       ).join('')}</div>`
     ).join('');
 
@@ -3831,7 +3831,7 @@
     const markerRows = WP_EMOJIS.map(row =>
       `<div style="display:flex;gap:3px;flex-wrap:wrap">${row.map(e => {
         const sel = e === _wpMarkerEmoji;
-        return `<button onclick="selectWpMarker('${e}')" data-marker-emoji="${e}"
+        return `<button onclick="selectWpMarker('${jsSafe(e)}')" data-marker-emoji="${e}"
           style="font-size:15px;padding:2px 3px;background:${sel?'var(--accent-dim)':'var(--bg3)'};border:1px solid ${sel?'var(--accent)':'var(--border)'};border-radius:4px;cursor:pointer;line-height:1.4">${e}</button>`;
       }).join('')}</div>`
     ).join('');
@@ -4145,14 +4145,14 @@
     const markerRows = WP_EMOJIS.map(row =>
       `<div style="display:flex;gap:3px;flex-wrap:wrap">${row.map(e => {
         const sel = e === initMarker;
-        return `<button onclick="selectWpMarker('${e}')" data-marker-emoji="${e}"
+        return `<button onclick="selectWpMarker('${jsSafe(e)}')" data-marker-emoji="${e}"
           style="font-size:15px;padding:2px 3px;background:${sel?'var(--accent-dim)':'var(--bg3)'};border:1px solid ${sel?'var(--accent)':'var(--border)'};border-radius:4px;cursor:pointer;line-height:1.4">${e}</button>`;
       }).join('')}</div>`
     ).join('');
 
     const textRows = WP_EMOJIS.map(row =>
       `<div style="display:flex;gap:3px;flex-wrap:wrap">${row.map(e =>
-        `<button onclick="insertWpEmoji('${e}')" style="font-size:15px;padding:2px 3px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;line-height:1.4">${e}</button>`
+        `<button onclick="insertWpEmoji('${jsSafe(e)}')" style="font-size:15px;padding:2px 3px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;line-height:1.4">${e}</button>`
       ).join('')}</div>`
     ).join('');
 
@@ -4582,8 +4582,8 @@
     // Config is per-radio — always load for the currently active radio (header pill selection)
     const botChParam = activeRadioId ? '?radio_id=' + encodeURIComponent(activeRadioId) : '';
     Promise.all([
-      fetch('/api/bot/config' + botChParam).then(r => r.json()),
-      fetch('/api/chat/channels' + botChParam).then(r => r.json()),
+      fetch('/api/bot/config' + botChParam).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }),
+      fetch('/api/chat/channels' + botChParam).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }),
     ]).then(([cfg, channels]) => {
       botConfig = cfg;
       applyBotConfig(cfg, channels);
@@ -4592,7 +4592,7 @@
     // Load historical activity only once; new entries arrive via SSE
     if (botInitDone) return;
     botInitDone = true;
-    fetch('/api/bot/activity').then(r => r.json()).then(activity => {
+    fetch('/api/bot/activity').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(activity => {
       activity.slice().reverse().forEach(e => addBotActivityEntry(e, false));
     }).catch(() => {});
   }
@@ -4668,7 +4668,7 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(activeRadioId ? { radio_id: activeRadioId } : {})
     })
-      .then(r => r.json())
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(d => { status.textContent = d.ok ? 'Sent!' : (d.error || 'Failed'); })
       .catch(() => { status.textContent = 'Error'; });
     setTimeout(() => { document.getElementById('motd-test-status').textContent = ''; }, 4000);
@@ -4875,7 +4875,7 @@
     if (!settingsInited) {
       settingsInited = true;
       settingsScanPorts();
-      fetch('/api/settings/app').then(r => r.json()).then(cfg => {
+      fetch('/api/settings/app').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(cfg => {
         settingsApplyZoom(cfg.zoom || 100);
         const cd = cfg.sense_cooldown || 180;
         document.getElementById('settings-sense-cooldown').value = cd;
@@ -4888,7 +4888,7 @@
   }
 
   function settingsRefresh() {
-    fetch('/api/settings/nodes').then(r => r.json()).then(data => {
+    fetch('/api/settings/nodes').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
       _renderSettingsRadios(data);
       _renderNodeCfgTabs(data);
     }).catch(e => console.error('settingsRefresh failed:', e));
@@ -4928,7 +4928,7 @@
   function settingsScanPorts() {
     const sel = document.getElementById('settings-port-select');
     sel.innerHTML = '<option value="">Scanning…</option>';
-    fetch('/api/settings/ports').then(r => r.json()).then(data => {
+    fetch('/api/settings/ports').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
       const available = data.ports.filter(p => !p.in_use);
       if (!available.length) {
         sel.innerHTML = '<option value="">No available devices found</option>';
@@ -4978,7 +4978,7 @@
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(body)
-    }).then(r => r.json()).then(data => {
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
       if (data.error) { err.textContent = data.error; return; }
       document.getElementById('settings-node-name').value = '';
       if (_addNodeType === 'tcp') document.getElementById('settings-tcp-host').value = '';
@@ -4992,7 +4992,7 @@
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({enabled: enable})
-    }).then(r => r.json()).then(data => {
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
       if (data.error) { alert(data.error); return; }
       // Update lastStatus immediately so header pill appears/disappears without waiting for poll
       if (lastStatus[id]) lastStatus[id].enabled = enable;
@@ -5005,7 +5005,7 @@
     document.getElementById('confirm-ok').textContent = 'Remove';
     showConfirm(`Remove radio "${name}"?`, () => {
       fetch(`/api/settings/nodes/${id}/remove`, {method: 'POST'})
-        .then(r => r.json()).then(data => {
+        .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
           if (data.error) { alert(data.error); return; }
           settingsLoadNodes();
         }).catch(e => console.error('removeNode failed:', e));
@@ -5016,7 +5016,7 @@
     document.getElementById('confirm-ok').textContent = 'Delete';
     showConfirm(`DELETE "${name}" and wipe all message history? This cannot be undone.`, () => {
       fetch(`/api/settings/nodes/${id}/delete`, {method: 'POST'})
-        .then(r => r.json()).then(data => {
+        .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
           if (data.error) { alert(data.error); return; }
           settingsLoadNodes();
         }).catch(e => console.error('deleteNode failed:', e));
@@ -5173,7 +5173,7 @@
       senseSummaryUpdate();
       // Also fetch from backend to merge any nodes not yet in saved state
       const _fetchRadioId = radioId;
-      fetch('/api/mesh/sense/status').then(r => r.json()).then(d => {
+      fetch('/api/mesh/sense/status').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
         if (activeRadioId !== _fetchRadioId) return; // radio switched while fetch was in flight
         if (d.responses && d.responses.length) {
           let changed = false;
@@ -5249,7 +5249,7 @@
     if (lsPassive) status.textContent = 'Passive listening…';
     if (lsActive)  status.textContent = 'Active scanning…';
 
-    fetch('/api/mesh/sense/status').then(r => r.json()).then(d => {
+    fetch('/api/mesh/sense/status').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       _senseCooldownVal = d.cooldown;
       if (d.response_count > 0) {
         d.responses.forEach(n => senseAddNode(n));
@@ -5275,7 +5275,7 @@
   }
 
   function toggleSensePassive() {
-    fetch('/api/mesh/sense/passive', {method: 'POST'}).then(r => r.json()).then(d => {
+    fetch('/api/mesh/sense/passive', {method: 'POST'}).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       document.getElementById('sense-passive-btn').classList.toggle('active', d.passive);
       localStorage.setItem('sensePassive', d.passive ? '1' : '0');
       const status = document.getElementById('sense-status');
@@ -5285,7 +5285,7 @@
   }
 
   function toggleSenseActive() {
-    fetch('/api/mesh/sense/active_auto', {method: 'POST'}).then(r => r.json()).then(d => {
+    fetch('/api/mesh/sense/active_auto', {method: 'POST'}).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       document.getElementById('sense-active-btn').classList.toggle('active', d.active_auto);
       localStorage.setItem('senseActiveAuto', d.active_auto ? '1' : '0');
       const status = document.getElementById('sense-status');
@@ -5347,7 +5347,7 @@
     _senseRunId++;
     _senseResponses = {};
     delete _senseStateByRadio[activeRadioId];
-    fetch('/api/mesh/sense', {method: 'POST'}).then(r => r.json()).then(d => {
+    fetch('/api/mesh/sense', {method: 'POST'}).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       if (!d.ok) {
         // Sense didn't start — restore previous run state
         _senseRunId = _prevRunId;
@@ -5690,7 +5690,7 @@
     err.innerHTML   = '<span style="color:var(--muted)">Loading…</span>';
     content.style.display = 'none';
     fetch(`/api/radio/${encodeURIComponent(radioId)}/config`)
-      .then(r => r.json())
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(d => {
         if (d.error) { err.innerHTML = `<span style="color:var(--red)">${escHtml(d.error)} — Press ↻ Reload to retry.</span>`; return; }
         err.innerHTML = '';
@@ -5698,10 +5698,8 @@
 
         const lnEl = document.getElementById('node-cfg-long-name');
         const snEl = document.getElementById('node-cfg-short-name');
-        lnEl.value = '';
-        snEl.value = '';
-        lnEl.placeholder = d.long_name  || '';
-        snEl.placeholder = d.short_name || '';
+        if (lnEl) { lnEl.value = ''; lnEl.placeholder = d.long_name  || ''; }
+        if (snEl) { snEl.value = ''; snEl.placeholder = d.short_name || ''; }
         document.getElementById('node-cfg-txpower').value    = d.tx_power   || 0;
         document.getElementById('node-cfg-hoplimit').value   = d.hop_limit  || 3;
 
@@ -5817,9 +5815,9 @@
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({long_name, short_name})
-    }).then(r => r.json()).then(d => {
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       nodeCfgStatus('owner', d.error || 'Saved.', !d.error);
-    }).catch(e => nodeCfgStatus('owner', 'Error: ' + e, false));
+    }).catch(e => nodeCfgStatus('owner', 'Error: ' + escHtml(String(e)), false));
   }
 
   function saveNodeDevice() {
@@ -5830,9 +5828,9 @@
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({role})
-    }).then(r => r.json()).then(d => {
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       nodeCfgStatus('device', d.error || 'Saved. Reboot may be needed.', !d.error);
-    }).catch(e => nodeCfgStatus('device', 'Error: ' + e, false));
+    }).catch(e => nodeCfgStatus('device', 'Error: ' + escHtml(String(e)), false));
   }
 
   function saveNodeLora() {
@@ -5846,9 +5844,9 @@
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({region, modem_preset, tx_power, hop_limit})
-    }).then(r => r.json()).then(d => {
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       nodeCfgStatus('lora', d.error || 'Saved. Reboot node to apply region/preset.', !d.error);
-    }).catch(e => nodeCfgStatus('lora', 'Error: ' + e, false));
+    }).catch(e => nodeCfgStatus('lora', 'Error: ' + escHtml(String(e)), false));
   }
 
   async function rebootNode() {
@@ -5895,7 +5893,7 @@
     const radioId = _selectedNodeId;
     if (!radioId) return;
     fetch(`/api/radio/${encodeURIComponent(radioId)}/channels`)
-      .then(r => r.json())
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(data => {
         if (data.error) return;
         _chCache = data;
@@ -5956,14 +5954,14 @@
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({role, name, psk_type, psk_hex})
-    }).then(r => r.json()).then(d => {
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       nodeCfgStatus('channels', d.error || 'Saved.', !d.error);
       if (!d.error) {
         loadNodeChannels();
         closeChEdit();
         initChat();   // refresh chat tab tabs too
       }
-    }).catch(e => nodeCfgStatus('channels', 'Error: ' + e, false));
+    }).catch(e => nodeCfgStatus('channels', 'Error: ' + escHtml(String(e)), false));
   }
 
   // ── Position ────────────────────────────────────────────────────────────────
@@ -6037,9 +6035,9 @@
                             lat: fixed_position ? fixed_lat : null,
                             lon: fixed_position ? fixed_lon : null,
                             alt: fixed_alt})
-    }).then(r => r.json()).then(d => {
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       nodeCfgStatus('position', d.error || 'Saved.', !d.error);
-    }).catch(e => nodeCfgStatus('position', 'Error: ' + e, false));
+    }).catch(e => nodeCfgStatus('position', 'Error: ' + escHtml(String(e)), false));
   }
 
   function removeNodePosition() {
@@ -6050,7 +6048,7 @@
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({fixed_position: false})
-    }).then(r => r.json()).then(d => {
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       nodeCfgStatus('position', d.error || 'Position removed. GPS will resume.', !d.error);
       if (!d.error) {
         document.getElementById('node-cfg-fixed-pos').checked = false;
@@ -6058,7 +6056,7 @@
         document.getElementById('node-cfg-fixed-lat').value = '';
         document.getElementById('node-cfg-fixed-lon').value = '';
       }
-    }).catch(e => nodeCfgStatus('position', 'Error: ' + e, false));
+    }).catch(e => nodeCfgStatus('position', 'Error: ' + escHtml(String(e)), false));
   }
 
   // ── Power ───────────────────────────────────────────────────────────────────
@@ -6071,9 +6069,9 @@
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({power_saving: is_power_saving, shutdown_after_secs: on_battery_shutdown_after_secs})
-    }).then(r => r.json()).then(d => {
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       nodeCfgStatus('power', d.error || 'Saved.', !d.error);
-    }).catch(e => nodeCfgStatus('power', 'Error: ' + e, false));
+    }).catch(e => nodeCfgStatus('power', 'Error: ' + escHtml(String(e)), false));
   }
 
   // ── Display ─────────────────────────────────────────────────────────────────
@@ -6095,9 +6093,9 @@
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({screen_on_secs, flip_screen, display_units: units})
-    }).then(r => r.json()).then(d => {
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       nodeCfgStatus('display', d.error || 'Saved.', !d.error);
-    }).catch(e => nodeCfgStatus('display', 'Error: ' + e, false));
+    }).catch(e => nodeCfgStatus('display', 'Error: ' + escHtml(String(e)), false));
   }
 
   // ── Telemetry ───────────────────────────────────────────────────────────────
@@ -6110,9 +6108,9 @@
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({tel_device: device_update_interval, tel_env: environment_update_interval})
-    }).then(r => r.json()).then(d => {
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       nodeCfgStatus('telemetry', d.error || 'Saved.', !d.error);
-    }).catch(e => nodeCfgStatus('telemetry', 'Error: ' + e, false));
+    }).catch(e => nodeCfgStatus('telemetry', 'Error: ' + escHtml(String(e)), false));
   }
 
   // ── MQTT ────────────────────────────────────────────────────────────────────
@@ -6133,13 +6131,13 @@
       body: JSON.stringify({mqtt_enabled: enabled, mqtt_address: address, mqtt_username: username,
                             mqtt_password: password, mqtt_encryption: encryption, mqtt_json: json_enabled,
                             mqtt_tls: tls, mqtt_map: map_reporting})
-    }).then(r => r.json()).then(d => {
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       nodeCfgStatus('mqtt', d.error || 'Saved.', !d.error);
       if (!d.error && password) {
         document.getElementById('node-cfg-mqtt-password').value = '';
         document.getElementById('node-cfg-mqtt-password').placeholder = '(set — leave blank to keep)';
       }
-    }).catch(e => nodeCfgStatus('mqtt', 'Error: ' + e, false));
+    }).catch(e => nodeCfgStatus('mqtt', 'Error: ' + escHtml(String(e)), false));
   }
 
   function togglePwdVis(inputId, btnId) {
@@ -6211,7 +6209,7 @@
 
   // ── Init ───────────────────────────────────────────────────────────────────
   // Apply saved font size immediately
-  fetch('/api/settings/app').then(r => r.json()).then(cfg => {
+  fetch('/api/settings/app').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(cfg => {
     if (cfg.zoom) settingsApplyZoom(cfg.zoom);
     if (cfg.accent_color) applyAccentColor(cfg.accent_color);
   }).catch(() => {});

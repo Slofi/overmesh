@@ -2318,21 +2318,38 @@ def api_radio_config_get(radio_id):
         tx_power  = _int(lc, "lora", "txPower")
         hop_limit = _int(lc, "lora", "hop_limit") or 3
 
-        # position
+        # position — get live position data for local node (used for coords + precisionBits)
+        node_hex = "!" + hex(local_num)[2:] if local_num else None
+        pos_data = {}
+        if node_hex and iface.nodes:
+            pos_data = iface.nodes.get(node_hex, {}).get("position", {})
+        if not pos_data and local_num and iface.nodesByNum:
+            pos_data = iface.nodesByNum.get(local_num, {}).get("position", {})
+
+        # node config entry for persistent fallback values (set by OM when user saves)
+        node_cfg_entry = next((n for n in CONFIG.get("nodes", []) if n["id"] == radio_id), {})
+
         gps_mode             = _int(lc,  "position", "gps_mode")
         pos_broadcast_secs   = _int(lc,  "position", "position_broadcast_secs")
         smart_position       = _bool(lc, "position", "position_broadcast_smart_enabled")
-        pos_precision        = _int(lc,  "position", "position_precision") or 13
         fixed_position       = _bool(lc, "position", "fixed_position")
+
+        # precision_bits: read from node's position data (live), fallback to our saved config value
+        pos_precision = (pos_data.get("precisionBits")
+                         or node_cfg_entry.get("precision_bits")
+                         or 13)
+
+        # fixed coords: live position data → OM-saved config fallback
         fixed_lat = fixed_lon = fixed_alt = None
         if fixed_position:
-            node_hex = "!" + hex(local_num)[2:] if local_num else None
-            if node_hex and iface.nodes:
-                pos = iface.nodes.get(node_hex, {}).get("position", {})
-                if pos.get("latitude") is not None:
-                    fixed_lat = pos["latitude"]
-                    fixed_lon = pos.get("longitude")
-                    fixed_alt = pos.get("altitude", 0)
+            if pos_data.get("latitude") is not None:
+                fixed_lat = pos_data["latitude"]
+                fixed_lon = pos_data.get("longitude")
+                fixed_alt = pos_data.get("altitude", 0)
+            if fixed_lat is None:
+                fixed_lat = node_cfg_entry.get("fixed_lat")
+                fixed_lon = node_cfg_entry.get("fixed_lon")
+                fixed_alt = node_cfg_entry.get("fixed_alt", 0)
 
         # power
         power_saving        = _bool(lc, "power", "is_power_saving")
@@ -2531,49 +2548,101 @@ def api_radio_config_position(radio_id):
         return jsonify({"error": "Radio not connected"}), 503
     data = request.get_json(silent=True) or {}
     try:
+        from meshtastic.protobuf import mesh_pb2, admin_pb2
+
         lc  = iface.localNode.localConfig
         pos = lc.position
-        if "gps_mode"           in data: pos.gps_mode                  = int(data["gps_mode"])
-        if "pos_broadcast_secs" in data: pos.position_broadcast_secs   = int(data["pos_broadcast_secs"])
+        if "gps_mode" in data:
+            try:    pos.gps_mode = int(data["gps_mode"])
+            except (TypeError, ValueError): return jsonify({"error": "gps_mode must be a number"}), 400
+        if "pos_broadcast_secs" in data:
+            try:    pos.position_broadcast_secs = int(data["pos_broadcast_secs"])
+            except (TypeError, ValueError): return jsonify({"error": "pos_broadcast_secs must be a number"}), 400
         if "smart_position"     in data:
             try:    pos.position_broadcast_smart_enabled = bool(data["smart_position"])
             except AttributeError: pass
-        if "pos_precision"      in data:
-            try:    pos.position_precision = int(data["pos_precision"])
-            except AttributeError: pass  # field not present in all firmware versions
+        # NOTE: position_precision field does not exist in current meshtastic protobuf —
+        # precision_bits is set on the Position message (admin), not via PositionConfig
         fixed = data.get("fixed_position")
         if fixed is not None:
             pos.fixed_position = bool(fixed)
         iface.localNode.writeConfig("position")
-        # If fixing, push the coordinates to the node
-        if fixed and data.get("lat") is not None:
-            lat = float(data["lat"]); lon = float(data["lon"]); alt = int(data.get("alt", 0))
+
+        local_num = getattr(iface.myInfo, "my_node_num", None)
+        node_cfg_entry = next((n for n in CONFIG.get("nodes", []) if n["id"] == radio_id), None)
+        try:
+            precision = int(data["pos_precision"]) if "pos_precision" in data else None
+        except (TypeError, ValueError):
+            return jsonify({"error": "pos_precision must be a number"}), 400
+
+        if fixed and data.get("lat") is not None and data.get("lon") is not None:
             try:
-                iface.localNode.setFixedPosition(lat, lon, alt)
+                lat = float(data["lat"]); lon = float(data["lon"]); alt = int(data.get("alt", 0))
+            except (TypeError, ValueError):
+                return jsonify({"error": "Invalid coordinates or altitude"}), 400
+
+            # Build position admin message — includes precision_bits so it's actually sent to node
+            p = mesh_pb2.Position()
+            if lat != 0.0: p.latitude_i  = int(lat / 1e-7)
+            if lon != 0.0: p.longitude_i = int(lon / 1e-7)
+            if alt != 0:   p.altitude    = alt
+            if precision is not None: p.precision_bits = precision
+            try:
+                a = admin_pb2.AdminMessage()
+                a.set_fixed_position.CopyFrom(p)
+                iface.localNode.ensureSessionKey()
+                iface.localNode._sendAdmin(a)
             except Exception:
-                pass  # admin message sent best-effort
-            # Immediately update in-memory position so UI reflects new coords before firmware broadcasts
+                pass  # best-effort
+
+            # Update in-memory position immediately
             try:
-                local_num = getattr(iface.myInfo, "my_node_num", None)
                 if local_num is not None and local_num in iface.nodesByNum:
-                    iface.nodesByNum[local_num]["position"] = {
-                        "latitude": lat, "longitude": lon, "altitude": alt,
-                        "latitudeI": int(lat * 1e7), "longitudeI": int(lon * 1e7),
-                        "fixedPosition": True,
-                    }
+                    mem_pos = {"latitude": lat, "longitude": lon, "altitude": alt,
+                               "latitudeI": int(lat * 1e7), "longitudeI": int(lon * 1e7),
+                               "fixedPosition": True}
+                    if precision is not None:
+                        mem_pos["precisionBits"] = precision
+                    iface.nodesByNum[local_num]["position"] = mem_pos
             except Exception:
                 pass
-            # Cache the intended fixed position — prevents stale firmware broadcasts from overriding it
+
+            # Cache in connections (in-memory session)
             with connections_lock:
                 connections[radio_id]["fixed_lat"] = lat
                 connections[radio_id]["fixed_lon"] = lon
+
+            # Persist to config.json — survives OM service restarts
+            if node_cfg_entry is not None:
+                node_cfg_entry["fixed_lat"] = lat
+                node_cfg_entry["fixed_lon"] = lon
+                node_cfg_entry["fixed_alt"] = alt
+                if precision is not None:
+                    node_cfg_entry["precision_bits"] = precision
+                save_config()
+
         elif fixed is False:
             try:    iface.localNode.removeFixedPosition()
             except Exception: pass
-            # Clear the position lock so live broadcasts are used again
             with connections_lock:
                 connections[radio_id].pop("fixed_lat", None)
                 connections[radio_id].pop("fixed_lon", None)
+            if node_cfg_entry is not None:
+                for k in ("fixed_lat", "fixed_lon", "fixed_alt", "precision_bits"):
+                    node_cfg_entry.pop(k, None)
+                save_config()
+
+        elif fixed is None and precision is not None:
+            # Precision-only change (fixed_position not being toggled, no coord update)
+            if node_cfg_entry is not None:
+                node_cfg_entry["precision_bits"] = precision
+                save_config()
+            try:
+                if local_num is not None and local_num in iface.nodesByNum:
+                    iface.nodesByNum[local_num].setdefault("position", {})["precisionBits"] = precision
+            except Exception:
+                pass
+
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -2657,10 +2726,16 @@ def api_radio_config_bluetooth(radio_id):
         return jsonify({"error": "Radio not connected"}), 503
     data = request.get_json(silent=True) or {}
     if "bt_mode" in data:
-        if int(data["bt_mode"]) not in (0, 1, 2):
-            return jsonify({"error": "bt_mode must be 0, 1 or 2"}), 400
+        try:
+            if int(data["bt_mode"]) not in (0, 1, 2):
+                return jsonify({"error": "bt_mode must be 0, 1 or 2"}), 400
+        except (TypeError, ValueError):
+            return jsonify({"error": "bt_mode must be a number"}), 400
     if "bt_fixed_pin" in data:
-        pin = int(data["bt_fixed_pin"])
+        try:
+            pin = int(data["bt_fixed_pin"])
+        except (TypeError, ValueError):
+            return jsonify({"error": "bt_fixed_pin must be a number"}), 400
         if not (0 <= pin <= 999999):
             return jsonify({"error": "bt_fixed_pin must be 0–999999"}), 400
     try:
@@ -2701,9 +2776,12 @@ def api_radio_channel_set(radio_id, ch_index):
     iface = get_iface_by_radio(radio_id)
     if not iface:
         return jsonify({"error": "Radio not connected"}), 503
-    data     = request.get_json(silent=True) or {}
-    role     = int(data.get("role", 0))
-    name     = (data.get("name") or "")
+    data = request.get_json(silent=True) or {}
+    try:
+        role = int(data.get("role", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "role must be a number"}), 400
+    name = (data.get("name") or "")
     if len(name) > 11:
         return jsonify({"error": f"Channel name too long ({len(name)} chars, max 11)"}), 400
     psk_type = data.get("psk_type", "keep")   # keep / default / random / custom

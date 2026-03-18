@@ -1499,6 +1499,50 @@
         <button class="btn" onclick="saveNodeMqtt()">Save</button>
         <div id="node-cfg-mqtt-status" style="font-size:12px;min-height:16px;margin-top:4px"></div>
 
+        <!-- Bluetooth -->
+        <h3 class="settings-subtitle">Bluetooth</h3>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start">
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px">
+            <input type="checkbox" id="node-cfg-bt-enabled"> Enabled
+          </label>
+          <div>
+            <label class="settings-label">PIN mode</label>
+            <select id="node-cfg-bt-mode" class="settings-select" onchange="btModeChange()">
+              <option value="0">No PIN</option>
+              <option value="1">Fixed PIN</option>
+              <option value="2">Random PIN</option>
+            </select>
+          </div>
+          <div id="node-cfg-bt-pin-wrap" style="display:none">
+            <label class="settings-label">Fixed PIN (6 digits)</label>
+            <input id="node-cfg-bt-pin" type="number" class="settings-input" min="0" max="999999" style="width:100px">
+          </div>
+        </div>
+        <button class="btn" onclick="saveNodeBluetooth()" style="margin-top:8px">Save</button>
+        <div id="node-cfg-bluetooth-status" style="font-size:12px;min-height:16px;margin-top:4px"></div>
+
+        <!-- Network / WiFi -->
+        <h3 class="settings-subtitle">Network / WiFi</h3>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end">
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px">
+            <input type="checkbox" id="node-cfg-wifi-enabled"> WiFi enabled
+          </label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px">
+            <input type="checkbox" id="node-cfg-wifi-ap-mode"> AP mode <span style="color:var(--muted);font-size:11px">(uncheck = client/station)</span>
+          </label>
+          <div>
+            <label class="settings-label">SSID</label>
+            <input id="node-cfg-wifi-ssid" class="settings-input" maxlength="32" style="width:180px">
+          </div>
+          <div>
+            <label class="settings-label">Password</label>
+            <input id="node-cfg-wifi-psk" type="password" class="settings-input" placeholder="(leave blank to keep)" style="width:180px">
+          </div>
+        </div>
+        <p style="font-size:11px;color:var(--muted);margin:6px 0 0">Note: enabling WiFi disables Bluetooth on ESP32 nodes. Reboot required after saving.</p>
+        <button class="btn" onclick="saveNodeNetwork()" style="margin-top:8px">Save</button>
+        <div id="node-cfg-network-status" style="font-size:12px;min-height:16px;margin-top:4px"></div>
+
         <!-- Node actions -->
         <h3 class="settings-subtitle">Node Actions</h3>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -5684,7 +5728,7 @@
         document.querySelector('#node-cfg-content h3').textContent = 'Identity' + hw;
 
         content.style.display = '';
-        ['owner','device','lora','channels','position','power','display','telemetry','mqtt'].forEach(k => {
+        ['owner','device','lora','channels','position','power','display','telemetry','mqtt','bluetooth','network'].forEach(k => {
           const el = document.getElementById(`node-cfg-${k}-status`);
           if (el) el.textContent = '';
         });
@@ -5727,6 +5771,19 @@
         document.getElementById('node-cfg-mqtt-json').checked       = !!d.mqtt_json;
         document.getElementById('node-cfg-mqtt-tls').checked        = !!d.mqtt_tls;
         document.getElementById('node-cfg-mqtt-map').checked        = !!d.mqtt_map;
+
+        // Bluetooth
+        document.getElementById('node-cfg-bt-enabled').checked = !!d.bt_enabled;
+        document.getElementById('node-cfg-bt-mode').value      = d.bt_mode ?? 0;
+        document.getElementById('node-cfg-bt-pin').value       = d.bt_fixed_pin ?? 0;
+        btModeChange();
+
+        // Network
+        document.getElementById('node-cfg-wifi-enabled').checked   = !!d.wifi_enabled;
+        document.getElementById('node-cfg-wifi-ap-mode').checked  = !!d.wifi_ap_mode;
+        document.getElementById('node-cfg-wifi-ssid').value        = d.wifi_ssid || '';
+        document.getElementById('node-cfg-wifi-psk').value         = '';
+        document.getElementById('node-cfg-wifi-psk').placeholder   = d.wifi_pwd_set ? '(set — leave blank to keep)' : '(not set)';
       })
       .catch(e => {
         err.innerHTML = `<span style="color:var(--red)">Load failed: ${escHtml(String(e))}. Press ↻ Reload to retry.</span>`;
@@ -6078,6 +6135,46 @@
         document.getElementById('node-cfg-mqtt-password').placeholder = '(set — leave blank to keep)';
       }
     }).catch(e => nodeCfgStatus('mqtt', 'Error: ' + e, false));
+  }
+
+  function btModeChange() {
+    const mode = parseInt(document.getElementById('node-cfg-bt-mode').value);
+    document.getElementById('node-cfg-bt-pin-wrap').style.display = mode === 1 ? '' : 'none';
+  }
+
+  function saveNodeBluetooth() {
+    const radioId = _selectedNodeId;
+    const bt_enabled  = document.getElementById('node-cfg-bt-enabled').checked;
+    const bt_mode     = parseInt(document.getElementById('node-cfg-bt-mode').value);
+    const bt_fixed_pin = parseInt(document.getElementById('node-cfg-bt-pin').value) || 0;
+    nodeCfgStatus('bluetooth', 'Saving…', true);
+    fetch(`/api/radio/${encodeURIComponent(radioId)}/config/bluetooth`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({bt_enabled, bt_mode, bt_fixed_pin})
+    }).then(r => r.json()).then(d => {
+      nodeCfgStatus('bluetooth', d.error || 'Saved. Reboot to apply.', !d.error);
+    }).catch(e => nodeCfgStatus('bluetooth', 'Error: ' + escHtml(String(e)), false));
+  }
+
+  function saveNodeNetwork() {
+    const radioId = _selectedNodeId;
+    const wifi_enabled  = document.getElementById('node-cfg-wifi-enabled').checked;
+    const wifi_ap_mode  = document.getElementById('node-cfg-wifi-ap-mode').checked;
+    const wifi_ssid     = document.getElementById('node-cfg-wifi-ssid').value.trim();
+    const wifi_psk      = document.getElementById('node-cfg-wifi-psk').value;
+    nodeCfgStatus('network', 'Saving…', true);
+    fetch(`/api/radio/${encodeURIComponent(radioId)}/config/network`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({wifi_enabled, wifi_ap_mode, wifi_ssid, wifi_psk})
+    }).then(r => r.json()).then(d => {
+      nodeCfgStatus('network', d.error || 'Saved. Reboot to apply.', !d.error);
+      if (!d.error && wifi_psk) {
+        document.getElementById('node-cfg-wifi-psk').value = '';
+        document.getElementById('node-cfg-wifi-psk').placeholder = '(set — leave blank to keep)';
+      }
+    }).catch(e => nodeCfgStatus('network', 'Error: ' + escHtml(String(e)), false));
   }
 
   function pipLocateMe() {

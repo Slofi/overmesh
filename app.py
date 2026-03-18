@@ -2354,6 +2354,17 @@ def api_radio_config_get(radio_id):
         mqtt_tls        = _bool(mc, "mqtt", "tls_enabled")
         mqtt_map        = _bool(mc, "mqtt", "map_reporting_enabled")
 
+        # bluetooth
+        bt_enabled   = _bool(lc, "bluetooth", "enabled")
+        bt_mode      = _int(lc,  "bluetooth", "mode")
+        bt_fixed_pin = _int(lc,  "bluetooth", "fixed_pin")
+
+        # network / wifi
+        wifi_enabled  = _bool(lc, "network", "wifi_enabled")
+        wifi_ap_mode  = _bool(lc, "network", "wifi_ap_mode")
+        wifi_ssid     = _str(lc,  "network", "wifi_ssid")
+        wifi_pwd_set  = bool(_str(lc, "network", "wifi_psk"))
+
         return jsonify({
             "long_name":    user.get("longName",  ""),
             "short_name":   user.get("shortName", ""),
@@ -2396,6 +2407,15 @@ def api_radio_config_get(radio_id):
             "mqtt_json":       mqtt_json,
             "mqtt_tls":        mqtt_tls,
             "mqtt_map":        mqtt_map,
+            # bluetooth
+            "bt_enabled":   bt_enabled,
+            "bt_mode":      bt_mode,
+            "bt_fixed_pin": bt_fixed_pin,
+            # network
+            "wifi_enabled":  wifi_enabled,
+            "wifi_ap_mode":  wifi_ap_mode,
+            "wifi_ssid":     wifi_ssid,
+            "wifi_pwd_set":  wifi_pwd_set,
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -2617,6 +2637,41 @@ def api_radio_config_mqtt(radio_id):
         if "mqtt_tls"        in data: mqtt.tls_enabled        = bool(data["mqtt_tls"])
         if "mqtt_map"        in data: mqtt.map_reporting_enabled = bool(data["mqtt_map"])
         iface.localNode.writeModuleConfig("mqtt")
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/radio/<radio_id>/config/bluetooth", methods=["POST"])
+def api_radio_config_bluetooth(radio_id):
+    iface = get_iface_by_radio(radio_id)
+    if not iface:
+        return jsonify({"error": "Radio not connected"}), 503
+    data = request.get_json(silent=True) or {}
+    try:
+        bt = iface.localNode.localConfig.bluetooth
+        if "bt_enabled"   in data: bt.enabled   = bool(data["bt_enabled"])
+        if "bt_mode"      in data: bt.mode       = int(data["bt_mode"])
+        if "bt_fixed_pin" in data: bt.fixed_pin  = int(data["bt_fixed_pin"])
+        iface.localNode.writeConfig("bluetooth")
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/radio/<radio_id>/config/network", methods=["POST"])
+def api_radio_config_network(radio_id):
+    iface = get_iface_by_radio(radio_id)
+    if not iface:
+        return jsonify({"error": "Radio not connected"}), 503
+    data = request.get_json(silent=True) or {}
+    try:
+        net = iface.localNode.localConfig.network
+        if "wifi_enabled" in data: net.wifi_enabled  = bool(data["wifi_enabled"])
+        if "wifi_ap_mode" in data: net.wifi_ap_mode  = bool(data["wifi_ap_mode"])
+        if "wifi_ssid"    in data: net.wifi_ssid      = str(data["wifi_ssid"])
+        if data.get("wifi_psk"):   net.wifi_psk       = str(data["wifi_psk"])
+        iface.localNode.writeConfig("network")
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500

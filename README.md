@@ -96,6 +96,15 @@ Logs: `journalctl --user -u overmesh -f`
 
 ---
 
+## Uninstall
+
+```bash
+systemctl --user disable --now overmesh
+rm -rf ~/overmesh
+```
+
+---
+
 ## Notes
 
 - Map tiles: [OpenStreetMap](https://www.openstreetmap.org/) — © OpenStreetMap contributors ([ODbL](https://www.openstreetmap.org/copyright))

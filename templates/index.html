@@ -1914,7 +1914,7 @@
     const chRadioParam = activeRadioId ? `?radio_id=${encodeURIComponent(activeRadioId)}` : '';
     const tabAtFetchTime = currentTab;
     const radioAtFetchTime = activeRadioId;
-    fetch(`/api/chat/channels${chRadioParam}`).then(r => r.json()).then(chs => {
+    fetch(`/api/chat/channels${chRadioParam}`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(chs => {
       // Discard if user switched away from chat tab or switched radio while fetch was in flight
       if (currentTab !== tabAtFetchTime || activeRadioId !== radioAtFetchTime) return;
       chatChannels = chs;
@@ -1932,7 +1932,7 @@
         renderMessages();  // always sync message area with active channel/tab
       }
     }).catch(e => console.warn('Chat channel init failed:', e));
-    fetch('/api/status').then(r => r.json()).then(s => {
+    fetch('/api/status').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(s => {
       const activeName = activeRadioId && s[activeRadioId] ? s[activeRadioId].name : Object.values(s).map(x => x.name).join(', ');
       document.getElementById('chat-radio').textContent = '📡 ' + activeName;
     }).catch(() => {});

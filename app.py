@@ -2099,13 +2099,18 @@ def api_settings_nodes_add():
     data      = request.get_json(silent=True) or {}
     name      = (data.get("name") or "").strip()
     node_type = (data.get("type") or "serial").strip()
+    if node_type not in ("serial", "tcp"):
+        return jsonify({"error": "type must be 'serial' or 'tcp'"}), 400
     if not name:
         return jsonify({"error": "Name is required"}), 400
     node_id  = f"node_{int(time.time())}"
     new_node = {"id": node_id, "name": name, "enabled": True, "type": node_type}
     if node_type == "tcp":
-        host     = (data.get("host") or "").strip()
-        tcp_port = int(data.get("tcp_port") or 4403)
+        host = (data.get("host") or "").strip()
+        try:
+            tcp_port = int(data.get("tcp_port") or 4403)
+        except (TypeError, ValueError):
+            return jsonify({"error": "tcp_port must be a number"}), 400
         if not host:
             return jsonify({"error": "Enter an IP address or hostname"}), 400
         if any(n.get("host") == host and n.get("type") == "tcp" for n in CONFIG["nodes"]):
@@ -2464,6 +2469,9 @@ def api_radio_config_device(radio_id):
     data = request.get_json(silent=True) or {}
     try:
         role = int(data.get("role", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "role must be a number"}), 400
+    try:
         iface.localNode.localConfig.device.role = role
         iface.localNode.writeConfig("device")
         return jsonify({"ok": True})
@@ -2478,15 +2486,15 @@ def api_radio_config_lora(radio_id):
         return jsonify({"error": "Radio not connected"}), 503
     data = request.get_json(silent=True) or {}
     try:
+        int_fields = {k: int(data[k]) for k in ("region","modem_preset","tx_power","hop_limit") if k in data}
+    except (TypeError, ValueError) as e:
+        return jsonify({"error": f"Invalid numeric value: {e}"}), 400
+    try:
         lc = iface.localNode.localConfig
-        if "region" in data:
-            lc.lora.region      = int(data["region"])
-        if "modem_preset" in data:
-            lc.lora.modemPreset = int(data["modem_preset"])
-        if "tx_power" in data:
-            lc.lora.txPower     = int(data["tx_power"])
-        if "hop_limit" in data:
-            lc.lora.hop_limit   = int(data["hop_limit"])
+        if "region"       in int_fields: lc.lora.region      = int_fields["region"]
+        if "modem_preset" in int_fields: lc.lora.modemPreset = int_fields["modem_preset"]
+        if "tx_power"     in int_fields: lc.lora.txPower     = int_fields["tx_power"]
+        if "hop_limit"    in int_fields: lc.lora.hop_limit   = int_fields["hop_limit"]
         iface.localNode.writeConfig("lora")
         return jsonify({"ok": True})
     except Exception as e:

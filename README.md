@@ -95,11 +95,25 @@ Open [http://localhost:8081](http://localhost:8081).
 | `nodes[].host` | IP or hostname (TCP nodes only) | — |
 | `nodes[].tcp_port` | TCP port (TCP nodes only) | `4403` |
 | `port` | Web server port | `8081` |
+| `host` | IP address Flask binds to | `0.0.0.0` |
 | `app.zoom` | UI zoom level (75–125) | `100` |
 | `app.accent_color` | Hex accent color | `#4ade80` |
 | `sense_passive` | Start passive Sense listening on launch | `false` |
 
 Nodes can be added and configured through **Settings → Radios** in the UI — no need to edit the file manually after the first run.
+
+### Environment variables
+
+For container and non-default deployments, these override the corresponding config values:
+
+| Variable | Description |
+|----------|-------------|
+| `OVERMESH_CONFIG` | Path to `config.json` |
+| `OVERMESH_DATA_DIR` | Directory for databases (`overmesh_prefs.db`, per-radio message DBs) |
+| `OVERMESH_HOST` | Flask bind address (overrides `host` in config) |
+| `OVERMESH_PORT` | Flask port (overrides `port` in config) |
+
+If not set, behaviour is identical to a plain `python3 app.py` run.
 
 ### TCP / WiFi nodes
 
@@ -140,6 +154,25 @@ rm -rf ~/overmesh
 ## About
 
 See [ABOUT.md](ABOUT.md) for the background story.
+
+---
+
+## Project structure
+
+For developers and contributors — the codebase is split into modules:
+
+| File | Contents |
+|------|----------|
+| `app.py` | Flask init, blueprint registration, startup sequence |
+| `config.py` | Config loading, `CONFIG` dict, `DATA_DIR`, `save_config()` |
+| `state.py` | Shared mutable globals: connections, chat buffer, SSE clients |
+| `db.py` | SQLite — prefs DB, per-radio message DBs, node history |
+| `helpers.py` | SSE push, node data aggregation, lookup helpers |
+| `mesh.py` | Interface connect/reconnect loops, packet callbacks, node queries |
+| `gps.py` | GPS receiver reader, NMEA parser, position push to nodes |
+| `sense.py` | Mesh Sense broadcast, passive listener, auto-loop |
+| `bot.py` | Command handling, MOTD scheduler, per-radio bot config |
+| `routes/` | Flask Blueprints — one file per feature area |
 
 ---
 

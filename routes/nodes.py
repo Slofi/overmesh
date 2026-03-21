@@ -90,7 +90,6 @@ def api_debug_raw_node(node_hex):
             if iface and iface.nodes:
                 node = iface.nodes.get(node_hex)
                 if node:
-                    import json
                     # publicKey is bytes, convert to hex string for display
                     raw = dict(node)
                     user = dict(raw.get("user", {}))

@@ -138,8 +138,10 @@ def api_settings_nodes_delete(node_id):
                 pass
     if not msgs_db:
         msgs_db = node.get("msgs_db")
-    # Validate msgs_db before using in a path — must match expected pattern
-    if msgs_db and not re.match(r'^overmesh_msgs_[a-f0-9]{1,16}\.db$', str(msgs_db)):
+    # Validate msgs_db before using in a path — extract basename first (stored as full path)
+    if msgs_db:
+        msgs_db = os.path.basename(msgs_db)
+    if msgs_db and not re.match(r'^overmesh_msgs_[a-f0-9]{1,16}\.db$', msgs_db):
         log.warning(f"[{node_id}] Refusing to delete unexpected msgs_db path: {msgs_db}")
         msgs_db = None
     CONFIG["nodes"] = [n for n in CONFIG["nodes"] if n["id"] != node_id]

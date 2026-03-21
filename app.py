@@ -29,16 +29,22 @@ app = Flask(__name__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# Environment variable overrides (for container / non-default deployments).
+# If not set, behaviour is identical to before.
+CONFIG_PATH = os.environ.get("OVERMESH_CONFIG", os.path.join(BASE_DIR, "config.json"))
+DATA_DIR    = os.environ.get("OVERMESH_DATA_DIR", BASE_DIR)
+os.makedirs(DATA_DIR, exist_ok=True)
+
 _NODE_ID_RE = re.compile(r'^[!^a-zA-Z0-9_\-]{1,64}$')
 
 def _valid_node_id(node_id):
     """Basic sanity check on a mesh node ID before passing it to the library."""
     return bool(node_id and _NODE_ID_RE.match(str(node_id)))
 
-with open(os.path.join(BASE_DIR, "config.json")) as f:
+with open(CONFIG_PATH) as f:
     CONFIG = json.load(f)
 
-PREFS_DB_PATH = os.path.join(BASE_DIR, "overmesh_prefs.db")
+PREFS_DB_PATH = os.path.join(DATA_DIR, "overmesh_prefs.db")
 
 
 @contextmanager
@@ -809,7 +815,7 @@ def connect_node(node_cfg):
             local_num = getattr(iface.myInfo, "my_node_num", None)
             if local_num:
                 hex_id  = hex(local_num)[2:]
-                msgs_db = f"overmesh_msgs_{hex_id}.db"
+                msgs_db = os.path.join(DATA_DIR, f"overmesh_msgs_{hex_id}.db")
                 init_msgs_db(msgs_db)
         except Exception as e:
             log.warning(f"[{node_id}] Could not set up per-radio DB: {e}")
@@ -1116,7 +1122,7 @@ def resolve_node_name(num):
 # Bot
 # ---------------------------------------------------------------------------
 
-BOT_CONFIG_PATH = os.path.join(BASE_DIR, "bot_config.json")
+BOT_CONFIG_PATH = os.path.join(DATA_DIR, "bot_config.json")
 
 BOT_JOKES = [
     "Why do ham radio operators make great detectives? They always find the source.",
@@ -1282,7 +1288,7 @@ def _bot_config_path(radio_id):
     import re as _re
     if not _re.match(r'^[a-zA-Z0-9_\-]{1,64}$', str(radio_id)):
         return BOT_CONFIG_PATH
-    return os.path.join(BASE_DIR, f"bot_config_{radio_id}.json")
+    return os.path.join(DATA_DIR, f"bot_config_{radio_id}.json")
 
 
 def load_bot_config(radio_id=None):
@@ -1325,7 +1331,7 @@ def save_bot_config(cfg, radio_id=None):
     with _bot_config_cache_lock:
         _bot_config_cache[radio_id] = json.loads(json.dumps(cfg))
     path = _bot_config_path(radio_id)
-    with tempfile.NamedTemporaryFile("w", dir=BASE_DIR, delete=False, suffix=".tmp") as tf:
+    with tempfile.NamedTemporaryFile("w", dir=DATA_DIR, delete=False, suffix=".tmp") as tf:
         json.dump(cfg, tf, indent=2)
         tf.flush()
     os.replace(tf.name, path)
@@ -2199,8 +2205,9 @@ def api_chat_send():
 def save_config():
     tmp = None
     try:
-        config_path = os.path.join(BASE_DIR, "config.json")
-        with tempfile.NamedTemporaryFile("w", dir=BASE_DIR, delete=False, suffix=".tmp") as tf:
+        config_path = CONFIG_PATH
+        config_dir  = os.path.dirname(os.path.abspath(CONFIG_PATH))
+        with tempfile.NamedTemporaryFile("w", dir=config_dir, delete=False, suffix=".tmp") as tf:
             json.dump(CONFIG, tf, indent=2)
             tmp = tf.name
         os.replace(tmp, config_path)
@@ -3667,4 +3674,6 @@ if __name__ == "__main__":
     if hasattr(signal, "SIGHUP"):  # Linux/macOS only — not available on Windows
         signal.signal(signal.SIGHUP, signal.SIG_IGN)
     startup()
-    app.run(host=CONFIG.get("host", "0.0.0.0"), port=CONFIG.get("port", 8081), debug=False)
+    _host = os.environ.get("OVERMESH_HOST", CONFIG.get("host", "0.0.0.0"))
+    _port = int(os.environ.get("OVERMESH_PORT", CONFIG.get("port", 8081)))
+    app.run(host=_host, port=_port, debug=False)

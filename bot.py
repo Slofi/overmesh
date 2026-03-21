@@ -212,10 +212,16 @@ def save_bot_config(cfg, radio_id=None):
     with _bot_config_cache_lock:
         _bot_config_cache[radio_id] = json.loads(json.dumps(cfg))
     path = _bot_config_path(radio_id)
-    with tempfile.NamedTemporaryFile("w", dir=DATA_DIR, delete=False, suffix=".tmp") as tf:
-        json.dump(cfg, tf, indent=2)
-        tf.flush()
-    os.replace(tf.name, path)
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile("w", dir=DATA_DIR, delete=False, suffix=".tmp") as tf:
+            json.dump(cfg, tf, indent=2)
+            tmp = tf.name
+        os.replace(tmp, path)
+    except Exception as e:
+        log.error(f"save_bot_config failed: {e}")
+        if tmp and os.path.exists(tmp):
+            os.unlink(tmp)
 
 # ---------------------------------------------------------------------------
 # Activity log + SSE

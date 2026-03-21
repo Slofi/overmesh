@@ -40,6 +40,7 @@ def api_settings_gps_set():
 
 @bp.route("/api/gps/push", methods=["POST"])
 def api_gps_push():
+    import threading
     with gps_lock:
         lat  = gps_state.get("lat")
         lon  = gps_state.get("lon")
@@ -48,5 +49,5 @@ def api_gps_push():
     if not fix or lat is None or lon is None:
         return jsonify({"error": "No GPS fix — cannot push position"}), 400
     precision_bits = CONFIG.get("gps", {}).get("precision", 32)
-    _gps_push_to_nodes(lat, lon, alt, precision_bits)
+    threading.Thread(target=_gps_push_to_nodes, args=(lat, lon, alt, precision_bits), daemon=True).start()
     return jsonify({"ok": True, "pushed": ["all connected"]})

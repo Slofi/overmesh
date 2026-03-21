@@ -65,7 +65,7 @@ def api_send_waypoint():
     if not iface:
         return jsonify({"error": "No radio connected"}), 503
     try:
-        from meshtastic import mesh_pb2, portnums_pb2
+        from meshtastic.protobuf import mesh_pb2, portnums_pb2
         wp_id_req = data.get("wp_id")
         wp_id_val = int(wp_id_req) if wp_id_req else int(time.time() * 1000) % (2 ** 31)
         icon_cp = 0
@@ -174,7 +174,7 @@ def api_edit_waypoint(wp_id):
     if not iface:
         return jsonify({"error": "No radio connected"}), 503
     try:
-        from meshtastic import mesh_pb2, portnums_pb2
+        from meshtastic.protobuf import mesh_pb2, portnums_pb2
         icon_cp = 0
         try:
             icon_cp = ord(marker_emoji[0])
@@ -188,7 +188,7 @@ def api_edit_waypoint(wp_id):
         # Accept destination_ids list or fall back to stored value
         dest_ids_raw = data.get("destination_ids")
         if dest_ids_raw is not None:
-            dest_ids = [d for d in dest_ids_raw if d] if isinstance(dest_ids_raw, list) else None
+            dest_ids = [d for d in dest_ids_raw if d and _valid_node_id(d)] if isinstance(dest_ids_raw, list) else None
         else:
             dest_ids = wp_data.get("destination_ids")
         dest = dest_ids[0] if dest_ids else None
@@ -248,7 +248,7 @@ def api_delete_waypoint(wp_id):
         if not iface:
             iface, _ = get_any_iface_with_id()
         if iface and wp_data:
-            from meshtastic import mesh_pb2, portnums_pb2
+            from meshtastic.protobuf import mesh_pb2, portnums_pb2
             ch_idx   = wp_data.get("channel_index") or 0
             dest_ids = wp_data.get("destination_ids")
             targets  = dest_ids if dest_ids else [wp_data.get("destination_id") or None]
@@ -287,7 +287,7 @@ def api_rebroadcast_waypoint(wp_id):
             iface, _ = get_any_iface_with_id()
         if not iface:
             return jsonify({"error": "No radio connected"}), 503
-        from meshtastic import mesh_pb2, portnums_pb2
+        from meshtastic.protobuf import mesh_pb2, portnums_pb2
         marker_emoji = wp_data.get("marker_emoji") or "📍"
         wp             = mesh_pb2.Waypoint()
         wp.id          = wp_id

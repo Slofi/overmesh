@@ -27,24 +27,26 @@ log = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# Environment variable overrides (for container / non-default deployments).
-# If not set, behaviour is identical to before.
-CONFIG_PATH = os.environ.get("OVERMESH_CONFIG", os.path.join(BASE_DIR, "config.json"))
-DATA_DIR    = os.environ.get("OVERMESH_DATA_DIR", BASE_DIR)
-os.makedirs(DATA_DIR, exist_ok=True)
-
-_NODE_ID_RE = re.compile(r'^[!^a-zA-Z0-9_\-]{1,64}$')
-
-def _valid_node_id(node_id):
-    """Basic sanity check on a mesh node ID before passing it to the library."""
-    return bool(node_id and _NODE_ID_RE.match(str(node_id)))
-
-with open(CONFIG_PATH) as f:
-    CONFIG = json.load(f)
-
-PREFS_DB_PATH = os.path.join(DATA_DIR, "overmesh_prefs.db")
+from config import (
+    BASE_DIR, CONFIG_PATH, DATA_DIR, CONFIG, PREFS_DB_PATH,
+    save_config, _valid_node_id,
+)
+from state import (
+    connections, connections_lock,
+    chat_messages, chat_lock, sse_clients, sse_lock,
+    pending_acks, pending_acks_lock,
+    waypoints_cache, waypoints_lock,
+    notes_cache, notes_lock,
+    gps_state, gps_lock, _gps_stop_event, _gps_last_push_ts, _GPS_AUTO_PUSH_INTERVAL,
+    _msg_counter, _msg_counter_lock,
+    traceroute_lock,
+    bot_activity, bot_activity_lock,
+    _bot_config_cache, _bot_config_cache_lock,
+    _motd_last_sent_per_radio, _motd_event,
+    _sense_state, _sense_lock,
+    _active_auto_event, _active_auto_running, _active_auto_running_lock,
+    SENSE_COLLECTION_WINDOW,
+)
 
 
 @contextmanager
@@ -353,39 +355,10 @@ def get_db_nodes(sort_by="last_seen", sort_dir="desc", fav_first=True, show_igno
 
 
 # ---------------------------------------------------------------------------
-# Node connections
+# GPS receiver (thread handle — not in state.py, only used locally)
 # ---------------------------------------------------------------------------
 
-connections = {}
-connections_lock = threading.Lock()
-
-# ---------------------------------------------------------------------------
-# Chat
-# ---------------------------------------------------------------------------
-
-chat_messages    = []   # rolling buffer, last 500
-chat_lock        = threading.Lock()
-sse_clients      = []   # queues evicted when full (maxsize=100) in push_to_sse(); minor slow leak on disconnect without traffic
-sse_lock         = threading.Lock()
-pending_acks     = {}   # packet_id -> (msg_id, radio_id, ts)
-pending_acks_lock = threading.Lock()
-
-waypoints_cache  = {}   # wp_id -> waypoint dict
-waypoints_lock   = threading.Lock()
-
-notes_cache = {}  # note_id -> note dict
-notes_lock  = threading.Lock()
-
-# ---------------------------------------------------------------------------
-# GPS receiver
-# ---------------------------------------------------------------------------
-
-gps_state = {"lat": None, "lon": None, "alt": None, "sats": 0, "fix": False, "speed": None}
-gps_lock   = threading.Lock()
-_gps_stop_event    = threading.Event()
-_gps_thread        = None
-_gps_last_push_ts  = 0.0   # epoch seconds — rate-limits auto-push to nodes
-_GPS_AUTO_PUSH_INTERVAL = 30  # seconds between auto-pushes
+_gps_thread = None
 
 
 def _parse_nmea_coord(val, hemi):
@@ -527,9 +500,6 @@ def _gps_stop():
     with gps_lock:
         gps_state.update({"lat": None, "lon": None, "alt": None, "sats": 0, "fix": False})
     _gps_thread = None
-
-_msg_counter      = 0
-_msg_counter_lock = threading.Lock()
 
 def _next_msg_id():
     global _msg_counter
@@ -1034,9 +1004,6 @@ def get_node_data():
 # Node action helpers
 # ---------------------------------------------------------------------------
 
-traceroute_lock = threading.Lock()
-
-
 def get_any_iface():
     with connections_lock:
         for state in connections.values():
@@ -1252,32 +1219,6 @@ BOT_CONFIG_DEFAULTS = {
     },
 }
 
-bot_activity      = []
-bot_activity_lock = threading.Lock()
-
-# ---------------------------------------------------------------------------
-# Mesh Sense
-# ---------------------------------------------------------------------------
-
-_sense_state = {
-    "active":         False,
-    "passive":        bool(CONFIG.get("sense_passive", False)),   # continuously capture all heard packets
-    "active_auto":    bool(CONFIG.get("sense_active_auto", False)),   # periodically broadcast position requests
-    "last_triggered": 0,
-    "window_end":     0,
-    "responses":      [],   # list of response dicts, cleared on each new active sense
-}
-_sense_lock   = threading.Lock()
-_active_auto_event = threading.Event()
-_active_auto_running = False
-_active_auto_running_lock = threading.Lock()
-
-SENSE_COLLECTION_WINDOW = 60   # seconds to collect responses after broadcast
-_motd_last_sent_per_radio = {}          # {radio_id: last_fired_timestamp}
-_motd_event       = threading.Event()  # set this to wake scheduler early (e.g. config changed)
-
-_bot_config_cache      = {}             # {radio_id_or_None: config_dict}
-_bot_config_cache_lock = threading.Lock()
 
 
 def _bot_config_path(radio_id):
@@ -2201,20 +2142,6 @@ def api_chat_send():
 # ---------------------------------------------------------------------------
 # Settings routes
 # ---------------------------------------------------------------------------
-
-def save_config():
-    tmp = None
-    try:
-        config_path = CONFIG_PATH
-        config_dir  = os.path.dirname(os.path.abspath(CONFIG_PATH))
-        with tempfile.NamedTemporaryFile("w", dir=config_dir, delete=False, suffix=".tmp") as tf:
-            json.dump(CONFIG, tf, indent=2)
-            tmp = tf.name
-        os.replace(tmp, config_path)
-    except Exception as e:
-        log.error(f"save_config failed: {e}")
-        if tmp and os.path.exists(tmp):
-            os.unlink(tmp)
 
 
 @app.route("/api/settings/ports")

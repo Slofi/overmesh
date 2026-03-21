@@ -62,11 +62,15 @@ from state import (
     bot_activity, bot_activity_lock,
     _bot_config_cache, _bot_config_cache_lock,
     _motd_last_sent_per_radio, _motd_event,
-    _sense_state, _sense_lock,
-    _active_auto_event, _active_auto_running, _active_auto_running_lock,
-    SENSE_COLLECTION_WINDOW,
 )
 from gps import gps_state, gps_lock, _gps_start, _gps_stop
+import sense as _sense_mod
+from sense import (
+    _sense_state, _sense_lock,
+    _active_auto_event, _active_auto_running_lock,
+    SENSE_COLLECTION_WINDOW,
+    _run_sense_broadcast, _active_auto_loop,
+)
 
 
 
@@ -1916,60 +1920,6 @@ def api_bot_motd_test():
 # Mesh Sense
 # ---------------------------------------------------------------------------
 
-def _run_sense_broadcast(iface, cooldown):
-    """Broadcast position request, wait for collection window, close. Called in a thread."""
-    try:
-        iface.sendPosition(wantResponse=True)
-    except Exception as e:
-        log.warning(f"Sense broadcast error: {e}")
-        with _sense_lock:
-            _sense_state["active"] = False
-            count = len(_sense_state["responses"])
-        push_to_sse(json.dumps({"type": "sense_done", "count": count,
-                                "error": "Node disconnected during broadcast"}))
-        # sendPosition failed — reconnect immediately instead of waiting for the loop
-        threading.Thread(target=_reconnect_disconnected, daemon=True).start()
-        return
-    # Brief pause then check: sendPosition sometimes silently kills the serial connection
-    time.sleep(1)
-    threading.Thread(target=_reconnect_disconnected, daemon=True).start()
-    time.sleep(SENSE_COLLECTION_WINDOW - 1)
-    with _sense_lock:
-        _sense_state["active"] = False
-        count = len(_sense_state["responses"])
-    push_to_sse(json.dumps({"type": "sense_done", "count": count}))
-
-
-def _active_auto_loop():
-    """Background thread: re-trigger sense at cooldown intervals while active_auto is on."""
-    global _active_auto_running
-    with _active_auto_running_lock:
-        if _active_auto_running:
-            return
-        _active_auto_running = True
-    try:
-        while True:
-            with _sense_lock:
-                if not _sense_state["active_auto"]:
-                    return
-            iface = get_any_iface()
-            cooldown = CONFIG.get("app", {}).get("sense_cooldown", 180)
-            if iface:
-                now = time.time()
-                with _sense_lock:
-                    _sense_state["active"]         = True
-                    _sense_state["last_triggered"] = now
-                    _sense_state["window_end"]     = now + SENSE_COLLECTION_WINDOW
-                    _sense_state["responses"]      = []
-                push_to_sse(json.dumps({"type": "sense_started", "window": SENSE_COLLECTION_WINDOW,
-                                        "cooldown": cooldown}))
-                _run_sense_broadcast(iface, cooldown)  # blocks for SENSE_COLLECTION_WINDOW
-            # Wait cooldown before next scan; wake early if active_auto toggled off
-            _active_auto_event.wait(timeout=cooldown)
-            _active_auto_event.clear()
-    finally:
-        with _active_auto_running_lock:
-            _active_auto_running = False
 
 
 @app.route("/api/mesh/sense", methods=["POST"])
@@ -2013,7 +1963,7 @@ def api_sense_active_auto():
     if active_auto:
         _active_auto_event.clear()
         with _active_auto_running_lock:
-            if not _active_auto_running:
+            if not _sense_mod._active_auto_running:
                 threading.Thread(target=_active_auto_loop, daemon=True).start()
     else:
         _active_auto_event.set()   # wake the waiting thread so it exits cleanly
@@ -2464,7 +2414,7 @@ def startup():
     if _sense_state["active_auto"]:
         _active_auto_event.clear()
         with _active_auto_running_lock:
-            if not _active_auto_running:
+            if not _sense_mod._active_auto_running:
                 threading.Thread(target=_active_auto_loop, daemon=True).start()
 
 

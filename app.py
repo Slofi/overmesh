@@ -370,6 +370,158 @@ waypoints_lock   = threading.Lock()
 notes_cache = {}  # note_id -> note dict
 notes_lock  = threading.Lock()
 
+# ---------------------------------------------------------------------------
+# GPS receiver
+# ---------------------------------------------------------------------------
+
+gps_state = {"lat": None, "lon": None, "alt": None, "sats": 0, "fix": False, "speed": None}
+gps_lock   = threading.Lock()
+_gps_stop_event    = threading.Event()
+_gps_thread        = None
+_gps_last_push_ts  = 0.0   # epoch seconds — rate-limits auto-push to nodes
+_GPS_AUTO_PUSH_INTERVAL = 30  # seconds between auto-pushes
+
+
+def _parse_nmea_coord(val, hemi):
+    """Convert NMEA DDMM.MMMM to decimal degrees."""
+    if not val:
+        return None
+    try:
+        raw = float(val)
+        d   = int(raw / 100)
+        m   = raw - d * 100
+        dec = d + m / 60.0
+        return -dec if hemi in ("S", "W") else dec
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_gpgga(line):
+    """Parse a $GPGGA/$GNGGA sentence and update gps_state + push SSE."""
+    global _gps_last_push_ts
+    try:
+        if "*" in line:
+            line = line[:line.index("*")]
+        parts = line.split(",")
+        if len(parts) < 10:
+            return
+        fix_q = int(parts[6]) if parts[6] else 0
+        lat   = _parse_nmea_coord(parts[2], parts[3])
+        lon   = _parse_nmea_coord(parts[4], parts[5])
+        sats  = int(parts[7]) if parts[7] else 0
+        alt   = float(parts[9]) if parts[9] else None
+        with gps_lock:
+            gps_state["sats"] = sats
+            gps_state["fix"]  = fix_q > 0
+            if fix_q > 0 and lat is not None and lon is not None:
+                gps_state["lat"] = lat
+                gps_state["lon"] = lon
+                gps_state["alt"] = int(alt) if alt is not None else None
+        push_to_sse(json.dumps({
+            "type": "gps_position",
+            "lat":  lat if fix_q > 0 else None,
+            "lon":  lon if fix_q > 0 else None,
+            "alt":  int(alt) if (fix_q > 0 and alt is not None) else None,
+            "sats": sats,
+            "fix":  fix_q > 0,
+        }))
+        # Auto-push to connected nodes if enabled and rate-limit allows
+        if fix_q > 0 and lat is not None and lon is not None:
+            gps_cfg = CONFIG.get("gps", {})
+            if gps_cfg.get("auto_push"):
+                now = time.time()
+                if now - _gps_last_push_ts >= _GPS_AUTO_PUSH_INTERVAL:
+                    _gps_last_push_ts = now
+                    precision_bits = gps_cfg.get("precision", 32)
+                    threading.Thread(
+                        target=_gps_push_to_nodes,
+                        args=(lat, lon, int(alt) if alt is not None else 0, precision_bits),
+                        daemon=True
+                    ).start()
+    except Exception as e:
+        log.debug(f"GPS parse error: {e}")
+
+
+def _gps_push_to_nodes(lat, lon, alt, precision_bits):
+    """Push GPS position to all connected nodes. Called from background thread."""
+    from meshtastic.protobuf import mesh_pb2, admin_pb2
+    with connections_lock:
+        radio_ids = list(connections.keys())
+    for radio_id in radio_ids:
+        with connections_lock:
+            state = connections.get(radio_id, {})
+            iface = state.get("iface") if state.get("status") == "connected" else None
+        if not iface:
+            continue
+        try:
+            p = mesh_pb2.Position()
+            p.latitude_i  = int(lat / 1e-7)
+            p.longitude_i = int(lon / 1e-7)
+            if alt:
+                p.altitude = int(alt)
+            if precision_bits and precision_bits < 32:
+                p.precision_bits = precision_bits
+            a = admin_pb2.AdminMessage()
+            a.set_fixed_position.CopyFrom(p)
+            iface.localNode.ensureSessionKey()
+            iface.localNode._sendAdmin(a)
+            local_num = getattr(iface.myInfo, "my_node_num", None)
+            if local_num is not None and local_num in iface.nodesByNum:
+                iface.nodesByNum[local_num]["position"] = {
+                    "latitude": lat, "longitude": lon, "altitude": int(alt),
+                    "latitudeI": int(lat * 1e7), "longitudeI": int(lon * 1e7),
+                    "fixedPosition": True,
+                }
+            with connections_lock:
+                connections[radio_id]["fixed_lat"] = lat
+                connections[radio_id]["fixed_lon"] = lon
+            log.info(f"GPS auto-push → {radio_id} ({lat:.5f}, {lon:.5f}) precision_bits={precision_bits}")
+        except Exception as e:
+            log.warning(f"GPS auto-push to {radio_id} failed: {e}")
+
+
+def _gps_reader(port, stop_event):
+    import serial as _serial
+    log.info(f"GPS: opening {port}")
+    try:
+        ser = _serial.Serial(port, baudrate=9600, timeout=1)
+    except Exception as e:
+        log.error(f"GPS: cannot open {port}: {e}")
+        push_to_sse(json.dumps({"type": "gps_error", "message": str(e)}))
+        return
+    while not stop_event.is_set():
+        try:
+            raw  = ser.readline()
+            line = raw.decode("ascii", errors="ignore").strip()
+            if line.startswith(("$GPGGA", "$GNGGA")):
+                _parse_gpgga(line)
+        except Exception as e:
+            log.warning(f"GPS read: {e}")
+            time.sleep(1)
+    try:
+        ser.close()
+    except Exception:
+        pass
+    log.info("GPS: thread stopped")
+
+
+def _gps_start(port):
+    global _gps_thread, _gps_stop_event
+    _gps_stop_event.set()
+    time.sleep(0.2)
+    _gps_stop_event = threading.Event()
+    t = threading.Thread(target=_gps_reader, args=(port, _gps_stop_event), daemon=True)
+    t.start()
+    _gps_thread = t
+
+
+def _gps_stop():
+    global _gps_thread
+    _gps_stop_event.set()
+    with gps_lock:
+        gps_state.update({"lat": None, "lon": None, "alt": None, "sats": 0, "fix": False})
+    _gps_thread = None
+
 _msg_counter      = 0
 _msg_counter_lock = threading.Lock()
 
@@ -2268,6 +2420,58 @@ def api_settings_app_set():
 
 
 # ---------------------------------------------------------------------------
+# GPS receiver settings routes
+# ---------------------------------------------------------------------------
+
+@app.route("/api/settings/gps", methods=["GET"])
+def api_settings_gps_get():
+    cfg = CONFIG.get("gps", {"enabled": False, "port": ""})
+    with gps_lock:
+        pos = {k: gps_state[k] for k in ("lat", "lon", "alt", "sats", "fix", "speed")}
+    return jsonify({**cfg, **pos})
+
+
+@app.route("/api/settings/gps", methods=["POST"])
+def api_settings_gps_set():
+    data = request.get_json(silent=True) or {}
+    cfg  = CONFIG.setdefault("gps", {"enabled": False, "port": ""})
+    was_enabled = cfg.get("enabled", False)
+    enabled = bool(data.get("enabled", False))
+    port    = str(data.get("port", "")).strip()
+    cfg["enabled"] = enabled
+    cfg["port"]    = port
+    if "auto_push" in data:
+        cfg["auto_push"] = bool(data["auto_push"])
+    if "precision" in data:
+        try:
+            cfg["precision"] = max(1, min(32, int(data["precision"])))
+        except (TypeError, ValueError):
+            return jsonify({"error": "precision must be a number"}), 400
+    save_config()
+    if enabled and port:
+        _gps_start(port)
+    elif was_enabled and not enabled:
+        _gps_stop()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/gps/push", methods=["POST"])
+def api_gps_push():
+    with gps_lock:
+        lat  = gps_state.get("lat")
+        lon  = gps_state.get("lon")
+        alt  = gps_state.get("alt") or 0
+        fix  = gps_state.get("fix", False)
+    if not fix or lat is None or lon is None:
+        return jsonify({"error": "No GPS fix — cannot push position"}), 400
+    precision_bits = CONFIG.get("gps", {}).get("precision", 32)
+    _gps_push_to_nodes(lat, lon, alt, precision_bits)
+    return jsonify({"ok": True, "pushed": ["all connected"]})
+
+
+
+
+# ---------------------------------------------------------------------------
 # Radio (local node) config routes
 # ---------------------------------------------------------------------------
 
@@ -3437,6 +3641,9 @@ def startup():
     init_prefs_db()
     load_waypoints()
     load_notes()
+    gps_cfg = CONFIG.get("gps", {})
+    if gps_cfg.get("enabled") and gps_cfg.get("port"):
+        _gps_start(gps_cfg["port"])
     # per-radio message DBs are initialized in connect_node() as each radio connects
     pub.subscribe(on_text_receive, "meshtastic.receive")
     try:

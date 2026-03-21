@@ -1727,6 +1727,49 @@
       </div>
     </div>
 
+    <!-- GPS Receiver -->
+    <div class="settings-section">
+      <h2 class="settings-title">GPS Receiver</h2>
+      <p style="color:var(--muted);font-size:12px;margin:0 0 10px 0">Connect a USB GPS receiver to provide location data. Works independently of any Meshtastic node.</p>
+      <div class="settings-row" style="align-items:center;gap:8px;flex-wrap:wrap">
+        <label class="settings-label">Port</label>
+        <select id="gps-port-select" class="settings-select" style="flex:1;min-width:140px" onchange="saveGpsSettings()"></select>
+        <button class="btn" onclick="gpsRefreshPorts()" title="Rescan serial ports">↻</button>
+      </div>
+      <div class="settings-row" style="margin-top:10px;align-items:center;gap:12px">
+        <label class="bot-toggle">
+          <input type="checkbox" id="gps-enabled-toggle" onchange="saveGpsSettings()">
+          <span class="bot-toggle-slider"></span>
+        </label>
+        <span style="font-size:13px">Enable GPS receiver</span>
+      </div>
+      <div id="gps-position-display" style="margin-top:10px;font-size:12px;display:none">
+        <div id="gps-fix-status" style="margin-bottom:3px"></div>
+        <div id="gps-coords" style="color:var(--muted);font-family:monospace"></div>
+      </div>
+      <!-- Precision / privacy threshold -->
+      <div style="margin-top:12px">
+        <label class="settings-label">Privacy threshold: <span id="gps-precision-label" style="color:var(--accent)">Actual position</span> <span style="font-weight:400;color:var(--muted)">(slide right = more private)</span></label>
+        <input type="range" id="gps-precision-slider" min="0" max="1000" step="100" value="0" style="width:200px;vertical-align:middle;margin-top:4px"
+               oninput="document.getElementById('gps-precision-label').textContent=precMeterLabel(parseInt(this.value))"
+               onchange="saveGpsSettings()">
+      </div>
+      <!-- Auto-broadcast -->
+      <div class="settings-row" style="margin-top:12px;align-items:center;gap:12px">
+        <label class="bot-toggle">
+          <input type="checkbox" id="gps-auto-push-toggle" onchange="saveGpsSettings()">
+          <span class="bot-toggle-slider"></span>
+        </label>
+        <span style="font-size:13px">Auto-broadcast to node <span style="color:var(--muted);font-size:11px">(every 30 s when fix available)</span></span>
+      </div>
+      <!-- Manual push -->
+      <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+        <button class="btn btn-sm" onclick="gpsPushToNode()" title="Send current GPS position to all connected nodes as fixed position">📍 Send to node</button>
+        <span id="gps-push-status" style="font-size:12px;color:var(--muted)"></span>
+      </div>
+      <div id="gps-status" style="font-size:12px;min-height:16px;margin-top:6px;color:var(--muted)"></div>
+    </div>
+
     <!-- Offline maps -->
     <div class="settings-section">
       <h2 class="settings-title">Offline Maps</h2>
@@ -2047,6 +2090,10 @@
     chatSSE = new EventSource('/api/chat/stream');
     chatSSE.onmessage = e => {
       let data; try { data = JSON.parse(e.data); } catch(err) { return; }
+      if (data.type === 'gps_position') {
+        _gpsUpdatePosition(data);
+        return;
+      }
       if (data.type === 'radio_removed') {
         chatMsgs = chatMsgs.filter(m => m.radio_id !== data.radio_id);
         delete radioUnreadChannels[data.radio_id];
@@ -2974,6 +3021,7 @@
   let waypointsData   = {};  // wp_id → wp object (for edit modal)
   let notesData       = {};  // note_id → note object
   let noteMarkers     = {};  // note_id → leaflet marker
+  let _gpsMarker      = null;
   let mapLocked     = false;
   let mapLabels     = false;
   let mapSearchQuery = '';
@@ -3516,6 +3564,7 @@
       else      marker.closeTooltip();
     });
     Object.values(senseMarkers).forEach(marker => { if (show) marker.openTooltip(); else marker.closeTooltip(); });
+    if (_gpsMarker) { if (show) _gpsMarker.openTooltip(); else _gpsMarker.closeTooltip(); }
   }
 
   function applyMapSearch() {
@@ -4979,6 +5028,7 @@
     refreshTileCacheInfo();
     updateTileEstimate();
     renderRegionList();
+    loadGpsSettings();
     if (!settingsInited) {
       settingsInited = true;
       settingsScanPorts();
@@ -4999,6 +5049,120 @@
       _renderSettingsRadios(data);
       _renderNodeCfgTabs(data);
     }).catch(e => console.error('settingsRefresh failed:', e));
+  }
+
+  // ── GPS receiver ──────────────────────────────────────────────────────────
+
+  function loadGpsSettings() {
+    fetch('/api/settings/gps')
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(cfg => {
+        document.getElementById('gps-enabled-toggle').checked   = cfg.enabled   || false;
+        document.getElementById('gps-auto-push-toggle').checked = cfg.auto_push || false;
+        const precMeters = bitToSliderMeters(cfg.precision ?? 32);
+        document.getElementById('gps-precision-slider').value = precMeters;
+        document.getElementById('gps-precision-label').textContent = precMeterLabel(precMeters);
+        _gpsPopulatePortList(cfg.port || '');
+        _gpsUpdatePosition(cfg);
+      })
+      .catch(e => console.error('loadGpsSettings failed:', e));
+  }
+
+  function gpsRefreshPorts() {
+    const currentPort = document.getElementById('gps-port-select').value;
+    _gpsPopulatePortList(currentPort);
+  }
+
+  function _gpsPopulatePortList(currentPort) {
+    fetch('/api/settings/ports')
+      .then(r => r.json())
+      .then(data => {
+        const sel = document.getElementById('gps-port-select');
+        sel.innerHTML = '<option value="">— select port —</option>';
+        (data.ports || []).forEach(p => {
+          const opt = document.createElement('option');
+          opt.value = p.device;
+          opt.textContent = `${p.device} — ${p.description}`;
+          if (p.device === currentPort) opt.selected = true;
+          sel.appendChild(opt);
+        });
+      })
+      .catch(e => console.error('_gpsPopulatePortList failed:', e));
+  }
+
+  function _gpsUpdatePosition(pos) {
+    const display  = document.getElementById('gps-position-display');
+    const fixEl    = document.getElementById('gps-fix-status');
+    const coordEl  = document.getElementById('gps-coords');
+    if (!pos || pos.lat == null) {
+      if (pos && typeof pos.sats === 'number' && pos.sats > 0) {
+        display.style.display = '';
+        fixEl.innerHTML = `<span style="color:var(--muted)">● No fix</span> · ${pos.sats} sats visible`;
+        coordEl.textContent = '';
+      } else {
+        display.style.display = 'none';
+      }
+      _gpsRemoveMarker();
+      return;
+    }
+    display.style.display = '';
+    fixEl.innerHTML = `<span style="color:${pos.fix ? 'var(--accent)' : 'var(--muted)'}">● ${pos.fix ? 'Fix' : 'No fix'}</span> · ${pos.sats || 0} sats`;
+    coordEl.textContent = `${pos.lat.toFixed(6)}, ${pos.lon.toFixed(6)}${pos.alt != null ? ' · ' + pos.alt + 'm' : ''}`;
+    if (pos.fix) _gpsPlaceMarker(pos.lat, pos.lon, pos.alt, pos.sats);
+  }
+
+  function _gpsPlaceMarker(lat, lon, alt, sats) {
+    if (!leafletMap) return;
+    const icon    = makeIcon('#3b82f6', false);  // blue — matches local node colour
+    const popup   = `<div style="font-size:13px"><b>📡 GPS Receiver</b><br>
+      <span style="color:var(--muted);font-size:11px">${lat.toFixed(6)}, ${lon.toFixed(6)}${alt != null ? ' · ' + alt + 'm' : ''}${sats ? ' · ' + sats + ' sats' : ''}</span></div>`;
+    if (_gpsMarker) {
+      _gpsMarker.setLatLng([lat, lon]).setIcon(icon).setPopupContent(popup);
+    } else {
+      _gpsMarker = L.marker([lat, lon], {icon})
+        .bindPopup(popup)
+        .bindTooltip('GPS', {permanent: true, direction: 'right', className: 'map-label', offset: [8, 0]})
+        .addTo(leafletMap);
+      if (!mapLabels) _gpsMarker.closeTooltip();
+    }
+  }
+
+  function _gpsRemoveMarker() {
+    if (_gpsMarker && leafletMap) { leafletMap.removeLayer(_gpsMarker); _gpsMarker = null; }
+  }
+
+  function saveGpsSettings() {
+    const enabled    = document.getElementById('gps-enabled-toggle').checked;
+    const port       = document.getElementById('gps-port-select').value;
+    const auto_push  = document.getElementById('gps-auto-push-toggle').checked;
+    const precMeters = parseInt(document.getElementById('gps-precision-slider').value);
+    const precision  = metersToBit(precMeters);
+    const statusEl   = document.getElementById('gps-status');
+    statusEl.textContent = 'Saving…';
+    fetch('/api/settings/gps', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enabled, port, auto_push, precision}),
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(() => {
+        statusEl.textContent = enabled ? '✓ GPS enabled' : '✓ Saved';
+        setTimeout(() => { statusEl.textContent = ''; }, 2000);
+      })
+      .catch(e => { statusEl.textContent = `✗ ${escHtml(String(e))}`; });
+  }
+
+  function gpsPushToNode() {
+    const statusEl = document.getElementById('gps-push-status');
+    statusEl.textContent = 'Sending…';
+    fetch('/api/gps/push', {method: 'POST'})
+      .then(r => r.json())
+      .then(d => {
+        if (d.error) { statusEl.textContent = `✗ ${escHtml(d.error)}`; return; }
+        const n = d.pushed ? d.pushed.length : 0;
+        statusEl.textContent = n ? `✓ Sent to ${n} node(s)` : '✓ Sent (no nodes connected)';
+        setTimeout(() => { statusEl.textContent = ''; }, 3000);
+      })
+      .catch(e => { statusEl.textContent = `✗ ${escHtml(String(e))}`; });
   }
 
   function _renderSettingsRadios(data) {

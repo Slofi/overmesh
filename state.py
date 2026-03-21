@@ -37,20 +37,6 @@ notes_cache = {}
 notes_lock  = threading.Lock()
 
 # ---------------------------------------------------------------------------
-# GPS receiver
-# ---------------------------------------------------------------------------
-
-gps_state = {
-    "lat": None, "lon": None, "alt": None,
-    "sats": 0, "fix": False, "speed": None,
-}
-gps_lock              = threading.Lock()
-_gps_stop_event       = threading.Event()
-_gps_thread           = None
-_gps_last_push_ts     = 0.0     # epoch seconds — rate-limits auto-push to nodes
-_GPS_AUTO_PUSH_INTERVAL = 30    # seconds between auto-pushes
-
-# ---------------------------------------------------------------------------
 # SSE message counter
 # ---------------------------------------------------------------------------
 

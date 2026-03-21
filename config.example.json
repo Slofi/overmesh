@@ -8,6 +8,7 @@
     }
   ],
   "port": 8081,
+  "host": "0.0.0.0",
   "app": {
     "zoom": 100,
     "accent_color": "#4ade80"

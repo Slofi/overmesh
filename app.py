@@ -3667,4 +3667,4 @@ if __name__ == "__main__":
     if hasattr(signal, "SIGHUP"):  # Linux/macOS only — not available on Windows
         signal.signal(signal.SIGHUP, signal.SIG_IGN)
     startup()
-    app.run(host="0.0.0.0", port=CONFIG.get("port", 8081), debug=False)
+    app.run(host=CONFIG.get("host", "0.0.0.0"), port=CONFIG.get("port", 8081), debug=False)

@@ -285,7 +285,7 @@ def build_sitrep():
         f"{sname(n)}, {n['last_heard']}" for n in recent[:3] if n.get("last_heard")
     )
 
-    cutoff     = int(time.time()) - 900
+    cutoff     = int(time.time()) - 3600
     online     = sum(1 for n in remote if (n.get("last_heard_ts") or 0) > cutoff)
     local_node = next((n for n in nodes if n.get("is_local")), None)
     air_util   = local_node.get("air_util") if local_node else None
@@ -303,7 +303,7 @@ def build_sitrep():
 def build_motd_text(cfg):
     nodes  = get_node_data()
     remote = [n for n in nodes if not n.get("is_local") and n.get("id")]
-    cutoff = int(time.time()) - 900
+    cutoff = int(time.time()) - 3600
     online = sum(1 for n in remote if (n.get("last_heard_ts") or 0) > cutoff)
     custom = cfg["motd"].get("message", "")
     return f"Bot active | {online} nodes online" + (f" | {custom}" if custom else "")
@@ -519,7 +519,7 @@ def motd_scheduler_loop():
                     for ch in channels:
                         send_bot_response(iface, text, ch)
                         push_bot_chat_message(text, ch, radio_id)
-                    _motd_last_sent_per_radio[radio_id] = now
+                    _motd_last_sent_per_radio[radio_id] = int(fire_dt.timestamp()) if mode == "fixed" else now
                     log_bot_activity("Bot", "motd_scheduled", text, channels[0])
                 except Exception as e:
                     log.warning(f"MOTD error for {radio_id}: {e}")

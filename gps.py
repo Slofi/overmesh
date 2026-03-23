@@ -151,6 +151,9 @@ def _gps_reader(port, stop_event):
                 _parse_gpgga(line)
         except Exception as e:
             log.warning(f"GPS read: {e}")
+            if "device disconnected" in str(e) or "device reports readiness" in str(e):
+                log.warning("GPS: device disconnected, stopping reader thread")
+                break
             time.sleep(1)
     try:
         ser.close()

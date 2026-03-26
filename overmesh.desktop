@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=OverMesh
+Comment=Meshtastic dashboard
+Exec=/path/to/overmesh/launch-overmesh.sh
+Icon=/path/to/overmesh/static/favicon.png
+Terminal=false
+Categories=Network;

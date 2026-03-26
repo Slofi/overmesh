@@ -443,6 +443,19 @@
     .map-tr-close { cursor: pointer; color: var(--muted); font-size: 14px; padding: 0 2px; }
     .map-tr-close:hover { color: var(--text); }
     #map-tr-body { padding: 10px 12px; overflow-y: auto; max-height: 320px; font-size: 12px; }
+    #map-info-window, #map-pos-window {
+      display: none; position: absolute; z-index: 1000;
+      right: 10px; top: 50%; transform: translateY(-50%); width: 270px;
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.7);
+      flex-direction: column; overflow: hidden;
+    }
+    #map-info-window.visible, #map-pos-window.visible { display: flex; }
+    #map-info-header, #map-pos-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 9px 12px; border-bottom: 1px solid var(--border);
+      font-size: 13px; font-weight: 600; color: var(--accent); flex-shrink: 0;
+    }
     #map-panels-right {
       position: absolute; top: 10px; right: 10px; z-index: 900;
       width: 200px; display: flex; flex-direction: column; gap: 6px;
@@ -1196,6 +1209,20 @@
         <span class="map-tr-close" onclick="closeMapTR()">✕</span>
       </div>
       <div id="map-tr-body"></div>
+    </div>
+    <div id="map-info-window">
+      <div id="map-info-header">
+        <span id="map-info-title">Node Info</span>
+        <span class="map-tr-close" onclick="closeMapInfo()">✕</span>
+      </div>
+      <div id="map-info-body"></div>
+    </div>
+    <div id="map-pos-window">
+      <div id="map-pos-header">
+        <span id="map-pos-title">Request Position</span>
+        <span class="map-tr-close" onclick="closeMapPos()">✕</span>
+      </div>
+      <div id="map-pos-body"></div>
     </div>
     <div id="map-panels-right">
       <div id="marks-panel">
@@ -1977,6 +2004,8 @@
   let _accentColor                 = '#4ade80';  // JS-side accent for canvas/dynamic color refs
   let _accentFreshColor            = '#86efac';  // brighter accent for fresh (<30m) map markers
   let _activeTracerouteController  = null;
+  let _nodeInfoTimer  = null;
+  let _lastHeardTimer = null;
   const inactiveRadioUnread = new Set();       // radio_ids with any unread (drives radio btn dot)
   const radioUnreadChannels = {};              // radio_id → Set of channels with unread (drives Chat tab + sub-tab dots)
 
@@ -2176,6 +2205,17 @@
         if (noteMarkers[data.id]) { if (leafletMap) { leafletMap.closePopup(); leafletMap.removeLayer(noteMarkers[data.id]); } delete noteMarkers[data.id]; }
         delete notesData[data.id];
         renderMarksPanel();
+        return;
+      }
+      if (data.type === 'node_last_heard') {
+        const node = allNodes.find(n => n.id === data.from_id);
+        if (node) {
+          node.last_heard_ts = data.ts;
+          updateMapMarkers(allNodes);
+          updateHeaderNodeCount(allNodes);
+        }
+        clearTimeout(_lastHeardTimer);
+        _lastHeardTimer = setTimeout(loadLive, 3000);
         return;
       }
       if (data.type === 'ack') {
@@ -2590,6 +2630,9 @@
           <button class="act-btn" title="Direct message" onclick="doDM('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">DM</button>
           <button class="act-btn" title="Request position" onclick="doReqPos('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Pos</button>
           <button class="act-btn" title="Exchange info" onclick="doNodeInfo('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Info</button>
+          ${n.latitude != null && n.longitude != null
+            ? `<button class="act-btn" title="Show on map" onclick="centerNodeOnMap('${jsSafe(n.id)}')">Map</button>`
+            : `<button class="act-btn" title="No GPS position" style="opacity:0.35;cursor:default" disabled>Map</button>`}
         </td>
         <td>${escHtml(n.radio_name)}</td>
         <td><span class="ignore-btn" onclick="ignoreNode('${jsSafe(n.id)}', false)" title="Ignore node">&#128683;</span></td>
@@ -4466,6 +4509,8 @@
 
   // ── Map Traceroute overlay ─────────────────────────────────────────────────
   async function openMapTR(nodeId, nodeName) {
+    document.getElementById('map-info-window').classList.remove('visible');
+    document.getElementById('map-pos-window').classList.remove('visible');
     document.getElementById('map-tr-title').textContent = 'TR · ' + nodeName;
     document.getElementById('map-tr-body').innerHTML = '<div style="color:var(--muted);font-size:12px" id="map-tr-status">Sending traceroute… 30s</div>';
     document.getElementById('map-tr-window').classList.add('visible');
@@ -4521,6 +4566,119 @@
 
   function closeMapTR() {
     document.getElementById('map-tr-window').classList.remove('visible');
+  }
+
+  // ── Map Info overlay ────────────────────────────────────────────────────
+  async function openMapInfo(nodeId, nodeName) {
+    if (_nodeInfoTimer) { clearInterval(_nodeInfoTimer); _nodeInfoTimer = null; }
+    document.getElementById('map-tr-window').classList.remove('visible');
+    document.getElementById('map-pos-window').classList.remove('visible');
+    document.getElementById('map-info-title').textContent = 'Info · ' + nodeName;
+    document.getElementById('map-info-body').innerHTML = `<div style="color:var(--muted);font-size:12px" id="map-info-status">Requesting telemetry from ${escHtml(nodeName)}… 15s</div>`;
+    document.getElementById('map-info-window').classList.add('visible');
+    if (leafletMap) leafletMap.closePopup();
+    let countdown = 15;
+    _nodeInfoTimer = setInterval(() => {
+      countdown--;
+      const el = document.getElementById('map-info-status');
+      if (!el) { clearInterval(_nodeInfoTimer); _nodeInfoTimer = null; return; }
+      if (countdown <= -30) {
+        el.textContent = `No response from ${nodeName}.`;
+        clearInterval(_nodeInfoTimer); _nodeInfoTimer = null;
+      } else {
+        el.textContent = `Requesting telemetry from ${nodeName}… ${countdown}s`;
+      }
+    }, 1000);
+    try {
+      const r = await fetch(`/api/node/${encodeURIComponent(nodeId)}/info`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({radio_id: activeRadioId})});
+      clearInterval(_nodeInfoTimer); _nodeInfoTimer = null;
+      const d = await r.json();
+      if (!r.ok) {
+        document.getElementById('map-info-body').innerHTML = `<div class="modal-error">${escHtml(d.error)}</div>`;
+        return;
+      }
+      const row = (label, val) => val != null && val !== '' ? `<tr><td>${label}</td><td>${val}</td></tr>` : '';
+      const snrC = v => v == null ? '—' : `<span class="${v >= 5 ? 'snr-good' : v >= -5 ? 'snr-ok' : 'snr-bad'}">${v} dB</span>`;
+      const battC = v => v == null ? '—' : `<span class="${v >= 60 ? 'battery-high' : v >= 30 ? 'battery-mid' : 'battery-low'}">${v === 101 ? '⚡ Charging' : v + '%'}</span>`;
+      const fmt2 = v => v != null ? v.toFixed(2) : null;
+      const coordLink = (lat, lon) => lat != null && lon != null
+        ? `<a href="https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=14/${lat}/${lon}" target="_blank" style="color:var(--accent)">${lat.toFixed(5)}, ${lon.toFixed(5)}</a>`
+        : null;
+      const staleNote = d.fresh ? '' :
+        `<div style="color:var(--yellow);font-size:11px;margin-bottom:8px">&#9888; Node did not respond — showing cached data</div>`;
+      document.getElementById('map-info-body').innerHTML = staleNote + `
+        <table class="info-table">
+          <tr><td colspan="2" class="info-section">Identity</td></tr>
+          ${row('Long name', escHtml(d.long_name))}
+          ${row('Short name', escHtml(d.short_name))}
+          ${row('HW model', escHtml(d.hw_model))}
+          ${row('Role', escHtml(d.role))}
+          <tr><td colspan="2" class="info-section">Signal</td></tr>
+          ${row('SNR', snrC(d.snr))}
+          ${row('RSSI', d.rssi != null ? d.rssi + ' dBm' : null)}
+          ${row('Hops away', d.hops_away)}
+          ${row('Last heard', escHtml(d.last_heard))}
+          <tr><td colspan="2" class="info-section">Power</td></tr>
+          ${row('Battery', battC(d.battery))}
+          ${row('Voltage', d.voltage != null ? d.voltage.toFixed(2) + ' V' : null)}
+          ${row('Uptime', escHtml(d.uptime))}
+          <tr><td colspan="2" class="info-section">Radio</td></tr>
+          ${row('Ch utilization', d.channel_util != null ? d.channel_util.toFixed(1) + '%' : null)}
+          ${row('Air util TX', d.air_util_tx != null ? d.air_util_tx.toFixed(1) + '%' : null)}
+          <tr><td colspan="2" class="info-section">Location</td></tr>
+          ${row('Coordinates', coordLink(d.latitude, d.longitude))}
+          ${row('Altitude', d.altitude != null ? d.altitude + ' m' : null)}
+          ${d.temperature != null || d.humidity != null || d.pressure != null
+            ? '<tr><td colspan="2" class="info-section">Environment</td></tr>' : ''}
+          ${row('Temperature', d.temperature != null ? fmt2(d.temperature) + ' °C' : null)}
+          ${row('Humidity', d.humidity != null ? fmt2(d.humidity) + '%' : null)}
+          ${row('Pressure', d.pressure != null ? fmt2(d.pressure) + ' hPa' : null)}
+        </table>`;
+    } catch(e) {
+      clearInterval(_nodeInfoTimer); _nodeInfoTimer = null;
+      document.getElementById('map-info-body').innerHTML = `<div class="modal-error">Failed: ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  function closeMapInfo() {
+    if (_nodeInfoTimer) { clearInterval(_nodeInfoTimer); _nodeInfoTimer = null; }
+    document.getElementById('map-info-window').classList.remove('visible');
+  }
+
+  // ── Map Position overlay ────────────────────────────────────────────────
+  async function openMapPos(nodeId, nodeName) {
+    if (_nodeInfoTimer) { clearInterval(_nodeInfoTimer); _nodeInfoTimer = null; }
+    document.getElementById('map-tr-window').classList.remove('visible');
+    document.getElementById('map-info-window').classList.remove('visible');
+    document.getElementById('map-pos-title').textContent = 'Pos · ' + nodeName;
+    document.getElementById('map-pos-body').innerHTML = `<div class="modal-loading">Requesting position from ${escHtml(nodeName)}...</div>`;
+    document.getElementById('map-pos-window').classList.add('visible');
+    if (leafletMap) leafletMap.closePopup();
+    try {
+      const r = await fetch(`/api/node/${encodeURIComponent(nodeId)}/position`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({radio_id: activeRadioId})});
+      const d = await r.json();
+      document.getElementById('map-pos-body').innerHTML = r.ok
+        ? `<div class="modal-success">Position request sent. Node should broadcast its location shortly.</div>`
+        : `<div class="modal-error">${escHtml(d.error)}</div>`;
+    } catch(e) {
+      document.getElementById('map-pos-body').innerHTML = `<div class="modal-error">Failed: ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  function closeMapPos() {
+    document.getElementById('map-pos-window').classList.remove('visible');
+  }
+
+  // ── Center node on map (Nodes tab "Map" button) ──────────────────────────
+  function centerNodeOnMap(nodeId) {
+    const node = allNodes.find(n => n.id === nodeId);
+    if (!node || node.latitude == null || node.longitude == null) return;
+    switchTab('map');
+    setTimeout(() => {
+      if (!leafletMap) return;
+      leafletMap.setView([node.latitude, node.longitude], Math.max(leafletMap.getZoom(), 12));
+      if (mapMarkers[nodeId]) mapMarkers[nodeId].openPopup();
+    }, 80);
   }
 
   function showNodeInList(id) {
@@ -4580,8 +4738,8 @@
         <button class="map-popup-btn" onclick="showNodeInList('${jsSafe(n.id)}')">List</button>
         ${!n.is_local ? `<button class="map-popup-btn" onclick="openMapDM('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">DM</button>` : ''}
         ${!n.is_local ? `<button class="map-popup-btn" onclick="openMapTR('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">TR</button>` : ''}
-        ${!n.is_local ? `<button class="map-popup-btn" onclick="leafletMap.closePopup();doReqPos('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Pos</button>` : ''}
-        ${!n.is_local ? `<button class="map-popup-btn" onclick="leafletMap.closePopup();doNodeInfo('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Info</button>` : ''}
+        ${!n.is_local ? `<button class="map-popup-btn" onclick="openMapPos('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Pos</button>` : ''}
+        ${!n.is_local ? `<button class="map-popup-btn" onclick="openMapInfo('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Info</button>` : ''}
       </div>`;
   }
 
@@ -5361,8 +5519,8 @@
           <button class="map-popup-btn" onclick="showNodeInList('${jsSafe(n.from_id)}')">List</button>
           <button class="map-popup-btn" onclick="openMapDM('${jsSafe(n.from_id)}','${safeName}')">DM</button>
           <button class="map-popup-btn" onclick="openMapTR('${jsSafe(n.from_id)}','${safeName}')">TR</button>
-          <button class="map-popup-btn" onclick="leafletMap.closePopup();doReqPos('${jsSafe(n.from_id)}','${safeName}')">Pos</button>
-          <button class="map-popup-btn" onclick="leafletMap.closePopup();doNodeInfo('${jsSafe(n.from_id)}','${safeName}')">Info</button>
+          <button class="map-popup-btn" onclick="openMapPos('${jsSafe(n.from_id)}','${safeName}')">Pos</button>
+          <button class="map-popup-btn" onclick="openMapInfo('${jsSafe(n.from_id)}','${safeName}')">Info</button>
         </div>`,
       ].filter(Boolean).join('');
       return rows;

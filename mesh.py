@@ -72,6 +72,18 @@ def on_text_receive(packet, interface):
         decoded = packet.get("decoded", {})
         portnum = decoded.get("portnum", "")
 
+        # The meshtastic library only updates lastHeard for TEXT + NODEINFO packets.
+        # Update it here for ALL packet types so Nodes tab reflects any received response.
+        _fid = packet.get("fromId")
+        if _fid:
+            _new_ts = packet.get("rxTime") or int(time.time())
+            _nodes = interface.nodes or {}
+            if _fid in _nodes:
+                _nodes[_fid]["lastHeard"] = _new_ts
+            # Always push SSE for non-ACK packets so frontend can refresh map colours.
+            if portnum != "ROUTING_APP":
+                push_to_sse(json.dumps({"type": "node_last_heard", "from_id": _fid, "ts": _new_ts}))
+
         if portnum == "ROUTING_APP":
             request_id = decoded.get("requestId")
             if request_id:

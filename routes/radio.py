@@ -255,6 +255,7 @@ def api_radio_config_lora(radio_id):
         iface.localNode.writeConfig("lora")
         return jsonify({"ok": True})
     except Exception as e:
+        log.exception("lora config save failed")
         return jsonify({"error": str(e)}), 500
 
 

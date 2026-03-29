@@ -65,6 +65,18 @@ pip install -r requirements.txt
 copy config.example.json config.json
 ```
 
+### Windows Notes
+
+**PowerShell users:** If `venv\Scripts\activate` fails with "running scripts is disabled", either:
+- Use Command Prompt (cmd) instead of PowerShell, or
+- Run: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` first
+
+**Serial ports:** Windows uses `COM3`, `COM4`, etc. (not `/dev/ttyUSB0`). Find your port in Device Manager → Ports (COM & LPT).
+
+**Easiest setup:** Skip editing config.json — just run the app and add your radio in Settings → Radios using the port dropdown.
+
+---
+
 Edit `config.json` and set your node's serial port (`/dev/ttyUSB0`, `/dev/ttyACM0` on Linux, or `COM3` on Windows) and a name for it. TCP/WiFi nodes can be added directly from the Settings → Radios UI after startup — no manual config editing needed.
 
 **Linux / macOS:**

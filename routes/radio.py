@@ -54,8 +54,8 @@ def api_radio_config_get(radio_id):
         # device + lora
         role      = _int(lc, "device", "role")
         region    = _int(lc, "lora", "region")
-        preset    = _int(lc, "lora", "modemPreset")
-        tx_power  = _int(lc, "lora", "txPower")
+        preset    = _int(lc, "lora", "modem_preset")
+        tx_power  = _int(lc, "lora", "tx_power")
         hop_limit = _int(lc, "lora", "hop_limit") or 3
 
         # position — get live position data for local node (used for coords + precisionBits)
@@ -248,10 +248,10 @@ def api_radio_config_lora(radio_id):
         return jsonify({"error": f"Invalid numeric value: {e}"}), 400
     try:
         lc = iface.localNode.localConfig
-        if "region"       in int_fields: lc.lora.region      = int_fields["region"]
-        if "modem_preset" in int_fields: lc.lora.modemPreset = int_fields["modem_preset"]
-        if "tx_power"     in int_fields: lc.lora.txPower     = int_fields["tx_power"]
-        if "hop_limit"    in int_fields: lc.lora.hop_limit   = int_fields["hop_limit"]
+        if "region"       in int_fields: lc.lora.region       = int_fields["region"]
+        if "modem_preset" in int_fields: lc.lora.modem_preset = int_fields["modem_preset"]
+        if "tx_power"     in int_fields: lc.lora.tx_power     = int_fields["tx_power"]
+        if "hop_limit"    in int_fields: lc.lora.hop_limit    = int_fields["hop_limit"]
         iface.localNode.writeConfig("lora")
         return jsonify({"ok": True})
     except Exception as e:

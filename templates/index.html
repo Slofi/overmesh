@@ -6273,7 +6273,7 @@
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({region, modem_preset, tx_power, hop_limit})
-    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+    }).then(r => r.json()).then(d => {
       nodeCfgStatus('lora', d.error || 'Saved. Reboot node to apply region/preset.', !d.error);
     }).catch(e => nodeCfgStatus('lora', 'Error: ' + escHtml(String(e)), false));
   }

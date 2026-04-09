@@ -9,7 +9,7 @@ from flask import Blueprint, jsonify, request
 from config import CONFIG, DATA_DIR, save_config
 from helpers import push_to_sse
 from mesh import connect_node
-from state import chat_lock, chat_messages, connections, connections_lock
+from state import chat_lock, chat_messages, connections, connections_lock, mc_connections, mc_connections_lock
 import logging
 log = logging.getLogger(__name__)
 
@@ -19,7 +19,10 @@ bp = Blueprint('settings', __name__)
 @bp.route("/api/settings/ports")
 def api_settings_ports():
     import serial.tools.list_ports
-    known_serials = {n.get("usb_serial") for n in CONFIG.get("nodes", []) if n.get("usb_serial")}
+    known_serials = (
+        {n.get("usb_serial") for n in CONFIG.get("nodes", []) if n.get("usb_serial")} |
+        {n.get("usb_serial") for n in CONFIG.get("mc_nodes", []) if n.get("usb_serial")}
+    )
     ports = []
     for p in serial.tools.list_ports.comports():
         ports.append({
@@ -182,6 +185,12 @@ def api_settings_nodes_set_enabled(node_id):
                 iface_to_close.close()
             except Exception:
                 pass
+    else:
+        with connections_lock:
+            state = connections.get(node_id)
+            already_connected = bool(state and state.get("status") == "connected" and state.get("iface"))
+        if not already_connected:
+            threading.Thread(target=connect_node, args=(node,), daemon=True).start()
     return jsonify({"ok": True})
 
 
@@ -224,4 +233,110 @@ def api_settings_app_set():
         if re.match(r'^#[0-9a-fA-F]{6}$', val):
             CONFIG["app"]["accent_color"] = val
     save_config()
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# MeshCore node management
+# ---------------------------------------------------------------------------
+
+@bp.route("/api/settings/mc_nodes")
+def api_settings_mc_nodes():
+    with mc_connections_lock:
+        statuses = {k: v.get("status", "disconnected") for k, v in mc_connections.items()}
+    nodes = [
+        {
+            "id":         n["id"],
+            "name":       n["name"],
+            "port":       n.get("port", ""),
+            "usb_serial": n.get("usb_serial", ""),
+            "enabled":    n.get("enabled", True),
+            "status":     statuses.get(n["id"], "disconnected"),
+        }
+        for n in CONFIG.get("mc_nodes", [])
+    ]
+    return jsonify({"mc_nodes": nodes})
+
+
+@bp.route("/api/settings/mc_nodes/add", methods=["POST"])
+def api_settings_mc_nodes_add():
+    from mesh_mc import connect_mc_node
+    data       = request.get_json(silent=True) or {}
+    name       = (data.get("name") or "").strip()
+    usb_serial = (data.get("usb_serial") or "").strip()
+    port       = (data.get("port") or "").strip()
+    if not name:
+        return jsonify({"error": "Name is required"}), 400
+    if not usb_serial and not port:
+        return jsonify({"error": "Select a device"}), 400
+    mc_nodes = CONFIG.setdefault("mc_nodes", [])
+    if usb_serial and any(n.get("usb_serial") == usb_serial for n in mc_nodes):
+        return jsonify({"error": "This device is already configured as an MC node"}), 400
+    # Also check MT nodes
+    if usb_serial and any(n.get("usb_serial") == usb_serial for n in CONFIG.get("nodes", [])):
+        return jsonify({"error": "This device is already configured as an MT node"}), 400
+    node_id  = f"mc_node_{int(time.time())}"
+    new_node = {"id": node_id, "name": name, "enabled": True}
+    if usb_serial:
+        new_node["usb_serial"] = usb_serial
+        new_node["port"]       = port
+    else:
+        new_node["port"] = port
+    mc_nodes.append(new_node)
+    save_config()
+    threading.Thread(target=connect_mc_node, args=(new_node,), daemon=True).start()
+    return jsonify({"ok": True, "id": node_id})
+
+
+@bp.route("/api/settings/mc_nodes/<node_id>/remove", methods=["POST"])
+def api_settings_mc_nodes_remove(node_id):
+    mc_nodes = CONFIG.get("mc_nodes", [])
+    node = next((n for n in mc_nodes if n["id"] == node_id), None)
+    if not node:
+        return jsonify({"error": "MC node not found"}), 404
+    with mc_connections_lock:
+        entry = mc_connections.pop(node_id, None)
+    mc_obj = (entry or {}).get("mc")
+    if mc_obj is not None:
+        try:
+            from mesh_mc import run_mc
+            run_mc(mc_obj.disconnect(), timeout=5)
+        except Exception:
+            pass
+    CONFIG["mc_nodes"] = [n for n in mc_nodes if n["id"] != node_id]
+    save_config()
+    push_to_sse({"type": "mc_radio_removed", "radio_id": node_id})
+    return jsonify({"ok": True})
+
+
+@bp.route("/api/settings/mc_nodes/<node_id>/set_enabled", methods=["POST"])
+def api_settings_mc_nodes_set_enabled(node_id):
+    data    = request.get_json(silent=True) or {}
+    enabled = bool(data.get("enabled", True))
+    mc_nodes = CONFIG.get("mc_nodes", [])
+    node = next((n for n in mc_nodes if n["id"] == node_id), None)
+    if not node:
+        return jsonify({"error": "MC node not found"}), 404
+    node["enabled"] = enabled
+    save_config()
+    if not enabled:
+        mc_obj = None
+        with mc_connections_lock:
+            if node_id in mc_connections:
+                mc_connections[node_id]["status"] = "disconnected"
+                mc_obj = mc_connections[node_id].get("mc")
+                mc_connections[node_id]["mc"]     = None
+        if mc_obj is not None:
+            try:
+                from mesh_mc import run_mc
+                run_mc(mc_obj.disconnect(), timeout=5)
+            except Exception:
+                pass
+    else:
+        with mc_connections_lock:
+            state = mc_connections.get(node_id)
+            already_connected = bool(state and state.get("status") == "connected" and state.get("mc"))
+        if not already_connected:
+            from mesh_mc import connect_mc_node
+            threading.Thread(target=connect_mc_node, args=(node,), daemon=True).start()
     return jsonify({"ok": True})

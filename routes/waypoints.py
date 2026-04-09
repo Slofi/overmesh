@@ -46,8 +46,14 @@ def api_send_waypoint():
         return jsonify({"error": "Invalid channel_index"}), 400
     # Accept either destination_ids (list) or legacy destination_id (single)
     dest_ids_raw = data.get("destination_ids")
-    if dest_ids_raw and isinstance(dest_ids_raw, list):
-        dest_ids = [d for d in dest_ids_raw if d and _valid_node_id(d)] or None
+    if dest_ids_raw is not None and not isinstance(dest_ids_raw, list):
+        return jsonify({"error": "destination_ids must be a list"}), 400
+    if isinstance(dest_ids_raw, list):
+        if len(dest_ids_raw) == 0:
+            return jsonify({"error": "destination_ids must not be empty"}), 400
+        dest_ids = [d for d in dest_ids_raw if d and _valid_node_id(d)]
+        if not dest_ids:
+            return jsonify({"error": "No valid destination IDs in destination_ids"}), 400
     else:
         single = (data.get("destination_id") or "").strip() or None
         dest_ids = [single] if single and _valid_node_id(single) else None
@@ -121,8 +127,9 @@ def api_send_waypoint():
             local_info = getattr(iface, "myInfo", None)
             local_num  = getattr(local_info, "my_node_num", None)
             my_name    = "?"
-            if local_num and iface.nodes:
-                local_node = iface.nodes.get(local_num)
+            local_key  = ("!" + hex(local_num)[2:]) if local_num else None
+            if local_key and iface.nodes:
+                local_node = iface.nodes.get(local_key)
                 if local_node:
                     u = local_node.get("user", {})
                     my_name = u.get("longName") or u.get("shortName") or "?"

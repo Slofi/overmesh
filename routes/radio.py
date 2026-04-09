@@ -54,8 +54,8 @@ def api_radio_config_get(radio_id):
         # device + lora
         role      = _int(lc, "device", "role")
         region    = _int(lc, "lora", "region")
-        preset    = _int(lc, "lora", "modemPreset")
-        tx_power  = _int(lc, "lora", "txPower")
+        preset    = _int(lc, "lora", "modem_preset")
+        tx_power  = _int(lc, "lora", "tx_power")
         hop_limit = _int(lc, "lora", "hop_limit") or 3
 
         # position — get live position data for local node (used for coords + precisionBits)
@@ -248,10 +248,10 @@ def api_radio_config_lora(radio_id):
         return jsonify({"error": f"Invalid numeric value: {e}"}), 400
     try:
         lc = iface.localNode.localConfig
-        if "region"       in int_fields: lc.lora.region      = int_fields["region"]
-        if "modem_preset" in int_fields: lc.lora.modemPreset = int_fields["modem_preset"]
-        if "tx_power"     in int_fields: lc.lora.txPower     = int_fields["tx_power"]
-        if "hop_limit"    in int_fields: lc.lora.hop_limit   = int_fields["hop_limit"]
+        if "region"       in int_fields: lc.lora.region       = int_fields["region"]
+        if "modem_preset" in int_fields: lc.lora.modem_preset = int_fields["modem_preset"]
+        if "tx_power"     in int_fields: lc.lora.tx_power     = int_fields["tx_power"]
+        if "hop_limit"    in int_fields: lc.lora.hop_limit    = int_fields["hop_limit"]
         iface.localNode.writeConfig("lora")
         return jsonify({"ok": True})
     except Exception as e:
@@ -323,8 +323,8 @@ def api_radio_config_position(radio_id):
 
             # Build position admin message — includes precision_bits so it's actually sent to node
             p = mesh_pb2.Position()
-            if lat != 0.0: p.latitude_i  = int(lat / 1e-7)
-            if lon != 0.0: p.longitude_i = int(lon / 1e-7)
+            if lat != 0.0: p.latitude_i  = int(lat * 1e7)
+            if lon != 0.0: p.longitude_i = int(lon * 1e7)
             if alt != 0:   p.altitude    = alt
             if precision is not None: p.precision_bits = precision
             try:
@@ -349,8 +349,10 @@ def api_radio_config_position(radio_id):
 
             # Cache in connections (in-memory session)
             with connections_lock:
-                connections[radio_id]["fixed_lat"] = lat
-                connections[radio_id]["fixed_lon"] = lon
+                entry = connections.get(radio_id)
+                if entry is not None:
+                    entry["fixed_lat"] = lat
+                    entry["fixed_lon"] = lon
 
             # Persist to config.json — survives OM service restarts
             if node_cfg_entry is not None:
@@ -365,8 +367,10 @@ def api_radio_config_position(radio_id):
             try:    iface.localNode.removeFixedPosition()
             except Exception: pass
             with connections_lock:
-                connections[radio_id].pop("fixed_lat", None)
-                connections[radio_id].pop("fixed_lon", None)
+                entry = connections.get(radio_id)
+                if entry is not None:
+                    entry.pop("fixed_lat", None)
+                    entry.pop("fixed_lon", None)
             if node_cfg_entry is not None:
                 for k in ("fixed_lat", "fixed_lon", "fixed_alt", "precision_bits"):
                     node_cfg_entry.pop(k, None)
@@ -548,11 +552,16 @@ def api_radio_channel_set(radio_id, ch_index):
                 ch.settings.psk = os.urandom(32)
             elif psk_type == "custom":
                 if not psk_hex:
-                    return jsonify({"error": "Custom PSK hex is empty"}), 400
+                    return jsonify({"error": "Custom PSK is empty"}), 400
                 try:
-                    ch.settings.psk = bytes.fromhex(psk_hex)
+                    psk_bytes = bytes.fromhex(psk_hex)
                 except ValueError:
-                    return jsonify({"error": "Invalid hex string"}), 400
+                    try:
+                        import base64
+                        psk_bytes = base64.b64decode(psk_hex, validate=True)
+                    except Exception:
+                        return jsonify({"error": "Invalid key — enter as hex or base64"}), 400
+                ch.settings.psk = psk_bytes
             # else "keep" — don't touch psk
 
         iface.localNode.writeChannel(ch_index)

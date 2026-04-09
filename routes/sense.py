@@ -63,6 +63,7 @@ def api_sense_active_auto():
         _active_auto_event.clear()
         with _active_auto_running_lock:
             if not _sense_mod._active_auto_running:
+                _sense_mod._active_auto_running = True
                 threading.Thread(target=_active_auto_loop, daemon=True).start()
     else:
         _active_auto_event.set()   # wake the waiting thread so it exits cleanly

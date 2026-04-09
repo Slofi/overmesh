@@ -4,6 +4,7 @@ import threading
 import time
 
 from db import get_favorites, get_ignored, upsert_node
+from hw_models import hw_model_name
 from state import connections, connections_lock, sse_clients, sse_lock
 
 log = logging.getLogger(__name__)
@@ -24,6 +25,8 @@ def _next_msg_id():
 
 
 def push_to_sse(data):
+    if isinstance(data, (dict, list)):
+        data = json.dumps(data)
     with sse_lock:
         dead = []
         for q in sse_clients:
@@ -104,7 +107,7 @@ def get_node_data():
             continue
 
         try:
-            nodes          = iface.nodes or {}
+            nodes          = dict(iface.nodes or {})   # snapshot to avoid RuntimeError if deleted concurrently
             local_id       = getattr(iface, "myInfo", None)
             local_node_num = getattr(local_id, "my_node_num", None) if local_id else None
 
@@ -121,7 +124,9 @@ def get_node_data():
                 last_seen_str = None
                 if last_heard:
                     delta = int(time.time()) - last_heard
-                    if delta < 60:
+                    if delta < 0:
+                        last_seen_str = None   # bogus future timestamp — skip
+                    elif delta < 60:
                         last_seen_str = f"{delta}s ago"
                     elif delta < 3600:
                         last_seen_str = f"{delta // 60}m ago"
@@ -131,7 +136,7 @@ def get_node_data():
                         last_seen_str = f"{delta // 86400}d ago"
 
                 is_local    = (node.get("num") == local_node_num)
-                node_id_str = user.get("id", "")
+                node_id_str = user.get("id") or node_num  # fall back to iface.nodes key if user.id is empty
 
                 # For the local node with fixed position: use cached coords to prevent
                 # stale firmware broadcasts from overriding what the user set.
@@ -145,8 +150,9 @@ def get_node_data():
                         try:
                             if iface.localNode.localConfig.position.fixed_position and lat is not None:
                                 with connections_lock:
-                                    connections[node_id]["fixed_lat"] = lat
-                                    connections[node_id]["fixed_lon"] = lon
+                                    if connections.get(node_id):
+                                        connections[node_id]["fixed_lat"] = lat
+                                        connections[node_id]["fixed_lon"] = lon
                         except Exception:
                             pass
 
@@ -156,6 +162,7 @@ def get_node_data():
                     "id":           node_id_str,
                     "long_name":    user.get("longName",  "Unknown"),
                     "short_name":   user.get("shortName", "?"),
+                    "hw_model":     hw_model_name(user.get("hwModel")),
                     "snr":          snr,         "rssi":    node.get("rssi"),
                     "battery":      battery,
                     "last_heard":   last_seen_str,

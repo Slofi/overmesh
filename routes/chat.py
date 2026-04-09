@@ -111,7 +111,7 @@ def api_chat_send():
         local_info = getattr(iface, "myInfo", None)
         local_num  = getattr(local_info, "my_node_num", None)
         if local_num and iface.nodes:
-            local_node = iface.nodes.get(local_num)
+            local_node = iface.nodes.get("!" + hex(local_num)[2:])
             if local_node:
                 u = local_node.get("user", {})
                 my_name = u.get("longName") or u.get("shortName") or "You"

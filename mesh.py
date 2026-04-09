@@ -62,7 +62,6 @@ MODEM_PRESETS = {
     8: "SHORT_TURBO",
 }
 
-
 # ---------------------------------------------------------------------------
 # Packet handler
 # ---------------------------------------------------------------------------
@@ -71,6 +70,19 @@ def on_text_receive(packet, interface):
     try:
         decoded = packet.get("decoded", {})
         portnum = decoded.get("portnum", "")
+
+        # The meshtastic library only updates lastHeard for TEXT + NODEINFO packets.
+        # Update it here for ALL packet types so Nodes tab reflects any received response.
+        _fid = packet.get("fromId")
+        if _fid:
+            _new_ts = packet.get("rxTime") or int(time.time())
+            _nodes = interface.nodes or {}
+            if _fid in _nodes:
+                _nodes[_fid]["lastHeard"] = _new_ts
+            # Always push SSE for non-ACK packets so frontend can refresh map colours.
+            # The frontend uses a debounced loadLive() as fallback for nodes without user.id.
+            if portnum != "ROUTING_APP":
+                push_to_sse(json.dumps({"type": "node_last_heard", "from_id": _fid, "ts": _new_ts}))
 
         if portnum == "ROUTING_APP":
             request_id = decoded.get("requestId")
@@ -231,17 +243,41 @@ def on_text_receive(packet, interface):
 
 
 def on_connection_lost(interface, topic=pub.AUTO_TOPIC):
+    lost_id = None
+    lost_name = None
+    with _sense_lock:
+        sense_active = _sense_state["active"]
     with connections_lock:
         for node_id, state in connections.items():
             if state.get("iface") is interface:
-                log.warning(f"[{node_id}] Connection lost.")
+                if sense_active:
+                    log.warning(f"[{node_id}] Connection lost during Sense (USB-CDC reset) — suppressing UI event, reconnecting.")
+                else:
+                    log.warning(f"[{node_id}] Connection lost.")
                 state["status"] = "disconnected"
                 state["iface"] = None
+                lost_id = node_id
+                lost_name = state.get("config", {}).get("name", node_id)
                 break
+    if lost_id and not sense_active:
+        push_to_sse(json.dumps({"type": "node_status", "radio_id": lost_id,
+                                "status": "disconnected", "name": lost_name}))
     try:
         interface.close()
     except Exception:
         pass
+    # Fallback: explicitly close the underlying serial stream in case close() silently failed.
+    # Without this, the FD stays open and the exclusive port lock is never released,
+    # causing every subsequent reconnect attempt to fail with EAGAIN.
+    try:
+        stream = getattr(interface, 'stream', None)
+        if stream and hasattr(stream, 'close'):
+            stream.close()
+    except Exception:
+        pass
+    if lost_id and sense_active:
+        # Reconnect immediately (1s settle time for USB) instead of waiting for reconnect_loop
+        threading.Timer(1.0, _reconnect_disconnected).start()
 
 
 # ---------------------------------------------------------------------------
@@ -317,6 +353,8 @@ def connect_node(node_cfg):
             connections[node_id]["status"] = "connected"
             if msgs_db:
                 connections[node_id]["msgs_db"] = msgs_db
+        push_to_sse(json.dumps({"type": "node_status", "radio_id": node_id,
+                                "status": "connected", "name": node_cfg.get("name", node_id)}))
         if msgs_db:
             node_cfg_live = next((n for n in CONFIG.get("nodes", []) if n["id"] == node_id), None)
             if node_cfg_live and node_cfg_live.get("msgs_db") != msgs_db:
@@ -367,6 +405,32 @@ def _reconnect_disconnected():
         threading.Thread(target=connect_node, args=(node_cfg,), daemon=True).start()
 
 
+def _check_and_reconnect_iface(iface):
+    """Post-Sense health check: handles both clean and silent disconnects for a given iface.
+    - If iface is still alive: does nothing.
+    - If silent disconnect (status=connected but iface dead): marks disconnected, pushes SSE.
+    - Either way, calls _reconnect_disconnected() to start reconnect if needed.
+    """
+    if _is_iface_alive(iface):
+        return
+    # Silent disconnect — status is still "connected" but iface is dead
+    with connections_lock:
+        for node_id, state in connections.items():
+            if state.get("iface") is iface and state.get("status") == "connected":
+                log.warning(f"[{node_id}] Post-Sense: silent disconnect detected, forcing reconnect.")
+                state["status"] = "disconnected"
+                state["iface"] = None
+                push_to_sse(json.dumps({"type": "node_status", "radio_id": node_id,
+                                        "status": "disconnected",
+                                        "name": state.get("config", {}).get("name", node_id)}))
+                break
+    try:
+        iface.close()
+    except Exception:
+        pass
+    _reconnect_disconnected()
+
+
 def health_check_loop():
     """Detect silent disconnects that don't fire the connection.lost event."""
     while True:
@@ -388,6 +452,12 @@ def health_check_loop():
             log.warning(f"[{node_id}] Health check: silent disconnect detected, forcing reconnect.")
             try:
                 iface.close()
+            except Exception:
+                pass
+            try:
+                stream = getattr(iface, 'stream', None)
+                if stream and hasattr(stream, 'close'):
+                    stream.close()
             except Exception:
                 pass
             with connections_lock:

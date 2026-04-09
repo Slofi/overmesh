@@ -8,6 +8,7 @@ from pubsub import pub
 from config import _valid_node_id
 from db import get_db_nodes, get_prefs_db, save_message
 from helpers import _next_msg_id, get_node_data, get_node_name, push_to_sse
+from hw_models import hw_model_name
 from mesh import (
     get_any_iface, get_any_iface_with_id, get_iface_by_radio,
     resolve_node_name,
@@ -149,10 +150,12 @@ def api_db_node_delete(node_id):
         try:
             node = (iface.nodes or {}).get(node_id)
             node_num = node.get("num") if node else None
-            # Evict from library in-memory dicts
-            iface.nodes.pop(node_id, None)
-            if node_num is not None:
-                iface.nodesByNum.pop(node_num, None)
+            # Evict from library in-memory dicts (under lock so helpers.py snapshot loop doesn't race)
+            with connections_lock:
+                if iface.nodes:
+                    iface.nodes.pop(node_id, None)
+                if node_num is not None and iface.nodesByNum:
+                    iface.nodesByNum.pop(node_num, None)
             # Also purge from radio flash nodeDB so stale PKI keys don't persist across restarts
             iface.localNode.removeNode(node_id)
         except Exception as e:
@@ -182,7 +185,7 @@ def api_traceroute(node_id):
     def on_receive(packet, interface):
         try:
             if interface is not iface:
-                return  # ignore packets from other radios
+                return
             if packet.get("fromId") == node_id:
                 decoded = packet.get("decoded", {})
                 if decoded.get("portnum") == "TRACEROUTE_APP":
@@ -204,7 +207,7 @@ def api_traceroute(node_id):
     try:
         pub.subscribe(on_receive, "meshtastic.receive")
         iface.sendTraceRoute(node_id, hopLimit=hop_limit)
-        done.wait(timeout=30)
+        done.wait(timeout=60)
     finally:
         try:
             pub.unsubscribe(on_receive, "meshtastic.receive")
@@ -216,7 +219,7 @@ def api_traceroute(node_id):
             pass  # Already force-released by /api/traceroute/reset
 
     if not done.is_set():
-        return jsonify({"error": "Timeout — node did not respond (30s)"}), 504
+        return jsonify({"error": "Timeout — node did not respond (60s)"}), 504
 
     my_name    = "You"
     dest_name  = get_node_name(node_id)
@@ -373,7 +376,7 @@ def api_node_info(node_id):
                     "fresh":        fresh,
                     "long_name":    user.get("longName"),
                     "short_name":   user.get("shortName"),
-                    "hw_model":     user.get("hwModel"),
+                    "hw_model":     hw_model_name(user.get("hwModel")),
                     "role":         user.get("role"),
                     "snr":          node.get("snr"),
                     "rssi":         node.get("rssi"),

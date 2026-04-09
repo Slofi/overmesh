@@ -30,6 +30,11 @@ def api_settings_gps_set():
             cfg["precision"] = max(1, min(32, int(data["precision"])))
         except (TypeError, ValueError):
             return jsonify({"error": "precision must be a number"}), 400
+    if "precision_meters" in data:
+        try:
+            cfg["precision_meters"] = max(0, min(1000, int(data["precision_meters"])))
+        except (TypeError, ValueError):
+            pass
     save_config()
     if enabled and port:
         _gps_start(port)

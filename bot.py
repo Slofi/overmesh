@@ -520,29 +520,12 @@ def build_mc_motd_text(cfg, config_id):
 
 def send_mc_bot_response(config_id, text, chan_idx, dest_pre=None):
     """Send bot reply via MC. Runs in a background thread — blocks until sent or timeout."""
-    import time
-    from mesh_mc import run_mc, _send_chan_msg_async, _send_dm_async, mc_connections, mc_connections_lock
+    from mesh_mc import run_mc, _send_chan_msg_async, _send_dm_async
     try:
         if dest_pre:
             run_mc(_send_dm_async(config_id, dest_pre, text), timeout=15)
         else:
             run_mc(_send_chan_msg_async(config_id, chan_idx, text), timeout=15)
-        # Push sent message to SSE so it appears in Chat tab
-        with mc_connections_lock:
-            radio_name = mc_connections.get(config_id, {}).get("name", config_id)
-        push_to_sse({
-            "type":       "mc_message",
-            "radio_id":   config_id,
-            "radio_name": radio_name,
-            "network":    "mc",
-            "subtype":    "dm" if dest_pre else "channel",
-            "channel":    chan_idx,
-            "from_id":    "me",
-            "to_id":      dest_pre,
-            "text":       text,
-            "ts":         int(time.time()),
-            "sent":       True,
-        })
     except Exception as e:
         log.warning(f"[MCBot:{config_id}] send failed: {e}")
 

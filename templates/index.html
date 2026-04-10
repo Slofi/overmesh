@@ -122,14 +122,78 @@
     .dot-disconnected { background: var(--red); }
 
     /* MC (MeshCore) color */
-    :root { --mc-color: #38bdf8; }
+    :root {
+      --mc-color: #38bdf8;
+      --mc-dim: rgba(56,189,248,0.12);
+      --mc-border: rgba(56,189,248,0.35);
+    }
     #mc-pill-sep { width: 1px; height: 14px; background: var(--border); margin: 0 2px; align-self: center; }
     .mc-btn { border-color: rgba(56,189,248,0.3) !important; }
+    .mc-btn:hover {
+      color: var(--mc-color) !important;
+      border-color: var(--mc-color) !important;
+      box-shadow: 0 0 0 1px rgba(56,189,248,0.15), 0 0 10px rgba(56,189,248,0.12);
+    }
     .mc-btn.active { color: var(--mc-color) !important; background: rgba(56,189,248,0.12) !important; border-color: var(--mc-color) !important; }
     .mc-badge { font-size: 9px; font-weight: bold; color: var(--mc-color); margin-right: 3px; opacity: 0.85; }
     .mt-badge { font-size: 9px; font-weight: bold; color: var(--accent); margin-right: 3px; opacity: 0.85; }
+    .mt-msg-tag { font-size: 10px; color: var(--accent); background: rgba(74,222,128,0.12); border: 1px solid rgba(74,222,128,0.25); border-radius: 3px; padding: 0 4px; margin-right: 4px; }
     .mc-msg-tag { font-size: 10px; color: var(--mc-color); background: rgba(56,189,248,0.12); border: 1px solid rgba(56,189,248,0.25); border-radius: 3px; padding: 0 4px; margin-right: 4px; }
     #chat-mt-pane, #chat-mc-pane { flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+    #mc-radio-selector { display: flex; gap: 4px; align-items: center; }
+    .net-mc { color: var(--mc-color) !important; }
+    .btn-net-mt { color: var(--text); border-color: rgba(63,185,80,0.3); }
+    .btn-net-mt:hover {
+      color: var(--text);
+      background: rgba(63,185,80,0.12);
+      border-color: var(--green);
+      box-shadow: 0 0 0 1px rgba(63,185,80,0.15), 0 0 10px rgba(63,185,80,0.12);
+    }
+    .btn-net-mt.active { color: var(--text); background: rgba(63,185,80,0.12); border-color: var(--green); }
+    .btn-net-mc { color: var(--mc-color); border-color: var(--mc-border); }
+    .btn-net-mc:hover { background: var(--mc-dim); border-color: var(--mc-color); }
+    .btn-net-mc.active { color: var(--mc-color); background: var(--mc-dim); border-color: var(--mc-color); }
+    .network-accent-mc {
+      background: linear-gradient(180deg, rgba(56,189,248,0.18), rgba(56,189,248,0.10));
+      border-color: var(--mc-border);
+      color: var(--mc-color);
+    }
+    .network-accent-mc:hover { background: rgba(56,189,248,0.2); border-color: var(--mc-color); }
+    .network-section-note {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 6px;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: rgba(255,255,255,0.02);
+    }
+    .network-section-note.mc {
+      border-color: rgba(56,189,248,0.18);
+      background: rgba(56,189,248,0.05);
+    }
+    .name-cell-main { display:flex; align-items:center; gap:6px; min-width:0; }
+    .name-cell-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .name-cell-meta { font-size:10px; color:var(--muted); margin-top:1px; }
+    .name-badge {
+      display:inline-block;
+      font-size:10px;
+      font-weight:600;
+      border-radius:3px;
+      padding:1px 4px;
+      line-height:1.2;
+      flex-shrink:0;
+    }
+    .name-badge.mt {
+      color: var(--accent);
+      background: rgba(74,222,128,0.12);
+      border: 1px solid rgba(74,222,128,0.28);
+    }
+    .name-badge.mc {
+      color: var(--mc-color);
+      background: rgba(56,189,248,0.12);
+      border: 1px solid rgba(56,189,248,0.3);
+    }
 
     /* Radio selector pill buttons */
     #radio-selector { display: flex; gap: 4px; align-items: center; }
@@ -145,7 +209,12 @@
       white-space: nowrap;
       transition: all 0.15s;
     }
-    .radio-btn:hover { color: var(--text); background: var(--bg3); border-color: var(--text); }
+    .radio-btn:hover {
+      color: var(--accent);
+      background: var(--bg3);
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px rgba(74,222,128,0.15), 0 0 10px rgba(74,222,128,0.12);
+    }
     .radio-btn.active  { color: var(--text);    background: var(--bg3); border: 2px solid var(--accent); padding: 2px 9px; }
     .radio-btn.primary { color: var(--accent); }
     .radio-btn.has-unread::after {
@@ -189,6 +258,18 @@
       transition: background 0.1s;
     }
     .btn:hover { background: var(--border); }
+    .btn .btn-icon { display:inline-block; margin-right:6px; transform-origin:50% 50%; }
+    .btn.refreshing {
+      background: var(--accent-dim);
+      border-color: var(--accent);
+      color: var(--accent);
+      box-shadow: 0 0 0 1px rgba(74,222,128,0.15), 0 0 12px rgba(74,222,128,0.12);
+    }
+    .btn.refreshing .btn-icon { animation: spin-refresh 0.85s linear infinite; }
+    @keyframes spin-refresh {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
     .btn.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
     .btn-primary { background: var(--accent-dim); border: 1px solid var(--accent); color: var(--accent); padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: background 0.1s; }
     .btn-primary:hover { background: var(--accent); color: var(--bg); }
@@ -535,6 +616,8 @@
       position: relative;
     }
     .channel-tab.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+    .channel-tab.net-mc { border-color: rgba(56,189,248,0.22); color: rgba(56,189,248,0.92); background: rgba(56,189,248,0.04); }
+    .channel-tab.net-mc.active { border-color: var(--mc-color); color: var(--mc-color); background: var(--mc-dim); }
     .channel-tab.has-unread::after {
       content: ''; position: absolute; top: 3px; right: 3px;
       width: 6px; height: 6px; border-radius: 50%; background: var(--red);
@@ -558,8 +641,13 @@
     .chat-date-divider { display: flex; align-items: center; gap: 10px; margin: 12px 0 8px; color: var(--muted); font-size: 11px; }
     .chat-date-divider::before, .chat-date-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
     .chat-date-divider span { white-space: nowrap; }
-    .msg-sender-link { cursor: pointer; }
-    .msg-sender-link:hover { color: var(--accent); text-decoration: underline; }
+    .msg-sender-link {
+      cursor: pointer;
+      color: var(--text);
+      text-decoration: underline dotted;
+      text-underline-offset: 2px;
+    }
+    .msg-sender-link:hover { color: var(--accent); }
     .msg-reply-btn {
       font-size: 10px; color: var(--muted); background: var(--bg3);
       border: 1px solid var(--border); border-radius: 4px;
@@ -1100,11 +1188,11 @@
   <div id="radio-selector"><span style="font-size:12px;color:var(--muted)">Loading…</span></div>
   <span id="header-node-count" style="font-size:12px;color:var(--muted);white-space:nowrap;margin-left:4px"></span>
   <div id="mc-pill-sep" style="display:none"></div>
-  <div id="mc-radio-selector" style="display:none;gap:4px;align-items:center"></div>
+  <div id="mc-radio-selector" style="display:none"></div>
   <span id="header-mc-count" style="display:none;font-size:12px;color:var(--muted);white-space:nowrap;margin-left:4px"></span>
   <div class="header-spacer"></div>
   <span id="last-updated" style="font-size:12px;color:var(--muted);white-space:nowrap"></span>
-  <button class="btn" onclick="loadCurrent()" title="Refresh node list from connected radios">Refresh</button>
+  <button class="btn" id="header-refresh-btn" onclick="loadCurrent(this)" title="Refresh MT and MC state from connected radios"><span class="btn-icon">↻</span><span class="btn-label">Refresh</span></button>
   <div id="power-btn-wrap">
     <button id="shutdown-btn" onclick="togglePowerMenu(event)" title="Power options">&#x23FB; Power</button>
     <div id="power-menu">
@@ -1139,8 +1227,8 @@
         </div>
         <button class="btn active" id="fav-filter-btn" onclick="toggleFavFirst()" title="Sort favourited nodes to top">&#9733; Fav first</button>
         <div class="view-toggle" id="nodes-net-filter" style="margin-left:4px">
-          <div id="nodes-mt-pill" class="btn active" onclick="toggleNodeFilter('mt')" title="Show/hide Meshtastic nodes">MT</div>
-          <div id="nodes-mc-pill" class="btn active" onclick="toggleNodeFilter('mc')" title="Show/hide MeshCore contacts" style="color:var(--mc-color)">MC</div>
+          <div id="nodes-mt-pill" class="btn btn-net-mt active" onclick="toggleNodeFilter('mt')" title="Show/hide Meshtastic nodes">MT</div>
+          <div id="nodes-mc-pill" class="btn btn-net-mc active" onclick="toggleNodeFilter('mc')" title="Show/hide MeshCore contacts">MC</div>
         </div>
       </div>
 
@@ -1209,8 +1297,8 @@
   <div class="panel" id="panel-chat">
     <div class="chat-toolbar">
       <div class="view-toggle" id="chat-net-toggle" style="margin-right:8px;flex-shrink:0;display:none">
-        <div class="btn active" id="chat-net-mt" onclick="setChatNetwork('mt')" title="Switch to Meshtastic chat">MT</div>
-        <div class="btn" id="chat-net-mc" onclick="setChatNetwork('mc')" style="color:var(--mc-color)" title="Switch to MeshCore chat">MC</div>
+        <div class="btn btn-net-mt active" id="chat-net-mt" onclick="setChatNetwork('mt')" title="Switch to Meshtastic chat">MT</div>
+        <div class="btn btn-net-mc" id="chat-net-mc" onclick="setChatNetwork('mc')" title="Switch to MeshCore chat">MC</div>
       </div>
       <div id="chat-channels"></div>
       <div id="mc-chat-channels" style="display:none;flex:1;gap:4px;overflow-x:auto;-webkit-overflow-scrolling:touch"></div>
@@ -1236,7 +1324,7 @@
         <input type="text" id="mc-chat-input" placeholder="Public channel…" maxlength="200"
                onkeydown="if(event.key==='Enter')sendMcChan()">
         <button class="dm-send" onclick="sendMcChan()" title="Send message to active MC channel">Send</button>
-        <button class="btn" style="font-size:12px;padding:4px 10px;flex-shrink:0;color:var(--mc-color);border-color:rgba(56,189,248,0.4)" onclick="mcSendAdvert()" title="Flood-advertise — announces this node to the MeshCore network">Advert</button>
+        <button class="btn btn-net-mc network-accent-mc" style="font-size:12px;padding:4px 10px;flex-shrink:0" onclick="mcSendAdvert()" title="Flood-advertise — announces this node to the MeshCore network">Advert</button>
       </div>
     </div>
   </div>
@@ -1250,13 +1338,13 @@
       </div>
       <!-- Map mode: MT/MC map filter pill -->
       <div class="view-toggle" id="map-net-filter" style="margin-left:8px">
-        <div id="map-mt-pill" class="btn active" onclick="toggleMapFilter('mt')" title="Show/hide Meshtastic nodes on map">MT</div>
-        <div id="map-mc-pill" class="btn active" onclick="toggleMapFilter('mc')" title="Show/hide MeshCore nodes on map" style="color:var(--mc-color)">MC</div>
+        <div id="map-mt-pill" class="btn btn-net-mt active" onclick="toggleMapFilter('mt')" title="Show/hide Meshtastic nodes on map">MT</div>
+        <div id="map-mc-pill" class="btn btn-net-mc active" onclick="toggleMapFilter('mc')" title="Show/hide MeshCore nodes on map">MC</div>
       </div>
       <!-- Sense mode: MT/MC sense selector pill (hidden when Map is active) -->
       <div class="view-toggle" id="sense-net-filter" style="margin-left:8px;display:none">
-        <div class="btn active" id="sense-net-mt" onclick="switchSenseNet('mt')" title="Meshtastic Sense">MT</div>
-        <div class="btn"        id="sense-net-mc" onclick="switchSenseNet('mc')" style="color:var(--mc-color)" title="MeshCore Sense">MC</div>
+        <div class="btn btn-net-mt active" id="sense-net-mt" onclick="switchSenseNet('mt')" title="Meshtastic Sense">MT</div>
+        <div class="btn btn-net-mc" id="sense-net-mc" onclick="switchSenseNet('mc')" title="MeshCore Sense">MC</div>
       </div>
       <div class="toolbar-spacer"></div>
       <span id="map-node-count" style="font-size:11px;color:var(--muted);white-space:nowrap"></span>
@@ -1426,8 +1514,8 @@
       <div id="bot-net-row" style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
         <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">Network:</span>
         <div class="view-toggle">
-          <div class="btn active" id="bot-net-mt" onclick="setBotNetwork('mt')" title="Configure bot for Meshtastic radios">MT</div>
-          <div class="btn" id="bot-net-mc" onclick="setBotNetwork('mc')" title="Configure bot for MeshCore radios" style="color:var(--mc-color)">MC</div>
+          <div class="btn btn-net-mt active" id="bot-net-mt" onclick="setBotNetwork('mt')" title="Configure bot for Meshtastic radios">MT</div>
+          <div class="btn btn-net-mc" id="bot-net-mc" onclick="setBotNetwork('mc')" title="Configure bot for MeshCore radios">MC</div>
         </div>
         <span id="bot-net-label" style="font-size:11px;color:var(--muted)"></span>
       </div>
@@ -1986,14 +2074,14 @@
         </div>
         <button class="btn" onclick="setMcChannel()" title="Set the active channel on this MC device">Set</button>
       </div>
-      <p style="color:var(--muted);font-size:11px;margin:6px 0 0">Leave Key blank to auto-derive from name (SHA256). Provide a 32-char hex key to use a specific shared secret. Click a row above to edit that slot.</p>
+      <p class="network-section-note mc">Leave Key blank to auto-derive from name (SHA256). Provide a 32-char hex key to use a specific shared secret. Click a row above to edit that slot.</p>
       <div id="mc-channels-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-top:6px"></div>
     </div><!-- /mc-channels-section -->
 
     <!-- Import Contact via Share Link -->
     <div class="settings-section" id="mc-import-contact-section" style="display:none">
       <h2 class="settings-title">Import Contact</h2>
-      <p style="color:var(--muted);font-size:12px;margin:0 0 10px">Paste a <code style="color:var(--accent)">meshcore://</code> share link to add a contact directly to the radio's contact list.</p>
+      <p class="network-section-note mc" style="margin:0 0 10px">Paste a <code class="net-mc">meshcore://</code> share link to add a contact directly to the radio's contact list.</p>
       <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
         <div style="flex:1;min-width:200px">
           <label class="settings-label">Share Link</label>
@@ -2412,12 +2500,39 @@
     return chatMsgs.filter(m => !m.radio_id || selectedRadioIds.has(m.radio_id));
   }
 
+  function hasConnectedMtRadios() {
+    return Object.values(lastStatus).some(s => s && s.enabled !== false && s.status === 'connected');
+  }
+
+  function hasConnectedMcRadios() {
+    return Object.values(mcLastStatus).some(s => s && s.status === 'connected');
+  }
+
+  function normalizeChatNetwork(preferred) {
+    const wantMc = preferred === 'mc';
+    const hasMt = hasConnectedMtRadios();
+    const hasMc = hasConnectedMcRadios();
+    if (wantMc && hasMc) return 'mc';
+    if (!wantMc && hasMt) return 'mt';
+    if (hasMc) return 'mc';
+    return 'mt';
+  }
+
+  function normalizeBotNetwork(preferred) {
+    return normalizeChatNetwork(preferred);
+  }
+
   function updateRadioSelector(status) {
     if (status) lastStatus = status;
     const entries = Object.entries(lastStatus).filter(([, s]) => s.enabled !== false && s.status === 'connected');
     const sel = document.getElementById('radio-selector');
     if (!sel) return;
-    if (!entries.length) { sel.innerHTML = '<span style="font-size:12px;color:var(--muted)">No radios</span>'; return; }
+    if (!entries.length) {
+      sel.innerHTML = '<span style="font-size:12px;color:var(--muted)">No radios</span>';
+      if (chatNetwork === 'mt' && hasConnectedMcRadios()) setChatNetwork('mc');
+      if (botNetwork === 'mt' && hasConnectedMcRadios()) setBotNetwork('mc');
+      return;
+    }
     // Auto-set activeRadioId if not set or no longer visible
     if (!activeRadioId || !entries.find(([id]) => id === activeRadioId)) {
       activeRadioId = entries[0][0];
@@ -2459,6 +2574,8 @@
         if (isMc && activeMcRadioId === id) {
           const nextMc = [...selectedRadioIds].find(x => x.startsWith('mc_'));
           activeMcRadioId = nextMc || null;
+          if (activeMcRadioId) localStorage.setItem('activeMcRadioId', activeMcRadioId);
+          else localStorage.removeItem('activeMcRadioId');
         }
       }
       // If last one: do nothing (can't deselect everything)
@@ -2486,6 +2603,7 @@
         _restoreSenseState(id);
       } else {
         activeMcRadioId = id;
+        localStorage.setItem('activeMcRadioId', id);
       }
       selectedRadioIds.add(id);
     }
@@ -2502,6 +2620,7 @@
   function switchRadio(id) { toggleRadioSelection(id); }
 
   function setChatNetwork(net) {
+    net = normalizeChatNetwork(net);
     chatNetwork = net;
     localStorage.setItem('chatNetwork', net);
     const isMt = net === 'mt';
@@ -2524,31 +2643,40 @@
 
   function initChat() {
     setChatNetwork(chatNetwork);  // apply MT/MC toggle state
-    const chRadioParam = activeRadioId ? `?radio_id=${encodeURIComponent(activeRadioId)}` : '';
-    const tabAtFetchTime = currentTab;
-    const radioAtFetchTime = activeRadioId;
-    fetch(`/api/chat/channels${chRadioParam}`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(chs => {
-      // Discard if user switched away from chat tab or switched radio while fetch was in flight
-      if (currentTab !== tabAtFetchTime || activeRadioId !== radioAtFetchTime) return;
-      chatChannels = chs;
-      // Only set default channel on first load; preserve DM tabs and valid channel selections
-      const validChannel = typeof chatChannel === 'string'
-        ? chatChannel.startsWith('dm:')   // DM tabs are always kept
-        : chs.some(ch => ch.index === chatChannel);
-      if (!validChannel) chatChannel = chs[0]?.index ?? 0;
-      renderChannelTabs();
-      // Clear unread dot for the channel that's now visible
-      if (currentTab === 'chat') {
-        unreadChannels.delete(chatChannel);
-        updateUnreadDots();
+    if (chatNetwork === 'mt') {
+      const chRadioParam = activeRadioId ? `?radio_id=${encodeURIComponent(activeRadioId)}` : '';
+      const tabAtFetchTime = currentTab;
+      const radioAtFetchTime = activeRadioId;
+      fetch(`/api/chat/channels${chRadioParam}`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(chs => {
+        // Discard if user switched away from chat tab or switched radio while fetch was in flight
+        if (currentTab !== tabAtFetchTime || activeRadioId !== radioAtFetchTime) return;
+        chatChannels = chs;
+        // Only set default channel on first load; preserve DM tabs and valid channel selections
+        const validChannel = typeof chatChannel === 'string'
+          ? chatChannel.startsWith('dm:')   // DM tabs are always kept
+          : chs.some(ch => ch.index === chatChannel);
+        if (!validChannel) chatChannel = chs[0]?.index ?? 0;
         renderChannelTabs();
-        renderMessages();  // always sync message area with active channel/tab
-      }
-    }).catch(e => console.warn('Chat channel init failed:', e));
-    fetch('/api/status').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(s => {
-      const activeName = activeRadioId && s[activeRadioId] ? s[activeRadioId].name : Object.values(s).map(x => x.name).join(', ');
-      document.getElementById('chat-radio').textContent = '📡 ' + activeName;
-    }).catch(() => {});
+        // Clear unread dot for the channel that's now visible
+        if (currentTab === 'chat') {
+          unreadChannels.delete(chatChannel);
+          updateUnreadDots();
+          renderChannelTabs();
+          renderMessages();  // always sync message area with active channel/tab
+        }
+      }).catch(e => console.warn('Chat channel init failed:', e));
+      fetch('/api/status').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(s => {
+        const activeName = activeRadioId && s[activeRadioId] ? s[activeRadioId].name : Object.values(s).map(x => x.name).join(', ');
+        document.getElementById('chat-radio').textContent = '📡 ' + activeName;
+      }).catch(() => {});
+    } else {
+      const activeName = activeMcRadioId && mcLastStatus[activeMcRadioId]
+        ? mcLastStatus[activeMcRadioId].name
+        : Object.values(mcLastStatus).filter(s => s.status === 'connected').map(x => x.name).join(', ');
+      document.getElementById('chat-radio').textContent = '📡 ' + (activeName || 'No MC radio');
+      renderMcMessages();
+      _updateMcInput();
+    }
     if (chatSSE) return;
     chatSSE = new EventSource('/api/chat/stream');
     chatSSE.onmessage = e => {
@@ -2748,6 +2876,11 @@
 
   function dmContactId(m)   { return (m.sent || m.from_id === 'bot') ? m.to_id   : m.from_id; }
   function dmContactName(m) { return (m.sent || m.from_id === 'bot') ? (m.to_name || m.to_id) : m.from_name; }
+  function mtRadioLabel(m) {
+    if (m.radio_name) return m.radio_name;
+    if (m.radio_id && lastStatus[m.radio_id]?.name) return lastStatus[m.radio_id].name;
+    return m.radio_id || '';
+  }
 
   function renderChannelTabs() {
     const chTabs = chatChannels.map(ch =>
@@ -2834,15 +2967,25 @@
       nodeId && nodeId !== 'bot'
         ? `<span class="msg-sender-link" onclick="openChatNodeActions('${jsSafe(nodeId)}','${jsSafe(name)}')">${escHtml(name)}</span>`
         : escHtml(name);
+    const radioLabel = mtRadioLabel(m);
+    const radioPart = radioLabel ? `${escHtml(radioLabel)} · ` : '';
+    if (m.from_id === 'bot') {
+      const target = m.to_name || m.to_id || (m.is_dm ? '?' : `CH${m.channel ?? 0}`);
+      const meta = `<span class="mt-msg-tag" style="background:rgba(167,139,250,0.18);color:#a78bfa;border-color:rgba(167,139,250,0.4)">Bot</span>${radioPart}→ ${escHtml(target)} · ${t}`;
+      const el = document.createElement('div');
+      el.className = 'chat-msg received';
+      el.innerHTML = `<div class="msg-meta">${meta}</div><div class="msg-bubble" style="background:rgba(167,139,250,0.15);border:1px solid rgba(167,139,250,0.3)">${escHtml(m.text)}</div>`;
+      return el;
+    }
     let meta;
     if (m.is_dm) {
       meta = m.sent
-        ? `${t} · You → ${escHtml(m.to_name || m.to_id)}`
-        : `${senderSpan(m.from_id, m.from_name)} → You · ${t}${snrStr}`;
+        ? `<span class="mt-msg-tag">MT</span>${radioPart}${t} · You → ${escHtml(m.to_name || m.to_id)}`
+        : `<span class="mt-msg-tag">MT</span>${radioPart}${senderSpan(m.from_id, m.from_name)} → You · ${t}${snrStr}`;
     } else {
       meta = m.sent
-        ? `${t} · ${escHtml(m.from_name)}`
-        : `${senderSpan(m.from_id, m.from_name)} · ${t}${snrStr}`;
+        ? `<span class="mt-msg-tag">MT</span>${radioPart}${t} · ${escHtml(m.from_name)}`
+        : `<span class="mt-msg-tag">MT</span>${radioPart}${senderSpan(m.from_id, m.from_name)} · ${t}${snrStr}`;
     }
     const statusHtml = m.sent
       ? `<div class="msg-status ${m.status || 'pending'}" data-msgid="${escHtml(m.id)}">${m.status === 'delivered' ? '✓' : m.status === 'failed' ? '✗' : '·'}</div>`
@@ -3204,8 +3347,11 @@
       <tr data-id="${n.id}" class="${n.is_favorite ? 'is-favorite' : ''}">
         <td><span class="star ${n.is_favorite ? 'starred' : ''}" onclick="toggleFav('${jsSafe(n.id)}', ${n.is_favorite})" title="${n.is_favorite ? 'Remove from favourites' : 'Add to favourites'}">&#9733;</span></td>
         <td>
-          ${escHtml(n.long_name)}
-          ${n.hw_model ? `<div style="font-size:10px;color:var(--muted);margin-top:1px">${escHtml(n.hw_model)}</div>` : ''}
+          <div class="name-cell-main">
+            <span class="name-badge mt">MT</span>
+            <span class="name-cell-title">${escHtml(n.long_name)}</span>
+          </div>
+          ${n.hw_model ? `<div class="name-cell-meta">${escHtml(n.hw_model)}</div>` : ''}
         </td>
         <td><span class="short-name">${escHtml(n.short_name)}</span></td>
         <td class="${snrClass(n.snr)}">${n.snr != null ? n.snr + ' dB' : '—'}</td>
@@ -3255,6 +3401,7 @@
         const path   = (c.out_path_len != null && c.out_path_len >= 0) ? c.out_path_len : '—';
         const last   = escHtml(c.last_seen || '—');
         const rname  = escHtml(mcLastStatus[c._rid]?.name || mcLastStatus[c._rid]?.node_name || c._rid || '');
+        const meta   = escHtml(`${mcTypeLabel(c.type ?? 0)}${rname ? ` · ${rname}` : ''}`);
         const pk     = jsSafe(c.full_key || c.id || '');
         const rid    = jsSafe(c._rid);
         const lat    = c.latitude ?? c.lat;
@@ -3263,7 +3410,13 @@
         const isIgnored = mcIgnored.has(cid);
         return `<tr class="${isFav ? 'is-favorite' : ''}${isIgnored ? ' is-ignored' : ''}">
           <td><span class="star ${isFav ? 'starred' : ''}" onclick="toggleMcFav('${jsSafe(cid)}')" title="${isFav ? 'Remove from favourites' : 'Add to favourites'}">&#9733;</span></td>
-          <td><span style="color:var(--mc-color);font-size:10px;font-weight:600;background:rgba(56,189,248,0.12);border:1px solid rgba(56,189,248,0.3);border-radius:3px;padding:1px 4px;margin-right:4px">MC</span>${name}${mcTypeBadge(c.type ?? 0)}</td>
+          <td>
+            <div class="name-cell-main">
+              <span class="name-badge mc">MC</span>
+              <span class="name-cell-title">${name}</span>${mcTypeBadge(c.type ?? 0)}
+            </div>
+            <div class="name-cell-meta">${meta}</div>
+          </td>
           <td><span class="short-name">${sname}</span></td>
           <td>—</td><td>—</td>
           <td>${path}</td>
@@ -3356,8 +3509,11 @@
       <tr class="${n.is_favorite ? 'is-favorite' : ''} ${n.is_ignored ? 'is-ignored' : ''}">
         <td><span class="star ${n.is_favorite ? 'starred' : ''}" onclick="toggleFav('${jsSafe(n.id)}', ${!!n.is_favorite})" title="${n.is_favorite ? 'Remove from favourites' : 'Add to favourites'}">&#9733;</span></td>
         <td>
-          ${escHtml(n.long_name)}
-          ${n.hw_model ? `<div style="font-size:10px;color:var(--muted);margin-top:1px">${escHtml(n.hw_model)}</div>` : ''}
+          <div class="name-cell-main">
+            <span class="name-badge mt">MT</span>
+            <span class="name-cell-title">${escHtml(n.long_name)}</span>
+          </div>
+          ${n.hw_model ? `<div class="name-cell-meta">${escHtml(n.hw_model)}</div>` : ''}
         </td>
         <td><span class="short-name">${escHtml(n.short_name)}</span></td>
         <td>${escHtml(n.first_seen_str)}</td>
@@ -3390,11 +3546,19 @@
         const sname     = escHtml((c.short_name || '?').slice(0,4).toUpperCase());
         const path      = (c.out_path_len != null && c.out_path_len >= 0) ? c.out_path_len : '—';
         const last      = escHtml(c.last_seen || '—');
+        const rname     = escHtml(mcLastStatus[c._rid]?.name || mcLastStatus[c._rid]?.node_name || c._rid || '');
+        const meta      = escHtml(`${mcTypeLabel(c.type ?? 0)}${rname ? ` · ${rname}` : ''}`);
         const pk        = jsSafe(c.full_key || c.id || '');
         const rid       = jsSafe(c._rid);
         return `<tr class="${isFav ? 'is-favorite' : ''}${isIgnored ? ' is-ignored' : ''}">
           <td><span class="star ${isFav ? 'starred' : ''}" onclick="toggleMcFav('${jsSafe(cid)}')" title="${isFav ? 'Remove from favourites' : 'Add to favourites'}">&#9733;</span></td>
-          <td><span style="color:var(--mc-color);font-size:10px;font-weight:600;background:rgba(56,189,248,0.12);border:1px solid rgba(56,189,248,0.3);border-radius:3px;padding:1px 4px;margin-right:4px">MC</span>${name}${mcTypeBadge(c.type ?? 0)}</td>
+          <td>
+            <div class="name-cell-main">
+              <span class="name-badge mc">MC</span>
+              <span class="name-cell-title">${name}</span>${mcTypeBadge(c.type ?? 0)}
+            </div>
+            <div class="name-cell-meta">${meta}</div>
+          </td>
           <td><span class="short-name">${sname}</span></td>
           <td>—</td><td>${last}</td><td>—</td><td>—</td><td>${path}</td><td>—</td><td>—</td>
           <td style="display:flex;gap:8px;align-items:center">
@@ -3516,11 +3680,26 @@
       .catch(e => console.error('loadHistory failed:', e));
   }
 
-  function loadCurrent() {
+  function loadCurrent(btn) {
+    const refreshBtn = btn || document.getElementById('header-refresh-btn');
+    if (refreshBtn) {
+      refreshBtn.classList.add('refreshing');
+      const label = refreshBtn.querySelector('.btn-label');
+      if (label) label.textContent = 'Refreshing';
+    }
     loadLive(); // always refresh node data, status bar, header count, map
+    initMc();   // refresh MC radios, contacts, channels, pills, and map markers
+    loadMcSettingsNodes();
     if (currentTab === 'nodes' && currentView === 'history') loadHistory();
     if (currentTab === 'chat')  initChat();
     if (currentTab === 'bot')   { botInitDone = false; initBot(); }
+    window.clearTimeout(loadCurrent._resetTimer);
+    loadCurrent._resetTimer = window.setTimeout(() => {
+      if (!refreshBtn) return;
+      refreshBtn.classList.remove('refreshing');
+      const label = refreshBtn.querySelector('.btn-label');
+      if (label) label.textContent = 'Refresh';
+    }, 1200);
   }
 
   // ── Clock ──────────────────────────────────────────────────────────────────
@@ -5781,6 +5960,7 @@
   }
 
   function setBotNetwork(net) {
+    net = normalizeBotNetwork(net);
     botNetwork = net;
     localStorage.setItem('botNetwork', net);
     document.getElementById('bot-net-mt').classList.toggle('active', net === 'mt');
@@ -5795,9 +5975,11 @@
 
   function initBot() {
     // Update MT/MC toggle visibility and label
-    const hasMc = activeMcRadioId != null;
-    document.getElementById('bot-net-row').style.display = hasMc ? 'flex' : 'none';
-    if (!hasMc && botNetwork === 'mc') { botNetwork = 'mt'; localStorage.setItem('botNetwork', 'mt'); }
+    botNetwork = normalizeBotNetwork(botNetwork);
+    localStorage.setItem('botNetwork', botNetwork);
+    const hasBoth = hasConnectedMcRadios() && hasConnectedMtRadios();
+    document.getElementById('bot-net-row').style.display = hasBoth ? 'flex' : 'none';
+    if (!hasBoth && botNetwork === 'mc') { botNetwork = 'mt'; localStorage.setItem('botNetwork', 'mt'); }
     document.getElementById('bot-net-mt').classList.toggle('active', botNetwork === 'mt');
     document.getElementById('bot-net-mc').classList.toggle('active', botNetwork === 'mc');
     const rid = _botRadioId();
@@ -6486,8 +6668,18 @@
   function _saveMcMessages() {
     try { localStorage.setItem('mcMessages', JSON.stringify(mcMessages.slice(-300))); } catch(e) {}
   }
+  function _mcLocalMsgId() {
+    return `mc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+  function _setMcMsgStatus(msgId, status) {
+    const m = mcMessages.find(x => x.id === msgId);
+    if (!m) return;
+    m.status = status;
+    _saveMcMessages();
+    renderMcMessages();
+  }
   let mcMapMarkers    = [];    // Leaflet markers for MC nodes on the main map
-  let activeMcRadioId = null;  // currently viewed MC radio
+  let activeMcRadioId = localStorage.getItem('activeMcRadioId') || null;  // currently viewed MC radio
   let mcChatTab       = localStorage.getItem('mcChatTab') || 'chan:0';
   const mcUnreadTabs      = new Set();
   const mcKnownChannels   = {0: 'Public'};  // idx → display name
@@ -6526,6 +6718,8 @@
     const connectedEntries = allEntries.filter(([, s]) => s.status === 'connected');
     if (!allEntries.length) {
       // No MC radios configured at all — hide the selector entirely
+      activeMcRadioId = null;
+      localStorage.removeItem('activeMcRadioId');
       sel.innerHTML = '';
       sel.style.display = 'none';
       if (sep) sep.style.display = 'none';
@@ -6536,6 +6730,8 @@
     }
     // MC radios exist but none connected — show "No radios" like MT does
     if (!connectedEntries.length) {
+      activeMcRadioId = null;
+      localStorage.removeItem('activeMcRadioId');
       sel.style.display = 'flex';
       if (sep) sep.style.display = '';
       if (netToggle) netToggle.style.display = 'none';
@@ -6545,12 +6741,15 @@
       return;
     }
     // At least one MC radio connected — show pills for connected ones only
-    if (netToggle) netToggle.style.display = '';
+    const bothChatNetworks = hasConnectedMtRadios() && connectedEntries.length > 0;
+    if (netToggle) netToggle.style.display = bothChatNetworks ? '' : 'none';
+    if (!bothChatNetworks && chatNetwork === 'mt') setChatNetwork('mc');
     if (sep) sep.style.display = '';
     sel.style.display = '';
     // Sync activeMcRadioId — use first connected MC radio if current is gone
     if (!activeMcRadioId || !connectedEntries.find(([id]) => id === activeMcRadioId)) {
       activeMcRadioId = connectedEntries[0][0];
+      localStorage.setItem('activeMcRadioId', activeMcRadioId);
     }
     // Auto-select MC radios only if nothing is selected yet (fresh start)
     if (selectedRadioIds.size === 0) {
@@ -6578,6 +6777,8 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
 
   function applyMcVisibility() {
     const hasMc = Object.keys(mcLastStatus).length > 0;
+    const mtConnected = hasConnectedMtRadios();
+    const mcConnected = hasConnectedMcRadios();
     // Only honour explicit user-set hide ('1'). Never auto-set it — that caused MC contacts
     // to stay hidden after the radio connected because the auto-hide ran on page load first.
     const forcedHide = localStorage.getItem('mcHide') === '1';
@@ -6602,16 +6803,16 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     if (hideToggle) hideToggle.checked = forcedHide;
     // MC pill in Nodes tab + MT pill (only makes sense when both networks are visible)
     const mcNodesPill = document.getElementById('nodes-mc-pill');
-    if (mcNodesPill) mcNodesPill.style.display = show ? '' : 'none';
+    if (mcNodesPill) mcNodesPill.style.display = show && mcConnected ? '' : 'none';
     const mtNodesPill = document.getElementById('nodes-mt-pill');
-    if (mtNodesPill) mtNodesPill.style.display = show ? '' : 'none';
+    if (mtNodesPill) mtNodesPill.style.display = show && mtConnected ? '' : 'none';
     // Scan button — shown only when MC radios exist + MC network is visible
     _updateScanBtnVisibility();
     // MC pill in Map tab + MT pill
     const mcMapPill = document.getElementById('map-mc-pill');
-    if (mcMapPill) mcMapPill.style.display = show ? '' : 'none';
+    if (mcMapPill) mcMapPill.style.display = show && mcConnected ? '' : 'none';
     const mtMapPill = document.getElementById('map-mt-pill');
-    if (mtMapPill) mtMapPill.style.display = show ? '' : 'none';
+    if (mtMapPill) mtMapPill.style.display = show && mtConnected ? '' : 'none';
     if (!show) renderMcMapMarkers();
     // MC Node Settings + Channels sections
     const mcNS = document.getElementById('mc-node-settings-section');
@@ -6864,7 +7065,10 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       delete mcLastStatus[data.radio_id];
       delete mcContacts[data.radio_id];
       mcMessages = mcMessages.filter(m => m.radio_id !== data.radio_id);
-      if (activeMcRadioId === data.radio_id) activeMcRadioId = null;
+      if (activeMcRadioId === data.radio_id) {
+        activeMcRadioId = null;
+        localStorage.removeItem('activeMcRadioId');
+      }
       updateMcPills();
       renderMcMessages();
       renderMcMapMarkers();
@@ -6884,6 +7088,19 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     if (type === 3) return '<span style="font-size:10px;font-weight:600;background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.35);border-radius:3px;padding:1px 4px;margin-left:4px">Room</span>';
     if (type === 4) return '<span style="font-size:10px;font-weight:600;background:rgba(139,92,246,0.15);color:#8b5cf6;border:1px solid rgba(139,92,246,0.35);border-radius:3px;padding:1px 4px;margin-left:4px">Sens</span>';
     return ''; // 0=NONE, 1=CLI — no badge for normal companion nodes
+  }
+
+  function mcTypeLabel(type) {
+    if (type === 2) return 'Repeater';
+    if (type === 3) return 'Room';
+    if (type === 4) return 'Sensor';
+    return 'Companion';
+  }
+
+  function mcContactMetaLabel(contact, radioId = null) {
+    const typeLabel = mcTypeLabel(contact?.type ?? contact?.contact_type ?? 0);
+    const radioName = radioId ? (mcLastStatus[radioId]?.name || mcLastStatus[radioId]?.node_name || radioId) : '';
+    return radioName ? `${typeLabel} via ${radioName}` : typeLabel;
   }
 
   function makeMcIcon(highlighted) {
@@ -6926,9 +7143,11 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         const _snrStr = c.snr  != null ? `${c.snr} dB` : '—';
         const _tsStr  = c.last_heard_ts ? senseTimeAgo(c.last_heard_ts) : (c.last_seen ? escHtml(c.last_seen) : '—');
         const _keyStr = (c.full_key || c.id || '').slice(0, 12);
+        const _metaStr = escHtml(mcContactMetaLabel(c, c._rid));
         marker.bindPopup(
           `<div class="map-popup-name">${label}<span class="map-popup-local" style="background:rgba(59,130,246,0.15);color:#3b82f6">MC</span>${mcTypeBadge(c.type ?? 0)}</div>`
           + (_keyStr ? `<div style="font-size:10px;color:var(--muted)">${escHtml(_keyStr)}</div>` : '')
+          + `<div style="font-size:10px;color:var(--muted);margin-top:2px">${_metaStr}</div>`
           + `<div><b>SNR:</b> ${_snrStr} &nbsp; <b>Battery:</b> ${_batStr}</div>`
           + `<div><b>Hops:</b> ${hops !== null ? hops : '—'} &nbsp; <b>Last seen:</b> ${_tsStr}</div>`
           + `<div style="font-size:11px;color:var(--muted)">${lat.toFixed(5)}, ${lon.toFixed(5)}</div>`
@@ -6987,12 +7206,12 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     if (!el) return;
     const chanTabs = Object.entries(mcKnownChannels).sort(([a],[b]) => +a - +b).map(([idx, name]) => {
       const tab = `chan:${idx}`;
-      return `<button class="channel-tab ${mcChatTab === tab ? 'active' : ''} ${mcUnreadTabs.has(tab) ? 'has-unread' : ''}"
-        onclick="switchMcTab('${tab}')" style="${mcChatTab === tab ? '' : 'color:var(--mc-color)'}">${escHtml(name)}</button>`;
+      return `<button class="channel-tab net-mc ${mcChatTab === tab ? 'active' : ''} ${mcUnreadTabs.has(tab) ? 'has-unread' : ''}"
+        onclick="switchMcTab('${tab}')">${escHtml(name)}</button>`;
     });
     const dmTabs = Object.entries(mcDmContacts).map(([pre, name]) => {
       const tab = `dm:${pre}`;
-      return `<button class="channel-tab ${mcChatTab === tab ? 'active' : ''} ${mcUnreadTabs.has(tab) ? 'has-unread' : ''}"
+      return `<button class="channel-tab net-mc ${mcChatTab === tab ? 'active' : ''} ${mcUnreadTabs.has(tab) ? 'has-unread' : ''}"
         onclick="switchMcTab('${tab}')">${escHtml(name)}<span class="dm-tab-close" onclick="closeMcDmTab('${jsSafe(pre)}',event)" title="Close DM tab">✕</span></button>`;
     });
     el.innerHTML = [...chanTabs, ...dmTabs].join('');
@@ -7065,6 +7284,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const path = c?.out_path || '';
     const seen = c?.last_seen || '';
     const hopStr = hops === 0 ? 'Direct (0 hops)' : hops > 0 ? `${hops} hop${hops !== 1 ? 's' : ''} away` : 'Path unknown';
+    const meta = c ? mcContactMetaLabel(c, radioId) : '';
 
     let panel = document.getElementById('mc-contact-popup');
     if (!panel) {
@@ -7077,6 +7297,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     panel.innerHTML = `
       <div style="font-weight:600;color:var(--mc-color);margin-bottom:2px">${escHtml(name)}</div>
       ${fromId ? `<div style="color:var(--muted);font-size:10px;margin-bottom:6px">${escHtml(fromId.slice(0, 12))}</div>` : ''}
+      ${meta ? `<div style="color:var(--muted);font-size:10px;margin-bottom:6px">${escHtml(meta)}</div>` : ''}
       <div style="color:var(--muted)">${escHtml(hopStr)}</div>
       ${path ? `<div style="color:var(--muted);font-size:10px;margin-top:2px;word-break:break-all">${escHtml(path)}</div>` : ''}
       ${seen ? `<div style="color:var(--muted);font-size:10px;margin-top:4px">Last seen: ${escHtml(seen)}</div>` : ''}
@@ -7116,7 +7337,15 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const hadNoContent = !container.children.length || !!container.querySelector('.chat-empty');
     const wasAtBottom = hadNoContent || container.scrollHeight - container.scrollTop <= container.clientHeight + 40;
     container.innerHTML = msgs.map(m => {
-      const ts = m.ts ? new Date(m.ts * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12: false}) : '';
+      let ts = '';
+      if (m.ts) {
+        const d = new Date(m.ts * 1000);
+        const now = new Date();
+        const pad = n => String(n).padStart(2, '0');
+        const isToday = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+        const datePrefix = isToday ? '' : `${pad(d.getDate())}.${pad(d.getMonth()+1)}. `;
+        ts = `${datePrefix}${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      }
       if (m.subtype === 'system') {
         if (m.from_id === 'bot') {
           const radioLabel = mcLastStatus[m.radio_id]?.name || m.radio_id || '';
@@ -7130,14 +7359,16 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       const sent = m.sent || m.from_id === 'me';
       if (sent) {
         const radioLabel = mcLastStatus[m.radio_id]?.name || m.radio_name || m.radio_id || '';
+        const statusHtml = `<div class="msg-status ${m.status || 'pending'}" data-msgid="${escHtml(m.id || '')}">${m.status === 'delivered' ? '✓' : m.status === 'failed' ? '✗' : '·'}</div>`;
         return `<div class="chat-msg sent">
           <div class="msg-meta"><span class="mc-msg-tag">MC</span>${escHtml(radioLabel)} · Me · ${ts}</div>
           <div class="msg-bubble">${escHtml(m.text)}</div>
+          ${statusHtml}
         </div>`;
       }
       const { name, contact } = _mcSenderInfo(m);
       const bodyText = _mcMsgText(m, name);
-      const senderHtml = `<span style="cursor:pointer;color:var(--text);text-decoration:underline dotted" onclick="showMcContactPopup(event,'${jsSafe(m.from_id || '')}','${jsSafe(m.radio_id || '')}')" title="Contact info">${escHtml(name)}</span>`;
+      const senderHtml = `<span class="msg-sender-link" onclick="showMcContactPopup(event,'${jsSafe(m.from_id || '')}','${jsSafe(m.radio_id || '')}')" title="Contact info">${escHtml(name)}</span>`;
       const mcReplyBtn = `<button class="msg-reply-btn" onclick="replyToMc('${jsSafe(m.from_id || '')}','${jsSafe(name)}','${m.subtype || 'channel'}')">↩ Reply</button>`;
       return `<div class="chat-msg received">
         <div class="msg-meta"><span class="mc-msg-tag">MC</span>${escHtml(m.radio_name || '')} · ${senderHtml} · ${ts}${mcReplyBtn}</div>
@@ -8221,35 +8452,54 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     input.value = '';
     if (mcChatTab.startsWith('dm:')) {
       const pre = mcChatTab.slice(3);
+      const msgId = _mcLocalMsgId();
+      mcMessages.push({
+        id: msgId,
+        type: 'mc_message', radio_id: activeMcRadioId,
+        radio_name: mcLastStatus[activeMcRadioId]?.name || '',
+        network: 'mc', subtype: 'dm',
+        from_id: 'me', to_id: pre, text, ts: Math.floor(Date.now()/1000), sent: true,
+        status: 'pending',
+      });
+      _saveMcMessages();
+      renderMcMessages();
       fetch(`/api/mc/${encodeURIComponent(activeMcRadioId)}/send_dm`, {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({target: pre, text}),
       }).then(r => r.json()).then(data => {
-        if (data.error) { console.warn('MC DM failed:', data.error); return; }
-        mcMessages.push({
-          type: 'mc_message', radio_id: activeMcRadioId,
-          radio_name: mcLastStatus[activeMcRadioId]?.name || '',
-          network: 'mc', subtype: 'dm',
-          from_id: 'me', to_id: pre, text, ts: Math.floor(Date.now()/1000), sent: true,
-        });
-        _saveMcMessages();
-        renderMcMessages();
-      }).catch(e => console.warn('MC DM failed:', e));
+        if (data.error) {
+          _setMcMsgStatus(msgId, 'failed');
+          console.warn('MC DM failed:', data.error);
+          return;
+        }
+        _setMcMsgStatus(msgId, 'delivered');
+      }).catch(e => {
+        _setMcMsgStatus(msgId, 'failed');
+        console.warn('MC DM failed:', e);
+      });
     } else {
       const chan = parseInt(mcChatTab.slice(5)) || 0;
+      const msgId = _mcLocalMsgId();
+      mcMessages.push({
+        id: msgId,
+        type: 'mc_message', radio_id: activeMcRadioId,
+        radio_name: mcLastStatus[activeMcRadioId]?.name || '',
+        network: 'mc', subtype: 'channel', channel: chan,
+        from_id: 'me', text, ts: Math.floor(Date.now()/1000), sent: true,
+        status: 'pending',
+      });
+      _saveMcMessages();
+      renderMcMessages();
       fetch(`/api/mc/${encodeURIComponent(activeMcRadioId)}/send_chan`, {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({text, channel: chan}),
       }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
-        if (data.error) { console.warn('MC send failed:', data.error); return; }
-        mcMessages.push({
-          type: 'mc_message', radio_id: activeMcRadioId,
-          radio_name: mcLastStatus[activeMcRadioId]?.name || '',
-          network: 'mc', subtype: 'channel', channel: chan,
-          from_id: 'me', text, ts: Math.floor(Date.now()/1000), sent: true,
-        });
-        _saveMcMessages();
-        renderMcMessages();
+        if (data.error) {
+          _setMcMsgStatus(msgId, 'failed');
+          console.warn('MC send failed:', data.error);
+          return;
+        }
+        _setMcMsgStatus(msgId, 'delivered');
         const _ts = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
         const _chanName = mcKnownChannels[chan] || (chan === 0 ? 'Public' : `CH${chan}`);
         const _entry = { kind: 'sent_message', name: mcLastStatus[activeMcRadioId]?.name || 'You', text: text.length > 60 ? text.slice(0,60)+'…' : text, ts: _ts, radioId: activeMcRadioId, channel: chan, chanName: _chanName };
@@ -8257,7 +8507,10 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
         try { localStorage.setItem('mcSenseLog', JSON.stringify(_mcSenseLogEntries.slice(0,100))); } catch(_e) {}
         renderMcSenseLog();
-      }).catch(e => console.warn('MC send failed:', e));
+      }).catch(e => {
+        _setMcMsgStatus(msgId, 'failed');
+        console.warn('MC send failed:', e);
+      });
     }
   }
 
@@ -8470,7 +8723,6 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
     try { localStorage.setItem('mcSenseLog', JSON.stringify(_mcSenseLogEntries.slice(0, 100))); } catch(e) {}
     renderMcSenseLog();
-    // Also push to mcMessages so it appears in the Chat tab (from_id:'bot' triggers distinct styling)
     mcMessages.push({
       network: 'mc', subtype: 'system', from_id: 'bot',
       radio_id: data.radio_id, channel: data.channel ?? 0,
@@ -9434,7 +9686,12 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     _senseRunId++;
     _senseResponses = {};
     delete _senseStateByRadio[activeRadioId];
-    fetch('/api/mesh/sense', {method: 'POST'}).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+    const body = activeRadioId ? JSON.stringify({radio_id: activeRadioId}) : '{}';
+    fetch('/api/mesh/sense', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       if (!d.ok) {
         // Sense didn't start — restore previous run state
         _senseRunId = _prevRunId;
@@ -10371,6 +10628,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const _ageEl = document.getElementById('sense-status-age');
     if (_ageEl) _ageEl.textContent = '(' + senseTimeAgo(parseInt(_ageEl.dataset.ts)) + ')';
     _evictStaleSenseNodes();
+    updateHeaderNodeCount(allNodes);
   }, 30000);
   // Init MC support
   initMc();

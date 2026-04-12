@@ -16,6 +16,7 @@ from meshcore import MeshCore, EventType
 from meshcore.packets import BinaryReqType
 
 from config import CONFIG, save_config
+from cross import maybe_forward_mc_message
 from helpers import push_to_sse
 from state import mc_connections, mc_connections_lock
 
@@ -45,22 +46,66 @@ def _remember_rx_log(config_id, payload):
         del entries[:-20]
 
 
-def _best_recent_rx_for_message(config_id, subtype, now_ts):
-    """Best-effort correlation between a message event and a recent RX_LOG_DATA event."""
+def _rx_sender_prefix(entry):
+    for key in ("pubkey_pre", "pubkey_prefix", "sender_pubkey_pre", "source_pubkey_pre", "from_pubkey_pre"):
+        value = entry.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
+def _payload_matches_subtype(payload_typename, subtype):
+    if not payload_typename:
+        return False
+    name = str(payload_typename).upper()
+    if subtype == "dm":
+        return any(token in name for token in ("DM", "CONTACT", "DIRECT"))
+    if subtype == "channel":
+        return any(token in name for token in ("CHAN", "CHANNEL", "BROADCAST", "TEXT", "MSG"))
+    return False
+
+
+def _best_recent_rx_for_message(config_id, subtype, now_ts, sender_prefix=None):
+    """Best-effort correlation between a message event and a recent RX_LOG_DATA event.
+
+    Prefer entries that match the sender prefix and payload subtype. Fall back
+    gradually rather than binding a message to an unrelated recent RX event.
+    """
     entries = _mc_recent_rx_logs.get(config_id, [])
     if not entries:
         return None
     cutoff = now_ts - 5.0
-    # Prefer non-advert/non-req payloads first; otherwise fall back to the latest recent RX event.
-    preferred = [
-        e for e in entries
-        if e.get("stored_at", 0) >= cutoff
-        and e.get("payload_typename") not in ("ADVERT", "REQ")
+    recent = [e for e in entries if e.get("stored_at", 0) >= cutoff]
+    if not recent:
+        return None
+
+    usable = [
+        e for e in recent
+        if e.get("payload_typename") not in ("ADVERT", "REQ")
     ]
-    if preferred:
-        return preferred[-1]
-    fallback = [e for e in entries if e.get("stored_at", 0) >= cutoff]
-    return fallback[-1] if fallback else None
+    if not usable:
+        usable = recent
+
+    if sender_prefix:
+        sender_matches = [
+            e for e in usable
+            if _rx_sender_prefix(e).startswith(sender_prefix[:12])
+        ]
+        if sender_matches:
+            subtype_matches = [
+                e for e in sender_matches
+                if _payload_matches_subtype(e.get("payload_typename"), subtype)
+            ]
+            return subtype_matches[-1] if subtype_matches else sender_matches[-1]
+
+    subtype_matches = [
+        e for e in usable
+        if _payload_matches_subtype(e.get("payload_typename"), subtype)
+    ]
+    if subtype_matches:
+        return subtype_matches[-1]
+
+    return usable[-1]
 
 
 def _run_event_loop():
@@ -334,6 +379,32 @@ def _invoke_mc_bot(msg, config_id, subtype):
 def _subscribe_mc_events(mc, config_id, name):
     """Wire up event callbacks — called from within the asyncio loop thread."""
 
+    def _touch_contact_seen(pubkey_or_prefix, ts=None):
+        ts = int(ts or time.time())
+        if not pubkey_or_prefix:
+            return None
+
+        with mc_connections_lock:
+            state = mc_connections.get(config_id)
+            if not state:
+                return None
+
+            contacts = state.setdefault("contacts", {})
+            matched_key = None
+            for pubkey in contacts.keys():
+                if pubkey == pubkey_or_prefix or pubkey.startswith(pubkey_or_prefix) or pubkey_or_prefix.startswith(pubkey):
+                    matched_key = pubkey
+                    break
+
+            if matched_key is None:
+                matched_key = pubkey_or_prefix
+                contacts[matched_key] = {"public_key": matched_key}
+
+            existing = contacts.get(matched_key, {"public_key": matched_key})
+            existing["last_seen_ts"] = ts
+            contacts[matched_key] = existing
+            return existing
+
     def on_advert(event):
         try:
             n = event.payload
@@ -341,11 +412,12 @@ def _subscribe_mc_events(mc, config_id, name):
             # ADVERTISEMENT payload only contains public_key — no name, coords, or type.
             # Merge into the existing contact record (preserving name/coords/type learned
             # via NEW_CONTACT or get_contacts) rather than replacing it with the sparse payload.
-            existing = {"public_key": pubkey}
+            existing = _touch_contact_seen(pubkey)
+            if existing is None:
+                existing = {"public_key": pubkey}
+            existing["last_advert"] = int(time.time())
             with mc_connections_lock:
                 if config_id in mc_connections:
-                    existing = mc_connections[config_id]["contacts"].get(pubkey, {"public_key": pubkey})
-                    existing["last_advert"] = int(time.time())
                     mc_connections[config_id]["contacts"][pubkey] = existing
             push_to_sse({
                 "type":              "mc_node",
@@ -370,8 +442,11 @@ def _subscribe_mc_events(mc, config_id, name):
         try:
             msg = event.payload
             now = int(time.time())
-            rx = _best_recent_rx_for_message(config_id, "channel", time.time())
-            push_to_sse({
+            _touch_contact_seen(msg.get("pubkey_pre"), now)
+            rx = _best_recent_rx_for_message(
+                config_id, "channel", time.time(), sender_prefix=msg.get("pubkey_pre")
+            )
+            sse_msg = {
                 "type":       "mc_message",
                 "radio_id":   config_id,
                 "radio_name": name,
@@ -388,8 +463,13 @@ def _subscribe_mc_events(mc, config_id, name):
                 "path_hash_size": msg.get("path_hash_size", (rx or {}).get("path_hash_size")),
                 "rx_rssi":    msg.get("rssi", (rx or {}).get("rssi")),
                 "rx_snr":     msg.get("snr", (rx or {}).get("snr")),
-            })
+            }
+            push_to_sse(sse_msg)
             log.info(f"[MC:{name}] Channel msg from {msg.get('pubkey_pre','?')}: {msg.get('text','')[:60]}")
+            threading.Thread(
+                target=maybe_forward_mc_message, args=(dict(sse_msg),),
+                daemon=True,
+            ).start()
             # Bot command handling (background thread to avoid blocking asyncio loop)
             threading.Thread(
                 target=_invoke_mc_bot, args=(dict(msg), config_id, "channel"),
@@ -402,7 +482,10 @@ def _subscribe_mc_events(mc, config_id, name):
         try:
             msg = event.payload
             now = int(time.time())
-            rx = _best_recent_rx_for_message(config_id, "dm", time.time())
+            _touch_contact_seen(msg.get("pubkey_prefix"), now)
+            rx = _best_recent_rx_for_message(
+                config_id, "dm", time.time(), sender_prefix=msg.get("pubkey_prefix")
+            )
             push_to_sse({
                 "type":       "mc_message",
                 "radio_id":   config_id,
@@ -433,6 +516,7 @@ def _subscribe_mc_events(mc, config_id, name):
         try:
             c = event.payload
             pubkey = c.get("public_key", "")
+            c["last_seen_ts"] = int(time.time())
             with mc_connections_lock:
                 if config_id in mc_connections:
                     mc_connections[config_id]["contacts"][pubkey] = c
@@ -471,6 +555,7 @@ def _subscribe_mc_events(mc, config_id, name):
     def on_status_response(event):
         try:
             p = event.payload
+            _touch_contact_seen(p.get("pubkey_pre"), int(time.time()))
             log.info(f"[MC:{name}] STATUS_RESPONSE from {p.get('pubkey_pre', '?')}")
             push_to_sse({
                 "type":         "mc_status_response",

@@ -1,9 +1,11 @@
 import json
 import queue
 import time
+import threading
 
 from flask import Blueprint, Response, jsonify, request
 
+from cross import maybe_forward_mt_message
 from db import save_message
 from helpers import _next_msg_id, get_node_name, push_to_sse
 from mesh import get_any_iface, get_any_iface_with_id, get_iface_by_radio
@@ -22,6 +24,8 @@ bp = Blueprint('chat', __name__)
 def api_chat_channels():
     radio_id = request.args.get("radio_id")
     iface = get_iface_by_radio(radio_id) if radio_id else get_any_iface()
+    if radio_id and not iface:
+        return jsonify({"error": "Radio not connected"}), 503
     if not iface:
         return jsonify([{"index": 0, "name": "Primary", "role": 1}])
     try:
@@ -108,6 +112,8 @@ def api_chat_send():
         pkt_id = sent.id if hasattr(sent, "id") else (sent.get("id") if isinstance(sent, dict) else None)
         # Resolve my own name
         my_name = "You"
+        local_node = None
+        local_node_id = None
         local_info = getattr(iface, "myInfo", None)
         local_num  = getattr(local_info, "my_node_num", None)
         if local_num and iface.nodes:
@@ -115,6 +121,7 @@ def api_chat_send():
             if local_node:
                 u = local_node.get("user", {})
                 my_name = u.get("longName") or u.get("shortName") or "You"
+                local_node_id = u.get("id")
         msg = {
             "id":        _next_msg_id(),
             "from_id":   "local",
@@ -136,6 +143,16 @@ def api_chat_send():
             with pending_acks_lock:
                 pending_acks[pkt_id] = (msg["id"], radio_id, time.time())
         push_to_sse(json.dumps(msg))
+        if not dest_id:
+            forward_msg = {
+                "from_id": local_node_id,
+                "from_name": my_name,
+                "channel": channel,
+                "text": text,
+                "is_dm": False,
+                "radio_id": radio_id,
+            }
+            threading.Thread(target=maybe_forward_mt_message, args=(forward_msg,), daemon=True).start()
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500

@@ -2,9 +2,11 @@ import os
 
 from flask import Blueprint, jsonify, request
 
-from config import CONFIG, save_config
+from config import CONFIG, CONFIG_LOCK, save_config
+from db import delete_channel_messages
+from helpers import push_to_sse
 from mesh import DEVICE_ROLES, LORA_REGIONS, MODEM_PRESETS, get_iface_by_radio
-from state import connections, connections_lock
+from state import chat_lock, chat_messages, connections, connections_lock
 import logging
 log = logging.getLogger(__name__)
 
@@ -356,12 +358,13 @@ def api_radio_config_position(radio_id):
 
             # Persist to config.json — survives OM service restarts
             if node_cfg_entry is not None:
-                node_cfg_entry["fixed_lat"] = lat
-                node_cfg_entry["fixed_lon"] = lon
-                node_cfg_entry["fixed_alt"] = alt
-                if precision is not None:
-                    node_cfg_entry["precision_bits"] = precision
-                save_config()
+                with CONFIG_LOCK:
+                    node_cfg_entry["fixed_lat"] = lat
+                    node_cfg_entry["fixed_lon"] = lon
+                    node_cfg_entry["fixed_alt"] = alt
+                    if precision is not None:
+                        node_cfg_entry["precision_bits"] = precision
+                    save_config()
 
         elif fixed is False:
             try:    iface.localNode.removeFixedPosition()
@@ -372,15 +375,17 @@ def api_radio_config_position(radio_id):
                     entry.pop("fixed_lat", None)
                     entry.pop("fixed_lon", None)
             if node_cfg_entry is not None:
-                for k in ("fixed_lat", "fixed_lon", "fixed_alt", "precision_bits"):
-                    node_cfg_entry.pop(k, None)
-                save_config()
+                with CONFIG_LOCK:
+                    for k in ("fixed_lat", "fixed_lon", "fixed_alt", "precision_bits"):
+                        node_cfg_entry.pop(k, None)
+                    save_config()
 
         elif fixed is None and precision is not None:
             # Precision-only change (fixed_position not being toggled, no coord update)
             if node_cfg_entry is not None:
-                node_cfg_entry["precision_bits"] = precision
-                save_config()
+                with CONFIG_LOCK:
+                    node_cfg_entry["precision_bits"] = precision
+                    save_config()
             try:
                 if local_num is not None and local_num in iface.nodesByNum:
                     iface.nodesByNum[local_num].setdefault("position", {})["precisionBits"] = precision
@@ -568,6 +573,35 @@ def api_radio_channel_set(radio_id, ch_index):
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/api/radio/<radio_id>/channels/<int:ch_index>/history", methods=["POST"])
+def api_radio_channel_history_clear(radio_id, ch_index):
+    if ch_index < 0 or ch_index > 7:
+        return jsonify({"error": "Channel index must be 0–7"}), 400
+    if not any(n.get("id") == radio_id for n in CONFIG.get("nodes", [])):
+        return jsonify({"error": "Radio not found"}), 404
+    try:
+        removed_db = delete_channel_messages(radio_id, ch_index)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    with chat_lock:
+        before = len(chat_messages)
+        chat_messages[:] = [
+            m for m in chat_messages
+            if not (
+                m.get("radio_id") == radio_id
+                and not m.get("is_dm")
+                and int(m.get("channel", 0) or 0) == ch_index
+            )
+        ]
+        removed_mem = before - len(chat_messages)
+    push_to_sse({
+        "type": "mt_channel_history_cleared",
+        "radio_id": radio_id,
+        "channel": ch_index,
+    })
+    return jsonify({"ok": True, "removed_db": removed_db, "removed_mem": removed_mem})
 
 
 @bp.route("/api/radio/<radio_id>/reboot", methods=["POST"])

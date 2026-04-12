@@ -12,7 +12,8 @@ import meshtastic.tcp_interface
 from pubsub import pub
 
 from bot import handle_bot_command
-from config import CONFIG, DATA_DIR, save_config
+from config import CONFIG, CONFIG_LOCK, DATA_DIR, save_config
+from cross import maybe_forward_mt_message
 from db import get_prefs_db, init_msgs_db, load_messages, save_message, update_message_status
 from helpers import _next_msg_id, _radio_id_for_iface, get_node_name, push_to_sse
 from sense import _sense_lock, _sense_state
@@ -237,6 +238,7 @@ def on_text_receive(packet, interface):
                 chat_messages.pop(0)
         save_message(msg)
         push_to_sse(json.dumps(msg))
+        threading.Thread(target=maybe_forward_mt_message, args=(dict(msg),), daemon=True).start()
         handle_bot_command(packet, interface)
     except Exception as e:
         log.warning(f"Chat receive error: {e}")
@@ -358,8 +360,9 @@ def connect_node(node_cfg):
         if msgs_db:
             node_cfg_live = next((n for n in CONFIG.get("nodes", []) if n["id"] == node_id), None)
             if node_cfg_live and node_cfg_live.get("msgs_db") != msgs_db:
-                node_cfg_live["msgs_db"] = msgs_db
-                save_config()
+                with CONFIG_LOCK:
+                    node_cfg_live["msgs_db"] = msgs_db
+                    save_config()
         log.info(f"[{node_id}] Connected.")
         if msgs_db:
             try:

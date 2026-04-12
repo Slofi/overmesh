@@ -3,10 +3,12 @@ import os
 import re
 import threading
 import time
+import uuid
 
 from flask import Blueprint, jsonify, request
 
-from config import CONFIG, DATA_DIR, save_config
+from config import CONFIG, CONFIG_LOCK, DATA_DIR, save_config
+from cross import _normalize_rule, get_cross_config
 from helpers import push_to_sse
 from mesh import connect_node
 from state import chat_lock, chat_messages, connections, connections_lock, mc_connections, mc_connections_lock
@@ -14,6 +16,15 @@ import logging
 log = logging.getLogger(__name__)
 
 bp = Blueprint('settings', __name__)
+
+
+def _has_any_mc_nodes():
+    return bool(CONFIG.get("mc_nodes", []))
+
+
+def _can_remove_mt_node():
+    """Allow removing the last MT radio only if the app still has MC radios configured."""
+    return len(CONFIG["nodes"]) > 1 or _has_any_mc_nodes()
 
 
 @bp.route("/api/settings/ports")
@@ -64,7 +75,7 @@ def api_settings_nodes_add():
         return jsonify({"error": "type must be 'serial' or 'tcp'"}), 400
     if not name:
         return jsonify({"error": "Name is required"}), 400
-    node_id  = f"node_{int(time.time())}"
+    node_id  = f"node_{uuid.uuid4().hex[:12]}"
     new_node = {"id": node_id, "name": name, "enabled": True, "type": node_type}
     if node_type == "tcp":
         host = (data.get("host") or "").strip()
@@ -86,15 +97,20 @@ def api_settings_nodes_add():
             return jsonify({"error": "Select a device"}), 400
         if usb_serial and any(n.get("usb_serial") == usb_serial for n in CONFIG["nodes"]):
             return jsonify({"error": "This device is already configured"}), 400
+        if usb_serial and any(n.get("usb_serial") == usb_serial for n in CONFIG.get("mc_nodes", [])):
+            return jsonify({"error": "This device is already configured as an MC node"}), 400
         if not usb_serial and any(n.get("port") == port and not n.get("usb_serial") for n in CONFIG["nodes"]):
             return jsonify({"error": f"Port {port} is already in use"}), 400
+        if not usb_serial and any(n.get("port") == port and not n.get("usb_serial") for n in CONFIG.get("mc_nodes", [])):
+            return jsonify({"error": f"Port {port} is already configured as an MC node"}), 400
         if usb_serial:
             new_node["usb_serial"] = usb_serial
             new_node["port"]       = port  # display only
         else:
             new_node["port"] = port
-    CONFIG["nodes"].append(new_node)
-    save_config()
+    with CONFIG_LOCK:
+        CONFIG["nodes"].append(new_node)
+        save_config()
     threading.Thread(target=connect_node, args=(new_node,), daemon=True).start()
     return jsonify({"ok": True, "id": node_id})
 
@@ -104,8 +120,8 @@ def api_settings_nodes_remove(node_id):
     node = next((n for n in CONFIG["nodes"] if n["id"] == node_id), None)
     if not node:
         return jsonify({"error": "Node not found"}), 404
-    if len(CONFIG["nodes"]) == 1:
-        return jsonify({"error": "Cannot remove the last radio"}), 400
+    if not _can_remove_mt_node():
+        return jsonify({"error": "Cannot remove the last MT radio unless at least one MC radio is configured"}), 400
     with connections_lock:
         state = connections.pop(node_id, None)
     if state and state.get("iface"):
@@ -113,8 +129,9 @@ def api_settings_nodes_remove(node_id):
             state["iface"].close()
         except Exception:
             pass
-    CONFIG["nodes"] = [n for n in CONFIG["nodes"] if n["id"] != node_id]
-    save_config()
+    with CONFIG_LOCK:
+        CONFIG["nodes"] = [n for n in CONFIG["nodes"] if n["id"] != node_id]
+        save_config()
     with chat_lock:
         chat_messages[:] = [m for m in chat_messages if m.get("radio_id") != node_id]
     push_to_sse(json.dumps({"type": "radio_removed", "radio_id": node_id}))
@@ -126,8 +143,8 @@ def api_settings_nodes_delete(node_id):
     node = next((n for n in CONFIG["nodes"] if n["id"] == node_id), None)
     if not node:
         return jsonify({"error": "Node not found"}), 404
-    if len(CONFIG["nodes"]) == 1:
-        return jsonify({"error": "Cannot delete the last radio"}), 400
+    if not _can_remove_mt_node():
+        return jsonify({"error": "Cannot delete the last MT radio unless at least one MC radio is configured"}), 400
     # Find db path from connections dict first, then fall back to config
     with connections_lock:
         state = connections.pop(node_id, None)
@@ -147,8 +164,9 @@ def api_settings_nodes_delete(node_id):
     if msgs_db and not re.match(r'^overmesh_msgs_[a-f0-9]{1,16}\.db$', msgs_db):
         log.warning(f"[{node_id}] Refusing to delete unexpected msgs_db path: {msgs_db}")
         msgs_db = None
-    CONFIG["nodes"] = [n for n in CONFIG["nodes"] if n["id"] != node_id]
-    save_config()
+    with CONFIG_LOCK:
+        CONFIG["nodes"] = [n for n in CONFIG["nodes"] if n["id"] != node_id]
+        save_config()
     with chat_lock:
         chat_messages[:] = [m for m in chat_messages if m.get("radio_id") != node_id]
     deleted_db = False
@@ -172,8 +190,9 @@ def api_settings_nodes_set_enabled(node_id):
     node = next((n for n in CONFIG["nodes"] if n["id"] == node_id), None)
     if not node:
         return jsonify({"error": "Node not found"}), 404
-    node["enabled"] = enabled
-    save_config()
+    with CONFIG_LOCK:
+        node["enabled"] = enabled
+        save_config()
     if not enabled:
         with connections_lock:
             iface_to_close = (connections[node_id].get("iface") if node_id in connections else None)
@@ -206,7 +225,8 @@ def api_settings_nodes_rename(node_id):
             with connections_lock:
                 if node_id in connections:
                     connections[node_id]["config"]["name"] = name
-            save_config()
+            with CONFIG_LOCK:
+                save_config()
             return jsonify({"ok": True})
     return jsonify({"error": "Node not found"}), 404
 
@@ -219,21 +239,66 @@ def api_settings_app_get():
 @bp.route("/api/settings/app", methods=["POST"])
 def api_settings_app_set():
     data = request.get_json(silent=True) or {}
-    if "app" not in CONFIG:
-        CONFIG["app"] = {}
-    try:
-        if "zoom" in data:
-            CONFIG["app"]["zoom"] = max(50, min(200, int(data["zoom"])))
-        if "sense_cooldown" in data:
-            CONFIG["app"]["sense_cooldown"] = max(1, min(3600, int(data["sense_cooldown"])))
-    except (TypeError, ValueError):
-        return jsonify({"error": "Invalid numeric value"}), 400
-    if "accent_color" in data:
-        val = str(data["accent_color"])
-        if re.match(r'^#[0-9a-fA-F]{6}$', val):
-            CONFIG["app"]["accent_color"] = val
-    save_config()
+    with CONFIG_LOCK:
+        if "app" not in CONFIG:
+            CONFIG["app"] = {}
+        try:
+            if "zoom" in data:
+                CONFIG["app"]["zoom"] = max(50, min(200, int(data["zoom"])))
+            if "sense_cooldown" in data:
+                CONFIG["app"]["sense_cooldown"] = max(1, min(3600, int(data["sense_cooldown"])))
+        except (TypeError, ValueError):
+            return jsonify({"error": "Invalid numeric value"}), 400
+        if "accent_color" in data:
+            val = str(data["accent_color"])
+            if re.match(r'^#[0-9a-fA-F]{6}$', val):
+                CONFIG["app"]["accent_color"] = val
+        for key in ("inapp_notify_messages", "inapp_notify_nodes", "inapp_notify_returned"):
+            if key in data:
+                CONFIG["app"][key] = bool(data[key])
+        save_config()
     return jsonify({"ok": True})
+
+
+@bp.route("/api/settings/cross", methods=["GET"])
+def api_settings_cross_get():
+    return jsonify(get_cross_config())
+
+
+@bp.route("/api/settings/cross", methods=["POST"])
+def api_settings_cross_set():
+    data = request.get_json(silent=True) or {}
+    rules_in = data.get("rules")
+    if rules_in is None:
+        rules_in = [data]
+    if not isinstance(rules_in, list):
+        return jsonify({"error": "rules must be a list"}), 400
+    mt_ids = {n.get("id") for n in CONFIG.get("nodes", [])}
+    mc_ids = {n.get("id") for n in CONFIG.get("mc_nodes", [])}
+    rules = []
+    for raw in rules_in:
+        rule = _normalize_rule(raw)
+        if not rule["source_radio_id"] or not rule["target_radio_id"]:
+            return jsonify({"error": "Each rule must have source and target radios"}), 400
+        if rule["source_radio_id"] == rule["target_radio_id"]:
+            return jsonify({"error": "Source and target radios must be on different systems"}), 400
+        source_net = rule["source_network"]
+        target_net = "mc" if source_net == "mt" else "mt"
+        if source_net == "mt":
+            if rule["source_radio_id"] not in mt_ids:
+                return jsonify({"error": f'Source radio {rule["source_radio_id"]} is not an MT radio'}), 400
+            if rule["target_radio_id"] not in mc_ids:
+                return jsonify({"error": f'Target radio {rule["target_radio_id"]} is not an MC radio'}), 400
+        else:
+            if rule["source_radio_id"] not in mc_ids:
+                return jsonify({"error": f'Source radio {rule["source_radio_id"]} is not an MC radio'}), 400
+            if rule["target_radio_id"] not in mt_ids:
+                return jsonify({"error": f'Target radio {rule["target_radio_id"]} is not an MT radio'}), 400
+        rules.append(rule)
+    with CONFIG_LOCK:
+        CONFIG["cross"] = {"rules": rules}
+        save_config()
+    return jsonify({"ok": True, "cross": {"rules": rules}})
 
 
 # ---------------------------------------------------------------------------
@@ -275,15 +340,20 @@ def api_settings_mc_nodes_add():
     # Also check MT nodes
     if usb_serial and any(n.get("usb_serial") == usb_serial for n in CONFIG.get("nodes", [])):
         return jsonify({"error": "This device is already configured as an MT node"}), 400
-    node_id  = f"mc_node_{int(time.time())}"
+    if not usb_serial and any(n.get("port") == port and not n.get("usb_serial") for n in mc_nodes):
+        return jsonify({"error": f"Port {port} is already configured as an MC node"}), 400
+    if not usb_serial and any(n.get("port") == port and not n.get("usb_serial") for n in CONFIG.get("nodes", [])):
+        return jsonify({"error": f"Port {port} is already configured as an MT node"}), 400
+    node_id  = f"mc_node_{uuid.uuid4().hex[:12]}"
     new_node = {"id": node_id, "name": name, "enabled": True}
     if usb_serial:
         new_node["usb_serial"] = usb_serial
         new_node["port"]       = port
     else:
         new_node["port"] = port
-    mc_nodes.append(new_node)
-    save_config()
+    with CONFIG_LOCK:
+        mc_nodes.append(new_node)
+        save_config()
     threading.Thread(target=connect_mc_node, args=(new_node,), daemon=True).start()
     return jsonify({"ok": True, "id": node_id})
 
@@ -303,8 +373,9 @@ def api_settings_mc_nodes_remove(node_id):
             run_mc(mc_obj.disconnect(), timeout=5)
         except Exception:
             pass
-    CONFIG["mc_nodes"] = [n for n in mc_nodes if n["id"] != node_id]
-    save_config()
+    with CONFIG_LOCK:
+        CONFIG["mc_nodes"] = [n for n in mc_nodes if n["id"] != node_id]
+        save_config()
     push_to_sse({"type": "mc_radio_removed", "radio_id": node_id})
     return jsonify({"ok": True})
 
@@ -317,8 +388,9 @@ def api_settings_mc_nodes_set_enabled(node_id):
     node = next((n for n in mc_nodes if n["id"] == node_id), None)
     if not node:
         return jsonify({"error": "MC node not found"}), 404
-    node["enabled"] = enabled
-    save_config()
+    with CONFIG_LOCK:
+        node["enabled"] = enabled
+        save_config()
     if not enabled:
         mc_obj = None
         with mc_connections_lock:

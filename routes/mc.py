@@ -7,7 +7,8 @@ import logging
 
 from flask import Blueprint, jsonify, request
 
-from config import CONFIG, save_config
+from config import CONFIG, CONFIG_LOCK, save_config
+from cross import maybe_forward_mc_message
 from helpers import push_to_sse
 from mesh_mc import (send_chan_msg, send_dm, send_advert, refresh_contacts,
                      get_device_info, set_radio_params, set_tx_power,
@@ -26,6 +27,10 @@ MC_SCAN_WINDOW = 60  # seconds
 
 log = logging.getLogger(__name__)
 bp  = Blueprint("mc", __name__)
+
+
+def _mc_contact_last_seen_ts(contact):
+    return int(contact.get("last_seen_ts") or contact.get("last_advert") or 0)
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +71,8 @@ def api_mc_contacts(radio_id):
     if refresh:
         try:
             refresh_contacts(radio_id)
+        except RuntimeError as e:
+            return jsonify({"error": str(e)}), 503
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -77,8 +84,9 @@ def api_mc_contacts(radio_id):
     contacts = []
     now = int(time.time())
     for pubkey, c in contacts_raw.items():
+        last_seen_ts = _mc_contact_last_seen_ts(c)
         last_advert = c.get("last_advert", 0)
-        delta = now - last_advert if last_advert else None
+        delta = now - last_seen_ts if last_seen_ts else None
         if delta is not None:
             if delta < 60:       last_seen = f"{delta}s ago"
             elif delta < 3600:   last_seen = f"{delta // 60}m ago"
@@ -95,6 +103,7 @@ def api_mc_contacts(radio_id):
             "latitude":    c.get("adv_lat") or None,
             "longitude":   c.get("adv_lon") or None,
             "last_advert": last_advert,
+            "last_seen_ts": last_seen_ts,
             "last_seen":   last_seen,
             "out_path_len":       c.get("out_path_len", -1),
             "out_path":           c.get("out_path", ""),
@@ -103,7 +112,7 @@ def api_mc_contacts(radio_id):
             "network":     "mc",
         })
 
-    contacts.sort(key=lambda x: x["last_advert"], reverse=True)
+    contacts.sort(key=lambda x: x["last_seen_ts"], reverse=True)
     return jsonify({"contacts": contacts, "radio_id": radio_id})
 
 
@@ -115,6 +124,8 @@ def api_mc_delete_contact(radio_id, contact_id):
         return jsonify({"ok": True})
     except ValueError as e:
         return jsonify({"error": str(e)}), 404
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 503
     except Exception as e:
         log.warning(f"[MC] delete contact {contact_id}: {e}")
         return jsonify({"error": str(e)}), 500
@@ -172,6 +183,14 @@ def api_mc_send_chan(radio_id):
     except Exception as e:
         log.warning(f"[MC] send_chan failed: {e}")
         return jsonify({"error": str(e)}), 500
+    threading.Thread(target=maybe_forward_mc_message, args=({
+        "radio_id": radio_id,
+        "subtype": "channel",
+        "channel": chan,
+        "from_id": "self",
+        "from_name": next((n.get("name") for n in CONFIG.get("mc_nodes", []) if n.get("id") == radio_id), radio_id),
+        "text": text,
+    },), daemon=True).start()
 
     return jsonify({"ok": True})
 
@@ -189,8 +208,10 @@ def api_mc_send_dm(radio_id):
 
     try:
         send_dm(radio_id, target, text)
-    except (RuntimeError, ValueError) as e:
+    except ValueError as e:
         return jsonify({"error": str(e)}), 400
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 503
     except Exception as e:
         log.warning(f"[MC] send_dm failed: {e}")
         return jsonify({"error": str(e)}), 500
@@ -251,8 +272,10 @@ def api_mc_statusreq(radio_id, node_id):
             return jsonify({"ok": True, "mode": "req_status_sync", "response": result})
         log.warning(f"[MC] statusreq sync returned no response: radio={radio_id} node={node_id[:12]}")
         return jsonify({"ok": True, "mode": "req_status_sync", "response": None})
-    except (RuntimeError, ValueError) as e:
+    except ValueError as e:
         return jsonify({"error": str(e)}), 400
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 503
     except Exception as e:
         log.warning(f"[MC] statusreq failed: {e}")
         return jsonify({"error": str(e)}), 500
@@ -265,6 +288,8 @@ def api_mc_advert(radio_id):
     flood = bool(data.get("flood", False))
     try:
         send_advert(radio_id, flood=flood)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 503
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     return jsonify({"ok": True})
@@ -334,11 +359,11 @@ def api_mc_set_radio(radio_id):
         if info is not None:
             info.update({"radio_freq": freq, "radio_bw": bw_khz,
                          "radio_sf": sf, "radio_cr": cr})
-        # Persist to config so params are re-applied on every connect
         cfg = state.get("config")
+    with CONFIG_LOCK:
         if cfg is not None:
             cfg["radio_params"] = {"freq": freq, "bw": bw_khz, "sf": sf, "cr": cr}
-    save_config()
+        save_config()
     return jsonify({"ok": True})
 
 
@@ -526,6 +551,9 @@ def api_mc_scan(radio_id):
         # Send flood advert
         try:
             send_advert(radio_id, flood=True)
+        except RuntimeError as e:
+            log.warning(f"[MC] scan advert unavailable: {e}")
+            return jsonify({"error": str(e)}), 503
         except Exception as e:
             log.warning(f"[MC] scan advert failed: {e}")
             return jsonify({"error": str(e)}), 500
@@ -573,7 +601,7 @@ def api_mc_trace(radio_id):
 def api_mc_debug_events(radio_id):
     """Enable catch-all event logging for this MC radio for 60s.
     Every event dispatched from the serial reader is logged at INFO — use to
-    diagnose missing STATUS_RESPONSE (ping) issues. Check /tmp/overmesh-mc.log."""
+    diagnose missing STATUS_RESPONSE (ping) issues. Check the active server log."""
     with mc_connections_lock:
         state = mc_connections.get(radio_id, {})
     if state.get("status") != "connected":

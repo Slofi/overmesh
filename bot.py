@@ -486,6 +486,10 @@ def _format_delta(delta_s):
     return f"{int(delta_s) // 86400}d ago"
 
 
+def _mc_contact_last_seen_ts(contact):
+    return int(contact.get("last_seen_ts") or contact.get("last_advert") or 0)
+
+
 def build_mc_sitrep(config_id):
     from state import mc_connections, mc_connections_lock
     with mc_connections_lock:
@@ -495,16 +499,16 @@ def build_mc_sitrep(config_id):
         return "👀 MC: 0 contacts"
     now = int(time.time())
     cutoff = now - 3600
-    online = sum(1 for c in contacts.values() if c.get("last_advert", 0) > cutoff)
-    recent = sorted(contacts.values(), key=lambda c: c.get("last_advert", 0), reverse=True)
+    recent_count = sum(1 for c in contacts.values() if _mc_contact_last_seen_ts(c) > cutoff)
+    recent = sorted(contacts.values(), key=_mc_contact_last_seen_ts, reverse=True)
     seen_lines = "\n".join(
-        f"{c.get('adv_name', '?')[:10]}, {_format_delta(now - c['last_advert'])}"
-        for c in recent[:3] if c.get("last_advert")
+        f"{c.get('adv_name', '?')[:10]}, {_format_delta(now - _mc_contact_last_seen_ts(c))}"
+        for c in recent[:3] if _mc_contact_last_seen_ts(c)
     )
     parts = []
     if seen_lines:
         parts.append(f"Last Seen:\n{seen_lines}")
-    parts.append(f"👀 MC Contacts: {total} | 🟢 Online: {online}")
+    parts.append(f"👀 MC Contacts: {total} | 🟢 Heard Recently: {recent_count}")
     return "\n\n".join(parts)
 
 
@@ -513,9 +517,13 @@ def build_mc_motd_text(cfg, config_id):
     with mc_connections_lock:
         contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
     cutoff = int(time.time()) - 3600
-    online = sum(1 for c in contacts.values() if c.get("last_advert", 0) > cutoff)
+    recent_count = sum(1 for c in contacts.values() if _mc_contact_last_seen_ts(c) > cutoff)
+    total = len(contacts)
     custom = cfg["motd"].get("message", "")
-    return f"Bot active | {online} MC contacts online" + (f" | {custom}" if custom else "")
+    return (
+        f"Bot active | MC: {recent_count} heard recently | {total} known contacts"
+        + (f" | {custom}" if custom else "")
+    )
 
 
 def send_mc_bot_response(config_id, text, chan_idx, dest_pre=None):
@@ -603,7 +611,7 @@ def handle_mc_bot_command(msg, config_id, subtype):
                         args=(config_id, response, channel, resp_dest),
                         daemon=True,
                     ).start()
-                    push_to_sse({"type": "mc_bot_reply", "radio_id": config_id, "to_name": from_name, "cmd": "relay", "text": response, "channel": channel})
+                    push_to_sse({"type": "mc_bot_reply", "radio_id": config_id, "to_id": resp_dest, "to_name": from_name, "cmd": "relay", "text": response, "channel": channel})
                     return
 
             resp_dest = from_pre if is_dm else None
@@ -613,7 +621,7 @@ def handle_mc_bot_command(msg, config_id, subtype):
                 daemon=True,
             ).start()
             log_bot_activity(from_name, "relay", response, channel)
-            push_to_sse({"type": "mc_bot_reply", "radio_id": config_id, "to_name": from_name, "cmd": "relay", "text": response, "channel": channel})
+            push_to_sse({"type": "mc_bot_reply", "radio_id": config_id, "to_id": resp_dest, "to_name": from_name, "cmd": "relay", "text": response, "channel": channel})
             return
 
         # --- Single-word commands ---
@@ -663,7 +671,7 @@ def handle_mc_bot_command(msg, config_id, subtype):
             daemon=True,
         ).start()
         log_bot_activity(from_name, cmd, response, channel)
-        push_to_sse({"type": "mc_bot_reply", "radio_id": config_id, "to_name": from_name, "cmd": cmd, "text": response, "channel": resp_ch})
+        push_to_sse({"type": "mc_bot_reply", "radio_id": config_id, "to_id": dest_pre, "to_name": from_name, "cmd": cmd, "text": response, "channel": resp_ch})
 
     except Exception as e:
         log.warning(f"[MCBot:{config_id}] command error: {e}")

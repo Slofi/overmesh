@@ -63,9 +63,9 @@ def api_send_waypoint():
         return jsonify({"error": "Valid coordinates required"}), 400
     if radio_id:
         iface = get_iface_by_radio(radio_id)
-        r_id  = radio_id if iface else None
         if not iface:
-            iface, r_id = get_any_iface_with_id()
+            return jsonify({"error": "Requested radio not connected"}), 503
+        r_id = radio_id
     else:
         iface, r_id = get_any_iface_with_id()
     if not iface:
@@ -175,8 +175,11 @@ def api_edit_waypoint(wp_id):
     desc      = raw_desc[:100 - len(coord_str)] + coord_str
     marker_emoji = (data.get("marker_emoji") or "📍").strip() or "📍"
     radio_id  = data.get("radio_id") or wp_data.get("radio_id") or ""
-    iface     = get_iface_by_radio(radio_id) if radio_id else None
-    if not iface:
+    if radio_id:
+        iface = get_iface_by_radio(radio_id)
+        if not iface:
+            return jsonify({"error": "Requested radio not connected"}), 503
+    else:
         iface, radio_id = get_any_iface_with_id()
     if not iface:
         return jsonify({"error": "No radio connected"}), 503
@@ -251,8 +254,12 @@ def api_delete_waypoint(wp_id):
     # Send mesh deletion packet on the same channel/destination it was originally sent to
     try:
         radio_id = (wp_data.get("radio_id") or "").strip() if wp_data else ""
-        iface = get_iface_by_radio(radio_id) if radio_id else None
-        if not iface:
+        if radio_id:
+            iface = get_iface_by_radio(radio_id)
+            if not iface:
+                log.warning(f"Mark delete skipped mesh broadcast: requested radio {radio_id} not connected")
+                iface = None
+        else:
             iface, _ = get_any_iface_with_id()
         if iface and wp_data:
             from meshtastic.protobuf import mesh_pb2, portnums_pb2
@@ -289,8 +296,11 @@ def api_rebroadcast_waypoint(wp_id):
         return jsonify({"error": "Mark not found"}), 404
     try:
         radio_id = (wp_data.get("radio_id") or "").strip()
-        iface = get_iface_by_radio(radio_id) if radio_id else None
-        if not iface:
+        if radio_id:
+            iface = get_iface_by_radio(radio_id)
+            if not iface:
+                return jsonify({"error": "Requested radio not connected"}), 503
+        else:
             iface, _ = get_any_iface_with_id()
         if not iface:
             return jsonify({"error": "No radio connected"}), 503

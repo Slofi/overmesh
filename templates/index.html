@@ -98,22 +98,76 @@
     .tab { position: relative; }
     .tab.has-unread::after {
       content: ''; position: absolute; top: 5px; right: 5px;
-      width: 7px; height: 7px; border-radius: 50%; background: var(--red);
-      box-shadow: 0 0 6px 2px rgba(248, 81, 73, 0.7);
-      animation: pulse-dot 1.5s ease-in-out infinite;
+      width: 7px; height: 7px; border-radius: 50%;
+      background: linear-gradient(180deg, var(--green), #166534);
+      box-shadow: 0 0 5px 2px rgba(74, 222, 128, 0.55), inset 0 0 0 1px rgba(255,255,255,0.06);
+      animation: pulse-dot-green 1.5s ease-in-out infinite;
     }
     .tab.has-mc-unread::before {
       content: ''; position: absolute; top: 5px; right: 14px;
-      width: 7px; height: 7px; border-radius: 50%; background: var(--mc-color);
-      box-shadow: 0 0 6px 2px rgba(56, 189, 248, 0.7);
-      animation: pulse-dot 1.5s ease-in-out infinite;
+      width: 7px; height: 7px; border-radius: 50%;
+      background: linear-gradient(180deg, var(--mc-color), #0369a1);
+      box-shadow: 0 0 5px 2px rgba(56, 189, 248, 0.55), inset 0 0 0 1px rgba(255,255,255,0.06);
+      animation: pulse-dot-blue 1.5s ease-in-out infinite;
     }
-    #chat-net-mc { position: relative; }
+    #chat-net-mt, #chat-net-mc { position: relative; }
+    #chat-net-mt.has-unread::after {
+      content: ''; position: absolute; top: 2px; right: 2px;
+      width: 6px; height: 6px; border-radius: 50%;
+      background: linear-gradient(180deg, var(--green), #166534);
+      box-shadow: 0 0 4px 1px rgba(74, 222, 128, 0.52), inset 0 0 0 1px rgba(255,255,255,0.06);
+      animation: pulse-dot-green 1.5s ease-in-out infinite;
+    }
     #chat-net-mc.has-mc-unread::after {
       content: ''; position: absolute; top: 2px; right: 2px;
-      width: 6px; height: 6px; border-radius: 50%; background: var(--mc-color);
-      box-shadow: 0 0 5px 1px rgba(56, 189, 248, 0.7);
-      animation: pulse-dot 1.5s ease-in-out infinite;
+      width: 6px; height: 6px; border-radius: 50%;
+      background: linear-gradient(180deg, var(--mc-color), #0369a1);
+      box-shadow: 0 0 4px 1px rgba(56, 189, 248, 0.52), inset 0 0 0 1px rgba(255,255,255,0.06);
+      animation: pulse-dot-blue 1.5s ease-in-out infinite;
+    }
+    #toast-stack {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      z-index: 4000;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+      max-width: min(340px, calc(100vw - 32px));
+    }
+    .toast {
+      pointer-events: auto;
+      background: rgba(13, 17, 23, 0.94);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+      padding: 10px 12px;
+      animation: toast-in 0.16s ease-out;
+    }
+    .toast.toast-node { border-left-color: var(--accent); }
+    .toast.toast-node-return { border-left-color: #f59e0b; }
+    .toast.toast-message { border-left-color: var(--mc-color); }
+    .toast-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 3px;
+    }
+    .toast-body {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.35;
+      word-break: break-word;
+    }
+    .toast-body b {
+      color: var(--text);
+      font-weight: 700;
+    }
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateY(-6px); }
+      to   { opacity: 1; transform: translateY(0); }
     }
 
     .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 5px; }
@@ -219,9 +273,10 @@
     .radio-btn.primary { color: var(--accent); }
     .radio-btn.has-unread::after {
       content: ''; position: absolute; top: 2px; right: 2px;
-      width: 7px; height: 7px; border-radius: 50%; background: var(--red);
-      box-shadow: 0 0 6px 2px rgba(248, 81, 73, 0.7);
-      animation: pulse-dot 1.5s ease-in-out infinite;
+      width: 7px; height: 7px; border-radius: 50%;
+      background: linear-gradient(180deg, var(--green), #166534);
+      box-shadow: 0 0 5px 2px rgba(74, 222, 128, 0.55), inset 0 0 0 1px rgba(255,255,255,0.06);
+      animation: pulse-dot-green 1.5s ease-in-out infinite;
     }
 
     /* Main content */
@@ -620,9 +675,15 @@
     .channel-tab.net-mc.active { border-color: var(--mc-color); color: var(--mc-color); background: var(--mc-dim); }
     .channel-tab.has-unread::after {
       content: ''; position: absolute; top: 3px; right: 3px;
-      width: 6px; height: 6px; border-radius: 50%; background: var(--red);
-      box-shadow: 0 0 5px 2px rgba(248, 81, 73, 0.7);
-      animation: pulse-dot 1.5s ease-in-out infinite;
+      width: 6px; height: 6px; border-radius: 50%;
+      background: linear-gradient(180deg, var(--green), #166534);
+      box-shadow: 0 0 4px 1px rgba(74, 222, 128, 0.52), inset 0 0 0 1px rgba(255,255,255,0.06);
+      animation: pulse-dot-green 1.5s ease-in-out infinite;
+    }
+    .channel-tab.net-mc.has-unread::after {
+      background: linear-gradient(180deg, var(--mc-color), #0369a1);
+      box-shadow: 0 0 4px 1px rgba(56, 189, 248, 0.52), inset 0 0 0 1px rgba(255,255,255,0.06);
+      animation: pulse-dot-blue 1.5s ease-in-out infinite;
     }
     .dm-tab-close {
       margin-left: 6px; font-size: 10px; opacity: 0.5; line-height: 1;
@@ -681,9 +742,13 @@
     .msg-status.pending   { color: var(--muted); }
     .msg-status.delivered { color: var(--accent); }
     .msg-status.failed    { color: var(--red); }
-    @keyframes pulse-dot {
-      0%, 100% { box-shadow: 0 0 5px 2px rgba(248, 81, 73, 0.7); }
-      50%       { box-shadow: 0 0 10px 5px rgba(248, 81, 73, 0.2); }
+    @keyframes pulse-dot-green {
+      0%, 100% { box-shadow: 0 0 5px 2px rgba(74, 222, 128, 0.55), inset 0 0 0 1px rgba(255,255,255,0.06); }
+      50%       { box-shadow: 0 0 9px 4px rgba(74, 222, 128, 0.16), inset 0 0 0 1px rgba(255,255,255,0.06); }
+    }
+    @keyframes pulse-dot-blue {
+      0%, 100% { box-shadow: 0 0 5px 2px rgba(56, 189, 248, 0.55), inset 0 0 0 1px rgba(255,255,255,0.06); }
+      50%       { box-shadow: 0 0 9px 4px rgba(56, 189, 248, 0.16), inset 0 0 0 1px rgba(255,255,255,0.06); }
     }
     .map-node-pulse {
       transform-box: fill-box;
@@ -1129,6 +1194,8 @@
 </head>
 <body>
 
+<div id="toast-stack"></div>
+
 <!-- Confirm modal -->
 <div id="confirm-modal" class="modal-overlay" onclick="if(event.target===this)confirmCancel()">
   <div class="modal-box" style="width:320px">
@@ -1197,7 +1264,7 @@
     <button id="shutdown-btn" onclick="togglePowerMenu(event)" title="Power options">&#x23FB; Power</button>
     <div id="power-menu">
       <button onclick="doRestart()" title="Restart the OverMesh server process">&#x21BA; Restart</button>
-      <button class="pm-danger" onclick="doShutdown()" title="Shut down the OverMesh server — use systemctl to restart">&#x23FB; Shutdown</button>
+      <button class="pm-danger" onclick="doShutdown()" title="Shut down the OverMesh server">&#x23FB; Shutdown</button>
     </div>
   </div>
   <div id="clock">
@@ -1397,7 +1464,7 @@
           <div id="sense-mc-stats" style="display:flex;gap:8px;margin-bottom:6px;flex-shrink:0;font-size:10px;color:var(--muted)">
             <span id="sense-mc-stat-total">0 contacts</span>
             <span style="color:var(--border)">·</span>
-            <span id="sense-mc-stat-online">0 online</span>
+            <span id="sense-mc-stat-online">0 heard recently</span>
             <span style="color:var(--border)">·</span>
             <span id="sense-mc-stat-gps">0 GPS</span>
           </div>
@@ -1756,6 +1823,7 @@
           <div style="display:flex;gap:8px;margin-top:12px">
             <button class="btn" onclick="saveNodeChannel()" title="Save channel settings to node">Save</button>
             <button class="btn" onclick="closeChEdit()" style="background:var(--bg3)" title="Discard changes">Cancel</button>
+            <button class="btn" onclick="clearNodeChannelHistory(_editingChIndex)" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted)" title="Delete saved chat history for this MT channel">Delete History</button>
             <button id="btn-ch-remove" class="btn" onclick="removeNodeChannel(_editingChIndex)" style="margin-left:auto;background:var(--bg3);border:1px solid var(--border);color:var(--muted)" title="Disable this channel and clear its name and key">Remove</button>
           </div>
           <div id="node-cfg-channels-status" style="font-size:12px;min-height:16px;margin-top:6px"></div>
@@ -1946,6 +2014,7 @@
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           <button class="btn" onclick="rebootNode()" style="background:var(--bg3);border:1px solid var(--border)" title="Remotely reboot this Meshtastic node">↺ Reboot node</button>
           <button class="btn" onclick="shutdownNode()" style="background:var(--bg3);border:1px solid #f87171;color:#f87171" title="Remotely shut down this node — requires physical power cycle to restart">⏻ Shutdown node</button>
+          <button class="btn" onclick="resetKnownNodesDb()" style="background:var(--bg3);border:1px solid #f59e0b;color:#f59e0b" title="Clear all remembered remote nodes for this selected radio from OverMesh history and live cache">⌫ Clear known nodes</button>
         </div>
         <div id="node-cfg-actions-status" style="font-size:12px;min-height:16px;margin-top:6px"></div>
 
@@ -2046,7 +2115,7 @@
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn" style="color:var(--red);border-color:var(--red)" onclick="rebootMcNode()" title="Send reboot command — may not be supported by all firmware versions">Reboot Device</button>
-        <button class="btn" id="mc-debug-btn" onclick="startMcDebugEvents()" title="Log all serial events for 60s — check /tmp/overmesh-mc.log to diagnose ping/status issues">Debug Events</button>
+        <button class="btn" id="mc-debug-btn" onclick="startMcDebugEvents()" title="Log all serial events for 60s — check the server log to diagnose ping/status issues">Debug Events</button>
       </div>
       <div id="mc-actions-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-top:6px"></div>
 
@@ -2073,6 +2142,7 @@
           <input id="mc-ch-key" class="settings-input" maxlength="32" style="width:240px;font-family:monospace" placeholder="32 hex chars — leave blank to auto-derive">
         </div>
         <button class="btn" onclick="setMcChannel()" title="Set the active channel on this MC device">Set</button>
+        <button class="btn" onclick="clearMcChannelHistory()" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted)" title="Delete saved chat history for this MC channel">Delete History</button>
       </div>
       <p class="network-section-note mc">Leave Key blank to auto-derive from name (SHA256). Provide a 32-char hex key to use a specific shared secret. Click a row above to edit that slot.</p>
       <div id="mc-channels-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-top:6px"></div>
@@ -2137,6 +2207,29 @@
       <div style="border-top:1px solid var(--border);margin:14px 0 10px 0"></div>
       <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Notifications</div>
       <div style="display:flex;flex-direction:column;gap:10px">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px">In-app</div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <label class="bot-toggle">
+            <input type="checkbox" id="inapp-notif-messages" onchange="saveInAppNotifPrefs()">
+            <span class="bot-toggle-slider"></span>
+          </label>
+          <span style="font-size:13px">New messages</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <label class="bot-toggle">
+            <input type="checkbox" id="inapp-notif-nodes" onchange="saveInAppNotifPrefs()">
+            <span class="bot-toggle-slider"></span>
+          </label>
+          <span style="font-size:13px">New node seen</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <label class="bot-toggle">
+            <input type="checkbox" id="inapp-notif-returned" onchange="saveInAppNotifPrefs()">
+            <span class="bot-toggle-slider"></span>
+          </label>
+          <span style="font-size:13px">Seen again after a long time</span>
+        </div>
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-top:4px">Browser</div>
         <div style="display:flex;align-items:center;gap:12px">
           <label class="bot-toggle">
             <input type="checkbox" id="notif-messages" onchange="saveNotifPrefs()">
@@ -2350,14 +2443,75 @@
     <div id="st-cross" style="display:none">
     <div class="settings-section">
       <h2 class="settings-title">Cross-system</h2>
-      <p style="color:var(--muted);font-size:12px;margin:0 0 10px">Features for running Meshtastic and MeshCore simultaneously.</p>
-      <div style="color:var(--muted);font-size:12px;padding:14px;background:var(--bg3);border-radius:6px;border:1px dashed var(--border);line-height:1.6">
-        Planned features:<br>
-        &bull; MT↔MC message bridge (relay messages between networks)<br>
-        &bull; Repeater mode (forward MT packets to MC and back)<br>
-        &bull; Unified contact book across both networks<br>
-        &bull; Cross-network bot commands<br><br>
-        <span style="color:var(--muted);font-size:11px">Not yet implemented.</span>
+      <p style="color:var(--muted);font-size:12px;margin:0 0 10px">Manual MT↔MC channel mirror / bridge. Forwarded messages are always tagged with source system and original sender.</p>
+      <div style="display:grid;gap:10px;max-width:760px">
+        <div id="cross-rules-list" style="display:grid;gap:8px"></div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button class="btn" onclick="crossNewRule()">New rule</button>
+          <button class="btn" onclick="crossSaveEditorRule()">Add / Update rule</button>
+          <span id="cross-settings-status" style="font-size:12px;color:var(--muted)"></span>
+        </div>
+        <div style="font-size:12px;color:var(--muted)">Rule editor</div>
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">
+          <label style="display:grid;gap:4px;font-size:12px">
+            <span>Mode</span>
+            <select id="cross-mode" onchange="_crossMarkDirty()">
+              <option value="mirror">Mirror</option>
+              <option value="bridge">Bridge</option>
+            </select>
+          </label>
+          <div style="font-size:12px;color:var(--muted);padding-top:22px">Mirror = one way. Bridge = both ways.</div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px">
+          <div style="display:grid;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg2)">
+            <div style="font-size:12px;font-weight:600;color:var(--text)">Source</div>
+            <label style="display:grid;gap:4px;font-size:12px">
+              <span>Source system</span>
+              <select id="cross-source-network" onchange="crossSourceNetworkChanged();_crossMarkDirty()">
+                <option value="mt">MT</option>
+                <option value="mc">MC</option>
+              </select>
+            </label>
+            <label style="display:grid;gap:4px;font-size:12px">
+              <span>Source radio</span>
+              <select id="cross-source-radio" onchange="crossSourceRadioChanged();_crossMarkDirty()"></select>
+            </label>
+            <label style="display:grid;gap:4px;font-size:12px">
+              <span>Source channel</span>
+              <select id="cross-source-channel" onchange="_crossMarkDirty()"></select>
+            </label>
+          </div>
+          <div style="display:grid;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg2)">
+            <div style="font-size:12px;font-weight:600;color:var(--text)">Target</div>
+            <label style="display:grid;gap:4px;font-size:12px">
+              <span id="cross-target-radio-label">Target radio</span>
+              <select id="cross-target-radio" onchange="crossTargetRadioChanged();_crossMarkDirty()"></select>
+            </label>
+            <label style="display:grid;gap:4px;font-size:12px">
+              <span>Target channel</span>
+              <select id="cross-target-channel" onchange="_crossMarkDirty()"></select>
+            </label>
+            <label style="display:grid;gap:4px;font-size:12px">
+              <span>Sender filter</span>
+              <select id="cross-sender-filter-mode" onchange="_crossMarkDirty()">
+                <option value="any">Any sender</option>
+                <option value="allow">Only these</option>
+                <option value="block">All except these</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <label style="display:grid;gap:4px;font-size:12px">
+          <span>Sender list</span>
+          <input type="text" id="cross-sender-filters" placeholder="Comma-separated names or IDs" oninput="_crossMarkDirty()">
+        </label>
+        <div style="color:var(--muted);font-size:11px;padding:12px;background:var(--bg3);border-radius:6px;border:1px solid var(--border);line-height:1.6">
+          <strong>Current scope:</strong> manual MT↔MC channel rules only.<br>
+          <strong>Mirror</strong> sends traffic one way, from the selected source channel to the selected target channel. Use it for monitoring, snooping, or copying one network into the other.<br>
+          <strong>Bridge</strong> links the two selected channels both ways, so messages from either side are forwarded to the other.<br>
+          <strong>Sender filter</strong> can limit forwarding to specific names/IDs, or exclude selected ones.<br>
+          Every forwarded message is clearly tagged with source system, original sender, and source channel, for example <code>[MT-&gt;MC Name / CH0]</code> or <code>[MC-&gt;MT Name / CH2]</code>.
+        </div>
       </div>
     </div>
     </div><!-- /st-cross -->
@@ -2408,6 +2562,7 @@
   let liveSort      = { col: 'last_heard_ts', dir: -1 };
   let _historyNodes = [];
   let dbSort        = { col: 'last_seen', dir: 'desc' };
+  let _appSettings  = {};
   let favFirst      = true;
   let dbFavFirst    = true;
   let showIgnored   = false;
@@ -2416,6 +2571,76 @@
   // ── Notifications ──────────────────────────────────────────────────────────
   let notifReady  = false;
   let prevNodeIds = new Set();
+  const INAPP_RETURNED_THRESHOLD_S = 7 * 24 * 3600;
+  const INAPP_NODE_RECENT_WINDOW_S = 120;
+  const _inAppToastSeen = new Map();
+  let _prevMtNodeSeen = new Map();
+
+  function _appPrefBool(key, fallback = true) {
+    if (_appSettings && typeof _appSettings[key] === 'boolean') return _appSettings[key];
+    return fallback;
+  }
+
+  function showToast(title, body, type = 'message', tag = '') {
+    const stack = document.getElementById('toast-stack');
+    if (!stack) return;
+    const now = Date.now();
+    if (tag) {
+      const prev = _inAppToastSeen.get(tag) || 0;
+      if (now - prev < 15000) return;
+      _inAppToastSeen.set(tag, now);
+    }
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.innerHTML = `<div class="toast-title">${escHtml(title)}</div><div class="toast-body">${body}</div>`;
+    stack.appendChild(toast);
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translateY(-4px)';
+      toast.style.transition = 'opacity 0.15s ease, transform 0.15s ease';
+      setTimeout(() => toast.remove(), 180);
+    }, 8000);
+  }
+
+  function maybeShowInAppMessage(title, body, tag) {
+    if (!_appPrefBool('inapp_notify_messages', true)) return;
+    showToast(title, body, 'message', tag);
+  }
+
+  function maybeShowInAppNodeSeen(title, body, tag) {
+    if (!_appPrefBool('inapp_notify_nodes', true)) return;
+    showToast(title, body, 'node', tag);
+  }
+
+  function maybeShowInAppNodeReturned(title, body, tag) {
+    if (!_appPrefBool('inapp_notify_returned', true)) return;
+    showToast(title, body, 'node-return', tag);
+  }
+
+  function saveInAppNotifPrefs() {
+    const payload = {
+      inapp_notify_messages: document.getElementById('inapp-notif-messages')?.checked ?? true,
+      inapp_notify_nodes: document.getElementById('inapp-notif-nodes')?.checked ?? true,
+      inapp_notify_returned: document.getElementById('inapp-notif-returned')?.checked ?? true,
+    };
+    Object.assign(_appSettings, payload);
+    fetch('/api/settings/app', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    }).catch(e => console.error('saveInAppNotifPrefs failed:', e));
+  }
+
+  function loadInAppNotifPrefs(cfg = null) {
+    const appCfg = cfg || _appSettings || {};
+    _appSettings = Object.assign({}, _appSettings || {}, appCfg);
+    const msgEl = document.getElementById('inapp-notif-messages');
+    const nodeEl = document.getElementById('inapp-notif-nodes');
+    const retEl = document.getElementById('inapp-notif-returned');
+    if (msgEl) msgEl.checked = _appPrefBool('inapp_notify_messages', true);
+    if (nodeEl) nodeEl.checked = _appPrefBool('inapp_notify_nodes', true);
+    if (retEl) retEl.checked = _appPrefBool('inapp_notify_returned', true);
+  }
 
   function sendNotif(title, body, tag, type) {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
@@ -2670,10 +2895,7 @@
         document.getElementById('chat-radio').textContent = '📡 ' + activeName;
       }).catch(() => {});
     } else {
-      const activeName = activeMcRadioId && mcLastStatus[activeMcRadioId]
-        ? mcLastStatus[activeMcRadioId].name
-        : Object.values(mcLastStatus).filter(s => s.status === 'connected').map(x => x.name).join(', ');
-      document.getElementById('chat-radio').textContent = '📡 ' + (activeName || 'No MC radio');
+      _updateMcChatRadioLabel();
       renderMcMessages();
       _updateMcInput();
     }
@@ -2704,6 +2926,8 @@
         if (data.status === 'connected') selectedRadioIds.add(data.radio_id);
         else selectedRadioIds.delete(data.radio_id);
         updateRadioSelector();
+        updateMcPills();
+        if (currentTab === 'chat') initChat();
         return;
       }
       if (data.type && data.type.startsWith('mc_')) {
@@ -2821,6 +3045,15 @@
           el.className = `msg-status ${data.success ? 'delivered' : 'failed'}`;
           el.textContent = data.success ? '✓' : '✗';
         });
+      } else if (data.type === 'mt_channel_history_cleared') {
+        const channel = parseInt(data.channel ?? 0);
+        chatMsgs = chatMsgs.filter(m => !(m.radio_id === data.radio_id && !m.is_dm && (m.channel ?? 0) === channel));
+        unreadChannels.delete(channel);
+        if (data.radio_id === activeRadioId) {
+          renderMessages();
+          renderChannelTabs();
+        }
+        updateUnreadDots();
       } else {
         if (!chatMsgs.find(m => m.id === data.id)) {
           chatMsgs.push(data);
@@ -2850,6 +3083,7 @@
             // Browser notification
             if (document.hidden || currentTab !== 'chat' || chatChannel !== msgCh) {
               const title = data.is_dm ? `DM from ${data.from_name}` : `${data.from_name} on CH${data.channel}`;
+              maybeShowInAppMessage(title, data.text, `toast-msg-${data.id}`);
               sendNotif(title, data.text, `msg-${data.id}`, 'message');
             }
           }
@@ -2955,13 +3189,8 @@
   function buildMsgEl(m) {
     const pad = n => String(n).padStart(2, '0');
     const d   = new Date(m.ts * 1000);
-    const now = new Date();
-    const isToday = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-    const datePrefix = isToday ? '' : `${pad(d.getDate())}.${pad(d.getMonth()+1)}. `;
-    const t   = `${datePrefix}${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    const snrStr = (!m.sent && m.snr != null)
-      ? ` · <span class="${m.snr >= 5 ? 'snr-good' : m.snr >= -5 ? 'snr-ok' : 'snr-bad'}">${m.snr} dB</span>`
-      : '';
+    const t   = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const snrStr = (!m.sent && m.snr != null) ? ` · ${m.snr} dB` : '';
     // Clickable sender name for received non-bot messages
     const senderSpan = (nodeId, name) =>
       nodeId && nodeId !== 'bot'
@@ -3061,6 +3290,7 @@
     if (!text) return;
     input.value = '';
     try {
+      if (await handleCrossCommand(text)) return;
       const isDmTab = typeof chatChannel === 'string' && chatChannel.startsWith('dm:');
       const payload = isDmTab
         ? { text, channel: 0, dest_id: chatChannel.slice(3), radio_id: activeRadioId }
@@ -3071,7 +3301,11 @@
         body: JSON.stringify(payload)
       });
       if (!r.ok) throw new Error(await r.text());
-    } catch(e) { console.error('Send failed:', e); }
+    } catch(e) {
+      input.value = text;
+      showAlert(String(e?.message || e || 'Send failed.'));
+      console.error('Send failed:', e);
+    }
   }
 
   function updateUnreadDots() {
@@ -3083,7 +3317,9 @@
       chatTabEl.classList.toggle('has-mc-unread', mcUnreadTabs.size   > 0 && (currentTab !== 'chat' || chatNetwork !== 'mc'));
     }
     // MC toggle button in chat toolbar — dot when MC has unread and MT pane is active
+    const btnMt = document.getElementById('chat-net-mt');
     const btnMc = document.getElementById('chat-net-mc');
+    if (btnMt) btnMt.classList.toggle('has-unread', unreadChannels.size > 0 && chatNetwork !== 'mt');
     if (btnMc) btnMc.classList.toggle('has-mc-unread', mcUnreadTabs.size > 0 && chatNetwork !== 'mc');
   }
 
@@ -3399,7 +3635,7 @@
         const name   = escHtml(c.long_name || c.id || '?');
         const sname  = escHtml((c.short_name || '?').slice(0,4).toUpperCase());
         const path   = (c.out_path_len != null && c.out_path_len >= 0) ? c.out_path_len : '—';
-        const last   = escHtml(c.last_seen || '—');
+        const last   = c.last_heard_ts ? senseTimeAgo(c.last_heard_ts) : escHtml(c.last_seen || '—');
         const rname  = escHtml(mcLastStatus[c._rid]?.name || mcLastStatus[c._rid]?.node_name || c._rid || '');
         const meta   = escHtml(`${mcTypeLabel(c.type ?? 0)}${rname ? ` · ${rname}` : ''}`);
         const pk     = jsSafe(c.full_key || c.id || '');
@@ -3532,7 +3768,7 @@
           ${n.is_ignored
             ? `<span class="unignore-btn" onclick="ignoreNode('${jsSafe(n.id)}', true)" title="Unignore">&#128683;</span>`
             : `<span class="ignore-btn"   onclick="ignoreNode('${jsSafe(n.id)}', false)" title="Ignore">&#128683;</span>`}
-          <span class="delete-btn" onclick="deleteNode('${jsSafe(n.id)}', '${jsSafe(n.long_name)}')" title="Remove from database">&#10005;</span>
+          <span class="delete-btn" onclick="deleteNode('${jsSafe(n.id)}', '${jsSafe(n.long_name)}')" title="Delete from device">&#10005;</span>
         </td>
       </tr>`).join('');
 
@@ -3545,7 +3781,7 @@
         const name      = escHtml(c.long_name || c.id || '?');
         const sname     = escHtml((c.short_name || '?').slice(0,4).toUpperCase());
         const path      = (c.out_path_len != null && c.out_path_len >= 0) ? c.out_path_len : '—';
-        const last      = escHtml(c.last_seen || '—');
+        const last      = c.last_heard_ts ? senseTimeAgo(c.last_heard_ts) : escHtml(c.last_seen || '—');
         const rname     = escHtml(mcLastStatus[c._rid]?.name || mcLastStatus[c._rid]?.node_name || c._rid || '');
         const meta      = escHtml(`${mcTypeLabel(c.type ?? 0)}${rname ? ` · ${rname}` : ''}`);
         const pk        = jsSafe(c.full_key || c.id || '');
@@ -3575,7 +3811,7 @@
   // ── Delete node ────────────────────────────────────────────────────────────
   function deleteNode(nodeId, name) {
     document.getElementById('confirm-ok').textContent = 'Delete';
-    showConfirm(`Remove "${name}" from the database?`, () => {
+    showConfirm(`Delete "${name}" from the device and OverMesh history?`, () => {
       fetch(`/api/db/node/${nodeId}`, { method: 'DELETE' })
         .then(r => {
           if (!r.ok) return;
@@ -3634,7 +3870,10 @@
                          && localStorage.getItem('mcHide') !== '1';
     if (!anyConnected) { el.style.display = 'none'; return; }
     let total = 0;
-    Object.values(mcContacts).forEach(rc => { total += Object.keys(rc).length; });
+    Object.entries(mcContacts).forEach(([rid, rc]) => {
+      if (mcLastStatus[rid]?.status !== 'connected') return;
+      total += Object.keys(rc).length;
+    });
     el.style.display = '';
     el.innerHTML = `Contacts: <span style="color:var(--mc-color)">${total}</span>`;
   }
@@ -3653,17 +3892,25 @@
       updateMapMarkers(nodes);
       updateHeaderNodeCount(nodes);
       updatePipMarkers(nodes);
-      // Node online detection
+      // Node seen / returned detection
+      const nowTs = Math.floor(Date.now() / 1000);
       const curIds = new Set(nodes.filter(n => n.id && !n.is_local).map(n => n.id));
       if (notifReady) {
-        curIds.forEach(id => {
+        nodes.filter(n => n.id && !n.is_local).forEach(n => {
+          const id = n.id;
+          const prevSeen = _prevMtNodeSeen.get(id) || 0;
+          const curSeen = n.last_heard_ts || 0;
           if (!prevNodeIds.has(id)) {
-            const n = nodes.find(x => x.id === id);
-            if (n) sendNotif('Node online', `${n.long_name} (${n.short_name}) appeared on mesh`, `node-${id}`, 'node');
+            const label = `${n.long_name} (${n.short_name})`;
+            maybeShowInAppNodeSeen('MT node seen', `<b>${escHtml(label)}</b>`, `toast-node-mt-${id}`);
+            sendNotif('Node online', `${label} appeared on mesh`, `node-${id}`, 'node');
+          } else if (prevSeen && curSeen > prevSeen && (curSeen - prevSeen) >= INAPP_RETURNED_THRESHOLD_S && (nowTs - curSeen) <= INAPP_NODE_RECENT_WINDOW_S) {
+            maybeShowInAppNodeReturned('MT node seen again', `<b>${escHtml(n.long_name)}</b> returned after a long gap`, `toast-node-return-mt-${id}`);
           }
         });
       }
       prevNodeIds = curIds;
+      _prevMtNodeSeen = new Map(nodes.filter(n => n.id && !n.is_local).map(n => [n.id, n.last_heard_ts || 0]));
       notifReady  = true;
     }).catch(e => console.error('loadLive failed', e));
     fetch('/api/status').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(status => {
@@ -3965,8 +4212,7 @@
       document.body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;color:var(--muted)">
         <div style="font-size:24px;color:var(--accent)">&#x23FB;</div>
         <div style="font-size:16px">OverMesh stopped.</div>
-        <div style="font-size:12px">Restart:</div>
-        <code style="color:var(--accent)">systemctl --user start overmesh</code>
+        <div style="font-size:12px;max-width:320px;text-align:center">Restart OverMesh using the same method you normally use on this machine.</div>
       </div>`;
     });
   }
@@ -5744,6 +5990,20 @@
     }, 80);
   }
 
+  function showMcNodeInList(id) {
+    switchTab('nodes');
+    setView('live');
+    setTimeout(() => {
+      const row = [...document.querySelectorAll('#live-tbody tr')].find(r => r.dataset.id === id) || null;
+      if (!row) return;
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      row.classList.remove('highlight-flash');
+      void row.offsetWidth;
+      row.classList.add('highlight-flash');
+      setTimeout(() => row.classList.remove('highlight-flash'), 4000);
+    }, 80);
+  }
+
   function markerColor(node) {
     if (node.is_local) return '#3b82f6';   // blue — local node
     if (!node.last_heard_ts) return '#6e7681';
@@ -6307,6 +6567,304 @@
 
   // ── Settings ───────────────────────────────────────────────────────────────
   let settingsInited = false;
+  let _crossSettings = {rules: []};
+  let _crossEditId = null;
+  let _crossChannelNames = {mt: {}, mc: {}};
+  let _crossLoadedOnce = false;
+  let _crossLoading = false;
+  let _crossDirty = false;
+
+  function _crossRuleBlank() {
+    return {
+      id: '',
+      enabled: true,
+      mode: 'mirror',
+      source_network: 'mt',
+      source_radio_id: '',
+      source_channel: 0,
+      target_radio_id: '',
+      target_channel: 0,
+      bidirectional: false,
+      sender_filter_mode: 'any',
+      sender_filters: '',
+    };
+  }
+
+  function _crossChannelLabel(net, radioId, idx) {
+    const n = (((_crossChannelNames || {})[net] || {})[radioId] || {})[idx];
+    return n || `CH${idx}`;
+  }
+
+  function _crossChannelOptions(net, radioId, selected = 0) {
+    return Array.from({length: 8}, (_, i) =>
+      `<option value="${i}" ${i === selected ? 'selected' : ''}>${escHtml(_crossChannelLabel(net, radioId, i))}</option>`
+    ).join('');
+  }
+
+  function _crossRadioEntries(net) {
+    if (net === 'mc') {
+      return Object.entries(mcLastStatus || {}).map(([id, s]) => ({
+        id,
+        name: s?.name || s?.node_name || id,
+        status: s?.status || 'disconnected',
+      }));
+    }
+    return Object.entries(lastStatus || {}).map(([id, s]) => ({
+      id,
+      name: s?.name || id,
+      status: s?.status || 'disconnected',
+    }));
+  }
+
+  function _crossRuleSummary(rule) {
+    const srcNet = (rule.source_network || 'mt').toUpperCase();
+    const dstNet = srcNet === 'MT' ? 'MC' : 'MT';
+    const srcRadio = (_crossRadioEntries(rule.source_network).find(r => r.id === rule.source_radio_id)?.name) || rule.source_radio_id || '—';
+    const dstRadio = (_crossRadioEntries(rule.source_network === 'mt' ? 'mc' : 'mt').find(r => r.id === rule.target_radio_id)?.name) || rule.target_radio_id || '—';
+    const srcCh = _crossChannelLabel(rule.source_network, rule.source_radio_id, parseInt(rule.source_channel || 0));
+    const dstCh = _crossChannelLabel(rule.source_network === 'mt' ? 'mc' : 'mt', rule.target_radio_id, parseInt(rule.target_channel || 0));
+    const arrow = rule.mode === 'bridge' ? '↔' : '→';
+    return `${srcNet} ${srcRadio} / ${srcCh} ${arrow} ${dstNet} ${dstRadio} / ${dstCh}`;
+  }
+
+  function renderCrossRulesList() {
+    const el = document.getElementById('cross-rules-list');
+    if (!el) return;
+    const rules = (_crossSettings && Array.isArray(_crossSettings.rules)) ? _crossSettings.rules : [];
+    if (!rules.length) {
+      el.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:10px 12px;border:1px dashed var(--border);border-radius:6px">No cross-system rules yet.</div>';
+      return;
+    }
+    el.innerHTML = rules.map(rule => `
+      <div style="padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg2);display:grid;gap:6px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+          <div style="font-size:13px;font-weight:600">${escHtml(_crossRuleSummary(rule))}</div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:11px;color:${rule.enabled ? 'var(--accent)' : 'var(--muted)'}">${rule.enabled ? 'enabled' : 'disabled'}</span>
+            <button class="btn-secondary" style="font-size:11px;padding:3px 8px" onclick="crossToggleRule('${jsSafe(rule.id)}')">${rule.enabled ? 'Disable' : 'Enable'}</button>
+            <button class="btn-secondary" style="font-size:11px;padding:3px 8px" onclick="crossEditRule('${jsSafe(rule.id)}')">Edit</button>
+            <button class="btn-secondary" style="font-size:11px;padding:3px 8px;color:var(--red);border-color:var(--red)" onclick="crossDeleteRule('${jsSafe(rule.id)}')">Delete</button>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--muted)">
+          ${escHtml(rule.mode === 'bridge' ? 'Bridge · both ways' : 'Mirror · one way')}
+          ${rule.sender_filter_mode !== 'any' ? ' · filtered senders' : ''}
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function _renderCrossRadioOptions(sourceNet, sourceRadioId = '', targetRadioId = '', sourceChannel = 0, targetChannel = 0) {
+    const targetNet = sourceNet === 'mt' ? 'mc' : 'mt';
+    const sourceSel = document.getElementById('cross-source-radio');
+    const targetSel = document.getElementById('cross-target-radio');
+    const targetLbl = document.getElementById('cross-target-radio-label');
+    const sourceChSel = document.getElementById('cross-source-channel');
+    const targetChSel = document.getElementById('cross-target-channel');
+    if (targetLbl) targetLbl.textContent = `Target radio (${targetNet.toUpperCase()})`;
+    const srcEntries = _crossRadioEntries(sourceNet);
+    const dstEntries = _crossRadioEntries(targetNet);
+    if (sourceSel) {
+      sourceSel.innerHTML = srcEntries.length
+        ? srcEntries.map(r => `<option value="${escHtml(r.id)}" ${r.id === sourceRadioId ? 'selected' : ''}>${escHtml(r.name)}${r.status !== 'connected' ? ' (' + escHtml(r.status) + ')' : ''}</option>`).join('')
+        : '<option value="">No radios</option>';
+    }
+    if (targetSel) {
+      targetSel.innerHTML = dstEntries.length
+        ? dstEntries.map(r => `<option value="${escHtml(r.id)}" ${r.id === targetRadioId ? 'selected' : ''}>${escHtml(r.name)}${r.status !== 'connected' ? ' (' + escHtml(r.status) + ')' : ''}</option>`).join('')
+        : '<option value="">No radios</option>';
+    }
+    const srcRadio = sourceSel?.value || sourceRadioId || srcEntries[0]?.id || '';
+    const dstRadio = targetSel?.value || targetRadioId || dstEntries[0]?.id || '';
+    if (sourceChSel) sourceChSel.innerHTML = _crossChannelOptions(sourceNet, srcRadio, parseInt(sourceChannel || 0));
+    if (targetChSel) targetChSel.innerHTML = _crossChannelOptions(targetNet, dstRadio, parseInt(targetChannel || 0));
+  }
+
+  function crossSourceNetworkChanged() {
+    const srcNet = document.getElementById('cross-source-network')?.value || 'mt';
+    _renderCrossRadioOptions(srcNet);
+  }
+
+  function crossSourceRadioChanged() {
+    const srcNet = document.getElementById('cross-source-network')?.value || 'mt';
+    _renderCrossRadioOptions(srcNet,
+      document.getElementById('cross-source-radio')?.value || '',
+      document.getElementById('cross-target-radio')?.value || '',
+      parseInt(document.getElementById('cross-source-channel')?.value || '0'),
+      parseInt(document.getElementById('cross-target-channel')?.value || '0'));
+  }
+
+  function crossTargetRadioChanged() {
+    const srcNet = document.getElementById('cross-source-network')?.value || 'mt';
+    _renderCrossRadioOptions(srcNet,
+      document.getElementById('cross-source-radio')?.value || '',
+      document.getElementById('cross-target-radio')?.value || '',
+      parseInt(document.getElementById('cross-source-channel')?.value || '0'),
+      parseInt(document.getElementById('cross-target-channel')?.value || '0'));
+  }
+
+  async function _loadCrossChannelNames(mtStatus, mcStatus) {
+    const out = {
+      mt: Object.assign({}, (_crossChannelNames && _crossChannelNames.mt) || {}),
+      mc: Object.assign({}, (_crossChannelNames && _crossChannelNames.mc) || {}),
+    };
+    const mtIds = Object.keys(mtStatus || {});
+    const mcIds = Object.keys(mcStatus || {});
+    await Promise.all(mtIds.map(async rid => {
+      try {
+        const r = await fetch(`/api/chat/channels?radio_id=${encodeURIComponent(rid)}`);
+        if (!r.ok) return;
+        const rows = await r.json();
+        out.mt[rid] = Object.assign({}, out.mt[rid] || {});
+        (rows || []).forEach(ch => { out.mt[rid][ch.index] = ch.name || `CH${ch.index}`; });
+      } catch(_) {}
+    }));
+    await Promise.all(mcIds.map(async rid => {
+      try {
+        const r = await fetch(`/api/mc/${encodeURIComponent(rid)}/channels`);
+        if (!r.ok) return;
+        const rows = await r.json();
+        out.mc[rid] = Object.assign({}, out.mc[rid] || {});
+        (rows.channels || []).forEach(ch => { out.mc[rid][ch.idx] = ch.name || `CH${ch.idx}`; });
+      } catch(_) {}
+    }));
+    return out;
+  }
+
+  function _crossRuleFromEditor() {
+    const ruleId = _crossEditId || `cross_local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const existing = ((_crossSettings && _crossSettings.rules) || []).find(r => r.id === ruleId);
+    const mode = document.getElementById('cross-mode')?.value || 'mirror';
+    return {
+      id: ruleId,
+      enabled: existing ? existing.enabled !== false : true,
+      mode,
+      bidirectional: mode === 'bridge',
+      source_network: document.getElementById('cross-source-network')?.value || 'mt',
+      source_radio_id: document.getElementById('cross-source-radio')?.value || '',
+      source_channel: parseInt(document.getElementById('cross-source-channel')?.value || '0'),
+      target_radio_id: document.getElementById('cross-target-radio')?.value || '',
+      target_channel: parseInt(document.getElementById('cross-target-channel')?.value || '0'),
+      sender_filter_mode: document.getElementById('cross-sender-filter-mode')?.value || 'any',
+      sender_filters: document.getElementById('cross-sender-filters')?.value || '',
+    };
+  }
+
+  function _crossFillEditor(rule = null) {
+    const r = Object.assign(_crossRuleBlank(), rule || {});
+    _crossEditId = r.id || null;
+    const sourceNet = r.source_network || 'mt';
+    document.getElementById('cross-mode').value = r.mode || 'mirror';
+    document.getElementById('cross-source-network').value = sourceNet;
+    document.getElementById('cross-sender-filter-mode').value = r.sender_filter_mode || 'any';
+    document.getElementById('cross-sender-filters').value = r.sender_filters || '';
+    _renderCrossRadioOptions(sourceNet, r.source_radio_id || '', r.target_radio_id || '', parseInt(r.source_channel || 0), parseInt(r.target_channel || 0));
+    _crossDirty = false;
+  }
+
+  function crossNewRule() {
+    _crossFillEditor(_crossRuleBlank());
+  }
+
+  function crossEditRule(ruleId) {
+    const rule = ((_crossSettings && _crossSettings.rules) || []).find(r => r.id === ruleId);
+    if (!rule) return;
+    _crossFillEditor(rule);
+  }
+
+  function crossDeleteRule(ruleId) {
+    _crossSettings.rules = ((_crossSettings && _crossSettings.rules) || []).filter(r => r.id !== ruleId);
+    if (_crossEditId === ruleId) crossNewRule();
+    renderCrossRulesList();
+    const statusEl = document.getElementById('cross-settings-status');
+    if (statusEl) statusEl.textContent = 'Saving...';
+    saveCrossSettings();
+  }
+
+  function crossToggleRule(ruleId) {
+    const rules = ((_crossSettings && _crossSettings.rules) || []).slice();
+    const idx = rules.findIndex(r => r.id === ruleId);
+    if (idx < 0) return;
+    rules[idx] = Object.assign({}, rules[idx], { enabled: !rules[idx].enabled });
+    _crossSettings.rules = rules;
+    renderCrossRulesList();
+    const statusEl = document.getElementById('cross-settings-status');
+    if (statusEl) statusEl.textContent = 'Saving...';
+    saveCrossSettings();
+  }
+
+  async function crossSaveEditorRule() {
+    const statusEl = document.getElementById('cross-settings-status');
+    const rule = _crossRuleFromEditor();
+    if (!rule.source_radio_id || !rule.target_radio_id) {
+      if (statusEl) statusEl.textContent = 'Select both source and target radios.';
+      return;
+    }
+    const rules = ((_crossSettings && _crossSettings.rules) || []).slice();
+    const idx = rules.findIndex(r => r.id === rule.id);
+    if (idx >= 0) rules[idx] = rule;
+    else rules.push(rule);
+    _crossSettings.rules = rules;
+    renderCrossRulesList();
+    _crossFillEditor(rule);
+    if (statusEl) statusEl.textContent = 'Saving...';
+    await saveCrossSettings();
+  }
+
+  async function loadCrossSettings() {
+    const statusEl = document.getElementById('cross-settings-status');
+    if (_crossLoading) return;
+    _crossLoading = true;
+    try {
+      const [mtResp, mcResp, crossResp] = await Promise.all([
+        fetch('/api/status'),
+        fetch('/api/mc/status'),
+        fetch('/api/settings/cross'),
+      ]);
+      if (!mtResp.ok || !mcResp.ok || !crossResp.ok) throw new Error('settings load failed');
+      const mt = await mtResp.json();
+      const mc = await mcResp.json();
+      const cfg = await crossResp.json();
+      lastStatus = mt || {};
+      const mcMap = {};
+      (mc.mc_nodes || []).forEach(n => { mcMap[n.id] = n; });
+      mcLastStatus = mcMap;
+      _crossChannelNames = await _loadCrossChannelNames(lastStatus, mcMap);
+      _crossSettings = {rules: Array.isArray(cfg.rules) ? cfg.rules : []};
+      renderCrossRulesList();
+      _crossFillEditor(_crossSettings.rules[0] || _crossRuleBlank());
+      _crossLoadedOnce = true;
+      if (statusEl) statusEl.textContent = '';
+    } catch (e) {
+      if (statusEl) statusEl.textContent = 'Cross-system settings load failed.';
+      console.error('loadCrossSettings failed:', e);
+    } finally {
+      _crossLoading = false;
+    }
+  }
+
+  async function saveCrossSettings() {
+    const statusEl = document.getElementById('cross-settings-status');
+    const payload = { rules: (_crossSettings && _crossSettings.rules) || [] };
+    if (statusEl) statusEl.textContent = 'Saving...';
+    try {
+      const r = await fetch('/api/settings/cross', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.error) throw new Error(data.error || r.status);
+      _crossSettings = data.cross || {rules: payload.rules || []};
+      renderCrossRulesList();
+      _crossFillEditor(_crossSettings.rules.find(r => r.id === _crossEditId) || _crossSettings.rules[0] || _crossRuleBlank());
+      if (statusEl) statusEl.textContent = 'Saved.';
+      _crossDirty = false;
+    } catch (e) {
+      if (statusEl) statusEl.textContent = String(e.message || e);
+      console.error('saveCrossSettings failed:', e);
+    }
+  }
 
   function switchSettingsTab(name) {
     ['mt', 'mc', 'app', 'cross'].forEach(t => {
@@ -6319,6 +6877,7 @@
       if (!sel.options.length || !sel.options[0].value) settingsMcScanPorts();
       loadMcNodeSettings();
     }
+    if (name === 'cross' && !_crossLoadedOnce) loadCrossSettings();
   }
 
   function initSettings() {
@@ -6326,6 +6885,7 @@
     settingsLoadNodes();
     loadMcSettingsNodes();
     loadNotifPrefs();
+    loadInAppNotifPrefs();
     loadExtMapPref();
     loadNodeCfgRadios();
     document.getElementById('tile-autocache-toggle').checked = _autoCacheTiles;
@@ -6335,8 +6895,10 @@
     loadGpsSettings();
     if (!settingsInited) {
       settingsInited = true;
+      if (localStorage.getItem('settingsTab') !== 'cross' && !_crossLoadedOnce) loadCrossSettings();
       settingsScanPorts();
       fetch('/api/settings/app').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(cfg => {
+        loadInAppNotifPrefs(cfg);
         settingsApplyZoom(cfg.zoom || 100);
         const cd = cfg.sense_cooldown || 180;
         document.getElementById('settings-sense-cooldown').value = cd;
@@ -6345,6 +6907,10 @@
         applyAccentColor(ac);
       }).catch(e => console.error('settings/app fetch failed:', e));
     }
+  }
+
+  function _crossMarkDirty() {
+    _crossDirty = true;
   }
 
   function settingsRefresh() {
@@ -6671,6 +7237,177 @@
   function _mcLocalMsgId() {
     return `mc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }
+
+  function _parseCrossCommand(text) {
+    const m = (text || '').trim().match(/^\/(mt|mc)(?:\s+|)([@#][^\s]+)\s+([\s\S]+)$/i);
+    if (!m) return null;
+    return {
+      network: m[1].toLowerCase(),
+      target: m[2],
+      text: (m[3] || '').trim(),
+    };
+  }
+
+  function _crossNormTarget(s) {
+    return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  }
+
+  function _crossPickBestTarget(raw, entries, label) {
+    const qRaw = String(raw || '').trim().toLowerCase();
+    const qNorm = _crossNormTarget(raw);
+    const scored = [];
+    entries.forEach(entry => {
+      let best = 0;
+      (entry.keys || []).forEach(k => {
+        const rawKey = String(k || '').trim().toLowerCase();
+        const normKey = _crossNormTarget(k);
+        if (!rawKey) return;
+        if (rawKey === qRaw) best = Math.max(best, 100);
+        else if (normKey && normKey === qNorm) best = Math.max(best, 95);
+        else if (rawKey.startsWith(qRaw)) best = Math.max(best, 80);
+        else if (normKey && qNorm && normKey.startsWith(qNorm)) best = Math.max(best, 75);
+        else if (rawKey.includes(qRaw)) best = Math.max(best, 60);
+        else if (normKey && qNorm && normKey.includes(qNorm)) best = Math.max(best, 55);
+      });
+      if (best > 0) scored.push({score: best, entry});
+    });
+    if (!scored.length) return { error: `${label} "${raw}" not found.` };
+    scored.sort((a, b) => b.score - a.score || String(a.entry.display || '').localeCompare(String(b.entry.display || '')));
+    if (scored.length > 1 && scored[0].score === scored[1].score) {
+      const names = scored.slice(0, 3).map(x => x.entry.display).join(', ');
+      return { error: `${label} "${raw}" is ambiguous: ${names}` };
+    }
+    return scored[0].entry;
+  }
+
+  function _resolveMtCommandTarget(token, radioId = null) {
+    if (!token) return { error: 'Missing MT target.' };
+    if (token.startsWith('#')) {
+      const ch = parseInt(token.slice(1), 10);
+      if (!Number.isInteger(ch) || ch < 0 || ch > 7) return { error: 'MT channel must be 0-7.' };
+      return { kind: 'channel', channel: ch };
+    }
+    if (!token.startsWith('@')) return { error: 'MT target must start with @ or #.' };
+    const raw = token.slice(1).trim();
+    if (!raw) return { error: 'Missing MT target name.' };
+    const entries = (allNodes || [])
+      .filter(n => !radioId || n.radio_id === radioId)
+      .map(n => ({
+      dest_id: n.id,
+      to_name: n.long_name || n.short_name || n.id,
+      display: n.long_name || n.short_name || n.id,
+      keys: [n.id, n.long_name, n.short_name],
+    }));
+    const match = _crossPickBestTarget(raw, entries, 'MT target');
+    if (match.error) return match;
+    return { kind: 'dm', dest_id: match.dest_id, to_name: match.to_name };
+  }
+
+  function _resolveMcCommandTarget(token) {
+    if (!token) return { error: 'Missing MC target.' };
+    if (token.startsWith('#')) {
+      const ch = parseInt(token.slice(1), 10);
+      if (!Number.isInteger(ch) || ch < 0 || ch > 7) return { error: 'MC channel must be 0-7.' };
+      return { kind: 'channel', channel: ch };
+    }
+    if (!token.startsWith('@')) return { error: 'MC target must start with @ or #.' };
+    const raw = token.slice(1).trim();
+    if (!raw) return { error: 'Missing MC target name.' };
+    const entries = [];
+    const radios = activeMcRadioId ? [activeMcRadioId, ...Object.keys(mcContacts).filter(id => id !== activeMcRadioId)] : Object.keys(mcContacts);
+    for (const rid of radios) {
+      const contacts = mcContacts[rid] || {};
+      for (const [pre, c] of Object.entries(contacts)) {
+        entries.push({
+          kind: 'dm',
+          target: pre,
+          to_name: c.long_name || c.id || pre,
+          radio_id: rid,
+          display: `${c.long_name || c.id || pre} (${mcLastStatus[rid]?.name || rid})`,
+          keys: [pre, c.full_key, c.id, c.long_name, c.short_name],
+        });
+      }
+    }
+    const match = _crossPickBestTarget(raw, entries, 'MC target');
+    if (match.error) return match;
+    return { kind: 'dm', target: match.target, to_name: match.to_name, radio_id: match.radio_id };
+  }
+
+  async function _sendMtCommand(target, text) {
+    if (!activeRadioId) throw new Error('No active MT radio.');
+    const payload = target.kind === 'dm'
+      ? { text, channel: 0, dest_id: target.dest_id, radio_id: activeRadioId }
+      : { text, channel: target.channel, radio_id: activeRadioId };
+    const r = await fetch('/api/chat/send', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    if (!r.ok) throw new Error(await r.text());
+  }
+
+  function _queueMcLocalMessage(radioId, text, opts = {}) {
+    const msgId = _mcLocalMsgId();
+    mcMessages.push({
+      id: msgId,
+      type: 'mc_message',
+      radio_id: radioId,
+      radio_name: mcLastStatus[radioId]?.name || '',
+      network: 'mc',
+      subtype: opts.kind === 'dm' ? 'dm' : 'channel',
+      channel: opts.kind === 'channel' ? opts.channel : undefined,
+      from_id: 'me',
+      to_id: opts.kind === 'dm' ? opts.target : undefined,
+      text,
+      ts: Math.floor(Date.now()/1000),
+      sent: true,
+      status: 'pending',
+    });
+    _saveMcMessages();
+    renderMcMessages();
+    return msgId;
+  }
+
+  async function _sendMcCommand(target, text) {
+    const radioId = target.radio_id || activeMcRadioId;
+    if (!radioId) throw new Error('No active MC radio.');
+    const msgId = _queueMcLocalMessage(radioId, text, target);
+    try {
+      const endpoint = target.kind === 'dm'
+        ? `/api/mc/${encodeURIComponent(radioId)}/send_dm`
+        : `/api/mc/${encodeURIComponent(radioId)}/send_chan`;
+      const body = target.kind === 'dm'
+        ? { target: target.target, text }
+        : { text, channel: target.channel };
+      const r = await fetch(endpoint, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.error) throw new Error(data.error || r.status);
+      _setMcMsgStatus(msgId, 'delivered');
+    } catch (e) {
+      _setMcMsgStatus(msgId, 'failed');
+      throw e;
+    }
+  }
+
+  async function handleCrossCommand(rawText) {
+    const cmd = _parseCrossCommand(rawText);
+    if (!cmd) return false;
+    if (!cmd.text) throw new Error('Message text required.');
+    if (cmd.network === 'mt') {
+      const target = _resolveMtCommandTarget(cmd.target, activeRadioId);
+      if (target.error) throw new Error(target.error);
+      await _sendMtCommand(target, cmd.text);
+      return true;
+    }
+    const target = _resolveMcCommandTarget(cmd.target);
+    if (target.error) throw new Error(target.error);
+    await _sendMcCommand(target, cmd.text);
+    return true;
+  }
   function _setMcMsgStatus(msgId, status) {
     const m = mcMessages.find(x => x.id === msgId);
     if (!m) return;
@@ -6848,9 +7585,20 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
 
   function switchMcRadio(id) {
     activeMcRadioId = id;
+    localStorage.setItem('activeMcRadioId', id);
     updateMcPills();
+    if (currentTab === 'chat' && chatNetwork === 'mc') _updateMcChatRadioLabel();
     renderMcMessages();
     if (currentTab === 'nodes') renderLive();
+  }
+
+  function _updateMcChatRadioLabel() {
+    const radioEl = document.getElementById('chat-radio');
+    if (!radioEl) return;
+    const activeName = activeMcRadioId && mcLastStatus[activeMcRadioId]
+      ? mcLastStatus[activeMcRadioId].name
+      : Object.values(mcLastStatus).filter(s => s.status === 'connected').map(x => x.name).join(', ');
+    radioEl.textContent = '📡 ' + (activeName || 'No MC radio');
   }
 
   // -- SSE events from backend (mc_status, mc_node, mc_message) --
@@ -6887,14 +7635,8 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
             if (!mcContacts[data.radio_id]) mcContacts[data.radio_id] = {};
             (cd.contacts || []).forEach(c => { mcContacts[data.radio_id][c.id] = c; });
             // Update any DM tab names that are still showing the raw prefix
-            Object.keys(mcDmContacts).forEach(pre => {
-              if (mcDmContacts[pre] === pre) {
-                const c = (mcContacts[data.radio_id] || {})[pre];
-                if (c?.long_name) mcDmContacts[pre] = c.long_name;
-              }
-            });
+            _mcRefreshDmContactNames(data.radio_id);
             renderMcMapMarkers();
-            renderMcChatTabs();
             if (currentTab === 'nodes') renderLive();
           }).catch(() => {});
         // Fetch channel names
@@ -6930,6 +7672,18 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       if (_prevContact.latitude  != null && _merged.latitude  == null) _merged.latitude  = _prevContact.latitude;
       if (_prevContact.longitude != null && _merged.longitude == null) _merged.longitude = _prevContact.longitude;
       mcContacts[data.radio_id][data.id] = _merged;
+      const prevSeenTs = _mcContactSeenTs(_prevContact);
+      const curSeenTs = _mcContactSeenTs(_merged);
+      const nowTs = Math.floor(Date.now() / 1000);
+      const contactLabel = _merged.long_name || _merged.name || data.id || '?';
+      if (notifReady) {
+        if (isNew) {
+          maybeShowInAppNodeSeen('MC contact seen', `<b>${escHtml(contactLabel)}</b>`, `toast-node-mc-${data.radio_id}-${data.id}`);
+        } else if (prevSeenTs && curSeenTs > prevSeenTs && (curSeenTs - prevSeenTs) >= INAPP_RETURNED_THRESHOLD_S && (nowTs - curSeenTs) <= INAPP_NODE_RECENT_WINDOW_S) {
+          maybeShowInAppNodeReturned('MC contact seen again', `<b>${escHtml(contactLabel)}</b> returned after a long gap`, `toast-node-return-mc-${data.radio_id}-${data.id}`);
+        }
+      }
+      _mcRefreshDmContactNames(data.radio_id);
       if (_mcScanActive && data.radio_id === _mcScanRadioId && isNew) _mcScanNewCount++;
       if (currentTab === 'nodes') renderLive();
       renderMcMapMarkers();
@@ -7011,6 +7765,13 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       return;
     }
     if (data.type === 'mc_message') {
+      _mcTouchContactActivity(data.radio_id, data.from_id, {
+        out_path_len: data.path_len,
+        out_path: data.path,
+        out_path_hash_size: data.path_hash_size,
+        snr: data.rx_snr,
+        rssi: data.rx_rssi,
+      });
       mcMessages.push(data);
       if (mcMessages.length > 500) mcMessages.splice(0, mcMessages.length - 500);
       _saveMcMessages();
@@ -7023,6 +7784,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
             const extracted = data.text.slice(0, colon);
             if (!mcContacts[data.radio_id]) mcContacts[data.radio_id] = {};
             mcContacts[data.radio_id][data.from_id] = { ...c, long_name: extracted, short_name: extracted.slice(0,4).toUpperCase() };
+            _mcRefreshDmContactNames(data.radio_id);
           }
         }
       }
@@ -7045,6 +7807,16 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       if (msgTab && !data.sent && (currentTab !== 'chat' || chatNetwork !== 'mc' || mcChatTab !== msgTab)) {
         mcUnreadTabs.add(msgTab);
         updateUnreadDots();
+      }
+      if (!data.sent) {
+        const currentMcTab = (currentTab === 'chat' && chatNetwork === 'mc') ? mcChatTab : null;
+        if (document.hidden || currentMcTab !== msgTab) {
+          const title = data.subtype === 'dm'
+            ? `MC DM from ${mcDmContacts[data.from_id] || data.from_id || '?'}`
+            : `MC ${mcKnownChannels[data.channel ?? 0] || ('CH' + (data.channel ?? 0))}`;
+          maybeShowInAppMessage(title, _mcMsgText(data, mcDmContacts[data.from_id] || ''), `toast-mc-msg-${data.radio_id}-${data.id || data.ts || Date.now()}`);
+          sendNotif(title, _mcMsgText(data, mcDmContacts[data.from_id] || ''), `mc-msg-${data.radio_id}-${data.id || data.ts || Date.now()}`, 'message');
+        }
       }
       renderMcMessages();
       // Retain all heard MC activity, even if the Sense panel is not currently visible.
@@ -7084,7 +7856,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
   // -- MC map markers --
   function mcTypeBadge(type) {
     // MeshCore contact types: 0=NONE, 1=CLI, 2=REP, 3=ROOM, 4=SENS
-    if (type === 2) return '<span style="font-size:10px;font-weight:600;background:rgba(34,197,94,0.15);color:#22c55e;border:1px solid rgba(34,197,94,0.35);border-radius:3px;padding:1px 4px;margin-left:4px">Rptr</span>';
+    if (type === 2) return '<span style="font-size:10px;font-weight:600;background:rgba(34,197,94,0.15);color:#22c55e;border:1px solid rgba(34,197,94,0.35);border-radius:3px;padding:1px 4px;margin-left:4px">RPT</span>';
     if (type === 3) return '<span style="font-size:10px;font-weight:600;background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.35);border-radius:3px;padding:1px 4px;margin-left:4px">Room</span>';
     if (type === 4) return '<span style="font-size:10px;font-weight:600;background:rgba(139,92,246,0.15);color:#8b5cf6;border:1px solid rgba(139,92,246,0.35);border-radius:3px;padding:1px 4px;margin-left:4px">Sens</span>';
     return ''; // 0=NONE, 1=CLI — no badge for normal companion nodes
@@ -7152,6 +7924,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
           + `<div><b>Hops:</b> ${hops !== null ? hops : '—'} &nbsp; <b>Last seen:</b> ${_tsStr}</div>`
           + `<div style="font-size:11px;color:var(--muted)">${lat.toFixed(5)}, ${lon.toFixed(5)}</div>`
           + `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">`
+          + `<button class="map-popup-btn" title="Show in Nodes list" onclick="leafletMap.closePopup();showMcNodeInList('${jsSafe(c.id || '')}')">List</button>`
           + (c.type !== 2 ? `<button class="map-popup-btn" title="Send direct message" onclick="leafletMap.closePopup();doMcDm('${safePk}','${safeRid}','${safeName}')">DM</button>` : '')
           + `<button class="map-popup-btn" title="Ping (request status)" onclick="leafletMap.closePopup();doMcPing('${safePk}','${safeRid}','${safeName}')">Ping</button>`
           + `<button class="map-popup-btn" title="Select in Sense panel" onclick="leafletMap.closePopup();switchTab('map');toggleSensePanel(true);switchSenseNet('mc');selectMcSenseContact('${jsSafe(c.id||'')}','${safeRid}')">Sense</button>`
@@ -7276,13 +8049,41 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     return text;
   }
 
+  function _mcContactSeenTs(contact) {
+    if (!contact) return 0;
+    return contact.last_heard_ts || contact.last_seen_ts || contact.last_advert || 0;
+  }
+
+  function _mcContactSeenLabel(contact) {
+    if (!contact) return '—';
+    const ts = _mcContactSeenTs(contact);
+    return ts ? senseTimeAgo(ts) : (contact.last_seen || '—');
+  }
+
+  function _mcRefreshDmContactNames(radioId = null) {
+    let changed = false;
+    Object.keys(mcDmContacts).forEach(pre => {
+      if (mcDmContacts[pre] !== pre) return;
+      const radios = radioId ? [radioId] : Object.keys(mcContacts);
+      for (const rid of radios) {
+        const c = (mcContacts[rid] || {})[pre];
+        if (c?.long_name) {
+          mcDmContacts[pre] = c.long_name;
+          changed = true;
+          break;
+        }
+      }
+    });
+    if (changed) renderMcChatTabs();
+  }
+
   function showMcContactPopup(evt, fromId, radioId) {
     evt.stopPropagation();
     const c    = radioId ? (mcContacts[radioId] || {})[fromId] : null;
     const name = c?.long_name || fromId?.slice(0, 10) || '?';
     const hops = c?.out_path_len ?? -1;
     const path = c?.out_path || '';
-    const seen = c?.last_seen || '';
+    const seen = _mcContactSeenLabel(c);
     const hopStr = hops === 0 ? 'Direct (0 hops)' : hops > 0 ? `${hops} hop${hops !== 1 ? 's' : ''} away` : 'Path unknown';
     const meta = c ? mcContactMetaLabel(c, radioId) : '';
 
@@ -7323,10 +8124,18 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     // Filter by active tab
     if (mcChatTab.startsWith('chan:')) {
       const idx = parseInt(mcChatTab.slice(5));
-      msgs = msgs.filter(m => (m.subtype === 'channel' && (m.channel ?? 0) === idx) || m.subtype === 'system');
+      msgs = msgs.filter(m =>
+        (m.subtype === 'channel' && (m.channel ?? 0) === idx)
+        || (m.subtype === 'system' && m.from_id !== 'bot')
+        || (m.from_id === 'bot' && !m.to_id && (m.channel ?? 0) === idx)
+      );
     } else if (mcChatTab.startsWith('dm:')) {
       const pre = mcChatTab.slice(3);
-      msgs = msgs.filter(m => (m.subtype === 'dm' && (m.from_id === pre || m.to_id === pre || (m.sent && m.to_id === pre))) || m.subtype === 'system');
+      msgs = msgs.filter(m =>
+        (m.subtype === 'dm' && (m.from_id === pre || m.to_id === pre || (m.sent && m.to_id === pre)))
+        || (m.subtype === 'system' && m.from_id !== 'bot')
+        || (m.from_id === 'bot' && m.to_id === pre)
+      );
     } else {
       msgs = msgs.filter(m => m.subtype !== 'system');
     }
@@ -7368,10 +8177,11 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       }
       const { name, contact } = _mcSenderInfo(m);
       const bodyText = _mcMsgText(m, name);
+      const obsSnr = m.rx_snr != null ? ` · obs ${m.rx_snr} dB` : '';
       const senderHtml = `<span class="msg-sender-link" onclick="showMcContactPopup(event,'${jsSafe(m.from_id || '')}','${jsSafe(m.radio_id || '')}')" title="Contact info">${escHtml(name)}</span>`;
       const mcReplyBtn = `<button class="msg-reply-btn" onclick="replyToMc('${jsSafe(m.from_id || '')}','${jsSafe(name)}','${m.subtype || 'channel'}')">↩ Reply</button>`;
       return `<div class="chat-msg received">
-        <div class="msg-meta"><span class="mc-msg-tag">MC</span>${escHtml(m.radio_name || '')} · ${senderHtml} · ${ts}${mcReplyBtn}</div>
+        <div class="msg-meta"><span class="mc-msg-tag">MC</span>${escHtml(m.radio_name || '')} · ${senderHtml}${escHtml(obsSnr)} · ${ts}${mcReplyBtn}</div>
         <div class="msg-bubble">${escHtml(bodyText)}</div>
       </div>`;
     }).join('');
@@ -7442,7 +8252,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
   }
 
   // MeshCore CONTACT_TYPENAMES: 0=NONE, 1=CLI, 2=REP, 3=ROOM, 4=SENS
-  const _MC_TYPE_LABELS = ['?', 'CLI', 'REP', 'ROOM', 'SENS'];
+  const _MC_TYPE_LABELS = ['?', 'CLI', 'RPT', 'ROOM', 'SENS'];
   const _MC_TYPE_COLORS = ['var(--muted)', 'var(--muted)', '#f59e0b', '#818cf8', '#34d399'];
 
   function renderMcSensePanel() {
@@ -7452,7 +8262,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const now = Math.floor(Date.now() / 1000);
 
     const allContacts = [];
-    let totalGps = 0, totalOnline = 0;
+    let totalGps = 0, totalRecent = 0;
     Object.entries(mcContacts).forEach(([rid, radioContacts]) => {
       if (mcLastStatus[rid]?.status !== 'connected') return;
       Object.values(radioContacts).forEach(c => {
@@ -7460,16 +8270,17 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         const lat = c.latitude ?? c.lat;
         const lon = c.longitude ?? c.lon;
         if (lat != null && lon != null) totalGps++;
-        if (c.last_heard_ts && (now - c.last_heard_ts) < 3600) totalOnline++;
+        const seenTs = _mcContactSeenTs(c);
+        if (seenTs && (now - seenTs) < 3600) totalRecent++;
       });
     });
-    allContacts.sort((a, b) => (b.last_heard_ts || 0) - (a.last_heard_ts || 0));
+    allContacts.sort((a, b) => _mcContactSeenTs(b) - _mcContactSeenTs(a));
 
     const statTotal  = document.getElementById('sense-mc-stat-total');
     const statOnline = document.getElementById('sense-mc-stat-online');
     const statGps    = document.getElementById('sense-mc-stat-gps');
     if (statTotal)  statTotal.textContent  = `${allContacts.length} contact${allContacts.length !== 1 ? 's' : ''}`;
-    if (statOnline) { statOnline.textContent = `${totalOnline} online`; statOnline.style.color = totalOnline > 0 ? '#22c55e' : 'var(--muted)'; }
+    if (statOnline) { statOnline.textContent = `${totalRecent} heard recently`; statOnline.style.color = totalRecent > 0 ? '#22c55e' : 'var(--muted)'; }
     if (statGps)    statGps.textContent    = `${totalGps} GPS`;
     const statusEl = document.getElementById('sense-mc-status');
     if (statusEl)   statusEl.textContent   = '';
@@ -7494,7 +8305,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       const lat     = c.latitude ?? c.lat;
       const lon     = c.longitude ?? c.lon;
       const hasGps  = lat != null && lon != null;
-      const ts      = c.last_heard_ts ? senseTimeAgo(c.last_heard_ts) : '—';
+      const ts      = _mcContactSeenLabel(c);
       const safeId  = jsSafe(id);
       const typeIdx = (typeof c.type === 'number' ? c.type : parseInt(c.type)) || 0;
       const typeLabel = _MC_TYPE_LABELS[typeIdx] || '?';
@@ -7560,7 +8371,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const lat       = c.latitude ?? c.lat;
     const lon       = c.longitude ?? c.lon;
     const hasGps    = lat != null && lon != null;
-    const ts        = c.last_heard_ts ? senseTimeAgo(c.last_heard_ts) : '—';
+    const ts        = _mcContactSeenLabel(c);
     const pathHex   = c.out_path || '';
     const safeId    = jsSafe(id);
     const safeRid   = jsSafe(rid);
@@ -7580,7 +8391,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const keyLine = id ? `<div style="font-size:10px;color:var(--muted);opacity:0.7;margin-top:1px;word-break:break-all">${escHtml(c.full_key || id)}</div>` : '';
 
     content.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;margin-bottom:3px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;margin-bottom:3px;padding-right:18px">
         <span style="font-size:12px;font-weight:600;color:var(--mc-color)">${escHtml(name)}</span>
         <span style="font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(255,255,255,0.06);color:${typeColor};flex-shrink:0">${typeLabel}</span>
       </div>
@@ -8230,7 +9041,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       const hopLabel = entry.hopLen === 0 ? 'Direct (0 hops)' : entry.hopLen > 0 ? `${entry.hopLen} hop${entry.hopLen !== 1 ? 's' : ''}` : 'Flood';
       let rows = td('Type', escHtml(typeLabel));
       rows += td('Path', hopLabel);
-      if (contact?.last_seen) rows += td('Last seen', escHtml(contact.last_seen));
+      rows += td('Last seen', escHtml(_mcContactSeenLabel(contact)));
       if (entry.lat != null && entry.lon != null) rows += td('Position', `${entry.lat.toFixed(5)}, ${entry.lon.toFixed(5)}`);
       if (contact && contact.out_path_len > 0 && contact.out_path) {
         rows += th('Via');
@@ -8354,15 +9165,8 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
               .then(cd => {
                 if (!mcContacts[n.id]) mcContacts[n.id] = {};
                 (cd.contacts || []).forEach(c => { mcContacts[n.id][c.id] = c; });
-                // Update DM tab names now that contacts are loaded
-                Object.keys(mcDmContacts).forEach(pre => {
-                  if (mcDmContacts[pre] === pre) {
-                    const c = (mcContacts[n.id] || {})[pre];
-                    if (c?.long_name) { mcDmContacts[pre] = c.long_name; }
-                  }
-                });
+                _mcRefreshDmContactNames(n.id);
                 renderMcMapMarkers();
-                renderMcChatTabs();
                 renderMcSensePanel();
                 if (currentTab === 'nodes') renderLive();
               }).catch(() => {});
@@ -8450,6 +9254,8 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const text  = (input?.value || '').trim();
     if (!text) return;
     input.value = '';
+    handleCrossCommand(text).then(handled => {
+      if (handled) return;
     if (mcChatTab.startsWith('dm:')) {
       const pre = mcChatTab.slice(3);
       const msgId = _mcLocalMsgId();
@@ -8512,6 +9318,11 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         console.warn('MC send failed:', e);
       });
     }
+    }).catch(e => {
+      if (input) input.value = text;
+      showAlert(String(e?.message || e || 'MC send failed.'));
+      console.warn('MC send failed:', e);
+    });
   }
 
   function mcSendAdvert() {
@@ -8656,7 +9467,12 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         ${td('Route type', data.observed_route_type ? escHtml(data.observed_route_type) : '—')}
       </table>`;
       // Update contact's last_seen in local cache so map popup reflects the ping
-      _mcUpdateContactLastSeen(data.radio_id, data.pubkey_pre || data.target_pubkey_pre);
+      _mcUpdateContactLastSeen(data.radio_id, data.pubkey_pre || data.target_pubkey_pre, {
+        out_path_len: data.observed_path_len,
+        out_path: data.observed_path,
+        snr: data.observed_snr,
+        rssi: data.observed_rssi,
+      });
       _mcAddPingLogEntry(data, findMcContactByKeyPrefix(data.pubkey_pre || '', data.radio_id), null);
       return;
     }
@@ -8705,7 +9521,12 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       }
     }
     // Update contact's last_seen in local cache so map popup reflects the ping
-    _mcUpdateContactLastSeen(data.radio_id, data.pubkey_pre);
+    _mcUpdateContactLastSeen(data.radio_id, data.pubkey_pre, {
+      out_path_len: data.observed_path_len,
+      out_path: data.observed_path,
+      snr: data.observed_snr ?? data.last_snr,
+      rssi: data.observed_rssi ?? data.last_rssi,
+    });
     _mcAddPingLogEntry(data, pingContact, pingContact ? (() => {
       const [rLat, rLon] = _mcSenseRadioPos(data.radio_id);
       return decodeMcPath(pingContact, rLat, rLon, data.radio_id)
@@ -8726,6 +9547,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     mcMessages.push({
       network: 'mc', subtype: 'system', from_id: 'bot',
       radio_id: data.radio_id, channel: data.channel ?? 0,
+      to_id: data.to_id || null,
       to_name: data.to_name || '?', cmd: data.cmd || '',
       text: text,
       ts: Math.floor(Date.now() / 1000), sent: true,
@@ -8757,14 +9579,30 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     renderMcSenseLog();
   }
 
-  function _mcUpdateContactLastSeen(radioId, pubkeyPre) {
+  function _mcTouchContactActivity(radioId, pubkeyPre, extra = {}) {
     if (!radioId || !pubkeyPre) return;
     const pre = pubkeyPre.slice(0, 12);
     if (!mcContacts[radioId]?.[pre]) return;
     const now = Math.floor(Date.now() / 1000);
-    mcContacts[radioId][pre].last_advert = now;
-    mcContacts[radioId][pre].last_seen = 'just now';
+    const contact = mcContacts[radioId][pre];
+    contact.last_seen_ts = now;
+    contact.last_heard_ts = now;
+    if (!contact.last_advert && extra.markAdvert) contact.last_advert = now;
+    contact.last_seen = 'just now';
+    if (extra.out_path_len != null) contact.out_path_len = extra.out_path_len;
+    if (extra.out_path != null) contact.out_path = extra.out_path;
+    if (extra.out_path_hash_size != null) contact.out_path_hash_size = extra.out_path_hash_size;
+    if (extra.snr != null) contact.snr = extra.snr;
+    if (extra.rssi != null) contact.rssi = extra.rssi;
     renderMcMapMarkers();
+    if (currentTab === 'nodes') renderLive();
+    if (_senseNet === 'mc' && document.getElementById('sense-panel')?.style.display !== 'none') {
+      renderMcSensePanel();
+    }
+  }
+
+  function _mcUpdateContactLastSeen(radioId, pubkeyPre, extra = {}) {
+    _mcTouchContactActivity(radioId, pubkeyPre, extra);
   }
 
   // ---------------------------------------------------------------------------
@@ -9274,6 +10112,39 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
   }
 
+  function clearMcChannelHistory() {
+    const radioId = mcSettingsRadioId || activeMcRadioId;
+    if (!radioId) return;
+    const idx = parseInt(document.getElementById('mc-ch-idx').value);
+    const name = (document.getElementById('mc-ch-name').value || '').trim() || `CH${idx}`;
+    const statusEl = document.getElementById('mc-channels-status');
+    if (isNaN(idx) || idx < 0) {
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Invalid slot.</span>';
+      return;
+    }
+    document.getElementById('confirm-ok').textContent = 'Delete';
+    showConfirm(`Delete saved MC chat history for "${name}"?`, () => {
+      const before = mcMessages.length;
+      mcMessages = mcMessages.filter(m => !(
+        m.radio_id === radioId && (
+          m.subtype === 'system' ||
+          (
+            parseInt(m.channel ?? 0) === idx &&
+            m.subtype !== 'dm'
+          )
+        )
+      ));
+      const removed = before - mcMessages.length;
+      _saveMcMessages();
+      mcUnreadTabs.delete(`chan:${idx}`);
+      if (activeMcRadioId === radioId) renderMcMessages();
+      updateUnreadDots();
+      if (statusEl) statusEl.innerHTML = `<span style="color:var(--accent)">Deleted ${removed} saved message${removed === 1 ? '' : 's'}.</span>`;
+      setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 4000);
+      document.getElementById('confirm-ok').textContent = 'OK';
+    });
+  }
+
   function startMcDebugEvents() {
     const radioId = mcSettingsRadioId || activeMcRadioId;
     const statusEl = document.getElementById('mc-actions-status');
@@ -9284,7 +10155,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       body: JSON.stringify({duration: 60}),
     }).then(r => r.json()).then(d => {
       if (!d.ok) { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(d.error||'Failed')}</span>`; return; }
-      if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent)">Debug logging ON — tail /tmp/overmesh-mc.log, then send a Ping. Auto-stops in 60s.</span>';
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent)">Debug logging ON — watch the server log, then send a Ping. Auto-stops in 60s.</span>';
       if (btn) btn.disabled = true;
       let remaining = 60;
       const t = setInterval(() => {
@@ -9312,7 +10183,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || 'HTTP ' + r.status); }))
       .then(d => {
         if (d.ok) {
-          if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent)">Contact imported. Flood advert sent — wait ~30s for propagation, then Ping should work.</span>';
+          if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent)">Contact imported.</span>';
           document.getElementById('mc-import-link').value = '';
           setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 15000);
         } else {
@@ -9725,7 +10596,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   function senseTimeAgo(ts) {
     if (!ts) return '';
-    const diff = Math.floor(Date.now() / 1000) - ts;
+    const diff = Math.max(0, Math.floor(Date.now() / 1000) - ts);
     if (diff < 60)   return diff + 's ago';
     if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
     return Math.floor(diff / 3600) + 'h ago';
@@ -10237,6 +11108,32 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     });
   }
 
+  function resetKnownNodesDb() {
+    const radioId = _selectedNodeId;
+    if (!radioId) return;
+    const label = document.querySelector('#node-cfg-tabs .btn.active')?.textContent || radioId;
+    document.getElementById('confirm-ok').textContent = 'Clear';
+    showConfirm(`Clear all remembered remote nodes for "${label}"? The selected radio itself stays intact.`, async () => {
+      const st = document.getElementById('node-cfg-actions-status');
+      if (st) st.innerHTML = '<span style="color:var(--muted)">Clearing known nodes…</span>';
+      try {
+        const r = await fetch(`/api/db/radio/${encodeURIComponent(radioId)}/nodes/reset`, {method:'POST'});
+        const d = await r.json();
+        if (st) st.innerHTML = r.ok
+          ? `<span style="color:var(--green)">Cleared ${escHtml(String(d.removed_db ?? 0))} saved node${(d.removed_db ?? 0) !== 1 ? 's' : ''}.</span>`
+          : `<span style="color:#f87171">${escHtml(d.error || 'Reset failed.')}</span>`;
+        if (r.ok) {
+          loadLive();
+          loadHistory();
+        }
+      } catch(e) {
+        if (st) st.innerHTML = `<span style="color:#f87171">Error: ${escHtml(e.message)}</span>`;
+      } finally {
+        document.getElementById('confirm-ok').textContent = 'OK';
+      }
+    });
+  }
+
   // ── Channels ────────────────────────────────────────────────────────────────
   let _editingChIndex = null;
   let _chCache = [];
@@ -10344,6 +11241,32 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       .catch(e => {
         if (statusEl) { statusEl.textContent = `✗ ${escHtml(String(e))}`; statusEl.style.color = 'var(--red)'; }
       });
+  }
+
+  function clearNodeChannelHistory(index) {
+    if (index == null || index < 0) return;
+    const radioId = _selectedNodeId;
+    const ch = _chCache.find(c => c.index === index);
+    const label = ch?.name || `CH${index}`;
+    document.getElementById('confirm-ok').textContent = 'Delete';
+    showConfirm(`Delete saved MT chat history for "${label}"?`, async () => {
+      nodeCfgStatus('channels', 'Deleting history…', true);
+      try {
+        const r = await fetch(`/api/radio/${encodeURIComponent(radioId)}/channels/${index}/history`, {method: 'POST'});
+        const d = await r.json();
+        if (!r.ok || d.error) throw new Error(d.error || r.status);
+        chatMsgs = chatMsgs.filter(m => !(m.radio_id === radioId && !m.is_dm && (m.channel ?? 0) === index));
+        unreadChannels.delete(index);
+        renderMessages();
+        renderChannelTabs();
+        updateUnreadDots();
+        nodeCfgStatus('channels', `Deleted ${d.removed_db ?? 0} saved message${(d.removed_db ?? 0) === 1 ? '' : 's'}.`, true);
+      } catch (e) {
+        nodeCfgStatus('channels', 'Error: ' + escHtml(String(e)), false);
+      } finally {
+        document.getElementById('confirm-ok').textContent = 'OK';
+      }
+    });
   }
 
   // ── Position ────────────────────────────────────────────────────────────────
@@ -10604,6 +11527,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   // ── Init ───────────────────────────────────────────────────────────────────
   // Apply saved font size immediately
   fetch('/api/settings/app').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(cfg => {
+    loadInAppNotifPrefs(cfg);
     if (cfg.zoom) settingsApplyZoom(cfg.zoom);
     if (cfg.accent_color) applyAccentColor(cfg.accent_color);
   }).catch(() => {});
@@ -10634,10 +11558,13 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   initMc();
   // Restore persisted MC sense log from localStorage
   if (_mcSenseLogEntries.length) renderMcSenseLog();
+  // Prime currentTab before early chat init so the first channel render doesn't get
+  // discarded when the saved tab is Chat and startup restores it a moment later.
+  const savedTab = localStorage.getItem('activeTab');
+  if (savedTab) currentTab = savedTab;
   // Start SSE connection early so ACKs aren't lost before user opens Chat
   initChat();
   // Restore last active tab
-  const savedTab = localStorage.getItem('activeTab');
   if (savedTab && savedTab !== 'nodes') switchTab(savedTab);
   else updatePipVisibility();
   updateUnreadDots();

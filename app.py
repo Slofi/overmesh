@@ -81,13 +81,29 @@ def api_restart():
         script_dir = os.path.dirname(script)
         time.sleep(0.4)
         disconnect_all_mc()
-        # Spawn a fresh process in a new session (no inherited sockets/fds),
-        # wait 1s for current process to fully exit and release port 8082.
-        subprocess.Popen(
-            ["bash", "-c",
-             f"sleep 1 && cd '{script_dir}' && nohup python3 '{script}' >> /tmp/overmesh-mc.log 2>&1"],
-            start_new_session=True, close_fds=True
+        python_bin = sys.executable or "python3"
+        kwargs = {
+            "cwd": script_dir,
+            "close_fds": True,
+        }
+        if os.name == "nt":
+            detached = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            kwargs["creationflags"] = detached
+            kwargs["stdin"] = subprocess.DEVNULL
+            kwargs["stdout"] = subprocess.DEVNULL
+            kwargs["stderr"] = subprocess.DEVNULL
+        else:
+            kwargs["start_new_session"] = True
+            kwargs["stdin"] = subprocess.DEVNULL
+            kwargs["stdout"] = subprocess.DEVNULL
+            kwargs["stderr"] = subprocess.DEVNULL
+        helper_code = (
+            "import os, sys, time; "
+            "time.sleep(1); "
+            "os.execv(sys.argv[1], [sys.argv[1], sys.argv[2]])"
         )
+        # Spawn a tiny helper that waits briefly, then execs the real app process.
+        subprocess.Popen([python_bin, "-c", helper_code, python_bin, script], **kwargs)
         os._exit(0)
     threading.Thread(target=_restart, daemon=True).start()
     return jsonify({"ok": True})
@@ -144,8 +160,8 @@ if __name__ == "__main__":
     startup()
     _host = os.environ.get("OVERMESH_HOST", CONFIG.get("host", "0.0.0.0"))
     try:
-        _port = int(os.environ.get("OVERMESH_PORT", CONFIG.get("port", 8081)))
+        _port = int(os.environ.get("OVERMESH_PORT", CONFIG.get("port", 8082)))
     except (TypeError, ValueError):
-        log.error("OVERMESH_PORT is not a valid integer, using default 8081")
-        _port = 8081
+        log.error("OVERMESH_PORT is not a valid integer, using default 8082")
+        _port = 8082
     app.run(host=_host, port=_port, debug=False)

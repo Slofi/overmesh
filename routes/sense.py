@@ -5,9 +5,9 @@ import time
 from flask import Blueprint, jsonify, request
 
 import sense as _sense_mod
-from config import CONFIG, save_config
+from config import CONFIG, CONFIG_LOCK, save_config
 from helpers import push_to_sse
-from mesh import get_any_iface
+from mesh import get_any_iface, get_iface_by_radio
 from sense import (
     _active_auto_event,
     _active_auto_loop,
@@ -23,7 +23,14 @@ bp = Blueprint('sense_routes', __name__)
 
 @bp.route("/api/mesh/sense", methods=["POST"])
 def api_mesh_sense():
-    iface = get_any_iface()
+    data = request.get_json(silent=True) or {}
+    radio_id = data.get("radio_id") or request.args.get("radio_id")
+    if radio_id:
+        iface = get_iface_by_radio(radio_id)
+        if not iface:
+            return jsonify({"error": "Requested radio not connected"}), 503
+    else:
+        iface = get_any_iface()
     if not iface:
         return jsonify({"error": "No radio connected"}), 503
     cooldown = CONFIG.get("app", {}).get("sense_cooldown", 180)
@@ -47,8 +54,9 @@ def api_sense_passive():
     with _sense_lock:
         new_val = not _sense_state["passive"]
         _sense_state["passive"] = new_val
-    CONFIG["sense_passive"] = new_val
-    save_config()
+    with CONFIG_LOCK:
+        CONFIG["sense_passive"] = new_val
+        save_config()
     return jsonify({"passive": new_val})
 
 
@@ -57,8 +65,9 @@ def api_sense_active_auto():
     with _sense_lock:
         active_auto = not _sense_state["active_auto"]
         _sense_state["active_auto"] = active_auto
-    CONFIG["sense_active_auto"] = active_auto
-    save_config()
+    with CONFIG_LOCK:
+        CONFIG["sense_active_auto"] = active_auto
+        save_config()
     if active_auto:
         _active_auto_event.clear()
         with _active_auto_running_lock:

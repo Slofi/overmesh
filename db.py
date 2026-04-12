@@ -401,11 +401,33 @@ def load_messages(radio_id):
     with get_msgs_db(radio_id) as conn:
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
-        c.execute("SELECT * FROM messages ORDER BY ts ASC LIMIT 500")
+        c.execute("""
+            SELECT * FROM (
+                SELECT * FROM messages ORDER BY ts DESC LIMIT 500
+            )
+            ORDER BY ts ASC
+        """)
         rows = [dict(r) for r in c.fetchall()]
     for row in rows:
         row["radio_id"] = radio_id
     return rows
+
+
+def delete_channel_messages(radio_id, channel):
+    if radio_id is None:
+        return 0
+    with get_msgs_db(radio_id) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) FROM messages WHERE channel=? AND (is_dm IS NULL OR is_dm=0)",
+            (int(channel),),
+        )
+        removed = int(cur.fetchone()[0] or 0)
+        cur.execute(
+            "DELETE FROM messages WHERE channel=? AND (is_dm IS NULL OR is_dm=0)",
+            (int(channel),),
+        )
+    return removed
 
 
 # ---------------------------------------------------------------------------

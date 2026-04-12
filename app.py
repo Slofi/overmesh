@@ -1,6 +1,8 @@
 import logging
 import os
 import signal
+import subprocess
+import sys
 import threading
 import time
 
@@ -24,6 +26,7 @@ from mesh import (
     connect_node, health_check_loop,
     on_connection_lost, on_text_receive, reconnect_loop,
 )
+from mesh_mc import start_mc_loop, connect_mc_node, reconnect_mc_loop, mc_watchdog_loop, disconnect_all_mc
 
 # ---------------------------------------------------------------------------
 # Blueprints
@@ -38,6 +41,7 @@ from routes.bot       import bp as bot_bp
 from routes.sense     import bp as sense_bp
 from routes.waypoints import bp as waypoints_bp
 from routes.notes     import bp as notes_bp
+from routes.mc        import bp as mc_bp
 
 app.register_blueprint(nodes_bp)
 app.register_blueprint(chat_bp)
@@ -48,6 +52,7 @@ app.register_blueprint(bot_bp)
 app.register_blueprint(sense_bp)
 app.register_blueprint(waypoints_bp)
 app.register_blueprint(notes_bp)
+app.register_blueprint(mc_bp)
 
 
 # ---------------------------------------------------------------------------
@@ -63,6 +68,7 @@ def index():
 def api_shutdown():
     def _kill():
         time.sleep(0.4)
+        disconnect_all_mc()
         os._exit(0)
     threading.Thread(target=_kill, daemon=True).start()
     return jsonify({"ok": True})
@@ -70,10 +76,36 @@ def api_shutdown():
 
 @app.route("/api/restart", methods=["POST"])
 def api_restart():
-    def _kill():
+    def _restart():
+        script     = os.path.abspath(__file__)
+        script_dir = os.path.dirname(script)
         time.sleep(0.4)
+        disconnect_all_mc()
+        python_bin = sys.executable or "python3"
+        kwargs = {
+            "cwd": script_dir,
+            "close_fds": True,
+        }
+        if os.name == "nt":
+            detached = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            kwargs["creationflags"] = detached
+            kwargs["stdin"] = subprocess.DEVNULL
+            kwargs["stdout"] = subprocess.DEVNULL
+            kwargs["stderr"] = subprocess.DEVNULL
+        else:
+            kwargs["start_new_session"] = True
+            kwargs["stdin"] = subprocess.DEVNULL
+            kwargs["stdout"] = subprocess.DEVNULL
+            kwargs["stderr"] = subprocess.DEVNULL
+        helper_code = (
+            "import os, sys, time; "
+            "time.sleep(1); "
+            "os.execv(sys.argv[1], [sys.argv[1], sys.argv[2]])"
+        )
+        # Spawn a tiny helper that waits briefly, then execs the real app process.
+        subprocess.Popen([python_bin, "-c", helper_code, python_bin, script], **kwargs)
         os._exit(0)
-    threading.Thread(target=_kill, daemon=True).start()
+    threading.Thread(target=_restart, daemon=True).start()
     return jsonify({"ok": True})
 
 
@@ -100,6 +132,13 @@ def startup():
     threading.Thread(target=reconnect_loop,      daemon=True).start()
     threading.Thread(target=health_check_loop,   daemon=True).start()
     threading.Thread(target=motd_scheduler_loop, daemon=True).start()
+    # MeshCore
+    start_mc_loop()
+    for mc_node_cfg in CONFIG.get("mc_nodes", []):
+        if mc_node_cfg.get("enabled", True):
+            threading.Thread(target=connect_mc_node, args=(mc_node_cfg,), daemon=True).start()
+    threading.Thread(target=reconnect_mc_loop, daemon=True).start()
+    threading.Thread(target=mc_watchdog_loop, daemon=True).start()
     if _sense_state["active_auto"]:
         _active_auto_event.clear()
         with _active_auto_running_lock:
@@ -110,7 +149,19 @@ def startup():
 if __name__ == "__main__":
     if hasattr(signal, "SIGHUP"):  # Linux/macOS only — not available on Windows
         signal.signal(signal.SIGHUP, signal.SIG_IGN)
+
+    def _graceful_shutdown(signum, frame):
+        log.info("[app] SIGTERM received — disconnecting MC nodes before exit")
+        disconnect_all_mc()
+        os._exit(0)
+
+    signal.signal(signal.SIGTERM, _graceful_shutdown)
+
     startup()
     _host = os.environ.get("OVERMESH_HOST", CONFIG.get("host", "0.0.0.0"))
-    _port = int(os.environ.get("OVERMESH_PORT", CONFIG.get("port", 8081)))
+    try:
+        _port = int(os.environ.get("OVERMESH_PORT", CONFIG.get("port", 8082)))
+    except (TypeError, ValueError):
+        log.error("OVERMESH_PORT is not a valid integer, using default 8082")
+        _port = 8082
     app.run(host=_host, port=_port, debug=False)

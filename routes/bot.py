@@ -3,14 +3,15 @@ import threading
 from flask import Blueprint, jsonify, request
 
 from bot import (
-    build_motd_text, load_bot_config, log_bot_activity,
-    save_bot_config, send_bot_response,
+    build_motd_text, build_mc_motd_text, load_bot_config, log_bot_activity,
+    save_bot_config, send_bot_response, send_mc_bot_response,
 )
 from mesh import get_any_iface
 from state import (
     _motd_event,
     bot_activity, bot_activity_lock,
     connections, connections_lock,
+    mc_connections, mc_connections_lock,
 )
 
 bp = Blueprint('bot_routes', __name__)
@@ -51,16 +52,31 @@ def api_bot_motd_test():
     cfg = load_bot_config(radio_id)
     if not cfg.get("enabled"):
         return jsonify({"ok": False, "error": "Bot is disabled"})
+
+    channel = cfg.get("listen_channels", [0])[0]
+
+    # Respect explicit radio targeting. Do not fall back across MT/MC stacks.
     if radio_id:
+        with mc_connections_lock:
+            mc_state = mc_connections.get(radio_id, {})
+        if mc_state.get("status") == "connected":
+            text = f"[{cfg.get('bot_label', 'OM Bot')}] {build_mc_motd_text(cfg, radio_id)}"
+            threading.Thread(
+                target=send_mc_bot_response, args=(radio_id, text, channel), daemon=True
+            ).start()
+            log_bot_activity("Bot", "motd_test_mc", text, channel)
+            return jsonify({"ok": True})
+
         with connections_lock:
             state = connections.get(radio_id, {})
             iface = state.get("iface") if state.get("status") == "connected" else None
+        if not iface:
+            return jsonify({"ok": False, "error": "Radio not connected"}), 503
     else:
         iface = get_any_iface()
     if not iface:
-        return jsonify({"ok": False, "error": "No radio connected"})
+        return jsonify({"ok": False, "error": "No radio connected"}), 503
     text = f"[{cfg.get('bot_label', 'OM Bot')}] {build_motd_text(cfg)}"
-    channel = cfg.get("listen_channels", [0])[0]
     threading.Thread(target=send_bot_response, args=(iface, text, channel, None), daemon=True).start()
     log_bot_activity("Bot", "motd_test", text, channel)
     return jsonify({"ok": True})

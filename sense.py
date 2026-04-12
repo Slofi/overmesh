@@ -51,10 +51,10 @@ def _run_sense_broadcast(iface, cooldown):
                                 "error": "Node disconnected during broadcast"}))
         threading.Thread(target=_reconnect_disconnected, daemon=True).start()
         return
-    # Brief pause then check: sendPosition sometimes silently kills the serial connection
-    time.sleep(1)
-    threading.Thread(target=_reconnect_disconnected, daemon=True).start()
-    time.sleep(SENSE_COLLECTION_WINDOW - 1)
+    # health_check_loop (5s interval) handles any real silent disconnect after sendPosition.
+    # The old 0.5s post-sense check was catching brief USB-CDC glitches on the nRF52840
+    # ProMicro during broadcast and triggering an unnecessary full reconnect cycle.
+    time.sleep(SENSE_COLLECTION_WINDOW)
     with _sense_lock:
         _sense_state["active"] = False
         count = len(_sense_state["responses"])
@@ -66,10 +66,7 @@ def _active_auto_loop():
     global _active_auto_running
     # Lazy import — mesh.py doesn't exist yet; avoids circular dep at module load time
     from mesh import get_any_iface
-    with _active_auto_running_lock:
-        if _active_auto_running:
-            return
-        _active_auto_running = True
+    # Note: _active_auto_running is set True by the caller (routes/sense.py) before start()
     try:
         while True:
             with _sense_lock:

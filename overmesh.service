@@ -1,11 +1,11 @@
 [Unit]
-Description=OverMesh Meshtastic Dashboard
+Description=OverMesh dual-network dashboard
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/overmesh
-ExecStart=/usr/bin/python3 %h/overmesh/app.py
+WorkingDirectory=APP_DIR
+ExecStart=PYTHON_BIN APP_DIR/app.py
 Restart=always
 RestartSec=5
 KillMode=control-group

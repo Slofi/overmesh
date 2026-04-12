@@ -8,6 +8,7 @@ from pubsub import pub
 from config import _valid_node_id
 from db import get_db_nodes, get_prefs_db, save_message
 from helpers import _next_msg_id, get_node_data, get_node_name, push_to_sse
+from hw_models import hw_model_name
 from mesh import (
     get_any_iface, get_any_iface_with_id, get_iface_by_radio,
     resolve_node_name,
@@ -119,6 +120,46 @@ def api_db_nodes():
     return jsonify(get_db_nodes(sort_by, sort_dir, fav_first, show_ignored))
 
 
+@bp.route("/api/db/radio/<radio_id>/nodes/reset", methods=["POST"])
+def api_db_radio_nodes_reset(radio_id):
+    iface = get_iface_by_radio(radio_id)
+    if not iface:
+        return jsonify({"error": "Radio not connected"}), 404
+
+    removed_db = 0
+    removed_live = 0
+
+    with get_prefs_db() as conn:
+        cur = conn.execute(
+            "DELETE FROM nodes WHERE radio_id=? AND COALESCE(is_local, 0)=0",
+            (radio_id,),
+        )
+        removed_db = cur.rowcount or 0
+
+    local_info = getattr(iface, "myInfo", None)
+    local_node_num = getattr(local_info, "my_node_num", None) if local_info else None
+
+    with connections_lock:
+        state = connections.get(radio_id, {})
+        iface = state.get("iface")
+        if iface:
+            nodes = getattr(iface, "nodes", None) or {}
+            nodes_by_num = getattr(iface, "nodesByNum", None) or {}
+
+            for key, node in list(nodes.items()):
+                if (node or {}).get("num") == local_node_num:
+                    continue
+                nodes.pop(key, None)
+                removed_live += 1
+
+            for num, node in list(nodes_by_num.items()):
+                if (node or {}).get("num") == local_node_num:
+                    continue
+                nodes_by_num.pop(num, None)
+
+    return jsonify({"ok": True, "removed_db": removed_db, "removed_live": removed_live})
+
+
 @bp.route("/api/db/node/<node_id>", methods=["PATCH"])
 def api_db_node_update(node_id):
     data = request.get_json(silent=True) or {}
@@ -149,10 +190,12 @@ def api_db_node_delete(node_id):
         try:
             node = (iface.nodes or {}).get(node_id)
             node_num = node.get("num") if node else None
-            # Evict from library in-memory dicts
-            iface.nodes.pop(node_id, None)
-            if node_num is not None:
-                iface.nodesByNum.pop(node_num, None)
+            # Evict from library in-memory dicts (under lock so helpers.py snapshot loop doesn't race)
+            with connections_lock:
+                if iface.nodes:
+                    iface.nodes.pop(node_id, None)
+                if node_num is not None and iface.nodesByNum:
+                    iface.nodesByNum.pop(node_num, None)
             # Also purge from radio flash nodeDB so stale PKI keys don't persist across restarts
             iface.localNode.removeNode(node_id)
         except Exception as e:
@@ -170,7 +213,12 @@ def api_traceroute(node_id):
         return jsonify({"error": "Invalid node ID"}), 400
     data     = request.get_json(silent=True) or {}
     radio_id = data.get("radio_id") or request.args.get("radio_id")
-    iface    = (get_iface_by_radio(radio_id) if radio_id else None) or get_any_iface()
+    if radio_id:
+        iface = get_iface_by_radio(radio_id)
+        if not iface:
+            return jsonify({"error": "Requested radio not connected"}), 503
+    else:
+        iface = get_any_iface()
     if not iface:
         return jsonify({"error": "No radio connected"}), 503
     if not traceroute_lock.acquire(blocking=False):
@@ -182,7 +230,7 @@ def api_traceroute(node_id):
     def on_receive(packet, interface):
         try:
             if interface is not iface:
-                return  # ignore packets from other radios
+                return
             if packet.get("fromId") == node_id:
                 decoded = packet.get("decoded", {})
                 if decoded.get("portnum") == "TRACEROUTE_APP":
@@ -204,7 +252,7 @@ def api_traceroute(node_id):
     try:
         pub.subscribe(on_receive, "meshtastic.receive")
         iface.sendTraceRoute(node_id, hopLimit=hop_limit)
-        done.wait(timeout=30)
+        done.wait(timeout=60)
     finally:
         try:
             pub.unsubscribe(on_receive, "meshtastic.receive")
@@ -216,7 +264,7 @@ def api_traceroute(node_id):
             pass  # Already force-released by /api/traceroute/reset
 
     if not done.is_set():
-        return jsonify({"error": "Timeout — node did not respond (30s)"}), 504
+        return jsonify({"error": "Timeout — node did not respond (60s)"}), 504
 
     my_name    = "You"
     dest_name  = get_node_name(node_id)
@@ -251,10 +299,10 @@ def api_dm(node_id):
         return jsonify({"error": "Empty message"}), 400
     radio_id_req = data.get("radio_id")
     if radio_id_req:
-        iface    = get_iface_by_radio(radio_id_req)
-        radio_id = radio_id_req if iface else None
+        iface = get_iface_by_radio(radio_id_req)
         if not iface:
-            iface, radio_id = get_any_iface_with_id()
+            return jsonify({"error": "Requested radio not connected"}), 503
+        radio_id = radio_id_req
     else:
         iface, radio_id = get_any_iface_with_id()
     if not iface:
@@ -294,7 +342,12 @@ def api_request_position(node_id):
         return jsonify({"error": "Invalid node ID"}), 400
     data     = request.get_json(silent=True) or {}
     radio_id = data.get("radio_id") or request.args.get("radio_id")
-    iface    = (get_iface_by_radio(radio_id) if radio_id else None) or get_any_iface()
+    if radio_id:
+        iface = get_iface_by_radio(radio_id)
+        if not iface:
+            return jsonify({"error": "Requested radio not connected"}), 503
+    else:
+        iface = get_any_iface()
     if not iface:
         return jsonify({"error": "No radio connected"}), 503
     try:
@@ -310,7 +363,12 @@ def api_node_info(node_id):
         return jsonify({"error": "Invalid node ID"}), 400
     data     = request.get_json(silent=True) or {}
     radio_id = data.get("radio_id") or request.args.get("radio_id")
-    iface    = (get_iface_by_radio(radio_id) if radio_id else None) or get_any_iface()
+    if radio_id:
+        iface = get_iface_by_radio(radio_id)
+        if not iface:
+            return jsonify({"error": "Requested radio not connected"}), 503
+    else:
+        iface = get_any_iface()
     if not iface:
         return jsonify({"error": "No radio connected"}), 503
 
@@ -373,7 +431,7 @@ def api_node_info(node_id):
                     "fresh":        fresh,
                     "long_name":    user.get("longName"),
                     "short_name":   user.get("shortName"),
-                    "hw_model":     user.get("hwModel"),
+                    "hw_model":     hw_model_name(user.get("hwModel")),
                     "role":         user.get("role"),
                     "snr":          node.get("snr"),
                     "rssi":         node.get("rssi"),

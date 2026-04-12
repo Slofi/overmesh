@@ -103,10 +103,31 @@ def _gps_push_to_nodes(lat, lon, alt, precision_bits):
             iface = state.get("iface") if state.get("status") == "connected" else None
         if not iface:
             continue
+        # Update frontend cache unconditionally — iface.nodes won't reflect the new
+        # position until the node broadcasts back a POSITION_APP, which may take minutes.
+        # The fixed_lat/lon cache in helpers.py ensures /api/nodes returns the correct
+        # position immediately, regardless of whether _sendAdmin succeeds.
+        local_num = getattr(iface.myInfo, "my_node_num", None)
+        with connections_lock:
+            if local_num is not None and local_num in iface.nodesByNum:
+                iface.nodesByNum[local_num]["position"] = {
+                    "latitude": lat, "longitude": lon, "altitude": int(alt),
+                    "latitudeI": int(lat * 1e7), "longitudeI": int(lon * 1e7),
+                    "fixedPosition": True,
+                }
+            connections[radio_id]["fixed_lat"] = lat
+            connections[radio_id]["fixed_lon"] = lon
+        # Tell the frontend immediately — don't wait for loadLive() poll
+        push_to_sse(json.dumps({
+            "type": "local_node_position",
+            "radio_id": radio_id,
+            "lat": lat,
+            "lon": lon,
+        }))
         try:
             p = mesh_pb2.Position()
-            p.latitude_i  = int(lat / 1e-7)
-            p.longitude_i = int(lon / 1e-7)
+            p.latitude_i  = int(lat * 1e7)
+            p.longitude_i = int(lon * 1e7)
             if alt:
                 p.altitude = int(alt)
             if precision_bits and precision_bits < 32:
@@ -115,19 +136,9 @@ def _gps_push_to_nodes(lat, lon, alt, precision_bits):
             a.set_fixed_position.CopyFrom(p)
             iface.localNode.ensureSessionKey()
             iface.localNode._sendAdmin(a)
-            local_num = getattr(iface.myInfo, "my_node_num", None)
-            if local_num is not None and local_num in iface.nodesByNum:
-                iface.nodesByNum[local_num]["position"] = {
-                    "latitude": lat, "longitude": lon, "altitude": int(alt),
-                    "latitudeI": int(lat * 1e7), "longitudeI": int(lon * 1e7),
-                    "fixedPosition": True,
-                }
-            with connections_lock:
-                connections[radio_id]["fixed_lat"] = lat
-                connections[radio_id]["fixed_lon"] = lon
-            log.info(f"GPS auto-push → {radio_id} ({lat:.5f}, {lon:.5f}) precision_bits={precision_bits}")
+            log.info(f"GPS push → {radio_id} ({lat:.5f}, {lon:.5f}) precision_bits={precision_bits}")
         except Exception as e:
-            log.warning(f"GPS auto-push to {radio_id} failed: {e}")
+            log.warning(f"GPS push to {radio_id} firmware failed: {e} (frontend cache still updated)")
 
 
 # ---------------------------------------------------------------------------

@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from datetime import datetime
 
 from config import PREFS_DB_PATH
-from state import connections, connections_lock, waypoints_cache, notes_cache
+from state import connections, connections_lock, waypoints_cache, waypoints_lock, notes_cache, notes_lock
 
 log = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ def init_prefs_db():
     with get_prefs_db() as conn:
         c = conn.cursor()
         c.execute('''CREATE TABLE IF NOT EXISTS nodes (
-            id          TEXT PRIMARY KEY,
+            id          TEXT,
             long_name   TEXT,
             short_name  TEXT,
             first_seen  INTEGER,
@@ -69,10 +69,51 @@ def init_prefs_db():
             is_local    INTEGER DEFAULT 0,
             is_favorite INTEGER DEFAULT 0,
             is_ignored  INTEGER DEFAULT 0,
-            notes       TEXT DEFAULT ''
+            notes       TEXT DEFAULT '',
+            PRIMARY KEY (id, radio_id)
         )''')
         try:
             c.execute("ALTER TABLE nodes ADD COLUMN is_ignored INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+        # Migrate legacy single-row-per-id schema to multi-radio rows keyed by (id, radio_id).
+        try:
+            info = c.execute("PRAGMA table_info(nodes)").fetchall()
+            pk_cols = [row[1] for row in info if row[5] > 0]
+            if pk_cols == ["id"]:
+                c.execute("ALTER TABLE nodes RENAME TO nodes_legacy")
+                c.execute('''CREATE TABLE nodes (
+                    id          TEXT,
+                    long_name   TEXT,
+                    short_name  TEXT,
+                    first_seen  INTEGER,
+                    last_seen   INTEGER,
+                    last_snr    REAL,
+                    last_rssi   REAL,
+                    last_battery INTEGER,
+                    last_lat    REAL,
+                    last_lon    REAL,
+                    hops_away   INTEGER,
+                    radio_id    TEXT,
+                    is_local    INTEGER DEFAULT 0,
+                    is_favorite INTEGER DEFAULT 0,
+                    is_ignored  INTEGER DEFAULT 0,
+                    notes       TEXT DEFAULT '',
+                    PRIMARY KEY (id, radio_id)
+                )''')
+                c.execute('''
+                    INSERT INTO nodes (
+                        id, long_name, short_name, first_seen, last_seen,
+                        last_snr, last_rssi, last_battery, last_lat, last_lon,
+                        hops_away, radio_id, is_local, is_favorite, is_ignored, notes
+                    )
+                    SELECT
+                        id, long_name, short_name, first_seen, last_seen,
+                        last_snr, last_rssi, last_battery, last_lat, last_lon,
+                        hops_away, COALESCE(radio_id, ''), is_local, is_favorite, is_ignored, COALESCE(notes, '')
+                    FROM nodes_legacy
+                ''')
+                c.execute("DROP TABLE nodes_legacy")
         except sqlite3.OperationalError:
             pass
         c.execute('''CREATE TABLE IF NOT EXISTS waypoints (
@@ -99,6 +140,9 @@ def init_prefs_db():
             lon          REAL,
             marker_emoji TEXT DEFAULT '📝',
             ts           INTEGER
+        )''')
+        c.execute('''CREATE TABLE IF NOT EXISTS mc_ignored (
+            pubkey_id  TEXT PRIMARY KEY
         )''')
         # Migrations for existing tables
         for col, defn in [("channel_index",  "INTEGER DEFAULT 0"),
@@ -146,30 +190,35 @@ def init_msgs_db(db_path):
 # ---------------------------------------------------------------------------
 
 def load_waypoints():
+    rows = []
     with get_prefs_db() as conn:
-        for row in conn.cursor().execute(
+        rows = conn.cursor().execute(
             "SELECT id,name,description,lat,lon,expire,icon,from_id,radio_id,ts,"
             "channel_index,destination_id,marker_emoji,destination_ids FROM waypoints"
-        ):
+        ).fetchall()
+    with waypoints_lock:
+        for row in rows:
             try:
                 dest_ids = json.loads(row[13]) if row[13] else None
             except (ValueError, TypeError):
                 dest_ids = None
-            wp = {
+            waypoints_cache[row[0]] = {
                 "id": row[0], "name": row[1], "description": row[2],
                 "lat": row[3], "lon": row[4], "expire": row[5],
                 "icon": row[6], "from_id": row[7], "radio_id": row[8], "ts": row[9],
                 "channel_index": row[10] or 0, "destination_id": row[11],
                 "marker_emoji": row[12] or "📍", "destination_ids": dest_ids,
             }
-            waypoints_cache[row[0]] = wp
 
 
 def load_notes():
+    rows = []
     with get_prefs_db() as conn:
-        for row in conn.cursor().execute(
+        rows = conn.cursor().execute(
             "SELECT id,name,description,lat,lon,marker_emoji,ts FROM self_notes"
-        ):
+        ).fetchall()
+    with notes_lock:
+        for row in rows:
             notes_cache[row[0]] = {
                 "id": row[0], "name": row[1], "description": row[2],
                 "lat": row[3], "lon": row[4],
@@ -184,6 +233,7 @@ def load_notes():
 def upsert_node(n):
     """Insert or update a node. first_seen is never overwritten after initial insert."""
     ts = n.get("last_heard_ts") or int(time.time())
+    radio_id = n.get("radio_id") or ""
     with get_prefs_db() as conn:
         conn.execute('''
             INSERT INTO nodes
@@ -191,7 +241,7 @@ def upsert_node(n):
                  last_snr, last_rssi, last_battery,
                  last_lat, last_lon, hops_away, radio_id, is_local)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
+            ON CONFLICT(id, radio_id) DO UPDATE SET
                 long_name    = excluded.long_name,
                 short_name   = excluded.short_name,
                 last_seen    = excluded.last_seen,
@@ -201,14 +251,13 @@ def upsert_node(n):
                 last_lat     = COALESCE(excluded.last_lat,  last_lat),
                 last_lon     = COALESCE(excluded.last_lon,  last_lon),
                 hops_away    = excluded.hops_away,
-                radio_id     = excluded.radio_id,
                 is_local     = excluded.is_local
         ''', (
             n["id"], n["long_name"], n["short_name"],
             ts, ts,
             n["snr"], n["rssi"], n["battery"],
             n["latitude"], n["longitude"],
-            n["hops_away"], n["radio_id"], 1 if n["is_local"] else 0,
+            n["hops_away"], radio_id, 1 if n["is_local"] else 0,
         ))
 
 
@@ -226,6 +275,23 @@ def get_ignored():
         return {row[0] for row in c.fetchall()}
 
 
+def get_mc_ignored():
+    with get_prefs_db() as conn:
+        c = conn.cursor()
+        c.execute("SELECT pubkey_id FROM mc_ignored")
+        return {row[0] for row in c.fetchall()}
+
+
+def set_mc_ignored(pubkey_id, ignored):
+    with get_prefs_db() as conn:
+        c = conn.cursor()
+        if ignored:
+            c.execute("INSERT OR IGNORE INTO mc_ignored (pubkey_id) VALUES (?)", (pubkey_id,))
+        else:
+            c.execute("DELETE FROM mc_ignored WHERE pubkey_id=?", (pubkey_id,))
+        conn.commit()
+
+
 def get_db_nodes(sort_by="last_seen", sort_dir="desc", fav_first=True, show_ignored=False):
     valid_cols = {"last_seen", "first_seen", "long_name", "last_snr",
                   "last_rssi", "last_battery", "hops_away"}
@@ -239,13 +305,39 @@ def get_db_nodes(sort_by="last_seen", sort_dir="desc", fav_first=True, show_igno
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
         c.execute(f"SELECT * FROM nodes {where} ORDER BY {order}")
-        rows = [dict(r) for r in c.fetchall()]
+        raw_rows = [dict(r) for r in c.fetchall()]
 
-    local = next(
-        (r for r in rows if r["is_local"] and r["last_lat"] and r["last_lon"]),
-        None,
-    )
+    local_by_radio = {}
+    for row in raw_rows:
+        if row["is_local"] and row["last_lat"] and row["last_lon"]:
+            rid = row.get("radio_id") or ""
+            existing = local_by_radio.get(rid)
+            if not existing or (row.get("last_seen") or 0) > (existing.get("last_seen") or 0):
+                local_by_radio[rid] = row
+
+    grouped = {}
+    for row in raw_rows:
+        node_id = row["id"]
+        current = grouped.get(node_id)
+        if current is None:
+            grouped[node_id] = dict(row)
+            continue
+        if (row.get("last_seen") or 0) > (current.get("last_seen") or 0):
+            merged = dict(current)
+            merged.update(row)
+            merged["is_favorite"] = 1 if (current.get("is_favorite") or row.get("is_favorite")) else 0
+            merged["is_ignored"] = 1 if (current.get("is_ignored") or row.get("is_ignored")) else 0
+            merged["notes"] = row.get("notes") or current.get("notes") or ""
+            grouped[node_id] = merged
+        else:
+            current["is_favorite"] = 1 if (current.get("is_favorite") or row.get("is_favorite")) else 0
+            current["is_ignored"] = 1 if (current.get("is_ignored") or row.get("is_ignored")) else 0
+            if not current.get("notes") and row.get("notes"):
+                current["notes"] = row.get("notes")
+
+    rows = list(grouped.values())
     for row in rows:
+        local = local_by_radio.get(row.get("radio_id") or "")
         if local and row["last_lat"] and row["last_lon"] and not row["is_local"]:
             row["distance"] = round(_haversine(
                 local["last_lat"], local["last_lon"],
@@ -256,6 +348,10 @@ def get_db_nodes(sort_by="last_seen", sort_dir="desc", fav_first=True, show_igno
         row["first_seen_str"] = _format_ts(row["first_seen"])
         row["last_seen_str"]  = _format_ts(row["last_seen"])
 
+    reverse = direction == "DESC"
+    rows.sort(key=lambda r: (r.get(sort_by) is None, r.get(sort_by)), reverse=reverse)
+    if fav_first:
+        rows.sort(key=lambda r: r.get("is_favorite", 0), reverse=True)
     return rows
 
 
@@ -305,11 +401,33 @@ def load_messages(radio_id):
     with get_msgs_db(radio_id) as conn:
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
-        c.execute("SELECT * FROM messages ORDER BY ts ASC LIMIT 500")
+        c.execute("""
+            SELECT * FROM (
+                SELECT * FROM messages ORDER BY ts DESC LIMIT 500
+            )
+            ORDER BY ts ASC
+        """)
         rows = [dict(r) for r in c.fetchall()]
     for row in rows:
         row["radio_id"] = radio_id
     return rows
+
+
+def delete_channel_messages(radio_id, channel):
+    if radio_id is None:
+        return 0
+    with get_msgs_db(radio_id) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) FROM messages WHERE channel=? AND (is_dm IS NULL OR is_dm=0)",
+            (int(channel),),
+        )
+        removed = int(cur.fetchone()[0] or 0)
+        cur.execute(
+            "DELETE FROM messages WHERE channel=? AND (is_dm IS NULL OR is_dm=0)",
+            (int(channel),),
+        )
+    return removed
 
 
 # ---------------------------------------------------------------------------

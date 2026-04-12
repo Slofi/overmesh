@@ -209,8 +209,6 @@ def load_bot_config(radio_id=None):
 
 
 def save_bot_config(cfg, radio_id=None):
-    with _bot_config_cache_lock:
-        _bot_config_cache[radio_id] = json.loads(json.dumps(cfg))
     path = _bot_config_path(radio_id)
     tmp = None
     try:
@@ -218,6 +216,8 @@ def save_bot_config(cfg, radio_id=None):
             json.dump(cfg, tf, indent=2)
             tmp = tf.name
         os.replace(tmp, path)
+        with _bot_config_cache_lock:
+            _bot_config_cache[radio_id] = json.loads(json.dumps(cfg))
     except Exception as e:
         log.error(f"save_bot_config failed: {e}")
         if tmp and os.path.exists(tmp):
@@ -465,6 +465,219 @@ def handle_bot_command(packet, interface):
         log.warning(f"Bot command error: {e}")
 
 # ---------------------------------------------------------------------------
+# MC Bot
+# ---------------------------------------------------------------------------
+
+def _mc_contact_name(config_id, pubkey_pre):
+    """Look up MC contact display name by pubkey prefix."""
+    from state import mc_connections, mc_connections_lock
+    with mc_connections_lock:
+        contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
+    for pubkey, c in contacts.items():
+        if pubkey.startswith(pubkey_pre[:min(len(pubkey_pre), len(pubkey))]):
+            return c.get("adv_name", pubkey_pre[:8])
+    return pubkey_pre[:8]
+
+
+def _format_delta(delta_s):
+    if delta_s < 60:     return f"{int(delta_s)}s ago"
+    if delta_s < 3600:   return f"{int(delta_s) // 60}m ago"
+    if delta_s < 86400:  return f"{int(delta_s) // 3600}h ago"
+    return f"{int(delta_s) // 86400}d ago"
+
+
+def _mc_contact_last_seen_ts(contact):
+    return int(contact.get("last_seen_ts") or contact.get("last_advert") or 0)
+
+
+def build_mc_sitrep(config_id):
+    from state import mc_connections, mc_connections_lock
+    with mc_connections_lock:
+        contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
+    total = len(contacts)
+    if not total:
+        return "👀 MC: 0 contacts"
+    now = int(time.time())
+    cutoff = now - 3600
+    recent_count = sum(1 for c in contacts.values() if _mc_contact_last_seen_ts(c) > cutoff)
+    recent = sorted(contacts.values(), key=_mc_contact_last_seen_ts, reverse=True)
+    seen_lines = "\n".join(
+        f"{c.get('adv_name', '?')[:10]}, {_format_delta(now - _mc_contact_last_seen_ts(c))}"
+        for c in recent[:3] if _mc_contact_last_seen_ts(c)
+    )
+    parts = []
+    if seen_lines:
+        parts.append(f"Last Seen:\n{seen_lines}")
+    parts.append(f"👀 MC Contacts: {total} | 🟢 Heard Recently: {recent_count}")
+    return "\n\n".join(parts)
+
+
+def build_mc_motd_text(cfg, config_id):
+    from state import mc_connections, mc_connections_lock
+    with mc_connections_lock:
+        contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
+    cutoff = int(time.time()) - 3600
+    recent_count = sum(1 for c in contacts.values() if _mc_contact_last_seen_ts(c) > cutoff)
+    total = len(contacts)
+    custom = cfg["motd"].get("message", "")
+    return (
+        f"Bot active | MC: {recent_count} heard recently | {total} known contacts"
+        + (f" | {custom}" if custom else "")
+    )
+
+
+def send_mc_bot_response(config_id, text, chan_idx, dest_pre=None):
+    """Send bot reply via MC. Runs in a background thread — blocks until sent or timeout."""
+    from mesh_mc import run_mc, _send_chan_msg_async, _send_dm_async
+    try:
+        if dest_pre:
+            run_mc(_send_dm_async(config_id, dest_pre, text), timeout=15)
+        else:
+            run_mc(_send_chan_msg_async(config_id, chan_idx, text), timeout=15)
+    except Exception as e:
+        log.warning(f"[MCBot:{config_id}] send failed: {e}")
+
+
+def handle_mc_bot_command(msg, config_id, subtype):
+    """Handle a bot command arriving on an MC channel or DM."""
+    try:
+        cfg = load_bot_config(config_id)
+        if not cfg.get("enabled"):
+            return
+
+        prefix  = f"[{cfg.get('bot_label', 'OM Bot')}]"
+        text    = (msg.get("text") or "").strip()
+        if not text:
+            return
+
+        is_dm    = (subtype == "dm")
+        channel  = msg.get("channel_idx", 0)
+        from_pre = msg.get("pubkey_prefix", "?") if is_dm else msg.get("pubkey_pre", "?")
+
+        if not is_dm and channel not in cfg.get("listen_channels", [0]):
+            return
+
+        from_name = _mc_contact_name(config_id, from_pre)
+
+        # MC channel messages embed sender name as "Name: actual_text" — strip it
+        if not is_dm:
+            colon_idx = text.find(': ')
+            if 0 < colon_idx < 50:
+                text = text[colon_idx + 2:].strip()
+
+        if not text:
+            return
+
+        # --- relay <TARGET> <message> ---
+        if text.lower().startswith("relay "):
+            if not cfg["commands"].get("relay", {}).get("enabled"):
+                return
+            parts = text.split(" ", 2)
+            if len(parts) < 3:
+                response = f"{prefix} Usage: relay <NAME> <message>"
+            else:
+                target_name = parts[1]
+                relay_msg   = parts[2]
+                target_pre  = None
+                from state import mc_connections, mc_connections_lock
+                with mc_connections_lock:
+                    contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
+                for pubkey, c in contacts.items():
+                    if c.get("adv_name", "").lower() == target_name.lower():
+                        target_pre = pubkey[:12]
+                        break
+                if not target_pre:
+                    response = f"{prefix} Contact '{target_name}' not found on MC mesh."
+                else:
+                    relay_cfg  = cfg["commands"].get("relay", {})
+                    relay_mode = relay_cfg.get("relay_mode", "dm")
+                    relay_ch   = int(relay_cfg.get("relay_channel", 0))
+                    relay_text = f"[{cfg.get('bot_label', 'OM Bot')} relay from {from_name[:10]}]: {relay_msg}"
+                    try:
+                        dest = None if relay_mode == "broadcast" else target_pre
+                        threading.Thread(
+                            target=send_mc_bot_response,
+                            args=(config_id, relay_text, relay_ch, dest),
+                            daemon=True,
+                        ).start()
+                        response = f"{prefix} Relayed to {target_name}."
+                        log_bot_activity(from_name, "relay", f"→ {target_name}: {relay_msg}", channel)
+                    except Exception as e:
+                        response = f"{prefix} Failed to relay: {e}"
+                        log_bot_activity(from_name, "relay", f"FAILED: {e}", channel)
+                    resp_dest = from_pre if is_dm else None
+                    threading.Thread(
+                        target=send_mc_bot_response,
+                        args=(config_id, response, channel, resp_dest),
+                        daemon=True,
+                    ).start()
+                    push_to_sse({"type": "mc_bot_reply", "radio_id": config_id, "to_id": resp_dest, "to_name": from_name, "cmd": "relay", "text": response, "channel": channel})
+                    return
+
+            resp_dest = from_pre if is_dm else None
+            threading.Thread(
+                target=send_mc_bot_response,
+                args=(config_id, response, channel, resp_dest),
+                daemon=True,
+            ).start()
+            log_bot_activity(from_name, "relay", response, channel)
+            push_to_sse({"type": "mc_bot_reply", "radio_id": config_id, "to_id": resp_dest, "to_name": from_name, "cmd": "relay", "text": response, "channel": channel})
+            return
+
+        # --- Single-word commands ---
+        cmd_key = "dot" if text == "." else text.lower().split()[0].rstrip("!?.,;")
+        if not cmd_key:
+            return
+
+        cmd_cfg = cfg["commands"].get(cmd_key)
+        if not cmd_cfg or not cmd_cfg.get("enabled"):
+            return
+
+        cmd = cmd_key
+        if cmd == "ping":
+            response = f"🏓PONG | {random.choice(['Still here, unfortunately.', 'Not dead yet.', 'Present and accounted for.', 'You rang?', 'Did someone say ping?', 'Responding as trained.', 'Loud and proud.', 'Alive and well.', 'Mesh is alive!', 'Roger that, I exist.', 'Beep boop, I am a bot.', 'Oh, you noticed me!', 'Here!', 'Indeed.', 'Obviously.'])}"
+        elif cmd == "ack":
+            response = random.choice(["✋Ack to you!", "✋Copy that!", "✋Acknowledged", "✋Received!", "✋Loud and clear", "✋Message received, filing it away", "✋Got it, doing nothing about it", "✋Confirmed. Mostly.", "✋10-4, good buddy", "✋Wilco"])
+        elif cmd == "test":
+            response = random.choice(["🎙Roger that!", "🎙Testing 1,2,3", "🎙Testing, testing", "🎙Read you loud and clear", "🎙Signal received", "🎙Loud and clear", "🎙You are coming through loud and hot", "🎙Heard you the first time", "🎙Five by five", "🎙Is this thing on? Yes, yes it is", "🎙Transmission received, sanity intact", "🎙Strength 5, readability 5", "🎙Clear as a bell", "🎙Your signal is better than my day", "🎙Mesh works, miracles do happen"])
+        elif cmd == "sitrep":
+            response = build_mc_sitrep(config_id)
+        elif cmd == "cmd":
+            enabled = sorted([c for c, v in cfg["commands"].items() if v.get("enabled") and c != "dot"])
+            parts_l = [c + (' (relay "NAME" msg)' if c == "relay" else "") for c in enabled]
+            response = "Commands: " + " | ".join(parts_l)
+        elif cmd == "motd":
+            response = build_mc_motd_text(cfg, config_id)
+        elif cmd == "joke":
+            response = random.choice(BOT_JOKES).replace("Meshtastic", "MeshCore")
+        elif cmd == "dot":
+            response = random.choice(["👀 Yes, I can see your . there ;)", "👀 Ah, a lone dot. Minimalist.", "👀 Received one (1) dot. Processing...", "👀 A dot! The mesh carried that with dignity.", "👀 Your . arrived safely. Was it worth it? ;)", "👀 10-4, dot received.", "👀 One dot, no context. Noted.", "👀 That's the whole message? Bold choice.", "👀 The mesh works! Proven by a dot.", "👀 Dot acknowledged. Over and out.", "👀 I see your . and raise you a response.", "👀 Short, sweet, and 100% LoRa."])
+        else:
+            return
+
+        response    = f"{prefix} {response}"
+        respond_via = cmd_cfg.get("respond_via", "same")
+
+        if respond_via == "dm" or is_dm:
+            dest_pre = from_pre
+            resp_ch  = 0
+        else:
+            dest_pre = None
+            resp_ch  = channel
+
+        threading.Thread(
+            target=send_mc_bot_response,
+            args=(config_id, response, resp_ch, dest_pre),
+            daemon=True,
+        ).start()
+        log_bot_activity(from_name, cmd, response, channel)
+        push_to_sse({"type": "mc_bot_reply", "radio_id": config_id, "to_id": dest_pre, "to_name": from_name, "cmd": cmd, "text": response, "channel": resp_ch})
+
+    except Exception as e:
+        log.warning(f"[MCBot:{config_id}] command error: {e}")
+
+
+# ---------------------------------------------------------------------------
 # MOTD scheduler
 # ---------------------------------------------------------------------------
 
@@ -523,5 +736,53 @@ def motd_scheduler_loop():
                     log_bot_activity("Bot", "motd_scheduled", text, channels[0])
                 except Exception as e:
                     log.warning(f"MOTD error for {radio_id}: {e}")
+
+            # --- MC radios ---
+            from state import mc_connections, mc_connections_lock
+            with mc_connections_lock:
+                mc_connected_ids = [
+                    rid for rid, state in mc_connections.items()
+                    if state.get("status") == "connected"
+                ]
+            for radio_id in mc_connected_ids:
+                try:
+                    cfg = load_bot_config(radio_id)
+                    if not cfg.get("enabled") or not cfg.get("motd", {}).get("enabled"):
+                        continue
+                    last_sent = _motd_last_sent_per_radio.get(radio_id, 0)
+                    mode      = cfg["motd"].get("mode", "interval")
+                    should_fire = False
+                    fire_ts     = now
+                    if mode == "fixed":
+                        fixed_time = cfg["motd"].get("fixed_time", "08:00")
+                        try:
+                            h, m = map(int, fixed_time.split(":"))
+                            if not (0 <= h <= 23 and 0 <= m <= 59):
+                                raise ValueError("out of range")
+                        except ValueError:
+                            h, m = 8, 0
+                        now_dt  = datetime.now()
+                        fire_dt = now_dt.replace(hour=h, minute=m, second=0, microsecond=0)
+                        if abs((now_dt - fire_dt).total_seconds()) < 90 and last_sent < fire_dt.timestamp():
+                            should_fire = True
+                            fire_ts     = int(fire_dt.timestamp())
+                    else:
+                        interval_secs = cfg["motd"].get("interval_hours", 4) * 3600
+                        should_fire   = (now - last_sent) >= interval_secs
+                    if not should_fire:
+                        continue
+                    text     = f"[{cfg.get('bot_label', 'OM Bot')}] {build_mc_motd_text(cfg, radio_id)}"
+                    channels = cfg.get("listen_channels", [0]) or [0]
+                    for ch in channels:
+                        threading.Thread(
+                            target=send_mc_bot_response,
+                            args=(radio_id, text, ch),
+                            daemon=True,
+                        ).start()
+                    _motd_last_sent_per_radio[radio_id] = fire_ts
+                    log_bot_activity("Bot", "motd_scheduled_mc", text, channels[0])
+                except Exception as e:
+                    log.warning(f"MOTD MC error for {radio_id}: {e}")
+
         except Exception as e:
             log.warning(f"MOTD scheduler error: {e}")

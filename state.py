@@ -6,11 +6,26 @@ to keep the dependency graph acyclic.
 import threading
 
 # ---------------------------------------------------------------------------
-# Node connections
+# Node connections (Meshtastic)
 # ---------------------------------------------------------------------------
 
 connections      = {}
 connections_lock = threading.Lock()
+
+# ---------------------------------------------------------------------------
+# MeshCore connections
+# mc_connections[config_id] = {
+#   "mc": MeshCore instance (or None),
+#   "status": "connected" | "disconnected" | "connecting",
+#   "config": node_cfg dict,
+#   "node_id": pubkey prefix (12 hex chars) once connected,
+#   "node_info": SELF_INFO payload dict,
+#   "contacts": {pubkey: contact_dict},
+# }
+# ---------------------------------------------------------------------------
+
+mc_connections      = {}
+mc_connections_lock = threading.Lock()
 
 # ---------------------------------------------------------------------------
 # Chat + SSE

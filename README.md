@@ -1,5 +1,7 @@
 # OverMesh
 
+**v2.0** — Meshtastic + MeshCore, unified.
+
 OverMesh is a self-hosted dashboard for Meshtastic and MeshCore. It runs on your own machine, uses your own radios, and keeps everything local, no cloud, no account, no subscription.
 
 This is now the main active OverMesh app. Meshtastic and MeshCore are treated as two equal parts of one tool, not as separate side projects.

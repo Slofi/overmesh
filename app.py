@@ -6,6 +6,8 @@ import sys
 import threading
 import time
 
+__version__ = "2.0.0"
+
 from flask import Flask, jsonify, render_template
 from pubsub import pub
 

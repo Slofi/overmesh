@@ -53,6 +53,7 @@ BOT_CONFIG_DEFAULTS = {
         "interval_hours": 4,
         "fixed_time": "08:00",
         "message": "",
+        "channels": [],
     },
 }
 
@@ -196,7 +197,10 @@ def load_bot_config(radio_id=None):
             log.warning(f"bot_config load error ({e}), falling back to defaults")
             cfg = {}
         merged = json.loads(json.dumps(BOT_CONFIG_DEFAULTS))
-        merged.update({k: v for k, v in cfg.items() if k != "commands"})
+        merged.update({k: v for k, v in cfg.items() if k not in ("commands", "motd")})
+        motd_defaults = json.loads(json.dumps(BOT_CONFIG_DEFAULTS["motd"]))
+        motd_defaults.update(cfg.get("motd", {}) if isinstance(cfg.get("motd", {}), dict) else {})
+        merged["motd"] = motd_defaults
         for cmd, defaults in BOT_CONFIG_DEFAULTS["commands"].items():
             if cmd not in cfg.get("commands", {}):
                 merged["commands"][cmd] = json.loads(json.dumps(defaults))
@@ -222,6 +226,22 @@ def save_bot_config(cfg, radio_id=None):
         log.error(f"save_bot_config failed: {e}")
         if tmp and os.path.exists(tmp):
             os.unlink(tmp)
+
+
+def motd_target_channels(cfg):
+    motd_cfg = cfg.get("motd", {}) if isinstance(cfg.get("motd", {}), dict) else {}
+    channels = motd_cfg.get("channels")
+    if isinstance(channels, list):
+        cleaned = []
+        for ch in channels:
+            try:
+                cleaned.append(int(ch))
+            except (TypeError, ValueError):
+                continue
+        if cleaned:
+            return cleaned
+    listen = cfg.get("listen_channels", [0]) or [0]
+    return [int(ch) for ch in listen]
 
 # ---------------------------------------------------------------------------
 # Activity log + SSE
@@ -728,7 +748,7 @@ def motd_scheduler_loop():
                     if not should_fire:
                         continue
                     text     = f"[{cfg.get('bot_label', 'OM Bot')}] {build_motd_text(cfg)}"
-                    channels = cfg.get("listen_channels", [0]) or [0]
+                    channels = motd_target_channels(cfg)
                     for ch in channels:
                         send_bot_response(iface, text, ch)
                         push_bot_chat_message(text, ch, radio_id)
@@ -772,7 +792,7 @@ def motd_scheduler_loop():
                     if not should_fire:
                         continue
                     text     = f"[{cfg.get('bot_label', 'OM Bot')}] {build_mc_motd_text(cfg, radio_id)}"
-                    channels = cfg.get("listen_channels", [0]) or [0]
+                    channels = motd_target_channels(cfg)
                     for ch in channels:
                         threading.Thread(
                             target=send_mc_bot_response,

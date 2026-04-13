@@ -247,12 +247,18 @@ def api_settings_app_set():
                 CONFIG["app"]["zoom"] = max(50, min(200, int(data["zoom"])))
             if "sense_cooldown" in data:
                 CONFIG["app"]["sense_cooldown"] = max(1, min(3600, int(data["sense_cooldown"])))
+            if "inapp_notify_returned_gap_value" in data:
+                CONFIG["app"]["inapp_notify_returned_gap_value"] = max(1, min(9999, int(data["inapp_notify_returned_gap_value"])))
         except (TypeError, ValueError):
             return jsonify({"error": "Invalid numeric value"}), 400
         if "accent_color" in data:
             val = str(data["accent_color"])
             if re.match(r'^#[0-9a-fA-F]{6}$', val):
                 CONFIG["app"]["accent_color"] = val
+        if "inapp_notify_returned_gap_unit" in data:
+            unit = str(data["inapp_notify_returned_gap_unit"]).lower()
+            if unit in ("hours", "days"):
+                CONFIG["app"]["inapp_notify_returned_gap_unit"] = unit
         for key in ("inapp_notify_messages", "inapp_notify_nodes", "inapp_notify_returned"):
             if key in data:
                 CONFIG["app"][key] = bool(data[key])

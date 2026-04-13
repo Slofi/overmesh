@@ -1307,7 +1307,7 @@
           <button class="search-clear" onclick="clearSearch('history-search')" title="Clear search">✕</button>
         </div>
         <button class="btn" id="db-fav-first-btn" onclick="toggleDbFavFirst()" title="Sort favourited nodes to top">&#9733; Fav first</button>
-        <button class="btn" id="db-show-ignored-btn" onclick="toggleShowIgnored()" title="Show only ignored Meshtastic nodes">&#128683; Show ignored</button>
+        <button class="btn" id="db-show-ignored-btn" onclick="toggleShowIgnored()" title="Show only ignored Meshtastic nodes">&#128683; MT ignored</button>
         <button class="btn" id="mc-show-ignored-btn" onclick="toggleMcShowIgnored()" title="Show only ignored MeshCore contacts">&#128683; MC ignored</button>
       </div>
 
@@ -1655,6 +1655,10 @@
               <input id="motd-fixed-time" type="time" class="bot-field" onchange="saveBotConfig()">
               <span style="color:var(--muted)">daily</span>
             </div>
+          </div>
+          <div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Send MOTD on channels:</div>
+            <div id="motd-channels" style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px"></div>
           </div>
           <div>
             <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Custom message:</div>
@@ -2228,6 +2232,23 @@
             <span class="bot-toggle-slider"></span>
           </label>
           <span style="font-size:13px">Seen again after a long time</span>
+          <input
+            id="inapp-notif-returned-gap-value"
+            type="number"
+            min="1"
+            step="1"
+            value="7"
+            onchange="saveInAppNotifPrefs()"
+            style="width:64px;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:12px"
+          >
+          <select
+            id="inapp-notif-returned-gap-unit"
+            onchange="saveInAppNotifPrefs()"
+            style="padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:12px"
+          >
+            <option value="hours">hours</option>
+            <option value="days">days</option>
+          </select>
         </div>
         <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-top:4px">Browser</div>
         <div style="display:flex;align-items:center;gap:12px">
@@ -2581,6 +2602,26 @@
     return fallback;
   }
 
+  function _appPrefInt(key, fallback) {
+    const raw = _appSettings ? _appSettings[key] : null;
+    const value = parseInt(raw, 10);
+    return Number.isFinite(value) ? value : fallback;
+  }
+
+  function _returnedGapUnit() {
+    const raw = String((_appSettings && _appSettings.inapp_notify_returned_gap_unit) || 'days').toLowerCase();
+    return raw === 'hours' ? 'hours' : 'days';
+  }
+
+  function _returnedGapValue() {
+    return Math.max(1, _appPrefInt('inapp_notify_returned_gap_value', 7));
+  }
+
+  function _returnedGapThresholdSeconds() {
+    const value = _returnedGapValue();
+    return value * (_returnedGapUnit() === 'hours' ? 3600 : 24 * 3600);
+  }
+
   function showToast(title, body, type = 'message', tag = '') {
     const stack = document.getElementById('toast-stack');
     if (!stack) return;
@@ -2618,12 +2659,20 @@
   }
 
   function saveInAppNotifPrefs() {
+    const returnedGapValue = Math.max(1, parseInt(document.getElementById('inapp-notif-returned-gap-value')?.value || '7', 10) || 7);
+    const returnedGapUnit = (document.getElementById('inapp-notif-returned-gap-unit')?.value === 'hours') ? 'hours' : 'days';
     const payload = {
       inapp_notify_messages: document.getElementById('inapp-notif-messages')?.checked ?? true,
       inapp_notify_nodes: document.getElementById('inapp-notif-nodes')?.checked ?? true,
       inapp_notify_returned: document.getElementById('inapp-notif-returned')?.checked ?? true,
+      inapp_notify_returned_gap_value: returnedGapValue,
+      inapp_notify_returned_gap_unit: returnedGapUnit,
     };
     Object.assign(_appSettings, payload);
+    const gapValueEl = document.getElementById('inapp-notif-returned-gap-value');
+    const gapUnitEl = document.getElementById('inapp-notif-returned-gap-unit');
+    if (gapValueEl) gapValueEl.value = String(returnedGapValue);
+    if (gapUnitEl) gapUnitEl.value = returnedGapUnit;
     fetch('/api/settings/app', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -2637,9 +2686,13 @@
     const msgEl = document.getElementById('inapp-notif-messages');
     const nodeEl = document.getElementById('inapp-notif-nodes');
     const retEl = document.getElementById('inapp-notif-returned');
+    const gapValueEl = document.getElementById('inapp-notif-returned-gap-value');
+    const gapUnitEl = document.getElementById('inapp-notif-returned-gap-unit');
     if (msgEl) msgEl.checked = _appPrefBool('inapp_notify_messages', true);
     if (nodeEl) nodeEl.checked = _appPrefBool('inapp_notify_nodes', true);
     if (retEl) retEl.checked = _appPrefBool('inapp_notify_returned', true);
+    if (gapValueEl) gapValueEl.value = String(_returnedGapValue());
+    if (gapUnitEl) gapUnitEl.value = _returnedGapUnit();
   }
 
   function sendNotif(title, body, tag, type) {
@@ -3441,7 +3494,7 @@
     showIgnored = !showIgnored;
     const btn = document.getElementById('db-show-ignored-btn');
     btn.classList.toggle('active', showIgnored);
-    btn.textContent = showIgnored ? '🚫 Ignored only' : '🚫 Show ignored';
+    btn.textContent = showIgnored ? '🚫 MT: ignored only' : '🚫 MT ignored';
     loadHistory();
   }
 
@@ -3904,7 +3957,7 @@
             const label = `${n.long_name} (${n.short_name})`;
             maybeShowInAppNodeSeen('MT node seen', `<b>${escHtml(label)}</b>`, `toast-node-mt-${id}`);
             sendNotif('Node online', `${label} appeared on mesh`, `node-${id}`, 'node');
-          } else if (prevSeen && curSeen > prevSeen && (curSeen - prevSeen) >= INAPP_RETURNED_THRESHOLD_S && (nowTs - curSeen) <= INAPP_NODE_RECENT_WINDOW_S) {
+          } else if (prevSeen && curSeen > prevSeen && (curSeen - prevSeen) >= _returnedGapThresholdSeconds() && (nowTs - curSeen) <= INAPP_NODE_RECENT_WINDOW_S) {
             maybeShowInAppNodeReturned('MT node seen again', `<b>${escHtml(n.long_name)}</b> returned after a long gap`, `toast-node-return-mt-${id}`);
           }
         });
@@ -4222,6 +4275,7 @@
   let _mapStaticLoaded = false;  // waypoints/notes/GPS only fetched once per session
   let mapMarkers    = {};
   let clusterMarkers = {};  // posKey → cluster badge marker
+  let mcClusterMarkers = {};  // posKey → MC cluster badge marker
   let waypointMarkers = {};
   let waypointsData   = {};  // wp_id → wp object (for edit modal)
   let notesData       = {};  // note_id → note object
@@ -4877,6 +4931,7 @@
     });
     Object.values(senseMarkers).forEach(marker => { if (show) marker.openTooltip(); else marker.closeTooltip(); });
     mcMapMarkers.forEach(marker => { if (show) marker.openTooltip(); else marker.closeTooltip(); });
+    Object.values(mcClusterMarkers).forEach(marker => { if (show) marker.openTooltip(); else marker.closeTooltip(); });
     if (_gpsMarker) { if (show) _gpsMarker.openTooltip(); else _gpsMarker.closeTooltip(); }
   }
 
@@ -4892,12 +4947,27 @@
       if (!matches && leafletMap.hasLayer(marker)) leafletMap.removeLayer(marker);
     });
     // Also filter cluster badges: show if any node in the group matches
-    const posKey = n => `${n.latitude.toFixed(4)}_${n.longitude.toFixed(4)}`;
+    const posKey = n => _mapPosKey(n.latitude, n.longitude);
     Object.entries(clusterMarkers).forEach(([k, marker]) => {
       const anyMatch = !mapSearchQuery || allNodes.some(n =>
         n.latitude != null && posKey(n) === k &&
         ((n.long_name || '').toLowerCase().includes(mapSearchQuery) ||
          (n.short_name || '').toLowerCase().includes(mapSearchQuery))
+      );
+      if (anyMatch && !leafletMap.hasLayer(marker)) marker.addTo(leafletMap);
+      if (!anyMatch && leafletMap.hasLayer(marker)) leafletMap.removeLayer(marker);
+    });
+    mcMapMarkers.forEach(marker => {
+      const data = marker._omMcMapData || null;
+      if (!data) return;
+      const matches = !mapSearchQuery || `${data.long_name || ''} ${data.name || ''} ${data.id || ''}`.toLowerCase().includes(mapSearchQuery);
+      if (matches && !leafletMap.hasLayer(marker)) marker.addTo(leafletMap);
+      if (!matches && leafletMap.hasLayer(marker)) leafletMap.removeLayer(marker);
+    });
+    Object.entries(mcClusterMarkers).forEach(([_, marker]) => {
+      const items = marker._omClusterItems || [];
+      const anyMatch = !mapSearchQuery || items.some(item =>
+        `${item.long_name || ''} ${item.name || ''} ${item.id || ''}`.toLowerCase().includes(mapSearchQuery)
       );
       if (anyMatch && !leafletMap.hasLayer(marker)) marker.addTo(leafletMap);
       if (!anyMatch && leafletMap.hasLayer(marker)) leafletMap.removeLayer(marker);
@@ -6004,6 +6074,10 @@
     }, 80);
   }
 
+  function _mapPosKey(lat, lon) {
+    return `${Number(lat).toFixed(4)}_${Number(lon).toFixed(4)}`;
+  }
+
   function markerColor(node) {
     if (node.is_local) return '#3b82f6';   // blue — local node
     if (!node.last_heard_ts) return '#6e7681';
@@ -6251,7 +6325,9 @@
     const chFetch = (botNetwork === 'mc' && activeMcRadioId)
       ? fetch(`/api/mc/${encodeURIComponent(activeMcRadioId)}/channels`)
           .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
-          .then(d => (d.channels || []).map(ch => ({ index: ch.idx, name: ch.name || `CH${ch.idx}` })))
+          .then(d => (d.channels || [])
+            .filter(ch => (ch.name || '').trim() || (ch.hash || '').trim())
+            .map(ch => ({ index: ch.idx, name: ch.name || `CH${ch.idx}` })))
       : fetch('/api/chat/channels' + botChParam)
           .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
 
@@ -6275,11 +6351,24 @@
     document.getElementById('bot-enable').checked = cfg.enabled;
     document.getElementById('bot-label').value = cfg.bot_label || 'OM Bot';
 
+    const listenChannels = Array.isArray(cfg.listen_channels) && cfg.listen_channels.length ? cfg.listen_channels : [0];
+    const motdChannels = Array.isArray(cfg.motd?.channels) && cfg.motd.channels.length ? cfg.motd.channels : listenChannels;
+
     const chDiv = document.getElementById('bot-channels');
     chDiv.innerHTML = channels.map(ch => `
       <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
         <input type="checkbox" value="${ch.index}"
-          ${cfg.listen_channels.includes(ch.index) ? 'checked' : ''}
+          ${listenChannels.includes(ch.index) ? 'checked' : ''}
+          onchange="saveBotConfig()">
+        CH${ch.index}${ch.name && ch.name !== 'Primary' ? ' · ' + escHtml(ch.name) : ''}
+      </label>
+    `).join('');
+
+    const motdDiv = document.getElementById('motd-channels');
+    motdDiv.innerHTML = channels.map(ch => `
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+        <input type="checkbox" value="${ch.index}"
+          ${motdChannels.includes(ch.index) ? 'checked' : ''}
           onchange="saveBotConfig()">
         CH${ch.index}${ch.name && ch.name !== 'Primary' ? ' · ' + escHtml(ch.name) : ''}
       </label>
@@ -6382,6 +6471,9 @@
     botConfig.motd.interval_hours = parseInt(document.getElementById('motd-interval').value) || 4;
     botConfig.motd.fixed_time     = document.getElementById('motd-fixed-time').value || '08:00';
     botConfig.motd.message        = document.getElementById('motd-message').value;
+    botConfig.motd.channels       = Array.from(
+      document.querySelectorAll('#motd-channels input[type=checkbox]:checked')
+    ).map(el => parseInt(el.value));
 
     fetch('/api/bot/config', {
       method: 'POST',
@@ -7679,7 +7771,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       if (notifReady) {
         if (isNew) {
           maybeShowInAppNodeSeen('MC contact seen', `<b>${escHtml(contactLabel)}</b>`, `toast-node-mc-${data.radio_id}-${data.id}`);
-        } else if (prevSeenTs && curSeenTs > prevSeenTs && (curSeenTs - prevSeenTs) >= INAPP_RETURNED_THRESHOLD_S && (nowTs - curSeenTs) <= INAPP_NODE_RECENT_WINDOW_S) {
+        } else if (prevSeenTs && curSeenTs > prevSeenTs && (curSeenTs - prevSeenTs) >= _returnedGapThresholdSeconds() && (nowTs - curSeenTs) <= INAPP_NODE_RECENT_WINDOW_S) {
           maybeShowInAppNodeReturned('MC contact seen again', `<b>${escHtml(contactLabel)}</b> returned after a long gap`, `toast-node-return-mc-${data.radio_id}-${data.id}`);
         }
       }
@@ -7875,6 +7967,69 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     return radioName ? `${typeLabel} via ${radioName}` : typeLabel;
   }
 
+  function _mcClusterIcon(count, hasRadio) {
+    return L.divIcon({
+      className: '',
+      html: `<div style="
+        background:${hasRadio ? '#10b981' : '#3b82f6'};
+        color:#f8fafc;border-radius:50%;
+        width:28px;height:28px;display:flex;align-items:center;justify-content:center;
+        font-weight:700;font-size:12px;border:2px solid rgba(255,255,255,0.35);
+        box-shadow:0 1px 4px rgba(0,0,0,0.5)">${count}</div>`,
+      iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -14]
+    });
+  }
+
+  function _mcClusterItemHtml(item) {
+    if (item._kind === 'radio') {
+      return `
+        <div style="border-top:1px solid var(--border);padding-top:8px;margin-top:6px">
+          <div class="map-popup-name" style="margin-bottom:2px">${escHtml(item.name || item.id || '?')}<span class="map-popup-local" style="background:rgba(16,185,129,0.15);color:#10b981">MC Radio</span></div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">This radio node</div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap">
+            <button class="map-popup-btn" title="Show in Nodes list" onclick="showMcNodeInList('${jsSafe(item.id || '')}')">List</button>
+          </div>
+        </div>`;
+    }
+    const label = item.long_name || item.name || item.id || '?';
+    const safePk = jsSafe(item.full_key || item.id || '');
+    const safeRid = jsSafe(item._rid || '');
+    const safeName = jsSafe(label);
+    const hops = (item.out_path_len != null && item.out_path_len >= 0) ? item.out_path_len : null;
+    const bat = item.battery ?? item.bat_pct ?? item.bat;
+    const batStr = bat != null ? `${bat}%` : '—';
+    const snrText = item.snr != null ? `${item.snr} dB` : '—';
+    const tsText = item.last_heard_ts ? senseTimeAgo(item.last_heard_ts) : (item.last_seen ? escHtml(item.last_seen) : '—');
+    const keyStr = (item.full_key || item.id || '').slice(0, 12);
+    return `
+      <div style="border-top:1px solid var(--border);padding-top:8px;margin-top:6px">
+        <div class="map-popup-name" style="margin-bottom:2px">${escHtml(label)}<span class="map-popup-local" style="background:rgba(59,130,246,0.15);color:#3b82f6">MC</span>${mcTypeBadge(item.type ?? 0)}</div>
+        ${keyStr ? `<div style="font-size:10px;color:var(--muted)">${escHtml(keyStr)}</div>` : ''}
+        <div style="font-size:10px;color:var(--muted);margin-top:2px">${escHtml(mcContactMetaLabel(item, item._rid))}</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">
+          <b>SNR:</b> ${snrText} &nbsp; <b>Battery:</b> ${batStr} &nbsp; <b>Hops:</b> ${hops !== null ? hops : '—'} &nbsp; <b>Seen:</b> ${tsText}
+        </div>
+        <div style="display:flex;gap:4px;flex-wrap:wrap">
+          <button class="map-popup-btn" title="Show in Nodes list" onclick="leafletMap.closePopup();showMcNodeInList('${jsSafe(item.id || '')}')">List</button>
+          ${item.type !== 2 ? `<button class="map-popup-btn" title="Send direct message" onclick="leafletMap.closePopup();doMcDm('${safePk}','${safeRid}','${safeName}')">DM</button>` : ''}
+          <button class="map-popup-btn" title="Ping (request status)" onclick="leafletMap.closePopup();doMcPing('${safePk}','${safeRid}','${safeName}')">Ping</button>
+          <button class="map-popup-btn" title="Select in Sense panel" onclick="leafletMap.closePopup();switchTab('map');toggleSensePanel(true);switchSenseNet('mc');selectMcSenseContact('${jsSafe(item.id || '')}','${safeRid}')">Sense</button>
+        </div>
+      </div>`;
+  }
+
+  function _mcClusterPopupHtml(items, lat, lon) {
+    const contactCount = items.filter(item => item._kind !== 'radio').length;
+    const radioCount = items.filter(item => item._kind === 'radio').length;
+    const titleParts = [];
+    if (contactCount) titleParts.push(`${contactCount} contact${contactCount !== 1 ? 's' : ''}`);
+    if (radioCount) titleParts.push(`${radioCount} radio${radioCount !== 1 ? 's' : ''}`);
+    return `
+      <div style="font-weight:700;margin-bottom:8px;color:#3b82f6">${escHtml(titleParts.join(' + ') || `${items.length} nodes`)} at this location</div>
+      <div style="color:var(--muted);font-size:11px;margin-bottom:10px">${Number(lat).toFixed(5)}, ${Number(lon).toFixed(5)}</div>
+      ${items.map(item => _mcClusterItemHtml(item)).join('')}`;
+  }
+
   function makeMcIcon(highlighted) {
     const outer = highlighted ? 10 : 7;
     const inner = highlighted ? 6  : 4;
@@ -7897,68 +8052,103 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     mcMapMarkers.forEach(m => leafletMap.removeLayer(m));
     mcMapMarkers = [];
     mcMapMarkerById = {};
+    Object.values(mcClusterMarkers).forEach(m => leafletMap.removeLayer(m));
+    mcClusterMarkers = {};
     if (!mapShowMc) return;
+
+    const items = [];
     Object.entries(mcContacts).forEach(([rid, radioContacts]) => {
       if (mcLastStatus[rid]?.status !== 'connected') return;
       Object.values(radioContacts).forEach(c => {
         const lat = c.latitude ?? c.lat;
         const lon = c.longitude ?? c.lon;
         if (lat == null || lon == null) return;
-        const label   = escHtml(c.long_name || c.name || c.id || '?');
-        const safePk  = jsSafe(c.full_key || c.id || '');
-        const safeRid = jsSafe(rid);
-        const safeName = jsSafe(c.long_name || c.name || c.id || '?');
-        const hops    = (c.out_path_len != null && c.out_path_len >= 0) ? c.out_path_len : null;
-        const marker = L.marker([lat, lon], { icon: makeMcIcon() });
-        const _bat   = c.battery ?? c.bat_pct ?? c.bat;
-        const _batStr = _bat != null ? `${_bat}%` : '—';
-        const _snrStr = c.snr  != null ? `${c.snr} dB` : '—';
-        const _tsStr  = c.last_heard_ts ? senseTimeAgo(c.last_heard_ts) : (c.last_seen ? escHtml(c.last_seen) : '—');
-        const _keyStr = (c.full_key || c.id || '').slice(0, 12);
-        const _metaStr = escHtml(mcContactMetaLabel(c, c._rid));
+        items.push({...c, latitude: lat, longitude: lon, _rid: rid, _kind: 'contact'});
+      });
+    });
+    Object.entries(mcLastStatus).forEach(([rid, st]) => {
+      if (st?.status !== 'connected') return;
+      if (st.lat == null || st.lon == null) return;
+      items.push({...st, id: rid, latitude: st.lat, longitude: st.lon, _rid: rid, _kind: 'radio'});
+    });
+
+    const groups = {};
+    items.forEach(item => {
+      const key = _mapPosKey(item.latitude, item.longitude);
+      (groups[key] = groups[key] || []).push(item);
+    });
+
+    items.forEach(item => {
+      const key = _mapPosKey(item.latitude, item.longitude);
+      const group = groups[key] || [item];
+      if (group.length > 1) {
+        if (mcClusterMarkers[key]) return;
+        const marker = L.marker([item.latitude, item.longitude], {
+          icon: _mcClusterIcon(group.length, group.some(entry => entry._kind === 'radio'))
+        });
+        marker._omClusterItems = group;
+        marker.bindPopup(_mcClusterPopupHtml(group, item.latitude, item.longitude), { className: 'om-popup', maxWidth: 280, maxHeight: 400 });
+        marker.bindTooltip(`${group.length} nodes`, { permanent: true, direction: 'right', className: 'map-label', offset: [8, 0] });
+        marker.addTo(leafletMap);
+        if (!mapLabels) marker.closeTooltip();
+        mcClusterMarkers[key] = marker;
+        return;
+      }
+
+      if (item._kind === 'radio') {
+        const name = escHtml(item.name || item.id);
+        const glow = 'drop-shadow(0 0 5px #10b981) drop-shadow(0 1px 4px rgba(0,0,0,0.8))';
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30" style="filter:${glow};overflow:visible"><rect x="7" y="7" width="16" height="16" fill="white" transform="rotate(45,15,15)" rx="1.5"/><rect x="10" y="10" width="10" height="10" fill="#10b981" transform="rotate(45,15,15)" rx="1"/></svg>`;
+        const icon = L.divIcon({ html: svg, className: '', iconSize: [30, 30], iconAnchor: [15, 15], popupAnchor: [0, -17] });
+        const marker = L.marker([item.latitude, item.longitude], { icon });
+        marker._omMcMapData = item;
         marker.bindPopup(
-          `<div class="map-popup-name">${label}<span class="map-popup-local" style="background:rgba(59,130,246,0.15);color:#3b82f6">MC</span>${mcTypeBadge(c.type ?? 0)}</div>`
-          + (_keyStr ? `<div style="font-size:10px;color:var(--muted)">${escHtml(_keyStr)}</div>` : '')
-          + `<div style="font-size:10px;color:var(--muted);margin-top:2px">${_metaStr}</div>`
-          + `<div><b>SNR:</b> ${_snrStr} &nbsp; <b>Battery:</b> ${_batStr}</div>`
-          + `<div><b>Hops:</b> ${hops !== null ? hops : '—'} &nbsp; <b>Last seen:</b> ${_tsStr}</div>`
-          + `<div style="font-size:11px;color:var(--muted)">${lat.toFixed(5)}, ${lon.toFixed(5)}</div>`
-          + `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">`
-          + `<button class="map-popup-btn" title="Show in Nodes list" onclick="leafletMap.closePopup();showMcNodeInList('${jsSafe(c.id || '')}')">List</button>`
-          + (c.type !== 2 ? `<button class="map-popup-btn" title="Send direct message" onclick="leafletMap.closePopup();doMcDm('${safePk}','${safeRid}','${safeName}')">DM</button>` : '')
-          + `<button class="map-popup-btn" title="Ping (request status)" onclick="leafletMap.closePopup();doMcPing('${safePk}','${safeRid}','${safeName}')">Ping</button>`
-          + `<button class="map-popup-btn" title="Select in Sense panel" onclick="leafletMap.closePopup();switchTab('map');toggleSensePanel(true);switchSenseNet('mc');selectMcSenseContact('${jsSafe(c.id||'')}','${safeRid}')">Sense</button>`
-          + `</div>`,
-          { className: 'om-popup', maxWidth: 240 }
+          `<div class="map-popup-name">${name}<span class="map-popup-local" style="background:rgba(16,185,129,0.15);color:#10b981">MC Radio</span></div>`
+          + `<div style="font-size:11px;color:var(--muted)">This radio node</div>`,
+          { className: 'om-popup', maxWidth: 200 }
         );
-        marker.bindTooltip(c.long_name || c.name || c.id || '?', { permanent: true, direction: 'right', className: 'map-label', offset: [8, 0] });
+        marker.bindTooltip(item.name || item.id, { permanent: true, direction: 'right', className: 'map-label', offset: [8, 0] });
         marker.addTo(leafletMap);
         if (!mapLabels) marker.closeTooltip();
         mcMapMarkers.push(marker);
-        mcMapMarkerById[c.id || ''] = marker;
-      });
-    });
-    // Add a distinct marker for each connected MC radio node itself (if it has a position set)
-    Object.entries(mcLastStatus).forEach(([rid, st]) => {
-      if (st?.status !== 'connected') return;
-      const lat = st.lat, lon = st.lon;
-      if (lat == null || lon == null) return;
-      const name = escHtml(st.name || rid);
-      const glow = 'drop-shadow(0 0 5px #10b981) drop-shadow(0 1px 4px rgba(0,0,0,0.8))';
-      // Diamond shape (rotated square) to distinguish from contact markers (plain squares)
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30" style="filter:${glow};overflow:visible"><rect x="7" y="7" width="16" height="16" fill="white" transform="rotate(45,15,15)" rx="1.5"/><rect x="10" y="10" width="10" height="10" fill="#10b981" transform="rotate(45,15,15)" rx="1"/></svg>`;
-      const icon = L.divIcon({ html: svg, className: '', iconSize: [30, 30], iconAnchor: [15, 15], popupAnchor: [0, -17] });
-      const marker = L.marker([lat, lon], { icon });
+        return;
+      }
+
+      const c = item;
+      const label = escHtml(c.long_name || c.name || c.id || '?');
+      const safePk = jsSafe(c.full_key || c.id || '');
+      const safeRid = jsSafe(c._rid);
+      const safeName = jsSafe(c.long_name || c.name || c.id || '?');
+      const hops = (c.out_path_len != null && c.out_path_len >= 0) ? c.out_path_len : null;
+      const marker = L.marker([c.latitude, c.longitude], { icon: makeMcIcon() });
+      const bat = c.battery ?? c.bat_pct ?? c.bat;
+      const batStr = bat != null ? `${bat}%` : '—';
+      const snrText = c.snr != null ? `${c.snr} dB` : '—';
+      const tsText = c.last_heard_ts ? senseTimeAgo(c.last_heard_ts) : (c.last_seen ? escHtml(c.last_seen) : '—');
+      const keyStr = (c.full_key || c.id || '').slice(0, 12);
+      marker._omMcMapData = c;
       marker.bindPopup(
-        `<div class="map-popup-name">${name}<span class="map-popup-local" style="background:rgba(16,185,129,0.15);color:#10b981">MC Radio</span></div>`
-        + `<div style="font-size:11px;color:var(--muted)">This radio node</div>`,
-        { className: 'om-popup', maxWidth: 200 }
+        `<div class="map-popup-name">${label}<span class="map-popup-local" style="background:rgba(59,130,246,0.15);color:#3b82f6">MC</span>${mcTypeBadge(c.type ?? 0)}</div>`
+        + (keyStr ? `<div style="font-size:10px;color:var(--muted)">${escHtml(keyStr)}</div>` : '')
+        + `<div style="font-size:10px;color:var(--muted);margin-top:2px">${escHtml(mcContactMetaLabel(c, c._rid))}</div>`
+        + `<div><b>SNR:</b> ${snrText} &nbsp; <b>Battery:</b> ${batStr}</div>`
+        + `<div><b>Hops:</b> ${hops !== null ? hops : '—'} &nbsp; <b>Last seen:</b> ${tsText}</div>`
+        + `<div style="font-size:11px;color:var(--muted)">${c.latitude.toFixed(5)}, ${c.longitude.toFixed(5)}</div>`
+        + `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">`
+        + `<button class="map-popup-btn" title="Show in Nodes list" onclick="leafletMap.closePopup();showMcNodeInList('${jsSafe(c.id || '')}')">List</button>`
+        + (c.type !== 2 ? `<button class="map-popup-btn" title="Send direct message" onclick="leafletMap.closePopup();doMcDm('${safePk}','${safeRid}','${safeName}')">DM</button>` : '')
+        + `<button class="map-popup-btn" title="Ping (request status)" onclick="leafletMap.closePopup();doMcPing('${safePk}','${safeRid}','${safeName}')">Ping</button>`
+        + `<button class="map-popup-btn" title="Select in Sense panel" onclick="leafletMap.closePopup();switchTab('map');toggleSensePanel(true);switchSenseNet('mc');selectMcSenseContact('${jsSafe(c.id || '')}','${safeRid}')">Sense</button>`
+        + `</div>`,
+        { className: 'om-popup', maxWidth: 240 }
       );
-      marker.bindTooltip(st.name || rid, { permanent: true, direction: 'right', className: 'map-label', offset: [8, 0] });
+      marker.bindTooltip(c.long_name || c.name || c.id || '?', { permanent: true, direction: 'right', className: 'map-label', offset: [8, 0] });
       marker.addTo(leafletMap);
       if (!mapLabels) marker.closeTooltip();
       mcMapMarkers.push(marker);
+      mcMapMarkerById[c.id || ''] = marker;
     });
+
     if (_senseNet === 'mc') renderMcPathLines();
     updateHeaderMcCount();
   }
@@ -8732,13 +8922,38 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
   }
 
   // Stable index: _mcSenseLogEntries[i].pathResult accessed by original array index
+  function _mcSenseLogEntrySearchText(entry) {
+    const parts = [
+      entry.kind,
+      entry.name,
+      entry.text,
+      entry.radioName,
+      entry.responderName,
+      entry.hopStr,
+      entry.snrLabel,
+      entry.id,
+      entry.radioId,
+      entry.fromId,
+      entry.chanName,
+    ];
+    if (entry.kind === 'self_advert') parts.push('self advert');
+    if (entry.kind === 'sent_message') parts.push('sent message');
+    if (entry.kind === 'message') parts.push('message');
+    if (entry.kind === 'ping') parts.push('ping');
+    if (entry.kind === 'trace') parts.push('trace');
+    if (entry.kind === 'scan') parts.push('scan');
+    if (entry.kind === 'bot_reply') parts.push('bot reply');
+    if (entry.kind === 'advert') parts.push('advert');
+    return parts.filter(Boolean).join(' ').toLowerCase();
+  }
+
   function renderMcSenseLog() {
     const el = document.getElementById('sense-mc-log');
     if (!el) return;
     const filter = (document.getElementById('sense-mc-log-search')?.value || '').toLowerCase().trim();
     const indexed = _mcSenseLogEntries.map((e, i) => ({...e, _i: i}));
     const entries = filter
-      ? indexed.filter(e => e.name.toLowerCase().includes(filter) || (e.text || '').toLowerCase().includes(filter))
+      ? indexed.filter(e => _mcSenseLogEntrySearchText(e).includes(filter))
       : indexed;
     if (!entries.length) {
       el.innerHTML = `<span id="sense-mc-log-empty">${filter ? 'No matches.' : 'No MC activity yet.'}</span>`;
@@ -10445,15 +10660,14 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   }
 
   function senseInit() {
-    // Immediately restore visual state from localStorage (before async fetch)
-    const lsPassive = localStorage.getItem('sensePassive') === '1';
+    // Only restore active-auto optimistically. Passive should come from backend state,
+    // otherwise stale localStorage can invert the first click after page load.
     const lsActive  = localStorage.getItem('senseActiveAuto') === '1';
     const pBtn = document.getElementById('sense-passive-btn');
     const aBtn = document.getElementById('sense-active-btn');
-    if (pBtn) pBtn.classList.toggle('active', lsPassive);
+    if (pBtn) pBtn.classList.remove('active');
     if (aBtn) aBtn.classList.toggle('active', lsActive);
     const status = document.getElementById('sense-status');
-    if (lsPassive) status.textContent = 'Passive listening…';
     if (lsActive)  status.textContent = 'Active scanning…';
 
     fetch('/api/mesh/sense/status').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {

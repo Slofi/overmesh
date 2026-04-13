@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 
 _sense_state = {
     "active":         False,
-    "passive":        bool(CONFIG.get("sense_passive",     False)),
+    "passive":        bool(CONFIG.get("sense_passive",     True)),
     "active_auto":    bool(CONFIG.get("sense_active_auto", False)),
     "last_triggered": 0,
     "window_end":     0,

@@ -6,7 +6,7 @@
     "zoom": 100,
     "accent_color": "#4ade80"
   },
-  "sense_passive": false,
+  "sense_passive": true,
   "sense_active_auto": false,
   "mc_nodes": [],
   "cross": {

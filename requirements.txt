@@ -2,4 +2,4 @@ flask>=3.0
 meshtastic>=2.5
 pyserial>=3.5
 pypubsub>=4.0
-meshcore
+meshcore>=2.3.1

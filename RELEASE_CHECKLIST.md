@@ -1,6 +1,6 @@
 # OverMesh Release Checklist
 
-This checklist is for preparing `overmesh-mc` to become the public OverMesh release.
+This checklist tracked the preparation of OverMesh for public release. The push is done as of 2026-04-13.
 
 ## Verified on the live app
 
@@ -58,8 +58,8 @@ Use this section only for any re-checks needed after further code changes:
 1. Keep the README aligned with the actual repo name and release plan
 2. DONE, add or refresh screenshots so they match the current app, not older MT only views
 3. DONE, do one clean manual sanity pass and record any failures
-4. Review app naming for stale `overmesh-mc` or test wording where public `OverMesh` should be used instead
-5. Prepare a short public changelog or release text based on `RELEASE_NOTES.md`
+4. DONE, reviewed app naming — stale `overmesh-mc` references cleaned up, launch scripts renamed, log path fixed
+5. DONE, public release text is `RELEASE_NOTES.md`
 6. DONE, improve cross-platform install clarity in the public docs:
    - keep Linux as the strongest path
    - add clear native install guidance framing for Windows and macOS too
@@ -73,8 +73,8 @@ Use this section only for any re-checks needed after further code changes:
 2. A small known limits section in the public release text
 3. A follow up pass on installation and service instructions on a second machine
 4. DONE, make restart behavior platform-aware instead of assuming Linux shell tools and `/tmp`
-5. PARTLY DONE, separate Linux convenience tooling from the default public install story more clearly
-6. Review helper scripts and any remaining hard-coded local paths for public-repo cleanliness
+5. DONE, Linux convenience scripts (`launch-overmesh.sh`, `launch-direct.sh`) clearly separated from default install
+6. DONE, helper scripts renamed and hard-coded local paths fixed (`/tmp/overmesh-mc.log` → `/tmp/overmesh.log`)
 
 ## Can wait
 

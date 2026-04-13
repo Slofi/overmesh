@@ -1,3 +1,7 @@
+# APP_DIR and PYTHON_BIN are placeholder tokens — do not edit them directly.
+# Use install.sh to set this up. It substitutes them with real paths automatically.
+# If you install manually: replace APP_DIR with the full path to the repo,
+# and PYTHON_BIN with the full path to your python3 binary (e.g. /usr/bin/python3).
 [Unit]
 Description=OverMesh dual-network dashboard
 After=network.target

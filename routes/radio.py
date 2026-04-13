@@ -127,7 +127,7 @@ def api_radio_config_get(radio_id):
         wifi_enabled  = _bool(lc, "network", "wifi_enabled")
         wifi_ap_mode  = _bool(lc, "network", "wifi_ap_mode")
         wifi_ssid     = _str(lc,  "network", "wifi_ssid")
-        wifi_psk_val  = _str(lc,  "network", "wifi_psk")
+        wifi_psk_set  = bool(_str(lc, "network", "wifi_psk"))
 
         return jsonify({
             "long_name":    user.get("longName",  ""),
@@ -179,7 +179,7 @@ def api_radio_config_get(radio_id):
             "wifi_enabled":  wifi_enabled,
             "wifi_ap_mode":  wifi_ap_mode,
             "wifi_ssid":     wifi_ssid,
-            "wifi_psk_val":  wifi_psk_val,
+            "wifi_psk_set":  wifi_psk_set,
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -511,7 +511,7 @@ def api_radio_config_network(radio_id):
         if "wifi_enabled" in data: net.wifi_enabled  = bool(data["wifi_enabled"])
         if "wifi_ap_mode" in data: net.wifi_ap_mode  = bool(data["wifi_ap_mode"])
         if "wifi_ssid"    in data: net.wifi_ssid      = str(data["wifi_ssid"])
-        if "wifi_psk"     in data: net.wifi_psk       = str(data["wifi_psk"])
+        if data.get("wifi_psk"):    net.wifi_psk       = str(data["wifi_psk"])
         iface.localNode.writeConfig("network")
         return jsonify({"ok": True})
     except Exception as e:

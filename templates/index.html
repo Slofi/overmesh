@@ -11227,8 +11227,10 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         document.getElementById('node-cfg-wifi-enabled').checked  = !!d.wifi_enabled;
         document.getElementById('node-cfg-wifi-ap-mode').checked  = !!d.wifi_ap_mode;
         document.getElementById('node-cfg-wifi-ssid').value       = d.wifi_ssid || '';
-        document.getElementById('node-cfg-wifi-psk').value        = d.wifi_psk_val || '';
-        document.getElementById('node-cfg-wifi-psk').type         = 'password';
+        const pskEl = document.getElementById('node-cfg-wifi-psk');
+        pskEl.value       = '';
+        pskEl.type        = 'password';
+        pskEl.placeholder = d.wifi_psk_set ? '(set — enter new to change)' : 'password';
         const eye = document.getElementById('node-cfg-wifi-psk-eye');
         if (eye) eye.style.opacity = '0.5';
       })
@@ -11716,22 +11718,25 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const wifi_ap_mode = document.getElementById('node-cfg-wifi-ap-mode').checked;
     const wifi_ssid    = document.getElementById('node-cfg-wifi-ssid').value.trim();
     const wifi_psk     = document.getElementById('node-cfg-wifi-psk').value;
+    const payload      = {wifi_enabled, wifi_ap_mode, wifi_ssid};
+    if (wifi_psk.trim()) payload.wifi_psk = wifi_psk;
     nodeCfgStatus('network', 'Saving…', true);
     fetch(`/api/radio/${encodeURIComponent(radioId)}/config/network`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({wifi_enabled, wifi_ap_mode, wifi_ssid, wifi_psk})
+      body: JSON.stringify(payload)
     }).then(r => {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.json();
     }).then(d => {
       nodeCfgStatus('network', d.error || 'Saved. Reboot to apply.', !d.error);
       if (!d.error) {
-        // Keep field showing the saved value; reset to password type
-        document.getElementById('node-cfg-wifi-psk').type = 'password';
+        const pskEl = document.getElementById('node-cfg-wifi-psk');
+        pskEl.value = '';
+        pskEl.type  = 'password';
+        if (wifi_psk.trim()) pskEl.placeholder = '(set — enter new to change)';
         const eye = document.getElementById('node-cfg-wifi-psk-eye');
         if (eye) eye.style.opacity = '0.5';
-        _nodeCfgData.wifi_psk_val = wifi_psk;
       }
     }).catch(e => nodeCfgStatus('network', 'Error: ' + escHtml(String(e)), false));
   }

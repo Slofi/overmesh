@@ -10660,15 +10660,19 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   }
 
   function senseInit() {
-    // Only restore active-auto optimistically. Passive should come from backend state,
-    // otherwise stale localStorage can invert the first click after page load.
-    const lsActive  = localStorage.getItem('senseActiveAuto') === '1';
+    // Pre-load both buttons from localStorage so the UI is never blank before the fetch.
+    // If sensePassive has never been stored (first run), default to true (app default).
+    // The fetch below confirms the real backend state and corrects any mismatch.
+    const lsPassiveRaw = localStorage.getItem('sensePassive');
+    const lsPassive    = lsPassiveRaw !== null ? lsPassiveRaw === '1' : true;
+    const lsActive     = localStorage.getItem('senseActiveAuto') === '1';
     const pBtn = document.getElementById('sense-passive-btn');
     const aBtn = document.getElementById('sense-active-btn');
-    if (pBtn) pBtn.classList.remove('active');
+    if (pBtn) pBtn.classList.toggle('active', lsPassive);
     if (aBtn) aBtn.classList.toggle('active', lsActive);
     const status = document.getElementById('sense-status');
-    if (lsActive)  status.textContent = 'Active scanning…';
+    if (lsActive)       status.textContent = 'Active scanning…';
+    else if (lsPassive) status.textContent = 'Passive listening…';
 
     fetch('/api/mesh/sense/status').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       _senseCooldownVal = d.cooldown;

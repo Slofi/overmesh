@@ -2766,8 +2766,12 @@
       const data = JSON.parse(localStorage.getItem('unreadState') || '{}');
       Object.entries(data).forEach(([rid, chs]) => {
         if (!chs.length) return;
-        if (rid === activeRadioId) { chs.forEach(ch => unreadChannels.add(ch)); }
-        else { radioUnreadChannels[rid] = new Set(chs); inactiveRadioUnread.add(rid); }
+        // Don't restore unread for the active radio on page load — history replay
+        // already shows those messages when chat is opened, so restoring stale
+        // unread state here only causes phantom dots on every refresh.
+        if (rid === activeRadioId) return;
+        radioUnreadChannels[rid] = new Set(chs);
+        inactiveRadioUnread.add(rid);
       });
     } catch(e) {}
   }

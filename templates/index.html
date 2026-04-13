@@ -195,7 +195,7 @@
     .mc-msg-tag { font-size: 10px; color: var(--mc-color); background: rgba(56,189,248,0.12); border: 1px solid rgba(56,189,248,0.25); border-radius: 3px; padding: 0 4px; margin-right: 4px; }
     #chat-mt-pane, #chat-mc-pane { flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
     #mc-radio-selector { display: flex; gap: 4px; align-items: center; }
-    .net-mc { color: var(--mc-color) !important; }
+    .net-mc:not(.channel-tab) { color: var(--mc-color) !important; }
     .btn-net-mt { color: var(--text); border-color: rgba(63,185,80,0.3); }
     .btn-net-mt:hover {
       color: var(--text);
@@ -671,8 +671,7 @@
       position: relative;
     }
     .channel-tab.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
-    .channel-tab.net-mc { border-color: rgba(56,189,248,0.22); color: rgba(56,189,248,0.92); background: rgba(56,189,248,0.04); }
-    .channel-tab.net-mc.active { border-color: var(--mc-color); color: var(--mc-color); background: var(--mc-dim); }
+    .channel-tab.net-mc:not(.active) { color: var(--muted) !important; border-color: var(--border) !important; background: var(--bg3) !important; }
     .channel-tab.has-unread::after {
       content: ''; position: absolute; top: 3px; right: 3px;
       width: 6px; height: 6px; border-radius: 50%;

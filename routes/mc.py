@@ -15,7 +15,8 @@ from mesh_mc import (send_chan_msg, send_dm, send_advert, refresh_contacts,
                      set_device_name, set_device_coords, reboot_device,
                      reboot_device_dtr, get_channels, set_channel,
                      req_node_status, get_stats, remove_mc_contact,
-                     send_trace_broadcast, import_mc_contact, enable_mc_debug)
+                     send_trace_broadcast, import_mc_contact, enable_mc_debug,
+                     set_contact_path)
 from db import get_mc_ignored, set_mc_ignored
 from state import mc_connections, mc_connections_lock
 
@@ -31,6 +32,41 @@ bp  = Blueprint("mc", __name__)
 
 def _mc_contact_last_seen_ts(contact):
     return int(contact.get("last_seen_ts") or contact.get("last_advert") or 0)
+
+
+def _serialize_mc_contact(pubkey, contact, now=None):
+    now = int(time.time()) if now is None else int(now)
+    last_seen_ts = _mc_contact_last_seen_ts(contact)
+    last_advert = contact.get("last_advert", 0)
+    delta = now - last_seen_ts if last_seen_ts else None
+    if delta is not None:
+        if delta < 60:
+            last_seen = f"{delta}s ago"
+        elif delta < 3600:
+            last_seen = f"{delta // 60}m ago"
+        elif delta < 86400:
+            last_seen = f"{delta // 3600}h ago"
+        else:
+            last_seen = f"{delta // 86400}d ago"
+    else:
+        last_seen = None
+
+    return {
+        "id": pubkey[:12],
+        "full_key": pubkey,
+        "long_name": contact.get("adv_name", pubkey[:8]),
+        "short_name": contact.get("adv_name", "?")[:4].upper(),
+        "latitude": contact.get("adv_lat") or None,
+        "longitude": contact.get("adv_lon") or None,
+        "last_advert": last_advert,
+        "last_seen_ts": last_seen_ts,
+        "last_seen": last_seen,
+        "out_path_len": contact.get("out_path_len", -1),
+        "out_path": contact.get("out_path", ""),
+        "out_path_hash_mode": contact.get("out_path_hash_mode", 0),
+        "type": contact.get("type", 0),
+        "network": "mc",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -84,33 +120,7 @@ def api_mc_contacts(radio_id):
     contacts = []
     now = int(time.time())
     for pubkey, c in contacts_raw.items():
-        last_seen_ts = _mc_contact_last_seen_ts(c)
-        last_advert = c.get("last_advert", 0)
-        delta = now - last_seen_ts if last_seen_ts else None
-        if delta is not None:
-            if delta < 60:       last_seen = f"{delta}s ago"
-            elif delta < 3600:   last_seen = f"{delta // 60}m ago"
-            elif delta < 86400:  last_seen = f"{delta // 3600}h ago"
-            else:                last_seen = f"{delta // 86400}d ago"
-        else:
-            last_seen = None
-
-        contacts.append({
-            "id":          pubkey[:12],
-            "full_key":    pubkey,
-            "long_name":   c.get("adv_name", pubkey[:8]),
-            "short_name":  c.get("adv_name", "?")[:4].upper(),
-            "latitude":    c.get("adv_lat") or None,
-            "longitude":   c.get("adv_lon") or None,
-            "last_advert": last_advert,
-            "last_seen_ts": last_seen_ts,
-            "last_seen":   last_seen,
-            "out_path_len":       c.get("out_path_len", -1),
-            "out_path":           c.get("out_path", ""),
-            "out_path_hash_mode": c.get("out_path_hash_mode", 0),
-            "type":        c.get("type", 0),   # 0=client, 1=room, 2=repeater
-            "network":     "mc",
-        })
+        contacts.append(_serialize_mc_contact(pubkey, c, now=now))
 
     contacts.sort(key=lambda x: x["last_seen_ts"], reverse=True)
     return jsonify({"contacts": contacts, "radio_id": radio_id})
@@ -128,6 +138,47 @@ def api_mc_delete_contact(radio_id, contact_id):
         return jsonify({"error": str(e)}), 503
     except Exception as e:
         log.warning(f"[MC] delete contact {contact_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/api/mc/<radio_id>/contacts/<contact_id>/route", methods=["POST"])
+def api_mc_set_contact_route(radio_id, contact_id):
+    """Set or clear a stored routing path for one MC contact."""
+    data = request.get_json(silent=True) or {}
+    clear = bool(data.get("clear"))
+    hop_prefixes = data.get("hops") or []
+    if not isinstance(hop_prefixes, list):
+        return jsonify({"error": "hops must be a list"}), 400
+
+    raw_mode = data.get("path_hash_mode")
+    if raw_mode in ("", None):
+        path_hash_mode = None
+    else:
+        try:
+            path_hash_mode = int(raw_mode)
+        except (TypeError, ValueError):
+            return jsonify({"error": "path_hash_mode must be an integer"}), 400
+
+    try:
+        updated_contact, _result = set_contact_path(
+            radio_id,
+            contact_id,
+            hop_prefixes=hop_prefixes,
+            clear=clear,
+            path_hash_mode=path_hash_mode,
+        )
+        full_key = updated_contact.get("public_key", contact_id)
+        return jsonify({
+            "ok": True,
+            "radio_id": radio_id,
+            "contact": _serialize_mc_contact(full_key, updated_contact),
+        })
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 503
+    except Exception as e:
+        log.warning(f"[MC] set route failed for {contact_id}: {e}")
         return jsonify({"error": str(e)}), 500
 
 

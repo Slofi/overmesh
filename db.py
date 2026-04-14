@@ -144,6 +144,35 @@ def init_prefs_db():
         c.execute('''CREATE TABLE IF NOT EXISTS mc_ignored (
             pubkey_id  TEXT PRIMARY KEY
         )''')
+        c.execute('''CREATE TABLE IF NOT EXISTS map_layers (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            name       TEXT NOT NULL,
+            color      TEXT DEFAULT '#f59e0b',
+            data_json  TEXT NOT NULL,
+            enabled    INTEGER DEFAULT 1,
+            is_geofence INTEGER DEFAULT 0,
+            geofence_enter INTEGER DEFAULT 1,
+            geofence_leave INTEGER DEFAULT 1,
+            geofence_notify_app INTEGER DEFAULT 1,
+            geofence_notify_browser INTEGER DEFAULT 1,
+            geofence_networks TEXT DEFAULT 'both',
+            created_ts INTEGER
+        )''')
+        try:
+            c.execute("ALTER TABLE map_layers ADD COLUMN is_geofence INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+        for col, defn in [
+            ("geofence_enter", "INTEGER DEFAULT 1"),
+            ("geofence_leave", "INTEGER DEFAULT 1"),
+            ("geofence_notify_app", "INTEGER DEFAULT 1"),
+            ("geofence_notify_browser", "INTEGER DEFAULT 1"),
+            ("geofence_networks", "TEXT DEFAULT 'both'"),
+        ]:
+            try:
+                c.execute(f"ALTER TABLE map_layers ADD COLUMN {col} {defn}")
+            except sqlite3.OperationalError:
+                pass
         # Migrations for existing tables
         for col, defn in [("channel_index",  "INTEGER DEFAULT 0"),
                           ("destination_id",  "TEXT DEFAULT NULL"),

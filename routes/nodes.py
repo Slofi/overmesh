@@ -274,8 +274,19 @@ def api_traceroute(node_id):
     # SNR values are stored as int * 4 in the protobuf
     snr_towards = [round(s / 4, 1) for s in result.get("snrTowards", [])]
     snr_back    = [round(s / 4, 1) for s in result.get("snrBack", [])]
+    # Node IDs for map path drawing (hex format matching frontend node IDs)
+    local_id = "local"
+    try:
+        local_num = getattr(getattr(iface, "myInfo", None), "my_node_num", None)
+        if local_num:
+            local_id = f"!{local_num:08x}"
+    except Exception:
+        pass
+    route_ids      = [local_id] + [f"!{int(n):08x}" for n in result.get("route", [])]     + [node_id]
+    route_back_ids = [node_id]  + [f"!{int(n):08x}" for n in result.get("routeBack", [])] + [local_id]
     return jsonify({"route": route, "routeBack": route_back,
-                    "snrTowards": snr_towards, "snrBack": snr_back})
+                    "snrTowards": snr_towards, "snrBack": snr_back,
+                    "routeIds": route_ids, "routeBackIds": route_back_ids})
 
 
 @bp.route("/api/traceroute/reset", methods=["POST"])

@@ -41,6 +41,22 @@
       gap: 6px;
     }
 
+    /* Silent Running banner */
+    #silent-banner {
+      display: none; position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
+      background: #7f1d1d; color: #fca5a5;
+      padding: 3px 16px; font-size: 12px; font-weight: 600; text-align: center;
+      letter-spacing: 0.3px; border-bottom: 1px solid #dc2626;
+    }
+    body.silent-active #silent-banner { display: block; }
+    body.silent-active { padding-top: 32px; }
+    #silent-banner button {
+      margin-left: 12px; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.35);
+      color: #fca5a5; padding: 1px 10px; border-radius: 4px; cursor: pointer; font-size: 11px;
+    }
+    #silent-banner button:hover { background: rgba(255,255,255,0.25); }
+    #silent-btn.active { background: rgba(220,38,38,0.15) !important; border-color: rgba(220,38,38,0.5) !important; color: #ef4444 !important; }
+
     /* Header */
     #header {
       background: var(--bg2);
@@ -149,6 +165,12 @@
     .toast.toast-node { border-left-color: var(--accent); }
     .toast.toast-node-return { border-left-color: #f59e0b; }
     .toast.toast-message { border-left-color: var(--mc-color); }
+    .toast-head {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      justify-content: space-between;
+    }
     .toast-title {
       font-size: 12px;
       font-weight: 600;
@@ -165,6 +187,18 @@
       color: var(--text);
       font-weight: 700;
     }
+    .toast-close {
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 14px;
+      line-height: 1;
+      padding: 0;
+      margin: 0;
+      flex-shrink: 0;
+    }
+    .toast-close:hover { color: var(--text); }
     @keyframes toast-in {
       from { opacity: 0; transform: translateY(-6px); }
       to   { opacity: 1; transform: translateY(0); }
@@ -300,6 +334,7 @@
       text-transform: uppercase;
       letter-spacing: 0.5px;
     }
+
 
     /* Buttons */
     .btn {
@@ -555,6 +590,50 @@
       display: inline-flex; align-items: center;
     }
     .dm-send:hover { opacity: 0.85; }
+    .mc-route-indicator {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 16px; height: 16px; margin-left: 5px; border-radius: 50%;
+      background: rgba(56,189,248,0.14); border: 1px solid rgba(56,189,248,0.35);
+      color: var(--mc-color); font-size: 10px; vertical-align: middle;
+    }
+    .mc-route-summary {
+      margin: 10px 0 12px; padding: 10px 12px; border-radius: 7px;
+      background: rgba(56,189,248,0.08); border: 1px solid rgba(56,189,248,0.22);
+      font-size: 12px;
+    }
+    .mc-route-hops { display: flex; flex-direction: column; gap: 6px; margin: 10px 0 14px; }
+    .mc-route-hop {
+      display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+      border: 1px solid var(--border); border-radius: 6px; background: var(--bg3);
+    }
+    .mc-route-hop-label { flex: 1; min-width: 0; }
+    .mc-route-hop-meta { color: var(--muted); font-size: 11px; margin-top: 2px; }
+    .mc-route-hop-btn {
+      border: 1px solid var(--border); background: var(--bg2); color: var(--muted);
+      border-radius: 4px; min-width: 26px; height: 24px; cursor: pointer;
+    }
+    .mc-route-hop-btn:hover { color: var(--text); border-color: var(--mc-color); }
+    .mc-route-search-row { display: flex; gap: 8px; margin-bottom: 10px; }
+    .mc-route-search {
+      flex: 1; background: var(--bg3); border: 1px solid var(--border);
+      color: var(--text); border-radius: 6px; padding: 8px 10px; font-size: 13px;
+    }
+    .mc-route-search:focus { outline: none; border-color: var(--mc-color); }
+    .mc-route-candidates {
+      max-height: 220px; overflow-y: auto; border: 1px solid var(--border);
+      border-radius: 7px; background: var(--bg3);
+    }
+    .mc-route-candidate {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .mc-route-candidate:last-child { border-bottom: none; }
+    .mc-route-candidate button {
+      border: 1px solid rgba(56,189,248,0.35); background: rgba(56,189,248,0.08);
+      color: var(--mc-color); border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 11px;
+    }
+    .mc-route-candidate button:hover { background: rgba(56,189,248,0.15); }
+    .mc-route-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 
     /* Map */
     #content:has(#panel-map.active) { padding: 0; overflow: hidden; }
@@ -611,17 +690,17 @@
       position: absolute; top: 10px; right: 10px; z-index: 900;
       width: 200px; display: flex; flex-direction: column; gap: 6px;
     }
-    #marks-panel, #notes-panel {
+    #marks-panel, #notes-panel, #overlay-panel {
       background: var(--bg2); border: 1px solid var(--border);
       border-radius: 8px; overflow: hidden;
       box-shadow: 0 2px 12px rgba(0,0,0,0.5);
     }
-    #marks-panel-hdr, #notes-panel-hdr {
+    #marks-panel-hdr, #notes-panel-hdr, #overlay-panel-hdr {
       display: flex; align-items: center; gap: 6px;
       padding: 6px 10px; cursor: pointer; user-select: none;
     }
-    #marks-panel-hdr:hover, #notes-panel-hdr:hover { background: var(--bg3); }
-    #marks-panel-body, #notes-panel-body { overflow-y: auto; max-height: 260px; border-top: 1px solid var(--border); }
+    #marks-panel-hdr:hover, #notes-panel-hdr:hover, #overlay-panel-hdr:hover { background: var(--bg3); }
+    #marks-panel-body, #notes-panel-body, #overlay-panel-body { overflow-y: auto; max-height: 320px; border-top: 1px solid var(--border); }
     .mp-item {
       display: flex; align-items: center; gap: 7px;
       padding: 5px 10px; cursor: pointer;
@@ -629,6 +708,16 @@
     }
     .mp-item:last-child { border-bottom: none; }
     .mp-item:hover { background: var(--bg3); }
+    .overlay-tool-btn {
+      background: var(--bg3); border: 1px solid var(--border); color: var(--text);
+      padding: 4px 8px; border-radius: 5px; font-size: 11px; cursor: pointer;
+    }
+    .overlay-tool-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .overlay-tool-btn.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+    .overlay-mini-btn {
+      background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:2px 5px;border-radius:3px;flex-shrink:0;line-height:1;
+    }
+    .overlay-mini-btn:hover { color: var(--text); background: var(--bg3); }
     .map-label {
       background: var(--bg2) !important; border: 1px solid var(--border) !important;
       border-radius: 4px !important; color: var(--text) !important;
@@ -639,6 +728,7 @@
     .map-label::before { display: none !important; }
     #map { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
     /* Override Leaflet popup to match dark theme */
+    path.leaflet-interactive:focus { outline: none; }
     .leaflet-popup-content-wrapper {
       background: var(--bg2); color: var(--text);
       border: 1px solid var(--border); border-radius: 6px;
@@ -820,10 +910,19 @@
       border-radius:6px; font-size:12px; cursor:pointer; }
     body.map-pick-mode .leaflet-container { cursor: crosshair !important; }
     body.map-pick-mode .leaflet-container.leaflet-drag-target { cursor: grabbing !important; }
+    body.overlay-pick-mode .leaflet-container { cursor: crosshair !important; }
+    body.overlay-pick-mode .leaflet-marker-icon { cursor: grab !important; }
+    body.overlay-pick-mode.overlay-dragging .leaflet-marker-icon { cursor: grabbing !important; }
     #wp-pick-banner { display:none; position:absolute; top:10px; left:50%; transform:translateX(-50%); z-index:2000;
       background:var(--yellow); color:#0a0f1e; padding:8px 18px; border-radius:8px; font-weight:700; font-size:13px;
       pointer-events:none; white-space:nowrap; box-shadow:0 2px 10px rgba(0,0,0,0.5); }
     #wp-pick-cancel { display:none; position:absolute; top:10px; right:16px; z-index:2000;
+      background:var(--bg3); border:1px solid var(--border); color:var(--text); padding:6px 14px;
+      border-radius:6px; font-size:12px; cursor:pointer; }
+    #overlay-pick-banner { display:none; position:absolute; top:10px; left:50%; transform:translateX(-50%); z-index:2000;
+      background:#f59e0b; color:#0a0f1e; padding:8px 18px; border-radius:8px; font-weight:700; font-size:13px;
+      pointer-events:none; white-space:nowrap; box-shadow:0 2px 10px rgba(0,0,0,0.5); }
+    #overlay-pick-cancel { display:none; position:absolute; top:10px; right:16px; z-index:2000;
       background:var(--bg3); border:1px solid var(--border); color:var(--text); padding:6px 14px;
       border-radius:6px; font-size:12px; cursor:pointer; }
     @keyframes row-flash {
@@ -1211,6 +1310,60 @@
   </div>
 </div>
 
+<!-- Silent Running warning modal -->
+<div id="sr-confirm-modal" class="modal-overlay" onclick="if(event.target===this)srConfirmCancel()">
+  <div class="modal-box" style="width:340px;border-top:2px solid var(--red)">
+    <div class="modal-header">
+      <span class="modal-title" style="color:var(--red)">&#9888; Silent Running Active</span>
+    </div>
+    <div class="modal-body">
+      <p id="sr-confirm-msg" style="margin:0 0 16px;font-size:13px;color:var(--text)"></p>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn-secondary" style="border-color:var(--red);color:var(--red)" onclick="srConfirmCancel()">OK</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Polar Grid customize modal -->
+<div id="polar-customize-modal" class="modal-overlay" onclick="if(event.target===this)closePolarCustomize()">
+  <div class="modal-box" style="width:300px">
+    <div class="modal-header">
+      <span class="modal-title">Polar Grid</span>
+      <button class="modal-close" onclick="closePolarCustomize()">&#10005;</button>
+    </div>
+    <div class="modal-body">
+      <div style="margin-bottom:16px">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:8px">Color</div>
+        <div id="pgpicker-grid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:10px"></div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <div id="pgpicker-preview" style="width:24px;height:24px;border-radius:5px;border:1px solid var(--border);flex-shrink:0"></div>
+          <input id="pgpicker-hex" type="text" maxlength="7" placeholder="#4ade80"
+            style="flex:1;background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:4px 6px;color:var(--text);font-size:12px;font-family:monospace"
+            oninput="pgpickerHexInput(this.value)">
+          <span style="font-size:11px;color:var(--muted);cursor:pointer;white-space:nowrap"
+            onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--muted)'"
+            onclick="openCPickerFor(_polarGridColor, setPolarGridColor)">Custom…</span>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:8px">Hardness</div>
+        <input type="range" id="polar-hardness-slider" min="0.1" max="1" step="0.05" style="width:100%;accent-color:var(--accent)" oninput="setPolarGridHardness(parseFloat(this.value))">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:4px">
+          <span>Pale</span><span>Vivid</span>
+        </div>
+      </div>
+      <div style="margin-top:14px">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:8px">Options</div>
+        <div style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text);padding:3px 0;user-select:none" onclick="toggleIntercardinals()">
+          <div id="pg-intercard-check" style="width:15px;height:15px;border-radius:3px;border:1px solid var(--border);background:var(--surface);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:11px;color:var(--accent);font-weight:700"></div>
+          NE / SE / SW / NW lines
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Alert modal -->
 <div id="alert-modal" class="modal-overlay" onclick="if(event.target===this)alertClose()">
   <div class="modal-box" style="width:320px">
@@ -1238,6 +1391,7 @@
 </div>
 
 
+<div id="silent-banner">Silent Running active — all radio transmissions blocked<button onclick="toggleSilentMode()">Disable</button></div>
 <div id="header">
   <div style="height:28px;aspect-ratio:848/202;flex-shrink:0;background:var(--accent);
     -webkit-mask-image:url('/static/Overmesh_logo.png');mask-image:url('/static/Overmesh_logo.png');
@@ -1259,6 +1413,7 @@
   <div class="header-spacer"></div>
   <span id="last-updated" style="font-size:12px;color:var(--muted);white-space:nowrap"></span>
   <button class="btn" id="header-refresh-btn" onclick="loadCurrent(this)" title="Refresh MT and MC state from connected radios"><span class="btn-icon">↻</span><span class="btn-label">Refresh</span></button>
+  <button class="btn" id="silent-btn" onclick="toggleSilentMode()" title="Enable Silent Running — suppresses all radio transmissions">Silent</button>
   <div id="power-btn-wrap">
     <button id="shutdown-btn" onclick="togglePowerMenu(event)" title="Power options">&#x23FB; Power</button>
     <div id="power-menu">
@@ -1484,6 +1639,8 @@
     <button id="map-pick-cancel" onclick="cancelMapPick()" title="Cancel position pick">Cancel</button>
     <div id="wp-pick-banner">Click on the map to place a Mark</div>
     <button id="wp-pick-cancel" onclick="cancelWaypointPick()" title="Cancel waypoint placement">Cancel</button>
+    <div id="overlay-pick-banner">Overlay edit mode</div>
+    <button id="overlay-pick-cancel" onclick="cancelMapLayerDraft()" title="Cancel overlay editing">Cancel</button>
     <div id="map"></div>
     <div id="map-dm-window">
       <div id="map-dm-header">
@@ -1518,6 +1675,14 @@
           <span id="notes-panel-chev" style="font-size:10px;color:var(--muted);margin-left:auto">▼</span>
         </div>
         <div id="notes-panel-body" style="display:none"></div>
+      </div>
+      <div id="overlay-panel">
+        <div id="overlay-panel-hdr" onclick="toggleOverlayPanel()">
+          <span style="font-size:12px;font-weight:600;color:var(--text)">Overlays</span>
+          <span id="overlay-panel-count" style="font-size:11px;color:var(--muted)"></span>
+          <span id="overlay-panel-chev" style="font-size:10px;color:var(--muted);margin-left:auto">▼</span>
+        </div>
+        <div id="overlay-panel-body" style="display:none"></div>
       </div>
     </div>
     </div><!-- end map-view-map -->
@@ -2458,6 +2623,37 @@
       <!-- Downloaded regions list -->
       <div id="region-list" style="margin-top:4px"></div>
     </div>
+
+    <!-- Map Layers -->
+    <div class="settings-section">
+      <h2 class="settings-title">Map Layers</h2>
+      <p style="color:var(--muted);font-size:12px;margin:0 0 8px 0">Import GeoJSON overlays such as zones, routes, POIs, or boundaries. Saved layers can be shown on the map and toggled on/off.</p>
+      <div style="display:grid;gap:8px;max-width:760px">
+        <div class="settings-row" style="gap:8px;align-items:center;flex-wrap:wrap">
+          <div style="flex:1;min-width:180px">
+            <label class="settings-label" for="map-layer-name">Layer name</label>
+            <input id="map-layer-name" class="settings-input" maxlength="60" placeholder="e.g. Patrol route, Event boundary">
+          </div>
+          <div style="width:96px;flex-shrink:0">
+            <label class="settings-label" for="map-layer-color">Color</label>
+            <input id="map-layer-color" type="color" value="#f59e0b" style="width:100%;height:34px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:2px">
+          </div>
+          <div style="display:flex;align-items:flex-end;gap:6px;flex-wrap:wrap">
+            <button class="btn-sm" type="button" onclick="document.getElementById('map-layer-file').click()">Choose file</button>
+            <button class="btn-primary" type="button" onclick="saveMapLayer()">Import layer</button>
+          </div>
+        </div>
+        <input id="map-layer-file" type="file" accept=".json,.geojson,application/geo+json,application/json" style="display:none" onchange="handleMapLayerFileInput(event)">
+        <div>
+          <label class="settings-label" for="map-layer-geojson">GeoJSON</label>
+          <textarea id="map-layer-geojson" class="settings-input" placeholder='Paste GeoJSON here, e.g. {"type":"FeatureCollection",...}' style="width:100%;min-height:140px;resize:vertical;font-family:monospace"></textarea>
+        </div>
+        <div id="map-layer-status" style="font-size:12px;color:var(--muted);min-height:16px"></div>
+        <div style="border-top:1px solid var(--border);margin:2px 0 0 0"></div>
+        <div style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px">Saved layers</div>
+        <div id="map-layer-list" style="display:grid;gap:6px"></div>
+      </div>
+    </div>
     </div><!-- /st-app -->
 
     <div id="st-cross" style="display:none">
@@ -2571,6 +2767,36 @@
     return String(s == null ? '' : s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;');
   }
 
+  // ── Silent Running ─────────────────────────────────────────────────────────
+  let _silentMode = false;
+
+  function _updateSilentUi(active) {
+    _silentMode = active;
+    document.body.classList.toggle('silent-active', active);
+    const btn = document.getElementById('silent-btn');
+    if (btn) {
+      btn.classList.toggle('active', active);
+      btn.title = active
+        ? 'Silent Running active — click to disable'
+        : 'Enable Silent Running — suppresses all radio transmissions';
+    }
+  }
+
+  async function toggleSilentMode() {
+    try {
+      const r = await fetch('/api/silent_mode', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enabled: !_silentMode})
+      });
+      const d = await r.json();
+      if (d.ok) _updateSilentUi(d.silent_mode);
+    } catch(e) { console.warn('[silent] toggle failed:', e); }
+  }
+
+  // Load silent mode state on page load
+  fetch('/api/silent_mode').then(r => r.json()).then(d => _updateSilentUi(d.silent_mode)).catch(() => {});
+
   // ── State ──────────────────────────────────────────────────────────────────
   let allNodes      = [];
   let mapShowMt     = localStorage.getItem('mapShowMt') !== '0';
@@ -2621,7 +2847,7 @@
     return value * (_returnedGapUnit() === 'hours' ? 3600 : 24 * 3600);
   }
 
-  function showToast(title, body, type = 'message', tag = '') {
+  function showToast(title, body, type = 'message', tag = '', opts = {}) {
     const stack = document.getElementById('toast-stack');
     if (!stack) return;
     const now = Date.now();
@@ -2630,16 +2856,26 @@
       if (now - prev < 15000) return;
       _inAppToastSeen.set(tag, now);
     }
+    const persistent = !!opts.persistent;
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
-    toast.innerHTML = `<div class="toast-title">${escHtml(title)}</div><div class="toast-body">${body}</div>`;
-    stack.appendChild(toast);
-    setTimeout(() => {
+    if (tag) toast.dataset.toastTag = tag;
+    toast.innerHTML = `
+      <div class="toast-head">
+        <div class="toast-title">${escHtml(title)}</div>
+        <button class="toast-close" type="button" title="Close notification" aria-label="Close notification">×</button>
+      </div>
+      <div class="toast-body">${body}</div>`;
+    const closeBtn = toast.querySelector('.toast-close');
+    const removeToast = () => {
       toast.style.opacity = '0';
       toast.style.transform = 'translateY(-4px)';
       toast.style.transition = 'opacity 0.15s ease, transform 0.15s ease';
       setTimeout(() => toast.remove(), 180);
-    }, 8000);
+    };
+    if (closeBtn) closeBtn.onclick = removeToast;
+    stack.appendChild(toast);
+    if (!persistent) setTimeout(removeToast, 8000);
   }
 
   function maybeShowInAppMessage(title, body, tag) {
@@ -2694,11 +2930,15 @@
     if (gapUnitEl) gapUnitEl.value = _returnedGapUnit();
   }
 
-  function sendNotif(title, body, tag, type) {
+  function sendNotif(title, body, tag, type, opts = {}) {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
     const prefKey = type === 'node' ? 'notif_nodes' : 'notif_messages';
     if (localStorage.getItem(prefKey) === 'false') return;
-    new Notification(title, { body, tag, silent: false });
+    const notif = new Notification(title, { body, tag, silent: false, requireInteraction: !!opts.persistent });
+    notif.onclick = () => {
+      try { window.focus(); } catch(e) {}
+      try { notif.close(); } catch(e) {}
+    };
   }
 
   function requestNotifPermission() {
@@ -3083,6 +3323,10 @@
         renderMarksPanel();
         return;
       }
+      if (data.type === 'silent_mode') {
+        _updateSilentUi(!!data.active);
+        return;
+      }
       if (data.type === 'node_last_heard') {
         // Fast path: update allNodes directly for nodes with a known user.id
         const node = allNodes.find(n => n.id === data.from_id);
@@ -3203,6 +3447,14 @@
   }
 
   let _confirmCallback = null;
+  function showSilentConfirm(msg) {
+    document.getElementById('sr-confirm-msg').textContent = msg;
+    document.getElementById('sr-confirm-modal').classList.add('open');
+  }
+  function srConfirmCancel() {
+    document.getElementById('sr-confirm-modal').classList.remove('open');
+  }
+
   function showConfirm(msg, onOk) {
     document.getElementById('confirm-msg').textContent = msg;
     document.getElementById('confirm-modal').classList.add('open');
@@ -3344,24 +3596,28 @@
     const input = document.getElementById('chat-input');
     const text  = input.value.trim();
     if (!text) return;
-    input.value = '';
-    try {
-      if (await handleCrossCommand(text)) return;
-      const isDmTab = typeof chatChannel === 'string' && chatChannel.startsWith('dm:');
-      const payload = isDmTab
-        ? { text, channel: 0, dest_id: chatChannel.slice(3), radio_id: activeRadioId }
-        : { text, channel: chatChannel, radio_id: activeRadioId };
-      const r = await fetch('/api/chat/send', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(payload)
-      });
-      if (!r.ok) throw new Error(await r.text());
-    } catch(e) {
-      input.value = text;
-      showAlert(String(e?.message || e || 'Send failed.'));
-      console.error('Send failed:', e);
-    }
+    const doSend = async () => {
+      input.value = '';
+      try {
+        if (await handleCrossCommand(text)) return;
+        const isDmTab = typeof chatChannel === 'string' && chatChannel.startsWith('dm:');
+        const payload = isDmTab
+          ? { text, channel: 0, dest_id: chatChannel.slice(3), radio_id: activeRadioId }
+          : { text, channel: chatChannel, radio_id: activeRadioId };
+        const r = await fetch('/api/chat/send', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload)
+        });
+        if (!r.ok) throw new Error(await r.text());
+      } catch(e) {
+        input.value = text;
+        showAlert(String(e?.message || e || 'Send failed.'));
+        console.error('Send failed:', e);
+      }
+    };
+    if (_silentMode) { showSilentConfirm('Sending is not possible while Silent Running is enabled.'); return; }
+    await doSend();
   }
 
   function updateUnreadDots() {
@@ -3705,7 +3961,7 @@
           <td>
             <div class="name-cell-main">
               <span class="name-badge mc">MC</span>
-              <span class="name-cell-title">${name}</span>${mcTypeBadge(c.type ?? 0)}
+              <span class="name-cell-title">${name}</span>${mcTypeBadge(c.type ?? 0)}${mcRouteIndicator(c, c._rid)}
             </div>
             <div class="name-cell-meta">${meta}</div>
           </td>
@@ -3715,6 +3971,7 @@
           <td>${last}</td>
           <td class="node-actions">
             ${c.type !== 2 ? `<button class="act-btn" title="Direct message" onclick="doMcDm('${pk}','${rid}','${jsSafe(c.long_name||'')}')">DM</button>` : ''}
+            <button class="act-btn" title="Edit stored route path" onclick="openMcRouteEditor('${jsSafe(cid)}','${rid}')">Route</button>
             ${hasCoords
               ? `<button class="act-btn" title="Show on map" onclick="centerMcOnMap(${lat},${lon})">Map</button>`
               : `<button class="act-btn" title="No coordinates available" style="opacity:0.35;cursor:default" disabled>Map</button>`}
@@ -3971,6 +4228,7 @@
     }).catch(e => console.error('loadLive failed', e));
     fetch('/api/status').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(status => {
       updateRadioSelector(status);
+      updateMcPills();  // re-evaluate chat-net-toggle + node/map pills now that MT status is fresh
       if (currentTab === 'settings') settingsRefresh();
     }).catch(e => console.error('status poll failed', e));
   }
@@ -4029,6 +4287,7 @@
     document.getElementById('action-modal').classList.remove('open');
     _editWpId    = null;
     _editNoteId  = null;
+    _mcRouteEditor = null;
     if (_nodeInfoTimer) { clearInterval(_nodeInfoTimer); _nodeInfoTimer = null; }
   }
 
@@ -4286,9 +4545,55 @@
   let _gpsMarker      = null;
   let _gpsEnabled     = false;
   let _localGpsPos    = null;  // {lat, lon} when GPS has fix — set from gps_position SSE
+  let _traceMapLines  = [];
+  let _showTrMap      = (() => { try { const v = localStorage.getItem('mapShowTrSnr'); return v === null ? true : v === '1'; } catch(e) { return true; } })();
+  let _polarGridLayer = null;
+  let _showPolarGrid  = (() => { try { return localStorage.getItem('mapShowPolarGrid') === '1'; } catch(e) { return false; } })();
+  let _polarGridColor         = (() => { try { return localStorage.getItem('mapPolarGridColor')    || '#4ade80'; } catch(e) { return '#4ade80'; } })();
+  let _polarGridHardness      = (() => { try { return parseFloat(localStorage.getItem('mapPolarGridHardness')) || 0.6; } catch(e) { return 0.6; } })();
+  let _showIntercardinals     = (() => { try { return localStorage.getItem('mapPolarIntercard') === '1'; } catch(e) { return false; } })();
   let mapLocked     = false;
   let mapLabels     = false;
   let _activeTileLayer = null;
+  let _mapLayerDefs = [];
+  let _mapLayerObjects = {};
+  let _mapLayerMenuPanel = null;
+  let _mapLayerDraft = null;
+  let _mapLayerDraftLayer = null;
+  let _mapLayerVertexMarkers = [];
+  let _mapLayerSelectedVertex = -1;
+  let _geofenceStates = {};
+
+  function _haversineMeters(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const toRad = d => d * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat / 2) ** 2
+      + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(a));
+  }
+
+  function _destPoint(lat, lon, bearingDeg, distM) {
+    const R = 6371000;
+    const br = bearingDeg * Math.PI / 180;
+    const dR = distM / R;
+    const lat1 = lat * Math.PI / 180;
+    const lon1 = lon * Math.PI / 180;
+    const lat2 = Math.asin(Math.sin(lat1) * Math.cos(dR) + Math.cos(lat1) * Math.sin(dR) * Math.cos(br));
+    const lon2 = lon1 + Math.atan2(Math.sin(br) * Math.sin(dR) * Math.cos(lat1), Math.cos(dR) - Math.sin(lat1) * Math.sin(lat2));
+    return {lat: lat2 * 180 / Math.PI, lon: lon2 * 180 / Math.PI};
+  }
+
+  function _circleRing(center, radiusM, steps = 48) {
+    const ring = [];
+    for (let i = 0; i < steps; i++) {
+      const p = _destPoint(center.lat, center.lon, (360 * i) / steps, radiusM);
+      ring.push([p.lon, p.lat]);
+    }
+    if (ring.length) ring.push(ring[0]);
+    return ring;
+  }
 
   const TILE_LAYERS = {
     osm:      { label: 'OpenStreetMap', url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 19 },
@@ -4298,6 +4603,222 @@
     esri_topo:{ label: 'Esri Topo',     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles © Esri', maxZoom: 18 },
     topo:     { label: 'OpenTopoMap',   url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, © <a href="https://opentopomap.org">OpenTopoMap</a>', maxZoom: 17 },
   };
+
+  // ── Polar grid ─────────────────────────────────────────────────────────────
+  function _hexToRgba(hex, alpha) {
+    const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+  function _tintColor(hex, v) {
+    // v=1: full color, v→0: blend toward white
+    const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+    const m = c => Math.round(c + (255 - c) * (1 - v));
+    return '#' + [m(r),m(g),m(b)].map(x => x.toString(16).padStart(2,'0')).join('');
+  }
+  function _offsetByKm(lat, lon, km, bearingDeg) {
+    const R = 6371, d = km / R, b = bearingDeg * Math.PI / 180;
+    const φ1 = lat * Math.PI / 180, λ1 = lon * Math.PI / 180;
+    const φ2 = Math.asin(Math.sin(φ1) * Math.cos(d) + Math.cos(φ1) * Math.sin(d) * Math.cos(b));
+    const λ2 = λ1 + Math.atan2(Math.sin(b) * Math.sin(d) * Math.cos(φ1), Math.cos(d) - Math.sin(φ1) * Math.sin(φ2));
+    return [φ2 * 180 / Math.PI, λ2 * 180 / Math.PI];
+  }
+
+  function _clearPolarGrid() {
+    if (_polarGridLayer) { try { leafletMap && leafletMap.removeLayer(_polarGridLayer); } catch(e) {} _polarGridLayer = null; }
+  }
+
+  function _drawPolarGrid() {
+    _clearPolarGrid();
+    if (!_showPolarGrid || !leafletMap) return;
+    let cLat, cLon;
+    if (_localGpsPos) { cLat = _localGpsPos.lat; cLon = _localGpsPos.lon; }
+    else {
+      const local = allNodes.find(n => n.is_local && n.latitude != null);
+      if (local) { cLat = local.latitude; cLon = local.longitude; }
+    }
+    if (cLat == null) return;
+    _polarGridLayer = L.layerGroup().addTo(leafletMap);
+    const h       = _polarGridHardness;
+    const tinted  = _tintColor(_polarGridColor, h);
+    const gc       = _hexToRgba(tinted, 0.55);
+    const gcB      = _hexToRgba(tinted, 0.80);
+    const gcLabel  = _hexToRgba(tinted, 0.90);
+    const gcKmLabel = `rgba(220,225,220,${0.55 + h * 0.30})`; // near-neutral, hardness-scaled opacity
+    const wRing   = 0.7  + h * 0.9;
+    const wMajor  = 0.9  + h * 1.1;
+    const wMinor  = 0.4  + h * 0.7;
+    [1, 2, 5, 10, 25, 50].forEach(km => {
+      L.circle([cLat, cLon], {radius: km * 1000, color: gc, weight: wRing, fillOpacity: 0, interactive: false}).addTo(_polarGridLayer);
+      const lPt = _offsetByKm(cLat, cLon, km, 0);
+      L.marker(lPt, {icon: L.divIcon({html: `<div style="font-size:11px;color:${gcKmLabel};white-space:nowrap;font-weight:700;text-shadow:0 0 3px #000,0 0 6px #000,0 0 10px #000;letter-spacing:0.02em">${km}km</div>`, iconAnchor: [-2, 8], className: ''}), interactive: false}).addTo(_polarGridLayer);
+    });
+    const cardinals = {0:'N', 90:'E', 180:'S', 270:'W'};
+    for (let b = 0; b < 360; b += 30) {
+      const isMajor = b % 90 === 0;
+      L.polyline([[cLat, cLon], _offsetByKm(cLat, cLon, 55, b)], {color: isMajor ? gcB : gc, weight: isMajor ? wMajor : wMinor, interactive: false, dashArray: isMajor ? null : '3,6'}).addTo(_polarGridLayer);
+      if (cardinals[b]) {
+        L.marker(_offsetByKm(cLat, cLon, 52, b), {icon: L.divIcon({html: `<div style="font-size:11px;color:${gcLabel};font-weight:700;text-shadow:0 0 4px #000">${cardinals[b]}</div>`, iconAnchor: [6, 8], className: ''}), interactive: false}).addTo(_polarGridLayer);
+      }
+    }
+    if (_showIntercardinals) {
+      const wIntercard = wMinor + (wMajor - wMinor) * 0.55;
+      const intercardinals = {45:'NE', 135:'SE', 225:'SW', 315:'NW'};
+      [45, 135, 225, 315].forEach(b => {
+        L.polyline([[cLat, cLon], _offsetByKm(cLat, cLon, 55, b)], {color: gcB, weight: wIntercard, interactive: false, dashArray: '8,6'}).addTo(_polarGridLayer);
+        L.marker(_offsetByKm(cLat, cLon, 52, b), {icon: L.divIcon({html: `<div style="font-size:10px;color:${gcLabel};font-weight:700;text-shadow:0 0 4px #000">${intercardinals[b]}</div>`, iconAnchor: [8, 8], className: ''}), interactive: false}).addTo(_polarGridLayer);
+      });
+    }
+  }
+
+  function togglePolarGrid() {
+    _showPolarGrid = !_showPolarGrid;
+    try { localStorage.setItem('mapShowPolarGrid', _showPolarGrid ? '1' : '0'); } catch(e) {}
+    document.getElementById('map-polar-btn')?.classList.toggle('active', _showPolarGrid);
+    _drawPolarGrid();
+  }
+
+  function setPolarGridColor(color) {
+    _polarGridColor = color;
+    try { localStorage.setItem('mapPolarGridColor', color); } catch(e) {}
+    document.querySelectorAll('#pgpicker-grid .cpicker-sw').forEach(s => {
+      s.classList.toggle('selected', s.dataset.color === color);
+    });
+    const hexEl  = document.getElementById('pgpicker-hex');
+    const prevEl = document.getElementById('pgpicker-preview');
+    if (hexEl)  hexEl.value = color;
+    if (prevEl) prevEl.style.background = color;
+    if (_showPolarGrid) _drawPolarGrid();
+  }
+
+  function setPolarGridHardness(v) {
+    _polarGridHardness = Math.max(0.1, Math.min(1, v));
+    try { localStorage.setItem('mapPolarGridHardness', String(_polarGridHardness)); } catch(e) {}
+    if (_showPolarGrid) _drawPolarGrid();
+  }
+
+  function toggleIntercardinals() {
+    _showIntercardinals = !_showIntercardinals;
+    try { localStorage.setItem('mapPolarIntercard', _showIntercardinals ? '1' : '0'); } catch(e) {}
+    const chk = document.getElementById('pg-intercard-check');
+    if (chk) chk.textContent = _showIntercardinals ? '✓' : '';
+    if (_showPolarGrid) _drawPolarGrid();
+  }
+
+  function _pgpickerBuildGrid() {
+    const grid = document.getElementById('pgpicker-grid');
+    if (!grid) return;
+    grid.innerHTML = '';
+    PG_PALETTE.forEach(c => {
+      const d = document.createElement('div');
+      d.className = 'cpicker-sw' + (c === _polarGridColor ? ' selected' : '');
+      d.style.background = c;
+      d.dataset.color = c;
+      d.onclick = () => setPolarGridColor(c);
+      grid.appendChild(d);
+    });
+    const hexEl  = document.getElementById('pgpicker-hex');
+    const prevEl = document.getElementById('pgpicker-preview');
+    if (hexEl)  hexEl.value = _polarGridColor;
+    if (prevEl) prevEl.style.background = _polarGridColor;
+  }
+
+  function pgpickerHexInput(val) {
+    if (/^#[0-9a-fA-F]{6}$/.test(val)) setPolarGridColor(val);
+  }
+
+  function openPolarCustomize() {
+    _pgpickerBuildGrid();
+    const slider = document.getElementById('polar-hardness-slider');
+    if (slider) slider.value = _polarGridHardness;
+    const chk = document.getElementById('pg-intercard-check');
+    if (chk) chk.textContent = _showIntercardinals ? '✓' : '';
+    document.getElementById('polar-customize-modal').classList.add('open');
+  }
+
+  function closePolarCustomize() {
+    document.getElementById('polar-customize-modal').classList.remove('open');
+  }
+
+  // ── SNR traceroute map paths ────────────────────────────────────────────────
+  function _snrLineColor(snr) {
+    if (snr == null) return '#a78bfa';
+    if (snr >= 0)    return '#4ade80';
+    if (snr >= -10)  return '#facc15';
+    return '#f87171';
+  }
+  function _snrLineOpacity(snr) {
+    if (snr == null) return 0.55;
+    return 0.45 + Math.max(0, Math.min(1, (snr + 20) / 35)) * 0.4;
+  }
+
+  function _nodeLatLon(nodeId) {
+    if (!nodeId) return null;
+    if (nodeId === 'local') {
+      if (_localGpsPos) return [_localGpsPos.lat, _localGpsPos.lon];
+      const local = allNodes.find(n => n.is_local && n.latitude != null);
+      return local ? [local.latitude, local.longitude] : null;
+    }
+    const n = allNodes.find(n => n.id === nodeId && n.latitude != null);
+    return n ? [n.latitude, n.longitude] : null;
+  }
+
+  function _clearTraceLines() {
+    _traceMapLines.forEach(l => { try { leafletMap && leafletMap.removeLayer(l); } catch(e) {} });
+    _traceMapLines = [];
+  }
+
+  function _drawTraceRouteOnMap(trData) {
+    _clearTraceLines();
+    if (!_showTrMap || !leafletMap) return;
+
+    // Build per-segment SNR lookups for both directions so each tooltip can show both values
+    const _segKey = (a, b) => [a, b].sort().join('|');
+    const toSnrMap = {}, backSnrMap = {};
+    (trData.routeIds || []).forEach((id, i, arr) => {
+      if (i < arr.length - 1) toSnrMap[_segKey(id, arr[i + 1])] = trData.snrTowards?.[i];
+    });
+    (trData.routeBackIds || []).forEach((id, i, arr) => {
+      if (i < arr.length - 1) backSnrMap[_segKey(id, arr[i + 1])] = trData.snrBack?.[i];
+    });
+
+    const drawPath = (ids, snrs, dashed) => {
+      if (!ids || ids.length < 2) return;
+      for (let i = 0; i < ids.length - 1; i++) {
+        const p1 = _nodeLatLon(ids[i]), p2 = _nodeLatLon(ids[i + 1]);
+        if (!p1 || !p2) continue;
+        const snr = snrs?.[i];
+        const color = _snrLineColor(snr), opacity = _snrLineOpacity(snr);
+        _traceMapLines.push(L.polyline([p1, p2], {color: '#111', weight: 8, opacity: 0.25, lineCap: 'round', interactive: false}).addTo(leafletMap));
+        const seg = L.polyline([p1, p2], {color, weight: 4, opacity, dashArray: dashed ? '6,5' : null, lineCap: 'round'});
+        const k = _segKey(ids[i], ids[i + 1]);
+        const snrTo   = toSnrMap[k];
+        const snrBack = backSnrMap[k];
+        if (snrTo != null || snrBack != null) {
+          const toStr   = snrTo   != null ? `${snrTo} dB`   : '—';
+          const backStr = snrBack != null ? `${snrBack} dB` : '—';
+          seg.bindTooltip(`To: ${toStr} &nbsp; Back: ${backStr}`, {sticky: true, direction: 'top'});
+        }
+        seg.addTo(leafletMap);
+        _traceMapLines.push(seg);
+      }
+      // Dot at each node point
+      ids.forEach((id, i) => {
+        const pt = _nodeLatLon(id);
+        if (!pt) return;
+        const snr = i < snrs?.length ? snrs[i] : (i > 0 ? snrs?.[i - 1] : null);
+        _traceMapLines.push(L.circleMarker(pt, {radius: 5, color: '#111', fillColor: _snrLineColor(snr ?? null), fillOpacity: 1, weight: 1.5, interactive: false}).addTo(leafletMap));
+      });
+    };
+    drawPath(trData.routeIds,     trData.snrTowards, false);
+    drawPath(trData.routeBackIds, trData.snrBack,    true);
+  }
+
+  function toggleTrMap() {
+    _showTrMap = !_showTrMap;
+    try { localStorage.setItem('mapShowTrSnr', _showTrMap ? '1' : '0'); } catch(e) {}
+    document.getElementById('map-tr-snr-btn')?.classList.toggle('active', _showTrMap);
+    if (!_showTrMap) _clearTraceLines();
+  }
 
   function setTileLayer(key) {
     if (!leafletMap) return;
@@ -4761,6 +5282,994 @@
     } });
   }
 
+  function _mapLayerPopupHtml(feature) {
+    const props = feature?.properties || {};
+    const title = props.name || props.title || props.label || props.id || 'Map layer item';
+    const desc  = props.description || props.desc || props.notes || props.note || '';
+    const parts = [`<div style="font-size:12px"><b>${escHtml(String(title))}</b>`];
+    if (desc) parts.push(`<div style="color:var(--muted);margin-top:4px">${escHtml(String(desc))}</div>`);
+    parts.push('</div>');
+    return parts.join('');
+  }
+
+  function _overlayLabelMarker(lat, lon, text) {
+    return L.marker([lat, lon], {
+      interactive: false,
+      keyboard: false,
+      icon: L.divIcon({
+        className: '',
+        html: `<div class="map-label" style="padding:1px 6px !important">${escHtml(String(text))}</div>`,
+        iconSize: null,
+      })
+    });
+  }
+
+  function _buildMapLayerLeaflet(def) {
+    const interactive = def?.interactive !== false;
+    const showLabels = def?.showLabels !== false;
+    const group = L.featureGroup();
+    const geo = L.geoJSON(def.data, {
+      interactive,
+      style: () => ({
+        color: def.color || '#f59e0b',
+        weight: 3,
+        opacity: 0.95,
+        fillColor: def.color || '#f59e0b',
+        fillOpacity: 0.12,
+      }),
+      pointToLayer: (feature, latlng) => L.circleMarker(latlng, {
+        radius: 6,
+        color: def.color || '#f59e0b',
+        weight: 2,
+        fillColor: def.color || '#f59e0b',
+        fillOpacity: 0.75,
+      }),
+      onEachFeature: (feature, layer) => {
+        const props = feature?.properties || {};
+        if (Object.keys(props).length) layer.bindPopup(_mapLayerPopupHtml(feature));
+      }
+    });
+    group.addLayer(geo);
+    const features = _mapLayerFeatureList(def.data);
+    features.forEach(feature => {
+      const props = feature?.properties || {};
+      const geom = feature?.geometry || {};
+      const overlayLabel = props.name || '';
+      if (showLabels && overlayLabel) {
+        try {
+          if (geom.type === 'Point') {
+            const [lon, lat] = geom.coordinates || [];
+            if (lat != null && lon != null) group.addLayer(_overlayLabelMarker(lat, lon, overlayLabel));
+          } else if (geom.type === 'LineString') {
+            const coords = geom.coordinates || [];
+            const mid = coords[Math.floor(coords.length / 2)];
+            if (mid) group.addLayer(_overlayLabelMarker(mid[1], mid[0], overlayLabel));
+          } else if (geom.type === 'Polygon') {
+            const ring = (geom.coordinates || [])[0] || [];
+            if (ring.length) {
+              const avg = ring.slice(0, -1).reduce((acc, [lon, lat]) => ({lat: acc.lat + lat, lon: acc.lon + lon}), {lat: 0, lon: 0});
+              const count = Math.max(ring.length - 1, 1);
+              group.addLayer(_overlayLabelMarker(avg.lat / count, avg.lon / count, overlayLabel));
+            }
+          }
+        } catch (e) {}
+      }
+      const pointLabels = Array.isArray(props.vertex_labels) ? props.vertex_labels : [];
+      if (showLabels && geom.type === 'Polygon' && props.shape !== 'circle' && pointLabels.length) {
+        const ring = (geom.coordinates || [])[0] || [];
+        ring.slice(0, -1).forEach(([lon, lat], idx) => {
+          const label = pointLabels[idx] || String(idx + 1);
+          group.addLayer(_overlayLabelMarker(lat, lon, label));
+        });
+      }
+    });
+    return group;
+  }
+
+  function _mapLayerFeatureList(data) {
+    if (!data || typeof data !== 'object') return [];
+    if (data.type === 'FeatureCollection') return Array.isArray(data.features) ? data.features.filter(Boolean) : [];
+    if (data.type === 'Feature') return [data];
+    return [{type: 'Feature', properties: {}, geometry: data}];
+  }
+
+  function _isPolygonGeofence(def) {
+    if (!def?.is_geofence) return false;
+    const features = _mapLayerFeatureList(def.data);
+    if (features.length !== 1) return false;
+    return features[0]?.geometry?.type === 'Polygon';
+  }
+
+  function _pointInRing(lat, lon, ring) {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const xi = ring[i][1], yi = ring[i][0];
+      const xj = ring[j][1], yj = ring[j][0];
+      const intersect = ((yi > lat) !== (yj > lat)) &&
+        (lon < ((xj - xi) * (lat - yi)) / ((yj - yi) || 1e-12) + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+
+  function _pointInPolygonFeature(lat, lon, feature) {
+    const coords = feature?.geometry?.coordinates;
+    const outer = Array.isArray(coords) ? coords[0] : null;
+    if (!outer || outer.length < 4) return false;
+    return _pointInRing(lat, lon, outer);
+  }
+
+  function _geofenceEntityKey(network, id, radioId = '') {
+    return `${network}:${radioId}:${id}`;
+  }
+
+  function _checkEntityGeofences(entity) {
+    if (entity.lat == null || entity.lon == null) return;
+    const geofences = _mapLayerDefs.filter(_isPolygonGeofence);
+    const entityKey = _geofenceEntityKey(entity.network, entity.id, entity.radioId || '');
+    const nextState = {};
+    geofences.forEach(def => {
+      const gf = def.geofence || {};
+      const networks = gf.networks || 'both';
+      if (networks !== 'both' && networks !== String(entity.network || '').toLowerCase()) return;
+      const feature = _mapLayerFeatureList(def.data)[0];
+      const inside = !!feature && _pointInPolygonFeature(entity.lat, entity.lon, feature);
+      nextState[def.id] = inside;
+      const prevInside = _geofenceStates[entityKey]?.[def.id];
+      if (prevInside == null) return;
+      if (inside === prevInside) return;
+      if (inside && gf.enter === false) return;
+      if (!inside && gf.leave === false) return;
+      const title = inside ? `${entity.network} entered geofence` : `${entity.network} left geofence`;
+      const body = `<b>${escHtml(entity.name || entity.id || '?')}</b> ${inside ? 'entered' : 'left'} <b>${escHtml(def.name || 'geofence')}</b>`;
+      if (gf.notify_app !== false) {
+        showToast(title, body, 'node-return', `geofence-${entityKey}-${def.id}-${inside ? 'in' : 'out'}`, {persistent: true});
+      }
+      if (gf.notify_browser !== false) {
+        sendNotif(title, `${entity.name || entity.id || '?'} ${inside ? 'entered' : 'left'} ${def.name || 'geofence'}`, `geofence-${entityKey}-${def.id}-${inside ? 'in' : 'out'}`, 'node', {persistent: true});
+      }
+    });
+    _geofenceStates[entityKey] = nextState;
+  }
+
+  function _refreshAllGeofences() {
+    if (!_mapLayerDefs.some(_isPolygonGeofence)) {
+      _geofenceStates = {};
+      return;
+    }
+    const nextKeys = new Set();
+    (allNodes || []).forEach(n => {
+      if (n?.latitude == null || n?.longitude == null) return;
+      const key = _geofenceEntityKey('MT', n.id || '', n.radio_id || '');
+      nextKeys.add(key);
+      _checkEntityGeofences({
+        network: 'MT',
+        id: n.id || '',
+        radioId: n.radio_id || '',
+        name: n.long_name || n.short_name || n.id || '?',
+        lat: n.latitude,
+        lon: n.longitude,
+      });
+    });
+    Object.entries(mcContacts || {}).forEach(([radioId, contacts]) => {
+      Object.values(contacts || {}).forEach(c => {
+        const lat = c.latitude;
+        const lon = c.longitude;
+        if (lat == null || lon == null) return;
+        const key = _geofenceEntityKey('MC', c.id || '', radioId);
+        nextKeys.add(key);
+        _checkEntityGeofences({
+          network: 'MC',
+          id: c.id || '',
+          radioId,
+          name: c.long_name || c.name || c.id || '?',
+          lat,
+          lon,
+        });
+      });
+    });
+    Object.keys(_geofenceStates).forEach(key => {
+      if (!nextKeys.has(key)) delete _geofenceStates[key];
+    });
+  }
+
+  function renderMapOverlays() {
+    if (!leafletMap) return;
+    Object.values(_mapLayerObjects).forEach(layer => {
+      try { leafletMap.removeLayer(layer); } catch(e) {}
+    });
+    _mapLayerObjects = {};
+    _mapLayerDefs.forEach(def => {
+      if (!def.enabled || !def.data) return;
+      try {
+        const layer = _buildMapLayerLeaflet(def);
+        _mapLayerObjects[def.id] = layer;
+        layer.addTo(leafletMap);
+      } catch (e) {
+        console.error('renderMapOverlays failed for layer', def.id, e);
+      }
+    });
+    _refreshAllGeofences();
+  }
+
+  function refreshMapLayerPanelOptions() {
+    if (!_mapLayerMenuPanel) return;
+    _mapLayerMenuPanel.innerHTML = '';
+    const title = L.DomUtil.create('div', '', _mapLayerMenuPanel);
+    title.textContent = 'Overlays';
+    title.style.cssText = 'padding:6px 10px 4px 10px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;border-top:1px solid var(--border);margin-top:4px';
+    if (!_mapLayerDefs.length) {
+      const empty = L.DomUtil.create('div', '', _mapLayerMenuPanel);
+      empty.textContent = 'No saved overlays';
+      empty.style.cssText = 'padding:6px 10px 8px 10px;font-size:12px;color:var(--muted)';
+      return;
+    }
+    _mapLayerDefs.forEach(def => {
+      const opt = L.DomUtil.create('div', 'map-layer-opt', _mapLayerMenuPanel);
+      opt.dataset.overlayId = String(def.id);
+      opt.classList.toggle('active', !!def.enabled);
+      opt.innerHTML = `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${escHtml(def.color || '#f59e0b')};margin-right:8px;vertical-align:middle"></span>${escHtml(def.name)}${def.enabled ? '<span style="color:#4ade80;margin-left:6px;font-size:13px;font-weight:700">✓</span>' : ''}`;
+      L.DomEvent.on(opt, 'click', e => {
+        L.DomEvent.stopPropagation(e);
+        toggleMapLayerEnabled(def.id, !def.enabled, {silent: true});
+      });
+    });
+  }
+
+  function _mapLayerDraftLabel() {
+    if (!_mapLayerDraft) return 'Overlay edit mode';
+    if (_mapLayerDraft.finished) return 'Overlay shape finished. Save it or keep editing.';
+    if (_mapLayerDraft.mode === 'point') return 'Click once on the map to place the point';
+    if (_mapLayerDraft.mode === 'line') return 'Click on the map to add line vertices, then double-click to finish';
+    if (_mapLayerDraft.mode === 'circle') return _mapLayerDraft.center ? 'Move the mouse to size the circle, then click again to finish' : 'Click on the map to place the circle center';
+    return 'Click on the map to add area corners, then double-click to finish';
+  }
+
+  function _syncOverlayBanner() {
+    const banner = document.getElementById('overlay-pick-banner');
+    const btn = document.getElementById('overlay-pick-cancel');
+    const active = !!_mapLayerDraft;
+    document.body.classList.toggle('overlay-pick-mode', active);
+    if (!active) document.body.classList.remove('overlay-dragging');
+    if (banner) {
+      banner.style.display = active ? 'block' : 'none';
+      banner.textContent = _mapLayerDraftLabel();
+    }
+    if (btn) btn.style.display = active ? 'block' : 'none';
+    if (leafletMap?.doubleClickZoom) {
+      if (active) leafletMap.doubleClickZoom.disable();
+      else leafletMap.doubleClickZoom.enable();
+    }
+  }
+
+  function _makeDraftVertexIcon(color = '#f59e0b', selected = false) {
+    const size = selected ? 14 : 12;
+    const offset = selected ? 7 : 6;
+    const bg = selected ? color : '#fff';
+    const border = selected ? '#fff' : color;
+    return L.divIcon({
+      className: '',
+      html: `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${escHtml(bg)};border:2px solid ${escHtml(border)};box-shadow:0 0 6px rgba(0,0,0,0.45)"></div>`,
+      iconSize: [size, size],
+      iconAnchor: [offset, offset],
+    });
+  }
+
+  function _clearMapLayerDraftVisuals() {
+    if (_mapLayerDraftLayer && leafletMap) {
+      try { leafletMap.removeLayer(_mapLayerDraftLayer); } catch(e) {}
+    }
+    _mapLayerDraftLayer = null;
+    _mapLayerVertexMarkers.forEach(marker => {
+      try { leafletMap && leafletMap.removeLayer(marker); } catch(e) {}
+    });
+    _mapLayerVertexMarkers = [];
+  }
+
+  function _draftToGeoJson(draft) {
+    const verts = draft.vertices || [];
+    const props = {
+      name: draft.name || '',
+      description: draft.description || '',
+    };
+    if (draft.mode === 'point') {
+      if (!verts.length) return null;
+      return { type: 'FeatureCollection', features: [{ type: 'Feature', properties: props, geometry: { type: 'Point', coordinates: [verts[0].lon, verts[0].lat] } }] };
+    }
+    if (draft.mode === 'circle') {
+      if (!draft.center || !(draft.radius_m > 0)) return null;
+      props.shape = 'circle';
+      props.center_lat = draft.center.lat;
+      props.center_lon = draft.center.lon;
+      props.radius_m = Math.round(draft.radius_m);
+      const ring = _circleRing(draft.center, draft.radius_m);
+      return { type: 'FeatureCollection', features: [{ type: 'Feature', properties: props, geometry: { type: 'Polygon', coordinates: [ring] } }] };
+    }
+    if (draft.mode === 'line') {
+      if (verts.length < 2) return null;
+      props.vertex_labels = verts.map((v, idx) => (v.label || '').trim() || String(idx + 1));
+      return { type: 'FeatureCollection', features: [{ type: 'Feature', properties: props, geometry: { type: 'LineString', coordinates: verts.map(v => [v.lon, v.lat]) } }] };
+    }
+    if (verts.length < 3) return null;
+    props.vertex_labels = verts.map((v, idx) => (v.label || '').trim() || String(idx + 1));
+    const ring = verts.map(v => [v.lon, v.lat]);
+    ring.push([verts[0].lon, verts[0].lat]);
+    return { type: 'FeatureCollection', features: [{ type: 'Feature', properties: props, geometry: { type: 'Polygon', coordinates: [ring] } }] };
+  }
+
+  function _renderMapLayerDraft() {
+    _clearMapLayerDraftVisuals();
+    _syncOverlayBanner();
+    if (!leafletMap || !_mapLayerDraft) return;
+    if (_mapLayerSelectedVertex >= _mapLayerDraft.vertices.length) _mapLayerSelectedVertex = -1;
+    const geojson = _draftToGeoJson(_mapLayerDraft);
+    if (geojson) {
+      _mapLayerDraftLayer = _buildMapLayerLeaflet({color: _mapLayerDraft.color || '#f59e0b', data: geojson, interactive: false, showLabels: false});
+      _mapLayerDraftLayer.addTo(leafletMap);
+    }
+    if (_mapLayerDraft.mode === 'circle' && _mapLayerDraft.center) {
+      const centerMarker = L.marker([_mapLayerDraft.center.lat, _mapLayerDraft.center.lon], {
+        icon: _makeDraftVertexIcon(_mapLayerDraft.color || '#f59e0b', _mapLayerSelectedVertex === 0),
+        draggable: true,
+        autoPan: true
+      });
+      centerMarker.bindTooltip('Center', { permanent: true, direction: 'top', className: 'map-label', offset: [0, -10] });
+      centerMarker.on('click', e => {
+        L.DomEvent.stop(e.originalEvent || e);
+        _mapLayerSelectedVertex = 0;
+        _renderMapLayerDraft();
+        renderOverlayPanel();
+      });
+      centerMarker.on('mousedown', e => {
+        L.DomEvent.stop(e.originalEvent || e);
+        leafletMap?.dragging?.disable();
+        _mapLayerSelectedVertex = 0;
+      });
+      centerMarker.on('dragstart', () => {
+        leafletMap?.dragging?.disable();
+        document.body.classList.add('overlay-dragging');
+        _mapLayerSelectedVertex = 0;
+      });
+      centerMarker.on('drag', e => {
+        const ll = e.target.getLatLng();
+        _mapLayerDraft.center = {lat: ll.lat, lon: ll.lng};
+        _renderMapLayerDraft();
+        renderOverlayPanel();
+      });
+      centerMarker.on('dragend', () => {
+        leafletMap?.dragging?.enable();
+        document.body.classList.remove('overlay-dragging');
+      });
+      centerMarker.on('mouseup', () => {
+        leafletMap?.dragging?.enable();
+        document.body.classList.remove('overlay-dragging');
+      });
+      centerMarker.addTo(leafletMap);
+      _mapLayerVertexMarkers.push(centerMarker);
+      if (_mapLayerDraft.radius_m > 0) {
+        const edge = _destPoint(_mapLayerDraft.center.lat, _mapLayerDraft.center.lon, 90, _mapLayerDraft.radius_m);
+        const edgeMarker = L.marker([edge.lat, edge.lon], {
+          icon: _makeDraftVertexIcon(_mapLayerDraft.color || '#f59e0b', _mapLayerSelectedVertex === 1),
+          draggable: true,
+          autoPan: true
+        });
+        edgeMarker.bindTooltip(`${Math.round(_mapLayerDraft.radius_m)} m`, { permanent: true, direction: 'top', className: 'map-label', offset: [0, -10] });
+        edgeMarker.on('click', e => {
+          L.DomEvent.stop(e.originalEvent || e);
+          _mapLayerSelectedVertex = 1;
+          _renderMapLayerDraft();
+          renderOverlayPanel();
+        });
+        edgeMarker.on('mousedown', e => {
+          L.DomEvent.stop(e.originalEvent || e);
+          leafletMap?.dragging?.disable();
+          _mapLayerSelectedVertex = 1;
+        });
+        edgeMarker.on('dragstart', () => {
+          leafletMap?.dragging?.disable();
+          document.body.classList.add('overlay-dragging');
+          _mapLayerSelectedVertex = 1;
+        });
+        edgeMarker.on('drag', e => {
+          const ll = e.target.getLatLng();
+          _mapLayerDraft.radius_m = _haversineMeters(_mapLayerDraft.center.lat, _mapLayerDraft.center.lon, ll.lat, ll.lng);
+          _mapLayerDraft.finished = _mapLayerDraft.radius_m > 0;
+          _renderMapLayerDraft();
+          renderOverlayPanel();
+        });
+        edgeMarker.on('dragend', () => {
+          leafletMap?.dragging?.enable();
+          document.body.classList.remove('overlay-dragging');
+        });
+        edgeMarker.on('mouseup', () => {
+          leafletMap?.dragging?.enable();
+          document.body.classList.remove('overlay-dragging');
+        });
+        edgeMarker.addTo(leafletMap);
+        _mapLayerVertexMarkers.push(edgeMarker);
+      }
+      return;
+    }
+    _mapLayerDraft.vertices.forEach((vertex, idx) => {
+      const marker = L.marker([vertex.lat, vertex.lon], {icon: _makeDraftVertexIcon(_mapLayerDraft.color || '#f59e0b', idx === _mapLayerSelectedVertex), draggable: true, autoPan: true});
+      marker.bindTooltip((vertex.label || String(idx + 1)), { permanent: true, direction: 'top', className: 'map-label', offset: [0, -10] });
+      marker.on('click', e => {
+        L.DomEvent.stop(e.originalEvent || e);
+        _mapLayerSelectedVertex = idx;
+        _renderMapLayerDraft();
+        renderOverlayPanel();
+      });
+      marker.on('mousedown', e => {
+        L.DomEvent.stop(e.originalEvent || e);
+        leafletMap?.dragging?.disable();
+        _mapLayerSelectedVertex = idx;
+      });
+      marker.on('dragstart', () => {
+        leafletMap?.dragging?.disable();
+        document.body.classList.add('overlay-dragging');
+        _mapLayerSelectedVertex = idx;
+      });
+      marker.on('drag', e => {
+        const ll = e.target.getLatLng();
+        _mapLayerDraft.vertices[idx] = {..._mapLayerDraft.vertices[idx], lat: ll.lat, lon: ll.lng};
+        _renderMapLayerDraft();
+        renderOverlayPanel();
+      });
+      marker.on('dragend', () => {
+        leafletMap?.dragging?.enable();
+        document.body.classList.remove('overlay-dragging');
+      });
+      marker.on('mouseup', () => {
+        leafletMap?.dragging?.enable();
+        document.body.classList.remove('overlay-dragging');
+      });
+      marker.addTo(leafletMap);
+      _mapLayerVertexMarkers.push(marker);
+    });
+  }
+
+  function _extractEditableMapLayer(data) {
+    let feature = null;
+    if (!data || typeof data !== 'object') throw new Error('Layer has no GeoJSON data.');
+    if (data.type === 'FeatureCollection') {
+      if (!Array.isArray(data.features) || data.features.length !== 1) throw new Error('Only single-feature overlays can be edited in the map for now.');
+      feature = data.features[0];
+    } else if (data.type === 'Feature') {
+      feature = data;
+    } else {
+      feature = {type: 'Feature', properties: {}, geometry: data};
+    }
+    const geom = feature.geometry || {};
+    if (geom.type === 'Point') {
+      return {mode: 'point', vertices: [{lat: geom.coordinates[1], lon: geom.coordinates[0], label: feature.properties?.name || ''}], description: feature.properties?.description || feature.properties?.desc || ''};
+    }
+    if (geom.type === 'LineString') {
+      const labels = Array.isArray(feature.properties?.vertex_labels) ? feature.properties.vertex_labels : [];
+      return {mode: 'line', vertices: (geom.coordinates || []).map(([lon, lat], idx) => ({lat, lon, label: labels[idx] || String(idx + 1)})), description: feature.properties?.description || feature.properties?.desc || ''};
+    }
+    if (geom.type === 'Polygon') {
+      if (feature.properties?.shape === 'circle' && feature.properties?.center_lat != null && feature.properties?.center_lon != null && feature.properties?.radius_m != null) {
+        return {
+          mode: 'circle',
+          center: {lat: Number(feature.properties.center_lat), lon: Number(feature.properties.center_lon)},
+          radius_m: Number(feature.properties.radius_m) || 0,
+          vertices: [],
+          description: feature.properties?.description || feature.properties?.desc || ''
+        };
+      }
+      const ring = (geom.coordinates || [])[0] || [];
+      if (ring.length < 4) throw new Error('Polygon ring is incomplete.');
+      const labels = Array.isArray(feature.properties?.vertex_labels) ? feature.properties.vertex_labels : [];
+      return {mode: 'polygon', vertices: ring.slice(0, -1).map(([lon, lat], idx) => ({lat, lon, label: labels[idx] || String(idx + 1)})), description: feature.properties?.description || feature.properties?.desc || ''};
+    }
+    throw new Error(`Editing for ${geom.type || 'unknown'} geometry is not supported yet.`);
+  }
+
+  function _mapLayerEditableState(def) {
+    try {
+      const features = _mapLayerFeatureList(def?.data);
+      if (features.length !== 1) return {editable: false, reason: features.length > 1 ? 'multi' : 'empty'};
+      _extractEditableMapLayer(def.data);
+      return {editable: true, reason: ''};
+    } catch (e) {
+      return {editable: false, reason: 'unsupported'};
+    }
+  }
+
+  function startMapLayerDraft(mode) {
+    _mapLayerDraft = {
+      mode,
+      layerId: null,
+      name: '',
+      description: '',
+      color: '#f59e0b',
+      enabled: true,
+      vertices: [],
+      center: null,
+      radius_m: 0,
+      finished: false,
+      is_geofence: false,
+      geofence: {
+        enter: true,
+        leave: true,
+        notify_app: true,
+        notify_browser: true,
+        networks: 'both',
+      },
+    };
+    _mapLayerSelectedVertex = -1;
+    renderOverlayPanel();
+    const body = document.getElementById('overlay-panel-body');
+    if (body && body.style.display === 'none') toggleOverlayPanel();
+    _renderMapLayerDraft();
+  }
+
+  function editMapLayer(id) {
+    const def = _mapLayerDefs.find(layer => layer.id === id);
+    if (!def) return;
+    try {
+      const editable = _extractEditableMapLayer(def.data);
+      _mapLayerDraft = {
+        mode: editable.mode,
+        layerId: id,
+        name: def.name || '',
+        description: editable.description || '',
+        color: def.color || '#f59e0b',
+        enabled: def.enabled !== false,
+        vertices: editable.vertices || [],
+        center: editable.center || null,
+        radius_m: editable.radius_m || 0,
+        finished: editable.mode === 'circle' ? !!(editable.radius_m > 0) : true,
+        is_geofence: !!def.is_geofence,
+        geofence: {
+          enter: def.geofence?.enter !== false,
+          leave: def.geofence?.leave !== false,
+          notify_app: def.geofence?.notify_app !== false,
+          notify_browser: def.geofence?.notify_browser !== false,
+          networks: def.geofence?.networks || 'both',
+        },
+      };
+      _mapLayerSelectedVertex = -1;
+      renderOverlayPanel();
+      _renderMapLayerDraft();
+      const body = document.getElementById('overlay-panel-body');
+      if (body && body.style.display === 'none') toggleOverlayPanel();
+    } catch (e) {
+      showAlert(String(e.message || e));
+    }
+  }
+
+  function cancelMapLayerDraft() {
+    _mapLayerDraft = null;
+    _mapLayerSelectedVertex = -1;
+    _clearMapLayerDraftVisuals();
+    _syncOverlayBanner();
+    renderOverlayPanel();
+  }
+
+  function mapLayerDraftAddVertex(lat, lon) {
+    if (!_mapLayerDraft) return;
+    if (_mapLayerDraft.mode === 'circle') {
+      if (!_mapLayerDraft.center) {
+        _mapLayerDraft.center = {lat, lon};
+        _mapLayerDraft.radius_m = 0;
+        _mapLayerDraft.finished = false;
+        _mapLayerSelectedVertex = 0;
+      } else {
+        _mapLayerDraft.radius_m = _haversineMeters(_mapLayerDraft.center.lat, _mapLayerDraft.center.lon, lat, lon);
+        _mapLayerDraft.finished = _mapLayerDraft.radius_m > 0;
+        _mapLayerSelectedVertex = 1;
+      }
+      _renderMapLayerDraft();
+      renderOverlayPanel();
+      return;
+    }
+    if (_mapLayerDraft.finished && _mapLayerDraft.mode !== 'point') return;
+    const nextLabel = String((_mapLayerDraft.vertices?.length || 0) + 1);
+    if (_mapLayerDraft.mode === 'point') _mapLayerDraft.vertices = [{lat, lon, label: _mapLayerDraft.name || ''}];
+    else _mapLayerDraft.vertices.push({lat, lon, label: nextLabel});
+    _mapLayerSelectedVertex = _mapLayerDraft.vertices.length - 1;
+    if (_mapLayerDraft.mode === 'point') _mapLayerDraft.finished = true;
+    _renderMapLayerDraft();
+    renderOverlayPanel();
+  }
+
+  function deleteLastMapLayerVertex() {
+    if (!_mapLayerDraft || !_mapLayerDraft.vertices.length) return;
+    _mapLayerDraft.vertices.pop();
+    if (_mapLayerSelectedVertex >= _mapLayerDraft.vertices.length) _mapLayerSelectedVertex = _mapLayerDraft.vertices.length - 1;
+    _mapLayerDraft.finished = false;
+    _renderMapLayerDraft();
+    renderOverlayPanel();
+  }
+
+  function deleteSelectedMapLayerVertex() {
+    if (!_mapLayerDraft || _mapLayerSelectedVertex < 0 || _mapLayerSelectedVertex >= _mapLayerDraft.vertices.length) return;
+    _mapLayerDraft.vertices.splice(_mapLayerSelectedVertex, 1);
+    if (_mapLayerSelectedVertex >= _mapLayerDraft.vertices.length) _mapLayerSelectedVertex = _mapLayerDraft.vertices.length - 1;
+    _mapLayerDraft.finished = false;
+    _renderMapLayerDraft();
+    renderOverlayPanel();
+  }
+
+  function finishMapLayerDraft() {
+    if (!_mapLayerDraft) return;
+    const statusEl = document.getElementById('overlay-editor-status');
+    const needed = _mapLayerDraft.mode === 'point' ? 1 : _mapLayerDraft.mode === 'line' ? 2 : _mapLayerDraft.mode === 'circle' ? 1 : 3;
+    const valid = _mapLayerDraft.mode === 'circle'
+      ? !!(_mapLayerDraft.center && _mapLayerDraft.radius_m > 0)
+      : ((_mapLayerDraft.vertices || []).length >= needed);
+    if (!valid) {
+      if (statusEl) statusEl.textContent = _mapLayerDraft.mode === 'point' ? 'Place the point on the map first.' : _mapLayerDraft.mode === 'line' ? 'A line needs at least 2 points.' : _mapLayerDraft.mode === 'circle' ? 'Pick the center, move the mouse to size the circle, then click again.' : 'An area needs at least 3 points.';
+      return;
+    }
+    _mapLayerDraft.finished = true;
+    if (statusEl) statusEl.textContent = 'Shape finished. Save it when ready.';
+    _renderMapLayerDraft();
+    renderOverlayPanel();
+  }
+
+  async function splitMapLayerIntoEditable(id) {
+    const def = _mapLayerDefs.find(layer => layer.id === id);
+    if (!def) return;
+    const features = _mapLayerFeatureList(def.data);
+    if (features.length < 2) {
+      showAlert('That overlay is already a single feature.');
+      return;
+    }
+    const safeBase = def.name || 'Overlay';
+    const statusEl = document.getElementById('overlay-editor-status');
+    if (statusEl) statusEl.textContent = 'Splitting…';
+    try {
+      for (let i = 0; i < features.length; i++) {
+        const feature = features[i];
+        const fname = feature?.properties?.name || feature?.properties?.title || `${safeBase} ${i + 1}`;
+        const payload = {
+          name: fname,
+          color: def.color || '#f59e0b',
+          data: {type: 'FeatureCollection', features: [feature]},
+          enabled: def.enabled,
+          is_geofence: !!def.is_geofence,
+          geofence: def.geofence || {enter: true, leave: true, notify_app: true, notify_browser: true, networks: 'both'},
+        };
+        const r = await fetch('/api/map_layers', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok || data.error) throw new Error(data.error || r.status);
+      }
+      const del = await fetch(`/api/map_layers/${id}`, {method: 'DELETE'});
+      const delData = await del.json().catch(() => ({}));
+      if (!del.ok || delData.error) throw new Error(delData.error || del.status);
+      await loadMapLayers({silent: true});
+      if (statusEl) statusEl.textContent = 'Overlay split into editable parts.';
+    } catch (e) {
+      if (statusEl) statusEl.textContent = `Split failed: ${e.message || e}`;
+    }
+  }
+
+  async function saveMapLayerDraft() {
+    if (!_mapLayerDraft) return;
+    const nameEl = document.getElementById('overlay-editor-name');
+    const colorEl = document.getElementById('overlay-editor-color');
+    const statusEl = document.getElementById('overlay-editor-status');
+    const name = (nameEl?.value || '').trim();
+    const color = colorEl?.value || '#f59e0b';
+    _mapLayerDraft.name = name;
+    _mapLayerDraft.description = (document.getElementById('overlay-editor-description')?.value || '').trim();
+    _mapLayerDraft.color = color;
+    const geojson = _draftToGeoJson(_mapLayerDraft);
+    if (!geojson) {
+      if (statusEl) statusEl.textContent = _mapLayerDraft.mode === 'point' ? 'Place the point on the map first.' : _mapLayerDraft.mode === 'line' ? 'A line needs at least 2 points.' : _mapLayerDraft.mode === 'circle' ? 'Pick the center, move the mouse to size the circle, then click again.' : 'An area needs at least 3 points.';
+      return;
+    }
+    if (statusEl) statusEl.textContent = 'Saving…';
+    try {
+      const isEdit = !!_mapLayerDraft.layerId;
+      const r = await fetch(isEdit ? `/api/map_layers/${_mapLayerDraft.layerId}` : '/api/map_layers', {
+        method: isEdit ? 'PATCH' : 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name, color, data: geojson, enabled: _mapLayerDraft.enabled !== false, is_geofence: !!_mapLayerDraft.is_geofence, geofence: _mapLayerDraft.geofence || {enter: true, leave: true, notify_app: true, notify_browser: true, networks: 'both'}})
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.error) throw new Error(data.error || r.status);
+      cancelMapLayerDraft();
+      await loadMapLayers({silent: true});
+    } catch (e) {
+      if (statusEl) statusEl.textContent = `Save failed: ${e.message || e}`;
+    }
+  }
+
+  function renderOverlayPanel() {
+    const body = document.getElementById('overlay-panel-body');
+    const count = document.getElementById('overlay-panel-count');
+    if (!body) return;
+    if (count) count.textContent = _mapLayerDefs.length ? `(${_mapLayerDefs.length})` : '';
+    const draft = _mapLayerDraft;
+    const editing = !!draft;
+    const vertices = draft?.vertices || [];
+    const selectedLabel = draft?.mode === 'circle'
+      ? (_mapLayerSelectedVertex === 0 ? 'Selected: center' : _mapLayerSelectedVertex === 1 ? 'Selected: radius' : 'No handle selected')
+      : _mapLayerSelectedVertex >= 0 ? `Selected point: ${_mapLayerSelectedVertex + 1}` : 'No point selected';
+    const selectedVertex = _mapLayerSelectedVertex >= 0 ? vertices[_mapLayerSelectedVertex] : null;
+    const gf = draft?.geofence || {enter: true, leave: true, notify_app: true, notify_browser: true, networks: 'both'};
+    const tip = !editing ? 'Create simple overlays directly on the map.' : draft.mode === 'point' ? 'Click the map to place the point. Drag the handle to adjust it.' : draft.mode === 'line' ? 'Click to add vertices. Double-click to finish. Drag handles to refine the path.' : 'Click to add corners. Double-click to finish. Drag handles to refine the area.';
+    body.innerHTML = `
+      <div style="padding:8px 10px;display:grid;gap:8px">
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="overlay-tool-btn ${draft?.mode === 'point' ? 'active' : ''}" onclick="startMapLayerDraft('point')">Point</button>
+          <button class="overlay-tool-btn ${draft?.mode === 'line' ? 'active' : ''}" onclick="startMapLayerDraft('line')">Line</button>
+          <button class="overlay-tool-btn ${draft?.mode === 'circle' ? 'active' : ''}" onclick="startMapLayerDraft('circle')">Circle</button>
+          <button class="overlay-tool-btn ${draft?.mode === 'polygon' ? 'active' : ''}" onclick="startMapLayerDraft('polygon')">Area</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted)">${escHtml(tip)}</div>
+        <div style="display:${editing ? 'grid' : 'none'};gap:8px;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3)">
+          <div>
+            <label class="settings-label" for="overlay-editor-name">Name</label>
+            <input id="overlay-editor-name" class="settings-input" maxlength="60" value="${escHtml(draft?.name || '')}" placeholder="Optional overlay label" oninput="_mapLayerDraft && (_mapLayerDraft.name=this.value,_renderMapLayerDraft())">
+          </div>
+          <div>
+            <label class="settings-label" for="overlay-editor-description">Description</label>
+            <textarea id="overlay-editor-description" class="settings-input" placeholder="Optional popup text" style="width:100%;min-height:66px;resize:vertical;height:auto;padding-top:8px;padding-bottom:8px" oninput="_mapLayerDraft && (_mapLayerDraft.description=this.value)">${escHtml(draft?.description || '')}</textarea>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <label class="settings-label" for="overlay-editor-color" style="margin:0">Color</label>
+            <input id="overlay-editor-color" type="color" value="${escHtml(draft?.color || '#f59e0b')}" style="width:48px;height:28px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:2px" onchange="_mapLayerDraft && (_mapLayerDraft.color=this.value,_renderMapLayerDraft())">
+            <span style="font-size:11px;color:var(--muted)">${draft?.layerId ? 'Editing saved overlay' : 'New overlay'}${draft?.finished ? ' · finished' : ''}</span>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text)">
+            <input type="checkbox" ${draft?.is_geofence ? 'checked' : ''} ${draft?.mode === 'polygon' || draft?.mode === 'circle' ? '' : 'disabled'} onchange="_mapLayerDraft && (_mapLayerDraft.is_geofence=this.checked)">
+            <span>Use as geofence ${draft?.mode === 'polygon' || draft?.mode === 'circle' ? '' : '(areas only)'}</span>
+          </label>
+          <div style="display:${draft?.is_geofence ? 'grid' : 'none'};gap:8px;padding:8px;border:1px solid rgba(245,158,11,0.28);border-radius:6px;background:rgba(245,158,11,0.06)">
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px">Geofence options</div>
+            <div style="display:flex;gap:14px;flex-wrap:wrap">
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" ${gf.enter ? 'checked' : ''} onchange="_mapLayerDraft && (_mapLayerDraft.geofence.enter=this.checked)"> Alert on enter</label>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" ${gf.leave ? 'checked' : ''} onchange="_mapLayerDraft && (_mapLayerDraft.geofence.leave=this.checked)"> Alert on leave</label>
+            </div>
+            <div style="display:flex;gap:14px;flex-wrap:wrap">
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" ${gf.notify_app ? 'checked' : ''} onchange="_mapLayerDraft && (_mapLayerDraft.geofence.notify_app=this.checked)"> In-app</label>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" ${gf.notify_browser ? 'checked' : ''} onchange="_mapLayerDraft && (_mapLayerDraft.geofence.notify_browser=this.checked)"> Browser</label>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span style="font-size:12px;color:var(--muted)">Track:</span>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="radio" name="overlay-gf-net" ${gf.networks === 'both' ? 'checked' : ''} onchange="_mapLayerDraft && (_mapLayerDraft.geofence.networks='both')"> Both</label>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="radio" name="overlay-gf-net" ${gf.networks === 'mt' ? 'checked' : ''} onchange="_mapLayerDraft && (_mapLayerDraft.geofence.networks='mt')"> MT only</label>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="radio" name="overlay-gf-net" ${gf.networks === 'mc' ? 'checked' : ''} onchange="_mapLayerDraft && (_mapLayerDraft.geofence.networks='mc')"> MC only</label>
+            </div>
+          </div>
+          <div style="font-size:11px;color:var(--muted)">${draft?.mode === 'circle' ? `Radius: ${draft?.radius_m ? Math.round(draft.radius_m) + ' m' : 'not set'}` : `Vertices: ${vertices.length}`}${editing && draft?.mode !== 'point' ? ` · ${escHtml(selectedLabel)}` : ''}</div>
+          <div style="display:${draft?.mode === 'polygon' && selectedVertex ? 'grid' : 'none'};gap:6px">
+            <label class="settings-label" for="overlay-point-label">Point label</label>
+            <input id="overlay-point-label" class="settings-input" maxlength="24" value="${escHtml(selectedVertex?.label || String((_mapLayerSelectedVertex >= 0 ? _mapLayerSelectedVertex + 1 : 1)))}" placeholder="1" oninput="_mapLayerDraft && _mapLayerSelectedVertex >= 0 && (_mapLayerDraft.vertices[_mapLayerSelectedVertex].label=this.value,_renderMapLayerDraft())">
+          </div>
+          <div id="overlay-editor-status" style="font-size:12px;color:var(--muted);min-height:14px"></div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="overlay-tool-btn" onclick="saveMapLayerDraft()">Save</button>
+            <button class="overlay-tool-btn" onclick="finishMapLayerDraft()">Finish</button>
+            <button class="overlay-tool-btn" onclick="deleteLastMapLayerVertex()">Delete last</button>
+            <button class="overlay-tool-btn" onclick="deleteSelectedMapLayerVertex()" ${_mapLayerSelectedVertex < 0 ? 'disabled' : ''}>Delete selected</button>
+            <button class="overlay-tool-btn" onclick="cancelMapLayerDraft()">Cancel</button>
+          </div>
+        </div>
+      </div>
+      <div style="border-top:1px solid var(--border)"></div>
+      <div>${_mapLayerDefs.length ? _mapLayerDefs.map(def => {
+        const state = _mapLayerEditableState(def);
+        const features = _mapLayerFeatureList(def.data).length || 0;
+        const actionBtn = state.editable
+          ? `<button class="overlay-mini-btn" onclick="event.stopPropagation();editMapLayer(${def.id})" title="Edit this overlay">✎</button>`
+          : state.reason === 'multi'
+            ? `<button class="overlay-mini-btn" onclick="event.stopPropagation();splitMapLayerIntoEditable(${def.id})" title="Split into editable single-feature overlays">⇄</button>`
+            : '';
+        return `
+        <div class="mp-item" onclick="zoomToMapLayer(${def.id})">
+          <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${escHtml(def.color || '#f59e0b')};flex-shrink:0"></span>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(def.name || 'Unnamed')}</div>
+            <div style="font-size:10px;color:var(--muted)">${def.enabled ? 'Visible on map' : 'Hidden'}${def.is_geofence ? ` · geofence (${escHtml((def.geofence?.networks || 'both').toUpperCase())})` : ''} · ${features} feature${features === 1 ? '' : 's'}${state.reason === 'multi' ? ' · split to edit' : ''}</div>
+          </div>
+          <button class="overlay-mini-btn" onclick="event.stopPropagation();toggleMapLayerEnabled(${def.id}, ${!def.enabled})" title="${def.enabled ? 'Hide overlay' : 'Show overlay'}">${def.enabled ? '◉' : '○'}</button>
+          ${_isPolygonGeofence(def) || (state.editable && (def.data?.features?.[0]?.geometry?.type === 'Polygon' || def.data?.geometry?.type === 'Polygon')) ? `<button class="overlay-mini-btn" onclick="event.stopPropagation();toggleMapLayerGeofence(${def.id}, ${!def.is_geofence})" title="${def.is_geofence ? 'Disable geofence' : 'Enable geofence'}">${def.is_geofence ? '⌁' : '⊚'}</button>` : ''}
+          ${actionBtn}
+          <button class="overlay-mini-btn" onclick="event.stopPropagation();deleteMapLayer(${def.id}, '${jsSafe(def.name)}')" title="Delete this overlay">✕</button>
+        </div>
+      `;
+      }).join('') : '<div style="padding:8px 10px;font-size:11px;color:var(--muted)">No overlays yet.</div>'}</div>
+    `;
+  }
+
+  function renderMapLayerList() {
+    const wrap = document.getElementById('map-layer-list');
+    if (!wrap) return;
+    if (!_mapLayerDefs.length) {
+      wrap.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:4px 0">No saved map layers yet.</div>';
+      return;
+    }
+    wrap.innerHTML = _mapLayerDefs.map(def => `
+      <div style="display:flex;align-items:center;gap:8px;padding:7px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2)">
+        <label style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;cursor:pointer">
+          <input type="checkbox" ${def.enabled ? 'checked' : ''} onchange="toggleMapLayerEnabled(${def.id}, this.checked)">
+          <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${escHtml(def.color || '#f59e0b')};flex-shrink:0"></span>
+          <span style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(def.name)}${def.is_geofence ? ' · Geofence' : ''}</span>
+        </label>
+        ${_isPolygonGeofence(def) || (_mapLayerEditableState(def).editable && (_mapLayerFeatureList(def.data)[0]?.geometry?.type === 'Polygon')) ? `<button class="btn-sm" type="button" onclick="toggleMapLayerGeofence(${def.id}, ${!def.is_geofence})">${def.is_geofence ? 'Geofence on' : 'Geofence off'}</button>` : ''}
+        <button class="btn-sm" type="button" onclick="zoomToMapLayer(${def.id})">Zoom</button>
+        <button class="btn-sm" type="button" style="color:var(--danger,#f87171)" onclick="deleteMapLayer(${def.id}, '${jsSafe(def.name)}')">Delete</button>
+      </div>
+    `).join('');
+  }
+
+  async function loadMapLayers(opts = {}) {
+    try {
+      const r = await fetch('/api/map_layers');
+      if (!r.ok) throw new Error(r.status);
+      _mapLayerDefs = await r.json();
+      renderMapLayerList();
+      renderOverlayPanel();
+      refreshMapLayerPanelOptions();
+      renderMapOverlays();
+    } catch (e) {
+      console.error('loadMapLayers failed:', e);
+      if (!opts.silent) {
+        const statusEl = document.getElementById('map-layer-status');
+        if (statusEl) statusEl.textContent = `Failed to load layers: ${e.message || e}`;
+      }
+    }
+  }
+
+  async function toggleMapLayerGeofence(id, enabled) {
+    const statusEl = document.getElementById('overlay-editor-status') || document.getElementById('map-layer-status');
+    try {
+      const r = await fetch(`/api/map_layers/${id}`, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({is_geofence: enabled})
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.error) throw new Error(data.error || r.status);
+      _mapLayerDefs = _mapLayerDefs.map(def => def.id === id ? data.layer : def);
+      renderMapLayerList();
+      renderOverlayPanel();
+      refreshMapLayerPanelOptions();
+      renderMapOverlays();
+      if (statusEl) statusEl.textContent = enabled ? 'Geofence enabled.' : 'Geofence disabled.';
+    } catch (e) {
+      if (statusEl) statusEl.textContent = `Geofence update failed: ${e.message || e}`;
+    }
+  }
+
+  function handleMapLayerFileInput(event) {
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const txt = String(reader.result || '');
+      const ta = document.getElementById('map-layer-geojson');
+      if (ta) ta.value = txt;
+      const nameInput = document.getElementById('map-layer-name');
+      if (nameInput && !nameInput.value.trim()) {
+        nameInput.value = file.name.replace(/\.(geojson|json)$/i, '');
+      }
+      const statusEl = document.getElementById('map-layer-status');
+      if (statusEl) statusEl.textContent = `Loaded ${file.name}`;
+    };
+    reader.onerror = () => {
+      const statusEl = document.getElementById('map-layer-status');
+      if (statusEl) statusEl.textContent = 'Could not read that file.';
+    };
+    reader.readAsText(file);
+  }
+
+  async function saveMapLayer() {
+    const nameEl = document.getElementById('map-layer-name');
+    const colorEl = document.getElementById('map-layer-color');
+    const geoEl = document.getElementById('map-layer-geojson');
+    const statusEl = document.getElementById('map-layer-status');
+    const name = (nameEl?.value || '').trim();
+    const raw = (geoEl?.value || '').trim();
+    const color = colorEl?.value || '#f59e0b';
+    if (!name) {
+      statusEl.textContent = 'Name required.';
+      return;
+    }
+    if (!raw) {
+      statusEl.textContent = 'GeoJSON required.';
+      return;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      statusEl.textContent = `Invalid JSON: ${e.message}`;
+      return;
+    }
+    statusEl.textContent = 'Saving…';
+    try {
+      const r = await fetch('/api/map_layers', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name, color, data: parsed, enabled: true})
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.error) throw new Error(data.error || r.status);
+      nameEl.value = '';
+      geoEl.value = '';
+      const fileEl = document.getElementById('map-layer-file');
+      if (fileEl) fileEl.value = '';
+      statusEl.textContent = `Saved layer "${data.layer?.name || name}".`;
+      await loadMapLayers({silent: true});
+    } catch (e) {
+      statusEl.textContent = `Save failed: ${e.message || e}`;
+    }
+  }
+
+  async function toggleMapLayerEnabled(id, enabled, opts = {}) {
+    try {
+      const r = await fetch(`/api/map_layers/${id}`, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enabled})
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.error) throw new Error(data.error || r.status);
+      _mapLayerDefs = _mapLayerDefs.map(def => def.id === id ? data.layer : def);
+      renderMapLayerList();
+      renderOverlayPanel();
+      refreshMapLayerPanelOptions();
+      renderMapOverlays();
+      if (!opts.silent) {
+        const statusEl = document.getElementById('map-layer-status');
+        if (statusEl) statusEl.textContent = enabled ? 'Layer enabled.' : 'Layer hidden.';
+      }
+    } catch (e) {
+      console.error('toggleMapLayerEnabled failed:', e);
+      if (!opts.silent) {
+        const statusEl = document.getElementById('map-layer-status');
+        if (statusEl) statusEl.textContent = `Update failed: ${e.message || e}`;
+      }
+      await loadMapLayers({silent: true});
+    }
+  }
+
+  function zoomToMapLayer(id) {
+    const def = _mapLayerDefs.find(layer => layer.id === id);
+    if (!def || !def.data) return;
+    switchTab('map');
+    requestAnimationFrame(() => {
+      try {
+        const layer = _mapLayerObjects[id] || _buildMapLayerLeaflet(def);
+        const bounds = layer.getBounds && layer.getBounds();
+        if (bounds && bounds.isValid && bounds.isValid()) leafletMap.fitBounds(bounds.pad(0.12));
+      } catch (e) {
+        console.error('zoomToMapLayer failed:', e);
+      }
+    });
+  }
+
+  function deleteMapLayer(id, name) {
+    document.getElementById('confirm-ok').textContent = 'Delete';
+    showConfirm(`Delete map layer "${name}"?`, async () => {
+      const statusEl = document.getElementById('map-layer-status');
+      if (statusEl) statusEl.textContent = 'Deleting…';
+      try {
+        const r = await fetch(`/api/map_layers/${id}`, {method: 'DELETE'});
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok || data.error) throw new Error(data.error || r.status);
+        _mapLayerDefs = _mapLayerDefs.filter(def => def.id !== id);
+        renderMapLayerList();
+        renderOverlayPanel();
+        refreshMapLayerPanelOptions();
+        renderMapOverlays();
+        if (statusEl) statusEl.textContent = 'Layer deleted.';
+      } catch (e) {
+        if (statusEl) statusEl.textContent = `Delete failed: ${e.message || e}`;
+      }
+    });
+  }
+
   function initMap() {
     if (leafletMap) return;
     const _savedMapView = (() => { try { return JSON.parse(localStorage.getItem('mapView')); } catch(e) { return null; } })();
@@ -4769,6 +6278,7 @@
     leafletMap = L.map('map', { zoomSnap: 0.5, zoomDelta: 0.5 }).setView(_initCenter, _initZoom);
     const _savedLayer = (() => { try { return localStorage.getItem('mapTileLayer') || 'osm'; } catch(e) { return 'osm'; } })();
     setTileLayer(_savedLayer);
+    if (_showPolarGrid) _drawPolarGrid();
 
     // Save map position on every move so it survives refresh
     leafletMap.on('moveend', () => {
@@ -4791,6 +6301,10 @@
         openWaypointModal(lat, lon);
         return;
       }
+      if (_mapLayerDraft) {
+        mapLayerDraftAddVertex(lat, lon);
+        return;
+      }
       if (!_mapPickMode) return;
       if (_mapPickMode === 'mc') {
         document.getElementById('mc-coords-lat').value = lat.toFixed(6);
@@ -4807,6 +6321,18 @@
         cancelMapPick();
         nodeCfgStatus('position', `Position set to ${lat.toFixed(5)}, ${lon.toFixed(5)}. Adjust precision, then Save.`, true);
       }
+    });
+    leafletMap.on('mousemove', (e) => {
+      if (!_mapLayerDraft || _mapLayerDraft.mode !== 'circle' || !_mapLayerDraft.center || _mapLayerDraft.finished) return;
+      _mapLayerDraft.radius_m = _haversineMeters(_mapLayerDraft.center.lat, _mapLayerDraft.center.lon, e.latlng.lat, e.latlng.lng);
+      _renderMapLayerDraft();
+      renderOverlayPanel();
+    });
+    leafletMap.on('dblclick', (e) => {
+      if (!_mapLayerDraft) return;
+      if (_mapLayerDraft.mode === 'circle') return;
+      L.DomEvent.stop(e);
+      finishMapLayerDraft();
     });
 
     // Locate/lock button
@@ -4867,6 +6393,34 @@
             panel.classList.remove('open');
           });
         });
+        _mapLayerMenuPanel = L.DomUtil.create('div', '', panel);
+        refreshMapLayerPanelOptions();
+
+        // Separator
+        const sep = L.DomUtil.create('div', '', panel);
+        sep.style.cssText = 'border-top:1px solid var(--border);margin:4px 2px 2px';
+
+        // Polar grid toggle
+        const gridOpt = L.DomUtil.create('div', 'map-layer-opt', panel);
+        gridOpt.id = 'map-polar-btn';
+        gridOpt.textContent = 'Polar Grid';
+        if (_showPolarGrid) gridOpt.classList.add('active');
+        L.DomEvent.on(gridOpt, 'click', (e) => { L.DomEvent.stopPropagation(e); togglePolarGrid(); });
+
+        // Polar grid customize link
+        const custBtn = L.DomUtil.create('div', '', panel);
+        custBtn.textContent = 'Customize…';
+        custBtn.style.cssText = 'padding:2px 10px 6px 12px;font-size:11px;color:var(--muted);cursor:pointer';
+        custBtn.onmouseenter = () => { custBtn.style.color = 'var(--text)'; };
+        custBtn.onmouseleave = () => { custBtn.style.color = 'var(--muted)'; };
+        L.DomEvent.on(custBtn, 'click', (e) => { L.DomEvent.stopPropagation(e); openPolarCustomize(); });
+
+        // SNR paths toggle
+        const snrOpt = L.DomUtil.create('div', 'map-layer-opt', panel);
+        snrOpt.id = 'map-tr-snr-btn';
+        snrOpt.textContent = 'SNR Paths';
+        if (_showTrMap) snrOpt.classList.add('active');
+        L.DomEvent.on(snrOpt, 'click', (e) => { L.DomEvent.stopPropagation(e); toggleTrMap(); });
 
         L.DomEvent.on(btn, 'click', L.DomEvent.stopPropagation);
         L.DomEvent.on(btn, 'click', () => panel.classList.toggle('open'));
@@ -4922,6 +6476,17 @@
       applyMapSearch();
     });
     applyMcVisibility();
+    loadMapLayers({silent: true});
+    renderMapOverlays();
+    renderOverlayPanel();
+    try {
+      if (localStorage.getItem('overlayPanelCollapsed') === '0') {
+        const body = document.getElementById('overlay-panel-body');
+        const chev = document.getElementById('overlay-panel-chev');
+        if (body) body.style.display = '';
+        if (chev) chev.textContent = '▲';
+      }
+    } catch(e) {}
   }
 
   function setMapLabels(show) {
@@ -5627,6 +7192,16 @@
     try { localStorage.setItem('notesPanelCollapsed', collapsed ? '0' : '1'); } catch(e) {}
   }
 
+  function toggleOverlayPanel() {
+    const body = document.getElementById('overlay-panel-body');
+    const chev = document.getElementById('overlay-panel-chev');
+    if (!body) return;
+    const collapsed = body.style.display === 'none';
+    body.style.display = collapsed ? '' : 'none';
+    if (chev) chev.textContent = collapsed ? '▲' : '▼';
+    try { localStorage.setItem('overlayPanelCollapsed', collapsed ? '0' : '1'); } catch(e) {}
+  }
+
   function flyToMark(wp_id) {
     const wp = waypointsData[wp_id];
     if (!wp || !leafletMap) return;
@@ -5857,15 +7432,19 @@
     const input = document.getElementById('map-dm-input');
     const text  = input.value.trim();
     if (!text || !mapDmContactId) return;
-    input.value = '';
-    try {
-      const r = await fetch('/api/chat/send', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ text, channel: 0, dest_id: mapDmContactId, radio_id: activeRadioId })
-      });
-      if (!r.ok) throw new Error(await r.text());
-    } catch(e) { console.error('Map DM send failed:', e); }
+    const doSend = async () => {
+      input.value = '';
+      try {
+        const r = await fetch('/api/chat/send', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ text, channel: 0, dest_id: mapDmContactId, radio_id: activeRadioId })
+        });
+        if (!r.ok) throw new Error(await r.text());
+      } catch(e) { console.error('Map DM send failed:', e); }
+    };
+    if (_silentMode) { showSilentConfirm('Sending is not possible while Silent Running is enabled.'); return; }
+    await doSend();
   }
 
   // ── Dynamic map panel factory ───────────────────────────────────────────
@@ -5941,6 +7520,7 @@
         <div class="tr-chain">${buildChain(d.route, d.snrTowards)}</div>
         <div class="tr-section">Route back</div>
         <div class="tr-chain">${buildChain(d.routeBack, d.snrBack)}</div>`;
+      if (_showTrMap) _drawTraceRouteOnMap(d);
     } catch(e) {
       clearInterval(timerId);
       if (timedOut) return;
@@ -6281,6 +7861,7 @@
     if (mapLocked) centerOnLocal();
 
     applyMapSearch();
+    _refreshAllGeofences();
   }
 
   // ── Bot ────────────────────────────────────────────────────────────────────
@@ -6983,6 +8564,7 @@
     loadInAppNotifPrefs();
     loadExtMapPref();
     loadNodeCfgRadios();
+    loadMapLayers({silent: true});
     document.getElementById('tile-autocache-toggle').checked = _autoCacheTiles;
     refreshTileCacheInfo();
     updateTileEstimate();
@@ -7092,6 +8674,7 @@
 
     const hasFix = pos.fix && pos.lat != null;
     _localGpsPos = hasFix ? {lat: pos.lat, lon: pos.lon} : null;
+    if (_showPolarGrid) _drawPolarGrid();
     fixEl.style.color = hasFix ? 'var(--accent)' : 'var(--yellow, #facc15)';
     fixEl.textContent  = hasFix ? '● Fix' : '● No fix';
     if (satsEl) satsEl.textContent = pos.sats != null ? pos.sats : '—';
@@ -7318,6 +8901,7 @@
   let _mcPathLines  = [];      // L.polyline objects for MC path lines
   let _mcHoverLines = [];      // temporary hover highlight polylines
   let _mcActiveHoverPath = null;
+  let _mcRouteEditor = null;
   let _mcSenseLogEntries = (() => {
     try { const s = JSON.parse(localStorage.getItem('mcSenseLog') || '[]'); return Array.isArray(s) ? s.slice(-200) : []; }
     catch(e) { return []; }
@@ -7970,6 +9554,227 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     return radioName ? `${typeLabel} via ${radioName}` : typeLabel;
   }
 
+  function _mcStoredRouteHopPrefixes(contact) {
+    if (!contact || (contact.out_path_len ?? -1) <= 0 || !contact.out_path) return [];
+    const hopCount = contact.out_path_len ?? 0;
+    const hashChars = ((contact.out_path_hash_mode ?? 0) + 1) * 2;
+    const hops = [];
+    for (let i = 0; i < hopCount; i++) {
+      const hop = (contact.out_path || '').slice(i * hashChars, (i + 1) * hashChars);
+      if (hop) hops.push(hop);
+    }
+    return hops;
+  }
+
+  function _mcStoredRouteSummary(contact, radioId = null) {
+    if (!contact) return 'Automatic routing';
+    const hopCount = contact.out_path_len ?? -1;
+    if (hopCount < 0) return 'Automatic / flood routing';
+    if (hopCount === 0) return 'Direct only';
+    const labels = _mcStoredRouteHopPrefixes(contact).map(prefix => {
+      const hop = findMcContactByKeyPrefix(prefix, radioId);
+      return hop?.long_name || hop?.id || prefix;
+    });
+    return labels.length ? `Via ${labels.join(' → ')}` : `${hopCount} hop${hopCount !== 1 ? 's' : ''}`;
+  }
+
+  function mcRouteIndicator(contact, radioId = null) {
+    if (!contact || (contact.out_path_len ?? -1) < 0) return '';
+    return `<span class="mc-route-indicator" title="${escHtml(_mcStoredRouteSummary(contact, radioId))}">&#10148;</span>`;
+  }
+
+  function _mcRouteCandidateList(radioId, targetId, query = '') {
+    const q = (query || '').trim().toLowerCase();
+    return Object.values(mcContacts[radioId] || {})
+      .filter(c => (c.type ?? 0) === 2)
+      .filter(c => (c.id || '') !== (targetId || ''))
+      .filter(c => {
+        if (!q) return true;
+        return (c.long_name || '').toLowerCase().includes(q)
+          || (c.short_name || '').toLowerCase().includes(q)
+          || (c.id || '').toLowerCase().includes(q)
+          || (c.full_key || '').toLowerCase().includes(q);
+      })
+      .sort((a, b) => {
+        const ta = _mcContactSeenTs(a);
+        const tb = _mcContactSeenTs(b);
+        if (tb !== ta) return tb - ta;
+        return (a.long_name || a.id || '').localeCompare(b.long_name || b.id || '');
+      });
+  }
+
+  function _mcRouteHopResolved(prefix, radioId) {
+    return findMcContactByKeyPrefix(prefix, radioId);
+  }
+
+  function _mcRouteHopMeta(prefix, radioId) {
+    const hop = _mcRouteHopResolved(prefix, radioId);
+    if (!hop) return { label: prefix, meta: 'Unknown stored hash' };
+    const seen = _mcContactSeenLabel(hop);
+    return {
+      label: hop.long_name || hop.id || prefix,
+      meta: `${mcTypeLabel(hop.type ?? 0)}${seen && seen !== '—' ? ` · ${seen}` : ''}`,
+      prefix: hop.full_key || hop.id || prefix,
+    };
+  }
+
+  function openMcRouteEditor(contactId, radioId) {
+    const contact = mcContacts[radioId]?.[contactId];
+    if (!contact) {
+      showAlert('Contact not found.');
+      return;
+    }
+    _mcRouteEditor = {
+      radioId,
+      contactId,
+      contactName: contact.long_name || contact.id || contactId,
+      selected: _mcStoredRouteHopPrefixes(contact),
+      query: '',
+      saving: false,
+      statusMessage: '',
+      statusKind: '',
+    };
+    openModal(`MC Route — ${_mcRouteEditor.contactName}`, '<div class="modal-loading">Loading route editor…</div>');
+    renderMcRouteEditor();
+    setTimeout(() => document.getElementById('mc-route-search')?.focus(), 40);
+  }
+
+  function renderMcRouteEditor() {
+    if (!_mcRouteEditor) return;
+    const body = document.getElementById('modal-body');
+    if (!body) return;
+    const { radioId, contactId, contactName, selected, query, saving } = _mcRouteEditor;
+    const contact = mcContacts[radioId]?.[contactId];
+    const radioLabel = mcLastStatus[radioId]?.name || mcLastStatus[radioId]?.node_name || radioId;
+    const currentSummary = contact ? _mcStoredRouteSummary(contact, radioId) : 'Automatic / flood routing';
+    const hopHtml = selected.length
+      ? `<div class="mc-route-hops">${selected.map((prefix, idx) => {
+          const hop = _mcRouteHopMeta(prefix, radioId);
+          return `<div class="mc-route-hop">
+            <div class="mc-route-hop-label">
+              <div>${escHtml(hop.label)}</div>
+              <div class="mc-route-hop-meta">${escHtml(hop.meta)}</div>
+            </div>
+            <button class="mc-route-hop-btn" title="Move up" ${idx === 0 || saving ? 'disabled' : ''} onclick="mcRouteMoveHop(${idx}, -1)">&#8593;</button>
+            <button class="mc-route-hop-btn" title="Move down" ${idx === selected.length - 1 || saving ? 'disabled' : ''} onclick="mcRouteMoveHop(${idx}, 1)">&#8595;</button>
+            <button class="mc-route-hop-btn" title="Remove hop" ${saving ? 'disabled' : ''} onclick="mcRouteRemoveHop(${idx})">&#10005;</button>
+          </div>`;
+        }).join('')}</div>`
+      : `<div class="mc-route-summary" style="margin-top:10px">No repeaters selected. Save now to force direct delivery only, or use <b>Clear path</b> to return to automatic routing.</div>`;
+
+    const candidates = _mcRouteCandidateList(radioId, contactId, query)
+      .filter(c => !selected.some(prefix => (c.full_key || c.id || '').toLowerCase().startsWith(String(prefix).toLowerCase())))
+      .slice(0, 24);
+    const candidatesHtml = candidates.length
+      ? candidates.map(c => {
+          const label = c.long_name || c.id || '?';
+          const seen = _mcContactSeenLabel(c);
+          const meta = `${mcTypeLabel(c.type ?? 0)}${seen && seen !== '—' ? ` · ${seen}` : ''}`;
+          return `<div class="mc-route-candidate">
+            <div>
+              <div>${escHtml(label)}</div>
+              <div class="mc-route-hop-meta">${escHtml(meta)}</div>
+            </div>
+            <button ${saving ? 'disabled' : ''} onclick="mcRouteAddHop('${jsSafe(c.full_key || c.id || '')}')">Add</button>
+          </div>`;
+        }).join('')
+      : `<div style="padding:12px;color:var(--muted);font-size:12px">No known repeaters match this search on ${escHtml(radioLabel)}.</div>`;
+
+    const statusHtml = _mcRouteEditor.statusMessage
+      ? `<div class="modal-${_mcRouteEditor.statusKind === 'error' ? 'error' : _mcRouteEditor.statusKind === 'success' ? 'success' : 'loading'}">${escHtml(_mcRouteEditor.statusMessage)}</div>`
+      : '<div id="mc-route-status"></div>';
+    body.innerHTML = `
+      <div class="modal-node">${escHtml(contactName)} · ${escHtml(contactId)} · via ${escHtml(radioLabel)}</div>
+      <div class="mc-route-summary">
+        <div style="color:var(--muted);font-size:11px;margin-bottom:4px">Current stored route</div>
+        <div>${escHtml(currentSummary)}</div>
+      </div>
+      <div style="font-size:12px;color:var(--muted)">Selected repeaters</div>
+      ${hopHtml}
+      <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Search known repeaters</div>
+      <div class="mc-route-search-row">
+        <input id="mc-route-search" class="mc-route-search" value="${escHtml(query)}" placeholder="Search repeaters..." oninput="mcRouteSetQuery(this.value)" ${saving ? 'disabled' : ''}>
+      </div>
+      <div class="mc-route-candidates">${candidatesHtml}</div>
+      ${statusHtml}
+      <div class="mc-route-actions">
+        <button class="btn" ${saving ? 'disabled' : ''} onclick="saveMcRouteEditor(true)">Clear path</button>
+        <button class="btn btn-net-mc active" ${saving ? 'disabled' : ''} onclick="saveMcRouteEditor(false)">${saving ? 'Saving…' : 'Save route'}</button>
+      </div>`;
+  }
+
+  function mcRouteSetQuery(value) {
+    if (!_mcRouteEditor) return;
+    _mcRouteEditor.query = value || '';
+    renderMcRouteEditor();
+    setTimeout(() => {
+      const input = document.getElementById('mc-route-search');
+      if (input) {
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      }
+    }, 0);
+  }
+
+  function mcRouteAddHop(prefix) {
+    if (!_mcRouteEditor || !prefix) return;
+    _mcRouteEditor.selected.push(prefix);
+    renderMcRouteEditor();
+  }
+
+  function mcRouteRemoveHop(idx) {
+    if (!_mcRouteEditor) return;
+    _mcRouteEditor.selected.splice(idx, 1);
+    renderMcRouteEditor();
+  }
+
+  function mcRouteMoveHop(idx, delta) {
+    if (!_mcRouteEditor) return;
+    const next = idx + delta;
+    if (next < 0 || next >= _mcRouteEditor.selected.length) return;
+    const hops = _mcRouteEditor.selected;
+    [hops[idx], hops[next]] = [hops[next], hops[idx]];
+    renderMcRouteEditor();
+  }
+
+  async function saveMcRouteEditor(clear = false) {
+    if (!_mcRouteEditor) return;
+    const state = _mcRouteEditor;
+    state.statusMessage = 'Saving route…';
+    state.statusKind = 'loading';
+    state.saving = true;
+    renderMcRouteEditor();
+    try {
+      const r = await fetch(`/api/mc/${encodeURIComponent(state.radioId)}/contacts/${encodeURIComponent(state.contactId)}/route`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({clear, hops: clear ? [] : state.selected}),
+      });
+      const data = await r.json();
+      if (!r.ok || data.error) throw new Error(data.error || `HTTP ${r.status}`);
+      const contact = data.contact;
+      if (!mcContacts[state.radioId]) mcContacts[state.radioId] = {};
+      const prev = mcContacts[state.radioId][contact.id] || {};
+      mcContacts[state.radioId][contact.id] = Object.assign({}, prev, contact);
+      state.contactId = contact.id;
+      state.selected = clear ? [] : _mcStoredRouteHopPrefixes(contact);
+      state.statusMessage = clear ? 'Stored path cleared.' : 'Stored route updated.';
+      state.statusKind = 'success';
+      renderMcMapMarkers();
+      if (currentTab === 'nodes') renderLive();
+      renderMcRouteEditor();
+    } catch(e) {
+      state.statusMessage = e.message || 'Request failed.';
+      state.statusKind = 'error';
+      renderMcRouteEditor();
+    } finally {
+      if (_mcRouteEditor) {
+        _mcRouteEditor.saving = false;
+        renderMcRouteEditor();
+      }
+    }
+  }
+
   function _mcClusterIcon(count, hasRadio) {
     return L.divIcon({
       className: '',
@@ -8154,6 +9959,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
 
     if (_senseNet === 'mc') renderMcPathLines();
     updateHeaderMcCount();
+    _refreshAllGeofences();
   }
 
   // -- MC chat tabs --
@@ -8824,8 +10630,10 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
 
     let lineColor, lineWeight, lineDash, lineOpacity, dotColor;
     if (kind === 'trace') {
-      lineColor = '#f97316'; lineWeight = 3; lineDash = null; lineOpacity = 1.0;
-      dotColor = '#f97316';
+      const trSnr = Array.isArray(pathResult) ? null : (pathResult.snr ?? null);
+      lineColor = (_showTrMap && trSnr != null) ? _snrLineColor(trSnr) : '#f97316';
+      dotColor  = lineColor;
+      lineWeight = 3; lineDash = null; lineOpacity = 1.0;
     } else if (kind === 'ping') {
       lineColor = '#22c55e'; lineWeight = 3; lineDash = '2,6'; lineOpacity = 1.0;
       dotColor = '#22c55e';
@@ -8849,10 +10657,14 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       _mcHoverLines.push(halo);
     }
 
+    const _mcLineSnr = Array.isArray(pathResult) ? null : (pathResult.snr ?? null);
     const line = L.polyline(points, {
       color: lineColor, weight: lineWeight, opacity: lineOpacity,
-      dashArray: lineDash, lineCap: 'round', lineJoin: 'round', interactive: false
-    }).addTo(leafletMap);
+      dashArray: lineDash, lineCap: 'round', lineJoin: 'round',
+      interactive: kind === 'trace' && _mcLineSnr != null
+    });
+    if (kind === 'trace' && _mcLineSnr != null) line.bindTooltip(`${_mcLineSnr.toFixed(1)} dB`, {sticky: true, direction: 'top'});
+    line.addTo(leafletMap);
     _mcHoverLines.push(line);
 
     if (dotColor) {
@@ -9471,6 +11283,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const input = document.getElementById('mc-chat-input');
     const text  = (input?.value || '').trim();
     if (!text) return;
+    const doSend = () => {
     input.value = '';
     handleCrossCommand(text).then(handled => {
       if (handled) return;
@@ -9541,46 +11354,53 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       showAlert(String(e?.message || e || 'MC send failed.'));
       console.warn('MC send failed:', e);
     });
+    };
+    if (_silentMode) { showSilentConfirm('Sending is not possible while Silent Running is enabled.'); return; }
+    doSend();
   }
 
   function mcSendAdvert() {
     if (!activeMcRadioId) return;
-    const btn = document.querySelector('button[onclick="mcSendAdvert()"]');
-    if (btn) { btn.disabled = true; btn.textContent = '…'; }
-    fetch(`/api/mc/${encodeURIComponent(activeMcRadioId)}/advert`, {
-      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({flood: true}),
-    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
-      if (btn) { btn.disabled = false; btn.textContent = 'Advert'; }
-      if (!d.error) {
-        const ts = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
-        const radioName = mcLastStatus[activeMcRadioId]?.name || activeMcRadioId;
-        const entry = { kind: 'self_advert', name: radioName, ts, radioId: activeMcRadioId, radioName };
-        _mcSenseLogEntries.unshift(entry);
-        if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
-        try { localStorage.setItem('mcSenseLog', JSON.stringify(_mcSenseLogEntries.slice(0, 100))); } catch(e) {}
-        renderMcSenseLog();
-      }
-      const statusText = d.error ? `Advert failed: ${d.error}` : 'Advert sent (flood).';
-      mcMessages.push({
-        type: 'mc_message', radio_id: activeMcRadioId,
-        radio_name: mcLastStatus[activeMcRadioId]?.node_name || mcLastStatus[activeMcRadioId]?.name || '',
-        network: 'mc', subtype: 'system',
-        from_id: 'system', text: statusText,
-        ts: Math.floor(Date.now()/1000), sent: true,
+    const doSend = () => {
+      const btn = document.querySelector('button[onclick="mcSendAdvert()"]');
+      if (btn) { btn.disabled = true; btn.textContent = '…'; }
+      fetch(`/api/mc/${encodeURIComponent(activeMcRadioId)}/advert`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({flood: true}),
+      }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+        if (btn) { btn.disabled = false; btn.textContent = 'Advert'; }
+        if (!d.error) {
+          const ts = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
+          const radioName = mcLastStatus[activeMcRadioId]?.name || activeMcRadioId;
+          const entry = { kind: 'self_advert', name: radioName, ts, radioId: activeMcRadioId, radioName };
+          _mcSenseLogEntries.unshift(entry);
+          if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
+          try { localStorage.setItem('mcSenseLog', JSON.stringify(_mcSenseLogEntries.slice(0, 100))); } catch(e) {}
+          renderMcSenseLog();
+        }
+        const statusText = d.error ? `Advert failed: ${d.error}` : 'Advert sent (flood).';
+        mcMessages.push({
+          type: 'mc_message', radio_id: activeMcRadioId,
+          radio_name: mcLastStatus[activeMcRadioId]?.node_name || mcLastStatus[activeMcRadioId]?.name || '',
+          network: 'mc', subtype: 'system',
+          from_id: 'system', text: statusText,
+          ts: Math.floor(Date.now()/1000), sent: true,
+        });
+        _saveMcMessages();
+        renderMcMessages();
+      }).catch(e => {
+        if (btn) { btn.disabled = false; btn.textContent = 'Advert'; }
+        mcMessages.push({
+          type: 'mc_message', radio_id: activeMcRadioId,
+          radio_name: '', network: 'mc', subtype: 'system',
+          from_id: 'system', text: `Advert failed: ${e.message}`,
+          ts: Math.floor(Date.now()/1000), sent: true,
+        });
+        _saveMcMessages();
+        renderMcMessages();
       });
-      _saveMcMessages();
-      renderMcMessages();
-    }).catch(e => {
-      if (btn) { btn.disabled = false; btn.textContent = 'Advert'; }
-      mcMessages.push({
-        type: 'mc_message', radio_id: activeMcRadioId,
-        radio_name: '', network: 'mc', subtype: 'system',
-        from_id: 'system', text: `Advert failed: ${e.message}`,
-        ts: Math.floor(Date.now()/1000), sent: true,
-      });
-      _saveMcMessages();
-      renderMcMessages();
-    });
+    };
+    if (_silentMode) { showSilentConfirm('Transmitting is not possible while Silent Running is enabled.'); return; }
+    doSend();
   }
 
   function replyToMt(name) {
@@ -9898,8 +11718,9 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       }
     }
     if (points.length < 2) return;
-    // Reuse hover path draw — trace style (orange, thick)
-    showMcHoverPath({ points, partial, kind: 'trace' }, true);
+    const _finalEntry = path[hops];
+    const _finalSnr = (_finalEntry?.snr != null) ? _finalEntry.snr : null;
+    showMcHoverPath({ points, partial, kind: 'trace', snr: _finalSnr }, true);
   }
 
   function _addMcTraceLogEntry(data, ours = false) {
@@ -9939,7 +11760,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       const lon = responderContact.longitude ?? responderContact.lon;
       if (lat != null && lon != null) points.push([lat, lon]);
     }
-    const pathResult = points.length >= 2 ? { points, partial, kind: 'trace' } : null;
+    const pathResult = points.length >= 2 ? { points, partial, kind: 'trace', snr: finalSnr } : null;
     const entry = { kind: 'trace', name: 'Broadcast Trace', ts, hopStr, hopLen: hops, typeIdx: 0, pathResult, lat: responderContact?.latitude ?? null, lon: responderContact?.longitude ?? null, radioId: data.radio_id, responderName, finalSnr, path, ours };
     if (_mcLogPinnedIdx !== null) _mcLogPinnedIdx++;
     _mcSenseLogEntries.unshift(entry);
@@ -10438,11 +12259,13 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   function toggleSensePanel(open) {
     const panel    = document.getElementById('sense-panel');
     const logPanel = document.getElementById('sense-log-panel');
+    const overlayPanel = document.getElementById('overlay-panel');
     const isOpen = open !== undefined ? open : panel.style.display === 'none';
     panel.style.display    = isOpen ? 'flex' : 'none';
     logPanel.style.display = isOpen ? 'flex' : 'none';
     const mpr = document.getElementById('map-panels-right');
     if (mpr) mpr.style.display = isOpen ? 'none' : '';
+    if (overlayPanel) overlayPanel.style.display = isOpen ? 'none' : '';
     document.getElementById('map-btn-map').classList.toggle('active', !isOpen);
     document.getElementById('map-btn-sense').classList.toggle('active', isOpen);
     const netFilter     = document.getElementById('map-net-filter');
@@ -10452,6 +12275,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     localStorage.setItem('sensePanelOpen', isOpen ? '1' : '0');
     resizeMapView();
     if (isOpen) {
+      if (_mapLayerDraft) cancelMapLayerDraft();
       // Apply current network mode (MT or MC)
       switchSenseNet(_senseNet);
       _updateMapNodeCount();
@@ -11807,7 +13631,12 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     '#000000','#052e16','#083344','#1e3a5f','#2e1065','#4a044e','#500724','#431407','#1a1200',
   ];
   const CPICKER_MAX_RECENT = 6;
+  const PG_PALETTE = [
+    '#f9fafb','#4ade80','#22d3ee','#60a5fa','#facc15','#fb923c','#f87171',
+    '#9ca3af','#16a34a','#0891b2','#2563eb','#ca8a04','#c2410c','#7c3aed',
+  ];
   let _cpickerSelected = '#4ade80';
+  let _cpickerCallback = null;
   let _cpickerRecent = JSON.parse(localStorage.getItem('cp_recent') || '[]');
   let _cpickerMode = 'hex';
   let _cpH = 0, _cpS = 100, _cpV = 100; // HSV state
@@ -11857,6 +13686,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   // ── Picker core ──
   function openCPicker() {
+    _cpickerCallback = null;
     _cpickerSelected = _accentColor;
     const [r,g,b] = _hexToRgb(_cpickerSelected);
     [_cpH,_cpS,_cpV] = _rgbToHsv(r,g,b);
@@ -11867,7 +13697,20 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     document.getElementById('cpicker-overlay').classList.add('open');
   }
 
+  function openCPickerFor(initialColor, onSelect) {
+    _cpickerCallback = onSelect;
+    _cpickerSelected = initialColor || '#4ade80';
+    const [r,g,b] = _hexToRgb(_cpickerSelected);
+    [_cpH,_cpS,_cpV] = _rgbToHsv(r,g,b);
+    _cpickerBuildGrid();
+    _cpickerBuildRecent();
+    _cpickerUpdateSquare();
+    _cpickerSyncFields(_cpickerSelected);
+    document.getElementById('cpicker-overlay').classList.add('open');
+  }
+
   function closeCPicker() {
+    _cpickerCallback = null;
     document.getElementById('cpicker-overlay').classList.remove('open');
   }
 
@@ -11875,10 +13718,17 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const hex = _cpickerSelected;
     _cpickerRecent = [hex,..._cpickerRecent.filter(c=>c!==hex)].slice(0,CPICKER_MAX_RECENT);
     localStorage.setItem('cp_recent',JSON.stringify(_cpickerRecent));
-    applyAccentColor(hex);
-    settingsSetAccentColor(hex);
-    document.getElementById('settings-accent-swatch').style.background = hex;
-    closeCPicker();
+    if (_cpickerCallback) {
+      const cb = _cpickerCallback;
+      _cpickerCallback = null;
+      closeCPicker();
+      cb(hex);
+    } else {
+      applyAccentColor(hex);
+      settingsSetAccentColor(hex);
+      document.getElementById('settings-accent-swatch').style.background = hex;
+      closeCPicker();
+    }
   }
 
   function _cpickerSetHex(hex) {

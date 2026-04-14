@@ -804,6 +804,58 @@ async def _send_dm_async(config_id, pubkey_prefix, text):
     return await mc.commands.send_msg(contacts[full_key], text)
 
 
+def _resolve_mc_contact(contacts, pubkey_prefix):
+    if not pubkey_prefix:
+        raise ValueError("Contact id is required")
+    prefix = str(pubkey_prefix).strip().lower()
+    matches = [k for k in contacts.keys() if str(k).lower().startswith(prefix)]
+    if not matches:
+        raise ValueError(f"Contact {pubkey_prefix} not found")
+    if len(matches) > 1:
+        raise ValueError(f"Contact prefix {pubkey_prefix} is ambiguous")
+    full_key = matches[0]
+    contact = dict(contacts[full_key] or {})
+    contact["public_key"] = full_key
+    return full_key, contact
+
+
+async def _set_contact_path_async(config_id, pubkey_prefix, hop_prefixes=None, clear=False, path_hash_mode=None):
+    mc, _ = _get_mc(config_id)
+    with mc_connections_lock:
+        contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
+
+    full_key, contact = _resolve_mc_contact(contacts, pubkey_prefix)
+
+    if clear:
+        result = await mc.commands.reset_path(full_key)
+    else:
+        hop_prefixes = list(hop_prefixes or [])
+        if path_hash_mode is None:
+            path_hash_mode = await mc.commands.get_path_hash_mode()
+        try:
+            path_hash_mode = int(path_hash_mode)
+        except (TypeError, ValueError):
+            raise ValueError("path_hash_mode must be an integer")
+        if path_hash_mode < 0 or path_hash_mode > 3:
+            raise ValueError("path_hash_mode must be between 0 and 3")
+
+        hash_chars = (path_hash_mode + 1) * 2
+        path_hex_parts = []
+        for hop_prefix in hop_prefixes:
+            hop_full_key, _ = _resolve_mc_contact(contacts, hop_prefix)
+            path_hex_parts.append(hop_full_key[:hash_chars])
+        result = await mc.commands.change_contact_path(contact, "".join(path_hex_parts), path_hash_mode=path_hash_mode)
+
+    refreshed = await _get_contacts_async(config_id)
+    if refreshed is None:
+        raise RuntimeError("Contact path updated but refresh timed out")
+
+    with mc_connections_lock:
+        updated_contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
+    _, updated_contact = _resolve_mc_contact(updated_contacts, full_key)
+    return updated_contact, result
+
+
 # Tracks in-flight background advert tasks per radio — prevents stacking.
 _advert_tasks: dict = {}
 _statusreq_tasks: dict = {}
@@ -1055,6 +1107,19 @@ def send_trace_broadcast(config_id, tag=None, timeout=10):
 
 def refresh_contacts(config_id, timeout=10):
     return run_mc(_get_contacts_async(config_id), timeout=timeout)
+
+
+def set_contact_path(config_id, pubkey_prefix, hop_prefixes=None, clear=False, path_hash_mode=None, timeout=15):
+    return run_mc(
+        _set_contact_path_async(
+            config_id,
+            pubkey_prefix,
+            hop_prefixes=hop_prefixes,
+            clear=clear,
+            path_hash_mode=path_hash_mode,
+        ),
+        timeout=timeout,
+    )
 
 
 # ---------------------------------------------------------------------------

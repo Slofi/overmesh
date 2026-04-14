@@ -6,7 +6,7 @@ OverMesh is a self-hosted dashboard for Meshtastic and MeshCore. It runs on your
 
 This is now the main active OverMesh app. Meshtastic and MeshCore are treated as two equal parts of one tool, not as separate side projects.
 
-> **Active development** This app is actively used and still changing. Expect a few rough edges, especially in newer cross-system features.
+> **Active development** This app is actively used and still changing. Expect a few rough edges.
 
 ---
 
@@ -32,14 +32,11 @@ The app is built around real use, not just setup screens. The idea is simple: on
 ![MeshCore settings](screenshots/settings-meshcore.png)
 *MeshCore radio settings and device controls*
 
-![Cross-system settings](screenshots/settings-cross-system.png)
-*Cross-system bridge and mirror rules between MT and MC*
-
 ---
 
 ## Main features
 
-OverMesh covers the main things you actually need in daily use: maps, chat, direct messages, multi-radio support, Sense, bot tools, settings, notifications, offline map tiles, and MT↔MC forwarding when you want to bridge traffic between the two systems.
+OverMesh covers the main things you actually need in daily use: maps, chat, direct messages, multi-radio support, Sense, bot tools, settings, notifications, and offline map tiles.
 
 ### Meshtastic
 
@@ -66,18 +63,6 @@ OverMesh covers the main things you actually need in daily use: maps, chat, dire
 - in-app notifications for messages, new nodes, and nodes seen again after a long gap
 - browser notifications
 - accent color and zoom settings
-
-### Cross-system
-
-- manual `Mirror` rules for one-way MT↔MC channel forwarding
-- manual `Bridge` rules for two-way MT↔MC channel forwarding
-- sender filters for cross-system rules
-- direct chat commands:
-  - `/mt #<channel> message`
-  - `/mc #<channel> message`
-  - `/mt @<target> message`
-  - `/mc @<target> message`
-- all forwarded messages are clearly tagged with source system, original sender, and source channel
 
 ---
 
@@ -193,7 +178,6 @@ Key values include:
 - `app.accent_color`
 - `sense_passive`
 - `gps`
-- `cross`
 
 Environment variables:
 
@@ -226,8 +210,6 @@ This is mainly a Linux convenience option, not the default install method for Wi
 
 ## Known limits
 
-- cross-system forwarding is channel-to-channel only right now
-- DM bridging is not implemented yet
 - some MC metadata, such as per-message SNR, is best-effort rather than guaranteed
 - the app is still evolving, so some UI details will keep changing
 
@@ -237,7 +219,7 @@ This is mainly a Linux convenience option, not the default install method for Wi
 
 Recent work has moved OverMesh much closer to feeling like one real dual-network app instead of two uneven halves.
 
-The big changes were better MC support across the app, cleaner MT and MC UI parity, better heard-recently logic, in-app notifications, per-channel history deletion on both systems, and much stronger cross-system tools.
+The big changes were better MC support across the app, cleaner MT and MC UI parity, better heard-recently logic, in-app notifications, and per-channel history deletion on both systems.
 
 OverMesh is now clearly the MT plus MC app.
 

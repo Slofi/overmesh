@@ -173,6 +173,33 @@ def init_prefs_db():
                 c.execute(f"ALTER TABLE map_layers ADD COLUMN {col} {defn}")
             except sqlite3.OperationalError:
                 pass
+        c.execute('''CREATE TABLE IF NOT EXISTS traceroute_history (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            node_id          TEXT NOT NULL,
+            node_name        TEXT,
+            radio_id         TEXT,
+            route_json       TEXT,
+            route_back_json  TEXT,
+            snr_towards_json TEXT,
+            snr_back_json    TEXT,
+            route_ids_json   TEXT,
+            route_back_ids_json TEXT,
+            ts               INTEGER NOT NULL
+        )''')
+        c.execute('''CREATE INDEX IF NOT EXISTS idx_tr_hist_ts
+                     ON traceroute_history (ts DESC)''')
+
+        c.execute('''CREATE TABLE IF NOT EXISTS node_position_history (
+            id       INTEGER PRIMARY KEY AUTOINCREMENT,
+            node_id  TEXT NOT NULL,
+            radio_id TEXT NOT NULL,
+            lat      REAL NOT NULL,
+            lon      REAL NOT NULL,
+            ts       INTEGER NOT NULL
+        )''')
+        c.execute('''CREATE INDEX IF NOT EXISTS idx_pos_hist_node
+                     ON node_position_history (node_id, radio_id, ts DESC)''')
+
         # Migrations for existing tables
         for col, defn in [("channel_index",  "INTEGER DEFAULT 0"),
                           ("destination_id",  "TEXT DEFAULT NULL"),
@@ -288,6 +315,109 @@ def upsert_node(n):
             n["latitude"], n["longitude"],
             n["hops_away"], radio_id, 1 if n["is_local"] else 0,
         ))
+    log_position(n["id"], radio_id, n.get("latitude"), n.get("longitude"), ts)
+
+
+_last_logged_pos = {}   # (node_id, radio_id) -> (lat, lon)
+_MIN_MOVE_M      = 15   # ignore movements smaller than this
+
+
+def _haversine_m(lat1, lon1, lat2, lon2):
+    R   = 6_371_000
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dp  = math.radians(lat2 - lat1)
+    dl  = math.radians(lon2 - lon1)
+    a   = math.sin(dp/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dl/2)**2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def log_position(node_id, radio_id, lat, lon, ts):
+    """Write a GPS history point only if the node moved more than _MIN_MOVE_M."""
+    if lat is None or lon is None:
+        return
+    key  = (node_id, radio_id)
+    last = _last_logged_pos.get(key)
+    if last is not None and _haversine_m(last[0], last[1], lat, lon) < _MIN_MOVE_M:
+        return
+    _last_logged_pos[key] = (lat, lon)
+    cutoff = int(time.time()) - 365 * 86400  # keep 1 year
+    with get_prefs_db() as conn:
+        conn.execute(
+            "INSERT INTO node_position_history (node_id, radio_id, lat, lon, ts) VALUES (?,?,?,?,?)",
+            (node_id, radio_id, lat, lon, ts),
+        )
+        conn.execute("DELETE FROM node_position_history WHERE ts < ?", (cutoff,))
+
+
+def clear_position_history(node_id=None):
+    """Clear GPS history. If node_id given, clears only that node. Otherwise clears all."""
+    with get_prefs_db() as conn:
+        if node_id:
+            conn.execute("DELETE FROM node_position_history WHERE node_id=?", (node_id,))
+        else:
+            conn.execute("DELETE FROM node_position_history")
+            conn.execute("DELETE FROM sqlite_sequence WHERE name='node_position_history'")
+    _last_logged_pos.clear() if not node_id else _last_logged_pos.pop((node_id,), None)
+
+
+def get_position_history(node_id, hours=24):
+    """Return list of {lat, lon, ts} dicts for a node, newest first, within the last N hours."""
+    since = int(time.time()) - hours * 3600
+    with get_prefs_db() as conn:
+        rows = conn.execute(
+            "SELECT lat, lon, ts FROM node_position_history WHERE node_id=? AND ts>=? ORDER BY ts ASC",
+            (node_id, since),
+        ).fetchall()
+    return [{"lat": r[0], "lon": r[1], "ts": r[2]} for r in rows]
+
+
+def save_traceroute(node_id, node_name, radio_id, tr):
+    """Persist a completed traceroute result. tr is the dict returned by the API."""
+    with get_prefs_db() as conn:
+        conn.execute(
+            """INSERT INTO traceroute_history
+               (node_id, node_name, radio_id,
+                route_json, route_back_json, snr_towards_json, snr_back_json,
+                route_ids_json, route_back_ids_json, ts)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (node_id, node_name, radio_id,
+             json.dumps(tr.get("route", [])),
+             json.dumps(tr.get("routeBack", [])),
+             json.dumps(tr.get("snrTowards", [])),
+             json.dumps(tr.get("snrBack", [])),
+             json.dumps(tr.get("routeIds", [])),
+             json.dumps(tr.get("routeBackIds", [])),
+             int(time.time())),
+        )
+        # Keep only last 50 entries total
+        conn.execute(
+            "DELETE FROM traceroute_history WHERE id NOT IN "
+            "(SELECT id FROM traceroute_history ORDER BY ts DESC LIMIT 50)"
+        )
+
+
+def get_traceroute_history(limit=20):
+    """Return last N traceroutes as list of dicts, newest first."""
+    with get_prefs_db() as conn:
+        rows = conn.execute(
+            "SELECT node_id, node_name, radio_id, "
+            "route_json, route_back_json, snr_towards_json, snr_back_json, "
+            "route_ids_json, route_back_ids_json, ts "
+            "FROM traceroute_history ORDER BY ts DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [{
+        "node_id":   r[0], "node_name": r[1], "radio_id": r[2],
+        "data": {
+            "route":         json.loads(r[3]),
+            "routeBack":     json.loads(r[4]),
+            "snrTowards":    json.loads(r[5]),
+            "snrBack":       json.loads(r[6]),
+            "routeIds":      json.loads(r[7]),
+            "routeBackIds":  json.loads(r[8]),
+        },
+        "ts": r[9],
+    } for r in rows]
 
 
 def get_favorites():

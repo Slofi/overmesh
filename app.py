@@ -103,14 +103,18 @@ def api_restart():
             kwargs["stdin"] = subprocess.DEVNULL
             kwargs["stdout"] = subprocess.DEVNULL
             kwargs["stderr"] = subprocess.DEVNULL
-        helper_code = (
-            "import os, sys, time; "
-            "time.sleep(1); "
-            "os.execv(sys.argv[1], [sys.argv[1], sys.argv[2]])"
-        )
-        # Spawn a tiny helper that waits briefly, then execs the real app process.
-        subprocess.Popen([python_bin, "-c", helper_code, python_bin, script], **kwargs)
-        os._exit(0)
+        if os.environ.get("INVOCATION_ID"):
+            # Running under systemd — exit non-zero so Restart=on-failure triggers
+            os._exit(1)
+        else:
+            helper_code = (
+                "import os, sys, time; "
+                "time.sleep(1); "
+                "os.execv(sys.argv[1], [sys.argv[1], sys.argv[2]])"
+            )
+            # Spawn a tiny helper that waits briefly, then execs the real app process.
+            subprocess.Popen([python_bin, "-c", helper_code, python_bin, script], **kwargs)
+            os._exit(0)
     threading.Thread(target=_restart, daemon=True).start()
     return jsonify({"ok": True})
 

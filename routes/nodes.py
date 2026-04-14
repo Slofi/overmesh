@@ -6,7 +6,7 @@ from flask import Blueprint, jsonify, request
 from pubsub import pub
 
 from config import CONFIG, _valid_node_id
-from db import get_db_nodes, get_prefs_db, save_message
+from db import get_db_nodes, get_position_history, get_prefs_db, get_traceroute_history, save_message, save_traceroute
 from helpers import _next_msg_id, get_node_data, get_node_name, push_to_sse
 from hw_models import hw_model_name
 from mesh import (
@@ -284,9 +284,14 @@ def api_traceroute(node_id):
         pass
     route_ids      = [local_id] + [f"!{int(n):08x}" for n in result.get("route", [])]     + [node_id]
     route_back_ids = [node_id]  + [f"!{int(n):08x}" for n in result.get("routeBack", [])] + [local_id]
-    return jsonify({"route": route, "routeBack": route_back,
-                    "snrTowards": snr_towards, "snrBack": snr_back,
-                    "routeIds": route_ids, "routeBackIds": route_back_ids})
+    tr = {"route": route, "routeBack": route_back,
+          "snrTowards": snr_towards, "snrBack": snr_back,
+          "routeIds": route_ids, "routeBackIds": route_back_ids}
+    try:
+        save_traceroute(node_id, get_node_name(node_id), radio_id or "", tr)
+    except Exception as e:
+        log.warning(f"Failed to save traceroute history: {e}")
+    return jsonify(tr)
 
 
 @bp.route("/api/traceroute/reset", methods=["POST"])
@@ -470,3 +475,28 @@ def api_node_info(node_id):
         return jsonify({"error": "Node not found in radio memory"}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/api/node/<node_id>/gps_history")
+def api_node_gps_history(node_id):
+    if not _valid_node_id(node_id):
+        return jsonify({"error": "Invalid node ID"}), 400
+    hours = request.args.get("hours", 24, type=int)
+    hours = max(1, min(hours, 24 * 7))   # clamp 1h – 168h
+    return jsonify(get_position_history(node_id, hours))
+
+
+@bp.route("/api/traceroute/history")
+def api_traceroute_history():
+    limit = request.args.get("limit", 20, type=int)
+    limit = max(1, min(limit, 50))
+    return jsonify(get_traceroute_history(limit))
+
+
+@bp.route("/api/db/gps_history/clear", methods=["POST"])
+def api_clear_gps_history():
+    from db import clear_position_history
+    data    = request.get_json(silent=True) or {}
+    node_id = data.get("node_id")   # optional — omit to clear all
+    clear_position_history(node_id or None)
+    return jsonify({"ok": True, "node_id": node_id or "all"})

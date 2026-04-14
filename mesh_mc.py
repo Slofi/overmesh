@@ -17,10 +17,24 @@ from meshcore.packets import BinaryReqType
 
 from config import CONFIG, save_config
 from cross import maybe_forward_mc_message
+from db import log_position
 from helpers import push_to_sse
 from state import mc_connections, mc_connections_lock
 
 log = logging.getLogger(__name__)
+
+
+def _push_mc_node(data):
+    """Push an mc_node SSE event and log the GPS position if present."""
+    push_to_sse(data)
+    lat, lon = data.get("latitude"), data.get("longitude")
+    if lat is not None and lon is not None:
+        try:
+            log_position(data["id"], data.get("radio_id", ""), lat, lon,
+                         data.get("last_heard_ts") or int(time.time()))
+        except Exception as e:
+            log.debug(f"[MC] log_position failed: {e}")
+
 
 # ---------------------------------------------------------------------------
 # Asyncio event loop — lives in its own daemon thread
@@ -355,7 +369,7 @@ async def _retry_contacts_async(mc, config_id, name):
         log.info(f"[MC:{name}] Contacts retry complete: {len(best_contacts)} contacts stored")
         now = int(time.time())
         for pubkey, c in best_contacts.items():
-            push_to_sse({
+            _push_mc_node({
                 "type":        "mc_node",
                 "radio_id":    config_id,
                 "radio_name":  name,
@@ -427,7 +441,7 @@ def _subscribe_mc_events(mc, config_id, name):
             with mc_connections_lock:
                 if config_id in mc_connections:
                     mc_connections[config_id]["contacts"][pubkey] = existing
-            push_to_sse({
+            _push_mc_node({
                 "type":              "mc_node",
                 "radio_id":          config_id,
                 "radio_name":        name,
@@ -529,7 +543,7 @@ def _subscribe_mc_events(mc, config_id, name):
                 if config_id in mc_connections:
                     mc_connections[config_id]["contacts"][pubkey] = c
             # Emit as mc_node so the frontend renders it the same way as an advertisement
-            push_to_sse({
+            _push_mc_node({
                 "type":              "mc_node",
                 "radio_id":          config_id,
                 "radio_name":        name,
@@ -608,7 +622,7 @@ def _subscribe_mc_events(mc, config_id, name):
                     c = mc_connections.get(config_id, {}).get("contacts", {}).get(pubkey, {})
                 if not c:
                     return
-                push_to_sse({
+                _push_mc_node({
                     "type":              "mc_node",
                     "radio_id":          config_id,
                     "radio_name":        name,

@@ -10,7 +10,7 @@ After=network.target
 Type=simple
 WorkingDirectory=APP_DIR
 ExecStart=PYTHON_BIN APP_DIR/app.py
-Restart=always
+Restart=on-failure
 RestartSec=5
 KillMode=control-group
 

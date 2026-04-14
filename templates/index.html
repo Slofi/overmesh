@@ -873,10 +873,18 @@
       background: var(--bg2); border: 1px solid var(--border);
       border-radius: 8px; padding: 6px 4px;
       box-shadow: 0 2px 12px rgba(0,0,0,0.6);
-      min-width: 150px; z-index: 1000;
+      min-width: 150px; z-index: 5000;
       display: none; flex-direction: column; gap: 2px;
+      max-height: calc(100vh - 120px); overflow-y: auto;
     }
     #map-layer-panel.open { display: flex; }
+    /* Ensure top-left controls (including the layer panel) render above bottom controls (legend) */
+    .leaflet-top { z-index: 1001 !important; }
+    .map-tr-log-entry {
+      padding: 3px 10px; font-size: 10px; color: var(--muted);
+      cursor: pointer; border-top: 1px solid var(--border); white-space: nowrap;
+    }
+    .map-tr-log-entry:hover { color: var(--text); background: var(--bg3); }
     .map-layer-opt {
       padding: 6px 10px; border-radius: 5px; cursor: pointer;
       font-size: 12px; color: var(--text); white-space: nowrap;
@@ -2654,6 +2662,14 @@
         <div id="map-layer-list" style="display:grid;gap:6px"></div>
       </div>
     </div>
+    <div class="settings-section">
+      <h2 class="settings-title">Data &amp; Storage</h2>
+      <p style="color:var(--muted);font-size:12px;margin:0 0 12px">GPS history is stored locally in <code>overmesh_prefs.db</code>. Entries older than 1 year are pruned automatically on each new position log.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn" onclick="clearGpsHistory()" style="background:var(--bg3);border:1px solid #f59e0b;color:#f59e0b" title="Delete all GPS movement history for all nodes">⌫ Clear GPS history</button>
+      </div>
+      <div id="gps-clear-status" style="font-size:12px;color:var(--muted);margin-top:8px;min-height:16px"></div>
+    </div>
     </div><!-- /st-app -->
 
     <div id="st-cross" style="display:none">
@@ -3645,20 +3661,47 @@
     if (name === 'nodes')    { initNodesFilterPills(); renderLive(); }
     if (name === 'chat')     { initChat(); updateUnreadDots(); }
     if (name === 'map')      {
-      initMap(); initMapFilterPills();
+      initMapFilterPills();
       if (!window._mapResizeObserver) { window._mapResizeObserver = new ResizeObserver(() => leafletMap && leafletMap.invalidateSize()); window._mapResizeObserver.observe(document.getElementById('map')); }
-      // Defer heavy work to next frame so tab appears immediately before rendering
       requestAnimationFrame(() => {
-        resizeMapView();
-        updateMapMarkers(allNodes);
-        renderMcMapMarkers();
-        if (!_mapStaticLoaded) {
-          _mapStaticLoaded = true;
-          loadWaypoints();
-          loadNotes();
-          loadGpsSettings();
+        // rAF 1: set correct map heights so Leaflet reads them correctly on init
+        const panel   = document.getElementById('panel-map');
+        const toolbar = document.getElementById('map-toolbar');
+        const mvm     = document.getElementById('map-view-map');
+        const sp      = document.getElementById('sense-panel');
+        const lp      = document.getElementById('sense-log-panel');
+        const body    = document.getElementById('map-body');
+        if (panel && toolbar) {
+          const h = Math.min(
+            panel.offsetHeight - toolbar.offsetHeight,
+            window.innerHeight - toolbar.getBoundingClientRect().bottom
+          );
+          if (h > 0) {
+            if (body) body.style.height = h + 'px';
+            if (mvm)  mvm.style.height  = h + 'px';
+            if (sp)   sp.style.height   = h + 'px';
+            if (lp)   lp.style.height   = h + 'px';
+          }
         }
-        if (localStorage.getItem('sensePanelOpen') === '1') toggleSensePanel(true);
+        const doMapInit = () => {
+          initMap();
+          leafletMap && leafletMap.invalidateSize();
+          updateMapMarkers(allNodes);
+          renderMcMapMarkers();
+          if (!_mapStaticLoaded) {
+            _mapStaticLoaded = true;
+            loadWaypoints();
+            loadNotes();
+            loadGpsSettings();
+          }
+          if (localStorage.getItem('sensePanelOpen') === '1') toggleSensePanel(true);
+        };
+        if (!leafletMap) {
+          // rAF 2: init map only AFTER browser has painted with the correct heights
+          requestAnimationFrame(doMapInit);
+        } else {
+          doMapInit();
+        }
       });
     }
     if (name === 'bot')      { initBot(); }
@@ -4205,6 +4248,7 @@
       updateMapMarkers(nodes);
       updateHeaderNodeCount(nodes);
       updatePipMarkers(nodes);
+      if (_showPolarGrid && !_polarGridLayer) _drawPolarGrid();
       // Node seen / returned detection
       const nowTs = Math.floor(Date.now() / 1000);
       const curIds = new Set(nodes.filter(n => n.id && !n.is_local).map(n => n.id));
@@ -4528,6 +4572,8 @@
         <div style="font-size:24px;color:var(--accent)">&#x23FB;</div>
         <div style="font-size:16px">OverMesh stopped.</div>
         <div style="font-size:12px;max-width:320px;text-align:center">Restart OverMesh using the same method you normally use on this machine.</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">Or run:</div>
+        <code onclick="navigator.clipboard.writeText('systemctl --user start overmesh')" title="Click to copy" style="font-size:12px;background:var(--bg2);border:1px solid var(--border);padding:4px 10px;border-radius:6px;cursor:pointer;user-select:all">systemctl --user start overmesh</code>
       </div>`;
     });
   }
@@ -4547,6 +4593,8 @@
   let _localGpsPos    = null;  // {lat, lon} when GPS has fix — set from gps_position SSE
   let _traceMapLines  = [];
   let _showTrMap      = (() => { try { const v = localStorage.getItem('mapShowTrSnr'); return v === null ? true : v === '1'; } catch(e) { return true; } })();
+  let _lastTraceData  = null;   // most recent traceroute result object
+  let _traceHistory   = [];     // [{ts, nodeName, data}] last 10, newest first
   let _polarGridLayer = null;
   let _showPolarGrid  = (() => { try { return localStorage.getItem('mapShowPolarGrid') === '1'; } catch(e) { return false; } })();
   let _polarGridColor         = (() => { try { return localStorage.getItem('mapPolarGridColor')    || '#4ade80'; } catch(e) { return '#4ade80'; } })();
@@ -4783,31 +4831,58 @@
 
     const drawPath = (ids, snrs, dashed) => {
       if (!ids || ids.length < 2) return;
-      for (let i = 0; i < ids.length - 1; i++) {
-        const p1 = _nodeLatLon(ids[i]), p2 = _nodeLatLon(ids[i + 1]);
-        if (!p1 || !p2) continue;
-        const snr = snrs?.[i];
-        const color = _snrLineColor(snr), opacity = _snrLineOpacity(snr);
-        _traceMapLines.push(L.polyline([p1, p2], {color: '#111', weight: 8, opacity: 0.25, lineCap: 'round', interactive: false}).addTo(leafletMap));
-        const seg = L.polyline([p1, p2], {color, weight: 4, opacity, dashArray: dashed ? '6,5' : null, lineCap: 'round'});
-        const k = _segKey(ids[i], ids[i + 1]);
-        const snrTo   = toSnrMap[k];
-        const snrBack = backSnrMap[k];
-        if (snrTo != null || snrBack != null) {
-          const toStr   = snrTo   != null ? `${snrTo} dB`   : '—';
-          const backStr = snrBack != null ? `${snrBack} dB` : '—';
-          seg.bindTooltip(`To: ${toStr} &nbsp; Back: ${backStr}`, {sticky: true, direction: 'top'});
-        }
-        seg.addTo(leafletMap);
-        _traceMapLines.push(seg);
-      }
-      // Dot at each node point
+
+      // Dots at every node with a known position
       ids.forEach((id, i) => {
         const pt = _nodeLatLon(id);
         if (!pt) return;
-        const snr = i < snrs?.length ? snrs[i] : (i > 0 ? snrs?.[i - 1] : null);
+        const snr = i < (snrs?.length || 0) ? snrs[i] : (i > 0 ? snrs?.[i - 1] : null);
         _traceMapLines.push(L.circleMarker(pt, {radius: 5, color: '#111', fillColor: _snrLineColor(snr ?? null), fillOpacity: 1, weight: 1.5, interactive: false}).addTo(leafletMap));
       });
+
+      // Draw segments between consecutive known-position nodes.
+      // If one or more intermediate nodes lack GPS we draw a thinner "bypass" line across them
+      // so the full path shape is always visible on the map.
+      let prevKnown = null; // { idx, pos }
+      for (let j = 0; j < ids.length; j++) {
+        const pos = _nodeLatLon(ids[j]);
+        if (!pos) continue;
+        if (prevKnown !== null) {
+          const pi = prevKnown.idx, p1 = prevKnown.pos;
+          const skipped = j - pi - 1; // intermediate hops without GPS
+
+          // Average SNR across all covered hops (pi … j-1)
+          const coveredSnrs = snrs ? snrs.slice(pi, j).filter(v => v != null) : [];
+          const snr = coveredSnrs.length ? coveredSnrs.reduce((a, b) => a + b, 0) / coveredSnrs.length : null;
+
+          const color    = _snrLineColor(snr);
+          const weight   = skipped > 0 ? 2 : 4;
+          const opacity  = skipped > 0 ? 0.45 : _snrLineOpacity(snr);
+          const dashArr  = dashed ? '6,5' : (skipped > 0 ? '3,8' : null);
+
+          // Shadow
+          _traceMapLines.push(L.polyline([p1, pos], {color: '#111', weight: weight + 4, opacity: 0.2, lineCap: 'round', interactive: false}).addTo(leafletMap));
+
+          const seg = L.polyline([p1, pos], {color, weight, opacity, dashArray: dashArr, lineCap: 'round'});
+
+          // Tooltip — one line per covered hop that has SNR data
+          const tipLines = [];
+          for (let h = pi; h < j; h++) {
+            const k = _segKey(ids[h], ids[h + 1]);
+            const snrTo   = toSnrMap[k];
+            const snrBack = backSnrMap[k];
+            if (snrTo != null || snrBack != null) {
+              tipLines.push(`To: ${snrTo != null ? snrTo + ' dB' : '—'} &nbsp; Back: ${snrBack != null ? snrBack + ' dB' : '—'}`);
+            }
+          }
+          if (skipped > 0) tipLines.push(`<em style="color:#a78bfa">${skipped} hop${skipped > 1 ? 's' : ''} — no GPS</em>`);
+          if (tipLines.length) seg.bindTooltip(tipLines.join('<br>'), {sticky: true, direction: 'top'});
+
+          seg.addTo(leafletMap);
+          _traceMapLines.push(seg);
+        }
+        prevKnown = { idx: j, pos };
+      }
     };
     drawPath(trData.routeIds,     trData.snrTowards, false);
     drawPath(trData.routeBackIds, trData.snrBack,    true);
@@ -4818,6 +4893,7 @@
     try { localStorage.setItem('mapShowTrSnr', _showTrMap ? '1' : '0'); } catch(e) {}
     document.getElementById('map-tr-snr-btn')?.classList.toggle('active', _showTrMap);
     if (!_showTrMap) _clearTraceLines();
+    else if (_lastTraceData) _drawTraceRouteOnMap(_lastTraceData);
   }
 
   function setTileLayer(key) {
@@ -6279,6 +6355,12 @@
     const _savedLayer = (() => { try { return localStorage.getItem('mapTileLayer') || 'osm'; } catch(e) { return 'osm'; } })();
     setTileLayer(_savedLayer);
     if (_showPolarGrid) _drawPolarGrid();
+    fetch('/api/traceroute/history').then(r => r.json()).then(rows => {
+      if (!Array.isArray(rows) || !rows.length) return;
+      _traceHistory = rows.map(r => ({ ts: r.ts * 1000, nodeId: r.node_id, nodeName: r.node_name, data: r.data }));
+      if (_traceHistory.length) _lastTraceData = _traceHistory[0].data;
+      _updateTrLogPanel();
+    }).catch(() => {});
 
     // Save map position on every move so it survives refresh
     leafletMap.on('moveend', () => {
@@ -6421,6 +6503,11 @@
         snrOpt.textContent = 'SNR Paths';
         if (_showTrMap) snrOpt.classList.add('active');
         L.DomEvent.on(snrOpt, 'click', (e) => { L.DomEvent.stopPropagation(e); toggleTrMap(); });
+
+        // TR history log
+        const trLog = L.DomUtil.create('div', '', panel);
+        trLog.id = 'map-tr-log';
+        trLog.style.cssText = 'max-height:100px;overflow-y:auto';
 
         L.DomEvent.on(btn, 'click', L.DomEvent.stopPropagation);
         L.DomEvent.on(btn, 'click', () => panel.classList.toggle('open'));
@@ -7520,6 +7607,10 @@
         <div class="tr-chain">${buildChain(d.route, d.snrTowards)}</div>
         <div class="tr-section">Route back</div>
         <div class="tr-chain">${buildChain(d.routeBack, d.snrBack)}</div>`;
+      _lastTraceData = d;
+      _traceHistory.unshift({ ts: Date.now(), nodeId, nodeName, data: d });
+      if (_traceHistory.length > 10) _traceHistory.pop();
+      _updateTrLogPanel();
       if (_showTrMap) _drawTraceRouteOnMap(d);
     } catch(e) {
       clearInterval(timerId);
@@ -7528,6 +7619,41 @@
     } finally {
       if (_activeTracerouteController === controller) _activeTracerouteController = null;
     }
+  }
+
+  function _updateTrLogPanel() {
+    const el = document.getElementById('map-tr-log');
+    if (!el) return;
+    el.innerHTML = _traceHistory.length === 0 ? '' : _traceHistory.map((e, i) => {
+      const t  = new Date(e.ts).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+      return `<div class="map-tr-log-entry" onclick="_replayTrace(${i})" title="Replay ${escHtml(e.nodeName)}">${t} · ${escHtml(e.nodeName)}</div>`;
+    }).join('');
+  }
+
+  function _replayTrace(idx) {
+    const e = _traceHistory[idx];
+    if (!e) return;
+    if (!_showTrMap) {
+      _showTrMap = true;
+      try { localStorage.setItem('mapShowTrSnr', '1'); } catch(_) {}
+      document.getElementById('map-tr-snr-btn')?.classList.add('active');
+    }
+    _drawTraceRouteOnMap(e.data);
+    const { body } = _openMapPanel('TR · ' + e.nodeName);
+    const buildChain = (nodes, snrs) => nodes.map((node, i) => {
+      const isEnd = i === 0 || i === nodes.length - 1;
+      const snr   = snrs?.[i];
+      const nodeEl = `<div class="tr-node${isEnd ? ' tr-end' : ''}">${escHtml(node)}</div>`;
+      const linkEl = i < nodes.length - 1
+        ? `<div class="tr-link ${snr != null ? snrClass(snr) : 'tr-link-muted'}">${snr != null ? `↓ ${snr} dB` : '↓'}</div>`
+        : '';
+      return nodeEl + linkEl;
+    }).join('');
+    body.innerHTML = `
+      <div class="tr-section">Route to node</div>
+      <div class="tr-chain">${buildChain(e.data.route, e.data.snrTowards)}</div>
+      <div class="tr-section">Route back</div>
+      <div class="tr-chain">${buildChain(e.data.routeBack, e.data.snrBack)}</div>`;
   }
 
   // ── Map Info overlay ────────────────────────────────────────────────────
@@ -7592,6 +7718,99 @@
       clearInterval(panel._timer); panel._timer = null;
       body.innerHTML = `<div class="modal-error">Failed: ${escHtml(e.message)}</div>`;
     }
+  }
+
+  // ── GPS Trail overlay ────────────────────────────────────────────────────
+  const _trailLayers = {};   // nodeId -> [leaflet layers]
+
+  async function openGpsTrail(nodeId, nodeName) {
+    const { panel, body } = _openMapPanel('Trail · ' + nodeName);
+
+    const RANGES = [
+      { label: '1h',   hours: 1   },
+      { label: '6h',   hours: 6   },
+      { label: '24h',  hours: 24  },
+      { label: '7d',   hours: 168 },
+    ];
+
+    function trailColor(ts, oldest, newest) {
+      // Gradient from muted blue (old) to bright green (recent)
+      const t = (newest === oldest) ? 1 : (ts - oldest) / (newest - oldest);
+      const r = Math.round(40  + t * (74  - 40));
+      const g = Math.round(100 + t * (222 - 100));
+      const b = Math.round(180 + t * (128 - 180));
+      return `rgb(${r},${g},${b})`;
+    }
+
+    async function loadTrail(hours) {
+      body.innerHTML = `<div style="color:var(--muted);font-size:12px">Loading trail…</div>`;
+      _clearTrail(nodeId);
+      try {
+        const r = await fetch(`/api/node/${encodeURIComponent(nodeId)}/gps_history?hours=${hours}`);
+        const pts = await r.json();
+        if (!Array.isArray(pts) || pts.length === 0) {
+          body.innerHTML = `<div style="color:var(--muted);font-size:12px">No GPS history for this period.</div>${renderPicker(hours)}`;
+          return;
+        }
+        const oldest = pts[0].ts, newest = pts[pts.length - 1].ts;
+        const layers = [];
+        for (let i = 0; i < pts.length - 1; i++) {
+          const col = trailColor(pts[i].ts, oldest, newest);
+          const seg = L.polyline([[pts[i].lat, pts[i].lon],[pts[i+1].lat, pts[i+1].lon]],
+            {color: col, weight: 3, opacity: 0.85, lineCap: 'round'}).addTo(leafletMap);
+          layers.push(seg);
+        }
+        pts.forEach((p, i) => {
+          const col = trailColor(p.ts, oldest, newest);
+          const isEnd = i === 0 || i === pts.length - 1;
+          const dot = L.circleMarker([p.lat, p.lon], {
+            radius: isEnd ? 6 : 3, color: '#111', fillColor: col,
+            fillOpacity: 1, weight: 1, interactive: true,
+          });
+          const d = new Date(p.ts * 1000);
+          dot.bindTooltip(d.toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}), {direction:'top', sticky:false});
+          dot.addTo(leafletMap);
+          layers.push(dot);
+        });
+        _trailLayers[nodeId] = layers;
+        const bounds = L.latLngBounds(pts.map(p => [p.lat, p.lon]));
+        leafletMap.fitBounds(bounds, {padding: [40, 40], maxZoom: 14});
+        const span = newest - oldest;
+        const spanStr = span < 3600 ? `${Math.round(span/60)}m` : span < 86400 ? `${(span/3600).toFixed(1)}h` : `${(span/86400).toFixed(1)}d`;
+        body.innerHTML = `
+          <div style="font-size:11px;color:var(--muted);margin-bottom:6px">${pts.length} points · ${spanStr} span</div>
+          <div style="font-size:10px;color:var(--muted);margin-bottom:8px">
+            Blue = oldest &nbsp;→&nbsp; Green = most recent
+          </div>
+          ${renderPicker(hours)}`;
+      } catch(e) {
+        body.innerHTML = `<div class="modal-error">Failed: ${escHtml(e.message)}</div>${renderPicker(hours)}`;
+      }
+    }
+
+    function renderPicker(active) {
+      return `<div style="display:flex;gap:4px;margin-top:4px">${
+        RANGES.map(r =>
+          `<button class="map-popup-btn${r.hours === active ? ' active' : ''}"
+           onclick="document.querySelectorAll('.trail-range-btn').forEach(b=>b.classList.remove('active'));this.classList.add('active');_reloadTrail('${jsSafe(nodeId)}','${jsSafe(nodeName)}',${r.hours})"
+           style="${r.hours===active?'border-color:var(--accent);color:var(--accent)':''}">${r.label}</button>`
+        ).join('')
+      }</div>`;
+    }
+
+    panel._cleanupTrail = () => _clearTrail(nodeId);
+    const origClose = panel.querySelector('.map-tr-close');
+    if (origClose) {
+      const origOnclick = origClose.onclick;
+      origClose.onclick = () => { _clearTrail(nodeId); if (origOnclick) origOnclick(); };
+    }
+    loadTrail(24);
+    window._reloadTrail = (nid, nname, hours) => { if (nid === nodeId) loadTrail(hours); };
+  }
+
+  function _clearTrail(nodeId) {
+    (_trailLayers[nodeId] || []).forEach(l => { try { leafletMap && leafletMap.removeLayer(l); } catch(e) {} });
+    delete _trailLayers[nodeId];
   }
 
   // ── Map Position overlay ────────────────────────────────────────────────
@@ -7706,6 +7925,7 @@
         ${!n.is_local ? `<button class="map-popup-btn" title="Traceroute to this node" onclick="openMapTR('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">TR</button>` : ''}
         ${!n.is_local ? `<button class="map-popup-btn" title="Set position" onclick="openMapPos('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Pos</button>` : ''}
         ${!n.is_local ? `<button class="map-popup-btn" title="Node info &amp; settings" onclick="openMapInfo('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Info</button>` : ''}
+        <button class="map-popup-btn" title="GPS movement trail" onclick="openGpsTrail('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Trail</button>
       </div>`;
   }
 
@@ -7791,6 +8011,7 @@
                   ${!x.is_local ? `<button class="map-popup-btn" title="Send direct message" onclick="openMapDM('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">DM</button>` : ''}
                   ${!x.is_local ? `<button class="map-popup-btn" title="Traceroute to this node" onclick="openMapTR('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">TR</button>` : ''}
                   ${!x.is_local ? `<button class="map-popup-btn" title="Node info &amp; settings" onclick="openMapInfo('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">Info</button>` : ''}
+                  <button class="map-popup-btn" title="GPS movement trail" onclick="openGpsTrail('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">Trail</button>
                 </div>
               </div>`).join('')}`;
           clusterMarkers[k].setIcon(updatedIcon).setPopupContent(updatedPopup);
@@ -9202,18 +9423,19 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     // Settings MC tab button: visible when not force-hidden — user can reach it to add first MC radio
     const stabMc = document.getElementById('stab-mc');
     if (stabMc) stabMc.style.display = !forcedHide ? '' : 'none';
-    // Cross-system tab: only when MC radios exist
+    // Cross-system tab: hidden from UI (code still fully functional).
+    // To re-enable: change `'none'` → `show ? '' : 'none'`
     const stabCross = document.getElementById('stab-cross');
-    if (stabCross) stabCross.style.display = show ? '' : 'none';
+    if (stabCross) stabCross.style.display = 'none';
     // st-mc content: hide only when forcedHide (keeps MC Radios list accessible to add first radio)
     const stMc = document.getElementById('st-mc');
     if (stMc && forcedHide) stMc.style.display = 'none';
     // st-cross: hide when no MC radios
     const stCross = document.getElementById('st-cross');
     if (stCross && !show) stCross.style.display = 'none';
-    // Map legend MC section
+    // Map legend MC section — hide if MC not shown, or if sense panel is in MT mode
     const mcLegend = document.getElementById('map-legend-mc');
-    if (mcLegend) mcLegend.style.display = show ? '' : 'none';
+    if (mcLegend) mcLegend.style.display = (show && _senseNet !== 'mt') ? '' : 'none';
     // Sync hide toggle checkbox
     const hideToggle = document.getElementById('mc-hide-toggle');
     if (hideToggle) hideToggle.checked = forcedHide;
@@ -9822,6 +10044,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
           ${item.type !== 2 ? `<button class="map-popup-btn" title="Send direct message" onclick="leafletMap.closePopup();doMcDm('${safePk}','${safeRid}','${safeName}')">DM</button>` : ''}
           <button class="map-popup-btn" title="Ping (request status)" onclick="leafletMap.closePopup();doMcPing('${safePk}','${safeRid}','${safeName}')">Ping</button>
           <button class="map-popup-btn" title="Select in Sense panel" onclick="leafletMap.closePopup();switchTab('map');toggleSensePanel(true);switchSenseNet('mc');selectMcSenseContact('${jsSafe(item.id || '')}','${safeRid}')">Sense</button>
+          ${item.latitude != null ? `<button class="map-popup-btn" title="GPS movement trail" onclick="openGpsTrail('${jsSafe(item.id || '')}','${safeName}')">Trail</button>` : ''}
         </div>
       </div>`;
   }
@@ -9947,6 +10170,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         + (c.type !== 2 ? `<button class="map-popup-btn" title="Send direct message" onclick="leafletMap.closePopup();doMcDm('${safePk}','${safeRid}','${safeName}')">DM</button>` : '')
         + `<button class="map-popup-btn" title="Ping (request status)" onclick="leafletMap.closePopup();doMcPing('${safePk}','${safeRid}','${safeName}')">Ping</button>`
         + `<button class="map-popup-btn" title="Select in Sense panel" onclick="leafletMap.closePopup();switchTab('map');toggleSensePanel(true);switchSenseNet('mc');selectMcSenseContact('${jsSafe(c.id || '')}','${safeRid}')">Sense</button>`
+        + `<button class="map-popup-btn" title="GPS movement trail" onclick="openGpsTrail('${jsSafe(c.id || '')}','${safeName}')">Trail</button>`
         + `</div>`,
         { className: 'om-popup', maxWidth: 240 }
       );
@@ -13173,6 +13397,25 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
           loadLive();
           loadHistory();
         }
+      } catch(e) {
+        if (st) st.innerHTML = `<span style="color:#f87171">Error: ${escHtml(e.message)}</span>`;
+      } finally {
+        document.getElementById('confirm-ok').textContent = 'OK';
+      }
+    });
+  }
+
+  function clearGpsHistory() {
+    document.getElementById('confirm-ok').textContent = 'Clear';
+    showConfirm('Delete all GPS movement history for all nodes? This cannot be undone.', async () => {
+      const st = document.getElementById('gps-clear-status');
+      if (st) st.innerHTML = '<span style="color:var(--muted)">Clearing…</span>';
+      try {
+        const r = await fetch('/api/db/gps_history/clear', {method:'POST'});
+        const d = await r.json();
+        if (st) st.innerHTML = r.ok
+          ? '<span style="color:var(--green)">GPS history cleared.</span>'
+          : `<span style="color:#f87171">${escHtml(d.error || 'Failed.')}</span>`;
       } catch(e) {
         if (st) st.innerHTML = `<span style="color:#f87171">Error: ${escHtml(e.message)}</span>`;
       } finally {

@@ -8,7 +8,7 @@ import threading
 import time
 from datetime import datetime
 
-from config import DATA_DIR
+from config import CONFIG, DATA_DIR
 from db import save_message
 from helpers import (
     _next_msg_id, push_to_sse,
@@ -333,6 +333,9 @@ def build_motd_text(cfg):
 # ---------------------------------------------------------------------------
 
 def send_bot_response(iface, text, channel_index, dest_id=None):
+    if CONFIG.get("silent_mode"):
+        log.info("[bot] Silent Running active — MT bot response suppressed")
+        return
     try:
         if dest_id:
             iface.sendText(text, destinationId=dest_id, channelIndex=channel_index)
@@ -349,7 +352,7 @@ def handle_bot_command(packet, interface):
     try:
         radio_id = _radio_id_for_iface(interface)
         cfg = load_bot_config(radio_id)
-        if not cfg.get("enabled"):
+        if not cfg.get("enabled") or CONFIG.get("silent_mode"):
             return
 
         prefix  = f"[{cfg.get('bot_label', 'OM Bot')}]"
@@ -548,6 +551,9 @@ def build_mc_motd_text(cfg, config_id):
 
 def send_mc_bot_response(config_id, text, chan_idx, dest_pre=None):
     """Send bot reply via MC. Runs in a background thread — blocks until sent or timeout."""
+    if CONFIG.get("silent_mode"):
+        log.info(f"[bot] Silent Running active — MC bot response suppressed")
+        return
     from mesh_mc import run_mc, _send_chan_msg_async, _send_dm_async
     try:
         if dest_pre:
@@ -562,7 +568,7 @@ def handle_mc_bot_command(msg, config_id, subtype):
     """Handle a bot command arriving on an MC channel or DM."""
     try:
         cfg = load_bot_config(config_id)
-        if not cfg.get("enabled"):
+        if not cfg.get("enabled") or CONFIG.get("silent_mode"):
             return
 
         prefix  = f"[{cfg.get('bot_label', 'OM Bot')}]"
@@ -725,7 +731,7 @@ def motd_scheduler_loop():
                     continue
                 try:
                     cfg = load_bot_config(radio_id)
-                    if not cfg.get("enabled") or not cfg.get("motd", {}).get("enabled"):
+                    if not cfg.get("enabled") or not cfg.get("motd", {}).get("enabled") or CONFIG.get("silent_mode"):
                         continue
                     last_sent = _motd_last_sent_per_radio.get(radio_id, 0)
                     mode      = cfg["motd"].get("mode", "interval")
@@ -767,7 +773,7 @@ def motd_scheduler_loop():
             for radio_id in mc_connected_ids:
                 try:
                     cfg = load_bot_config(radio_id)
-                    if not cfg.get("enabled") or not cfg.get("motd", {}).get("enabled"):
+                    if not cfg.get("enabled") or not cfg.get("motd", {}).get("enabled") or CONFIG.get("silent_mode"):
                         continue
                     last_sent = _motd_last_sent_per_radio.get(radio_id, 0)
                     mode      = cfg["motd"].get("mode", "interval")

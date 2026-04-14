@@ -4,7 +4,7 @@ from datetime import datetime
 
 from flask import Blueprint, jsonify, request
 
-from config import _valid_node_id
+from config import CONFIG, _valid_node_id
 from db import get_prefs_db, save_message
 from helpers import _next_msg_id, get_node_name, push_to_sse
 from mesh import get_any_iface_with_id, get_iface_by_radio
@@ -28,6 +28,8 @@ def api_get_waypoints():
 def api_send_waypoint():
     data = request.get_json(silent=True) or {}
     log.info(f"Mark send received: destination_ids={data.get('destination_ids')!r}")
+    if CONFIG.get("silent_mode"):
+        return jsonify({"error": "Silent Running active — transmissions are blocked"}), 409
     name = (data.get("name") or "").strip()[:30]
     try:
         lat = float(data.get("lat", 0))
@@ -166,6 +168,8 @@ def api_edit_waypoint(wp_id):
         wp_data = waypoints_cache.get(wp_id)
     if not wp_data:
         return jsonify({"error": "Mark not found"}), 404
+    if CONFIG.get("silent_mode"):
+        return jsonify({"error": "Silent Running active — transmissions are blocked"}), 409
     data = request.get_json(silent=True) or {}
     name = (data.get("name") or "").strip()[:30]
     if not name:
@@ -253,6 +257,8 @@ def api_delete_waypoint(wp_id):
         conn.cursor().execute("DELETE FROM waypoints WHERE id=?", (wp_id,))
     # Send mesh deletion packet on the same channel/destination it was originally sent to
     try:
+        if CONFIG.get("silent_mode"):
+            raise RuntimeError("Silent Running active — mesh delete broadcast skipped")
         radio_id = (wp_data.get("radio_id") or "").strip() if wp_data else ""
         if radio_id:
             iface = get_iface_by_radio(radio_id)
@@ -294,6 +300,8 @@ def api_rebroadcast_waypoint(wp_id):
         wp_data = waypoints_cache.get(wp_id)
     if not wp_data:
         return jsonify({"error": "Mark not found"}), 404
+    if CONFIG.get("silent_mode"):
+        return jsonify({"error": "Silent Running active — transmissions are blocked"}), 409
     try:
         radio_id = (wp_data.get("radio_id") or "").strip()
         if radio_id:

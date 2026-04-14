@@ -24,6 +24,8 @@ bp = Blueprint('sense_routes', __name__)
 @bp.route("/api/mesh/sense", methods=["POST"])
 def api_mesh_sense():
     data = request.get_json(silent=True) or {}
+    if CONFIG.get("silent_mode"):
+        return jsonify({"error": "Silent Running active — transmissions are blocked"}), 409
     radio_id = data.get("radio_id") or request.args.get("radio_id")
     if radio_id:
         iface = get_iface_by_radio(radio_id)
@@ -62,6 +64,8 @@ def api_sense_passive():
 
 @bp.route("/api/mesh/sense/active_auto", methods=["POST"])
 def api_sense_active_auto():
+    if not _sense_state["active_auto"] and CONFIG.get("silent_mode"):
+        return jsonify({"error": "Silent Running active — automatic Sense broadcasts are blocked"}), 409
     with _sense_lock:
         active_auto = not _sense_state["active_auto"]
         _sense_state["active_auto"] = active_auto

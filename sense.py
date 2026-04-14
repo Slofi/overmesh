@@ -40,6 +40,13 @@ def _run_sense_broadcast(iface, cooldown):
     """Broadcast position request, wait for collection window, close. Called in a thread."""
     # Lazy import — mesh.py doesn't exist yet; avoids circular dep at module load time
     from mesh import _reconnect_disconnected
+    if CONFIG.get("silent_mode"):
+        with _sense_lock:
+            _sense_state["active"] = False
+            count = len(_sense_state["responses"])
+        push_to_sse(json.dumps({"type": "sense_done", "count": count,
+                                "error": "Silent Running active — broadcast blocked"}))
+        return
     try:
         iface.sendPosition(wantResponse=True)
     except Exception as e:

@@ -167,6 +167,8 @@ def api_mc_send_chan(radio_id):
     """Send a channel message."""
     data = request.get_json(silent=True) or {}
     text = (data.get("text") or "").strip()
+    if CONFIG.get("silent_mode"):
+        return jsonify({"error": "Silent Running active — transmissions are blocked"}), 409
     try:
         chan = int(data.get("channel", 0))
     except (TypeError, ValueError):
@@ -201,6 +203,8 @@ def api_mc_send_dm(radio_id):
     data   = request.get_json(silent=True) or {}
     text   = (data.get("text") or "").strip()
     target = (data.get("target") or "").strip()   # pubkey prefix (≥6 chars)
+    if CONFIG.get("silent_mode"):
+        return jsonify({"error": "Silent Running active — transmissions are blocked"}), 409
     if not text:
         return jsonify({"error": "text is required"}), 400
     if not target or len(target) < 6:
@@ -229,6 +233,8 @@ def api_mc_statusreq(radio_id, node_id):
     existing frontend panel continues to work unchanged.
     """
     log.info(f"[MC] statusreq route called: radio={radio_id} node={node_id[:12] if node_id else '?'}")
+    if CONFIG.get("silent_mode"):
+        return jsonify({"error": "Silent Running active — transmissions are blocked"}), 409
     if not node_id or len(node_id) < 6:
         return jsonify({"error": "node_id (pubkey prefix) required"}), 400
     try:
@@ -286,6 +292,8 @@ def api_mc_advert(radio_id):
     """Broadcast an advertisement (announce presence on mesh)."""
     data  = request.get_json(silent=True) or {}
     flood = bool(data.get("flood", False))
+    if CONFIG.get("silent_mode"):
+        return jsonify({"error": "Silent Running active — transmissions are blocked"}), 409
     try:
         send_advert(radio_id, flood=flood)
     except RuntimeError as e:
@@ -539,6 +547,8 @@ def api_mc_stats(radio_id):
 def api_mc_scan(radio_id):
     """Flood-advertise on MC mesh and collect mc_node SSE events for 60s."""
     import json
+    if CONFIG.get("silent_mode"):
+        return jsonify({"error": "Silent Running active — transmissions are blocked"}), 409
     with mc_connections_lock:
         state = mc_connections.get(radio_id, {})
     if state.get("status") != "connected":
@@ -579,6 +589,8 @@ def api_mc_scan(radio_id):
 def api_mc_trace(radio_id):
     """Send a broadcast trace packet. Response arrives via SSE as mc_trace_data.
     TRACE_DATA (0x89) is a push notification so it works even where STATUS_RESPONSE doesn't."""
+    if CONFIG.get("silent_mode"):
+        return jsonify({"error": "Silent Running active — transmissions are blocked"}), 409
     with mc_connections_lock:
         state = mc_connections.get(radio_id, {})
     if state.get("status") != "connected":
@@ -622,6 +634,8 @@ def api_mc_debug_events(radio_id):
 @bp.route("/api/mc/<radio_id>/import_contact", methods=["POST"])
 def api_mc_import_contact(radio_id):
     """Import a contact from a meshcore:// share link into the radio's NVS contact list."""
+    if CONFIG.get("silent_mode"):
+        return jsonify({"error": "Silent Running active — transmissions are blocked"}), 409
     with mc_connections_lock:
         state = mc_connections.get(radio_id, {})
     if state.get("status") != "connected":

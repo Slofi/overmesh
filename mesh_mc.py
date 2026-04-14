@@ -36,6 +36,11 @@ _mc_debug_flags: set = set()   # radio config_ids with debug logging enabled
 _mc_recent_rx_logs: dict[str, list[dict]] = {}  # radio id -> recent RX_LOG_DATA payloads
 
 
+def _ensure_mc_tx_allowed(action="MC transmission"):
+    if CONFIG.get("silent_mode"):
+        raise RuntimeError(f"Silent Running active — {action} blocked")
+
+
 def _remember_rx_log(config_id, payload):
     entries = _mc_recent_rx_logs.setdefault(config_id, [])
     entries.append({
@@ -308,6 +313,9 @@ async def _connect_mc_node_async(node_cfg):
     # the remote can't decrypt it (ECDH requires our pubkey) and won't respond.
     async def _startup_advert():
         await asyncio.sleep(8)   # let serial/drain settle first
+        if CONFIG.get("silent_mode"):
+            log.info(f"[MC:{name}] Silent Running active — startup advert suppressed")
+            return
         await _send_advert_async(config_id, flood=True)
         log.info(f"[MC:{name}] Startup flood advert sent — remote nodes will learn our identity")
     asyncio.ensure_future(_startup_advert())
@@ -903,6 +911,7 @@ async def _import_contact_async(config_id, card_data):
 
 def import_mc_contact(config_id, share_link_or_hex, timeout=15):
     """Parse a meshcore:// share link (or raw hex) and import it into the radio's contact list."""
+    _ensure_mc_tx_allowed("MC contact import")
     raw = share_link_or_hex.strip()
     if raw.lower().startswith("meshcore://"):
         raw = raw[len("meshcore://"):]
@@ -1002,19 +1011,25 @@ async def _get_contacts_async(config_id):
 # ---------------------------------------------------------------------------
 
 def send_chan_msg(config_id, chan_idx, text, timeout=10):
+    _ensure_mc_tx_allowed("MC channel message")
     return run_mc(_send_chan_msg_async(config_id, chan_idx, text), timeout=timeout)
 
 
 def send_dm(config_id, pubkey_prefix, text, timeout=10):
+    _ensure_mc_tx_allowed("MC direct message")
     return run_mc(_send_dm_async(config_id, pubkey_prefix, text), timeout=timeout)
 
 
 def send_statusreq(config_id, pubkey_prefix, timeout=10):
+    _ensure_mc_tx_allowed("MC status request")
     return run_mc(_send_statusreq_async(config_id, pubkey_prefix), timeout=timeout)
 
 
 def send_advert(config_id, flood=False, timeout=5):
     """Fire-and-forget advert — schedules background TX and returns immediately."""
+    if CONFIG.get("silent_mode"):
+        log.info(f"[MC:{config_id}] Silent Running active — advert suppressed")
+        return None
     return run_mc(_send_advert_async(config_id, flood=flood), timeout=timeout)
 
 
@@ -1034,6 +1049,7 @@ async def _send_trace_async(config_id, tag=None):
 
 
 def send_trace_broadcast(config_id, tag=None, timeout=10):
+    _ensure_mc_tx_allowed("MC trace")
     return run_mc(_send_trace_async(config_id, tag=tag), timeout=timeout)
 
 
@@ -1341,6 +1357,7 @@ def reboot_device(config_id, timeout=10):
 
 
 def req_node_status(config_id, pubkey_prefix, timeout=30):
+    _ensure_mc_tx_allowed("MC status request")
     return run_mc(_req_status_async(config_id, pubkey_prefix), timeout=timeout)
 
 

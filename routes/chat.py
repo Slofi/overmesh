@@ -5,6 +5,7 @@ import threading
 
 from flask import Blueprint, Response, jsonify, request
 
+from config import CONFIG
 from cross import maybe_forward_mt_message
 from db import save_message
 from helpers import _next_msg_id, get_node_name, push_to_sse
@@ -87,6 +88,8 @@ def api_chat_stream():
 def api_chat_send():
     data    = request.get_json(silent=True) or {}
     text    = (data.get("text") or "").strip()
+    if CONFIG.get("silent_mode"):
+        return jsonify({"error": "Silent Running active — transmissions are blocked"}), 409
     try:
         channel = max(0, min(7, int(data.get("channel", 0))))
     except (TypeError, ValueError):

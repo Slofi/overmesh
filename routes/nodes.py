@@ -5,7 +5,7 @@ import time
 from flask import Blueprint, jsonify, request
 from pubsub import pub
 
-from config import _valid_node_id
+from config import CONFIG, _valid_node_id
 from db import get_db_nodes, get_prefs_db, save_message
 from helpers import _next_msg_id, get_node_data, get_node_name, push_to_sse
 from hw_models import hw_model_name
@@ -248,8 +248,9 @@ def api_traceroute(node_id):
         hop_limit = int(iface.localNode.localConfig.lora.hop_limit) or 7
     except Exception:
         hop_limit = 7
-
     try:
+        if CONFIG.get("silent_mode"):
+            return jsonify({"error": "Silent Running active — transmissions are blocked"}), 409
         pub.subscribe(on_receive, "meshtastic.receive")
         iface.sendTraceRoute(node_id, hopLimit=hop_limit)
         done.wait(timeout=60)
@@ -308,6 +309,8 @@ def api_dm(node_id):
     if not iface:
         return jsonify({"error": "No radio connected"}), 503
     try:
+        if CONFIG.get("silent_mode"):
+            return jsonify({"error": "Silent Running active — transmissions are blocked"}), 409
         sent    = iface.sendText(msg, destinationId=node_id, wantAck=True)
         pkt_id  = sent.id if hasattr(sent, "id") else (sent.get("id") if isinstance(sent, dict) else None)
         chat_msg = {
@@ -351,6 +354,8 @@ def api_request_position(node_id):
     if not iface:
         return jsonify({"error": "No radio connected"}), 503
     try:
+        if CONFIG.get("silent_mode"):
+            return jsonify({"error": "Silent Running active — transmissions are blocked"}), 409
         iface.sendPosition(destinationId=node_id, wantResponse=True)
         return jsonify({"ok": True})
     except Exception as e:
@@ -387,6 +392,8 @@ def api_node_info(node_id):
             pass
 
     try:
+        if CONFIG.get("silent_mode"):
+            return jsonify({"error": "Silent Running active — transmissions are blocked"}), 409
         pub.subscribe(on_receive, "meshtastic.receive")
         iface.sendTelemetry(destinationId=node_id, wantResponse=True,
                             telemetryType="device_metrics")

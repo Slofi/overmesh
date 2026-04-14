@@ -222,6 +222,8 @@ def _send_mc_forward(radio_id, channel, text):
 
 def maybe_forward_mt_message(msg):
     try:
+        if CONFIG.get("silent_mode"):
+            return
         rules = get_cross_rules()
         if not rules:
             return
@@ -258,6 +260,8 @@ def maybe_forward_mt_message(msg):
 
 def maybe_forward_mc_message(msg):
     try:
+        if CONFIG.get("silent_mode"):
+            return
         rules = get_cross_rules()
         if not rules:
             return

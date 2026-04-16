@@ -92,6 +92,7 @@ def api_mc_status():
                 "cr":         info.get("radio_cr"),
                 "tx_power":   info.get("tx_power"),
                 "max_tx_power": info.get("max_tx_power"),
+                "max_channels": info.get("max_channels"),
                 "lat":        info.get("adv_lat"),
                 "lon":        info.get("adv_lon"),
                 "contacts":   len(v.get("contacts", {})),
@@ -528,7 +529,7 @@ def api_mc_channels(radio_id):
     # max_channels comes from DEVICE_INFO (send_device_query); default 8
     max_ch = min(int(state.get("node_info", {}).get("max_channels") or 8), 16)
     try:
-        channels = get_channels(radio_id, max_ch)
+        channels = get_channels(radio_id, max_ch, timeout=max(30, max_ch * 7))
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 503
     except Exception as e:

@@ -3004,6 +3004,9 @@
   let _accentColor                 = '#4ade80';  // JS-side accent for canvas/dynamic color refs
   let _accentFreshColor            = '#86efac';  // brighter accent for fresh (<30m) map markers
   let _activeTracerouteController  = null;
+  let _activeTrPanel               = null;
+  let _activeReplayIdx             = null;
+  let _activeReplayPanel           = null;
   let _nodeInfoTimer               = null;
   const inactiveRadioUnread = new Set();       // radio_ids with any unread (drives radio btn dot)
   const radioUnreadChannels = {};              // radio_id → Set of channels with unread (drives Chat tab + sub-tab dots)
@@ -4415,6 +4418,8 @@
     if (body) body.innerHTML = '<div style="color:var(--muted);font-size:12px">Releasing lock…</div>';
     try {
       await fetch('/api/traceroute/reset', {method:'POST'});
+      // Also clear the frontend controller so the guard in openMapTR stops blocking
+      _activeTracerouteController = null;
       if (body) body.innerHTML =
         '<div class="modal-success">Lock released. You can now send a new traceroute.</div>';
     } catch(e) {
@@ -4880,6 +4885,14 @@
 
           seg.addTo(leafletMap);
           _traceMapLines.push(seg);
+
+          // Arrowhead at midpoint — shows direction of travel (p1 → pos)
+          const mid = [(p1[0] + pos[0]) / 2, (p1[1] + pos[1]) / 2];
+          const bearing = _mcBearing(p1, pos);
+          const arrowOpacity = skipped > 0 ? 0.45 : opacity;
+          const arrowHtml = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="-8 -8 16 16" style="overflow:visible;opacity:${arrowOpacity}"><polygon points="0,-7 5,4 0,1 -5,4" fill="${color}" stroke="#111" stroke-width="1.5" stroke-linejoin="round" transform="rotate(${bearing})"/></svg>`;
+          const arrowIcon = L.divIcon({ html: arrowHtml, iconSize: [16, 16], iconAnchor: [8, 8], className: '' });
+          _traceMapLines.push(L.marker(mid, { icon: arrowIcon, interactive: false }).addTo(leafletMap));
         }
         prevKnown = { idx: j, pos };
       }
@@ -6463,6 +6476,7 @@
 
         const panel = L.DomUtil.create('div', '', wrap);
         panel.id = 'map-layer-panel';
+        L.DomEvent.disableScrollPropagation(panel);
         Object.entries(TILE_LAYERS).forEach(([key, def]) => {
           const opt = L.DomUtil.create('div', 'map-layer-opt', panel);
           opt.textContent  = def.label;
@@ -7564,7 +7578,20 @@
 
   // ── Map Traceroute overlay ─────────────────────────────────────────────────
   async function openMapTR(nodeId, nodeName) {
+    // Close any existing TR panel (removes stale panel from DOM; old fetch continues silently)
+    if (_activeTrPanel) { _activeTrPanel.remove(); _activeTrPanel = null; }
+    // Don't stack TRs — if a fetch is already in flight, show message instead
+    if (_activeTracerouteController) {
+      const { panel, body } = _openMapPanel('TR · ' + nodeName);
+      _activeTrPanel = panel;
+      body.innerHTML = `<div class="modal-error">TR already in progress.</div><button class="btn" style="margin-top:10px" onclick="unlockTraceroutePanel(this)">Unlock TR</button>`;
+      return;
+    }
     const { panel, body } = _openMapPanel('TR · ' + nodeName);
+    _activeTrPanel = panel;
+    // Clear _activeTrPanel when user manually closes the panel
+    const _trCloseBtn = panel.querySelector('.map-tr-close');
+    if (_trCloseBtn) { const _orig = _trCloseBtn.onclick; _trCloseBtn.onclick = () => { _activeTrPanel = null; _orig && _orig(); }; }
     body.innerHTML = '<div style="color:var(--muted);font-size:12px" class="tr-status">Sending traceroute… 60s</div>';
     const controller = new AbortController();
     _activeTracerouteController = controller;
@@ -7618,6 +7645,9 @@
       body.innerHTML = `<div class="modal-error">Request failed: ${escHtml(e.message)}</div>`;
     } finally {
       if (_activeTracerouteController === controller) _activeTracerouteController = null;
+      // NOTE: _activeTrPanel is intentionally NOT cleared here — it stays set so the next
+      // openMapTR call removes the old panel (result, error, or timeout) before creating a new one.
+      // It is only nulled when the user manually closes the panel (✕ button).
     }
   }
 
@@ -7625,21 +7655,55 @@
     const el = document.getElementById('map-tr-log');
     if (!el) return;
     el.innerHTML = _traceHistory.length === 0 ? '' : _traceHistory.map((e, i) => {
-      const t  = new Date(e.ts).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
-      return `<div class="map-tr-log-entry" onclick="_replayTrace(${i})" title="Replay ${escHtml(e.nodeName)}">${t} · ${escHtml(e.nodeName)}</div>`;
+      const t   = new Date(e.ts).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+      const dot = _activeReplayIdx === i
+        ? '<span style="color:var(--accent);margin-right:4px;font-size:9px;vertical-align:middle">●</span>'
+        : '';
+      return `<div class="map-tr-log-entry" onclick="_replayTrace(${i})" title="${_activeReplayIdx === i ? 'Hide' : 'Show'} path · ${escHtml(e.nodeName)}">${dot}${t} · ${escHtml(e.nodeName)}</div>`;
     }).join('');
   }
 
   function _replayTrace(idx) {
     const e = _traceHistory[idx];
     if (!e) return;
+
+    // Toggle off if same entry clicked again
+    if (_activeReplayIdx === idx) {
+      _clearTraceLines();
+      if (_activeReplayPanel) { _activeReplayPanel.remove(); _activeReplayPanel = null; }
+      _activeReplayIdx = null;
+      _updateTrLogPanel();
+      return;
+    }
+
+    // Close any existing replay panel before opening new one
+    if (_activeReplayPanel) { _activeReplayPanel.remove(); _activeReplayPanel = null; }
+
     if (!_showTrMap) {
       _showTrMap = true;
       try { localStorage.setItem('mapShowTrSnr', '1'); } catch(_) {}
       document.getElementById('map-tr-snr-btn')?.classList.add('active');
     }
     _drawTraceRouteOnMap(e.data);
-    const { body } = _openMapPanel('TR · ' + e.nodeName);
+    _activeReplayIdx = idx;
+    _updateTrLogPanel();
+
+    const { panel, body } = _openMapPanel('TR · ' + e.nodeName);
+    _activeReplayPanel = panel;
+
+    // Hook close button — clear path + state when user hits ✕
+    const closeBtn = panel.querySelector('.map-tr-close');
+    if (closeBtn) {
+      const origClose = closeBtn.onclick;
+      closeBtn.onclick = () => {
+        _clearTraceLines();
+        _activeReplayIdx = null;
+        _activeReplayPanel = null;
+        _updateTrLogPanel();
+        origClose && origClose();
+      };
+    }
+
     const buildChain = (nodes, snrs) => nodes.map((node, i) => {
       const isEnd = i === 0 || i === nodes.length - 1;
       const snr   = snrs?.[i];
@@ -9666,6 +9730,23 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       return;
     }
     if (data.type === 'mc_message') {
+      // If from_id is missing/unknown, try to touch the contact by name from embedded "Name: text"
+      if ((!data.from_id || data.from_id === '?') && data.text) {
+        const colon = data.text.indexOf(': ');
+        if (colon > 0 && colon < 50) {
+          const embName = data.text.slice(0, colon);
+          const fc = _mcFindContact(data.radio_id, null, embName);
+          if (fc) {
+            const now = Math.floor(Date.now() / 1000);
+            fc.last_heard_ts = now;
+            fc.last_seen_ts  = now;
+            fc.last_seen = 'just now';
+            if (data.path_len != null) fc.out_path_len = data.path_len;
+            if (data.path      != null) fc.out_path     = data.path;
+            if (data.rx_snr    != null) fc.snr          = data.rx_snr;
+          }
+        }
+      }
       _mcTouchContactActivity(data.radio_id, data.from_id, {
         out_path_len: data.path_len,
         out_path: data.path,
@@ -10255,15 +10336,51 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
   }
 
   // MC sender name helpers
+  function _mcFindContact(radioId, fromId, fallbackName) {
+    // Search a single contacts dict: by pubkey prefix first, then by name
+    function _searchDict(dict, name) {
+      if (fromId && fromId !== '?') {
+        if (dict[fromId]) return dict[fromId];
+        const fromLow = fromId.toLowerCase();
+        for (const [key, contact] of Object.entries(dict)) {
+          const kl = key.toLowerCase();
+          if (kl === fromLow || fromLow.startsWith(kl) || kl.startsWith(fromLow)) return contact;
+        }
+      }
+      // Fall back to name match when pubkey is absent or useless
+      if (name) {
+        const nl = name.toLowerCase();
+        for (const contact of Object.values(dict)) {
+          if ((contact.long_name || '').toLowerCase() === nl) return contact;
+        }
+      }
+      return null;
+    }
+    const name = fallbackName || null;
+    // 1. Try the message's own radio first
+    if (radioId) {
+      const hit = _searchDict(mcContacts[radioId] || {}, name);
+      if (hit) return hit;
+    }
+    // 2. Fall back: search all radios (contact may be known via a different radio)
+    for (const [rid, dict] of Object.entries(mcContacts)) {
+      if (rid === radioId) continue;
+      const hit = _searchDict(dict, name);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
   function _mcSenderInfo(m) {
-    // 1. Look up from contacts dict
-    const c = m.radio_id ? (mcContacts[m.radio_id] || {})[m.from_id] : null;
-    if (c?.long_name) return { name: c.long_name, contact: c };
-    // 2. Parse "Name: message" embedded format
+    // 1. Parse "Name: message" embedded format first (to get name for fallback lookup)
     const text = m.text || '';
     const colon = text.indexOf(': ');
-    if (colon > 0 && colon < 50) return { name: text.slice(0, colon), contact: null };
-    return { name: m.from_id ? m.from_id.slice(0, 10) : '?', contact: null };
+    const embeddedName = (colon > 0 && colon < 50) ? text.slice(0, colon) : null;
+    // 2. Look up from contacts dict — by pubkey or by embedded name
+    const c = _mcFindContact(m.radio_id, m.from_id, embeddedName);
+    if (c?.long_name) return { name: c.long_name, contact: c };
+    if (embeddedName) return { name: embeddedName, contact: null };
+    return { name: m.from_id && m.from_id !== '?' ? m.from_id.slice(0, 10) : '?', contact: null };
   }
 
   function _mcMsgText(m, senderName) {
@@ -10300,15 +10417,36 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     if (changed) renderMcChatTabs();
   }
 
-  function showMcContactPopup(evt, fromId, radioId) {
+  function showMcContactPopup(evt, fromId, radioId, overrideName) {
     evt.stopPropagation();
-    const c    = radioId ? (mcContacts[radioId] || {})[fromId] : null;
-    const name = c?.long_name || fromId?.slice(0, 10) || '?';
-    const hops = c?.out_path_len ?? -1;
-    const path = c?.out_path || '';
-    const seen = _mcContactSeenLabel(c);
-    const hopStr = hops === 0 ? 'Direct (0 hops)' : hops > 0 ? `${hops} hop${hops !== 1 ? 's' : ''} away` : 'Path unknown';
-    const meta = c ? mcContactMetaLabel(c, radioId) : '';
+    const c      = _mcFindContact(radioId, fromId, overrideName);
+    const name   = c?.long_name || overrideName || fromId?.slice(0, 10) || '?';
+    const hops   = c?.out_path_len ?? -1;
+    const path   = c?.out_path || '';
+    const seen   = _mcContactSeenLabel(c);
+    const hopStr = c ? (hops === 0 ? 'Direct (0 hops)' : hops > 0 ? `${hops} hop${hops !== 1 ? 's' : ''} away` : 'Path unknown') : 'Not in contacts';
+    const meta   = c ? mcContactMetaLabel(c, radioId) : '';
+    const markerId  = c?.id || (fromId !== '?' ? fromId.slice(0, 12) : '');
+    const hasMarker = !!mcMapMarkerById[markerId];
+
+    // Backfill contact data from cached messages when contact info is stale/incomplete
+    if (c) {
+      const nameLow = name.toLowerCase();
+      let bestMsg = null;
+      for (const m of mcMessages) {
+        if (!m.ts || m.sent) continue;
+        const { name: mName } = _mcSenderInfo(m);
+        if (mName.toLowerCase() === nameLow && (!bestMsg || m.ts > bestMsg.ts)) bestMsg = m;
+      }
+      if (bestMsg) {
+        if (bestMsg.ts > _mcContactSeenTs(c)) {
+          c.last_heard_ts = bestMsg.ts;
+          c.last_seen_ts  = bestMsg.ts;
+        }
+        if (c.out_path_len == null && bestMsg.path_len != null) c.out_path_len = bestMsg.path_len;
+        if (!c.out_path     && bestMsg.path)                    c.out_path     = bestMsg.path;
+      }
+    }
 
     let panel = document.getElementById('mc-contact-popup');
     if (!panel) {
@@ -10317,21 +10455,47 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       panel.style.cssText = 'position:fixed;z-index:3000;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px;min-width:180px;max-width:280px;box-shadow:0 2px 12px rgba(0,0,0,.6)';
       document.body.appendChild(panel);
     }
-    const dmBtn = c ? `<button class="map-popup-btn" style="width:100%;margin-top:8px;font-size:11px" onclick="doMcDm('${jsSafe(fromId)}','${jsSafe(radioId)}','${jsSafe(name)}');document.getElementById('mc-contact-popup').style.display='none'">DM</button>` : '';
+    // Use the resolved contact's id for actions (fromId may be "?" for pubkey-less messages)
+    const actionId  = c?.id || c?.full_key || (fromId !== '?' ? fromId : null);
+    const actionRid = radioId;
+    const hide = `document.getElementById('mc-contact-popup').style.display='none'`;
+    const btns = [];
+    if (c && actionId) {
+      btns.push(`<button class="map-popup-btn" onclick="doMcDm('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}">DM</button>`);
+      if (c.type !== 2) btns.push(`<button class="map-popup-btn" onclick="doMcPing('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}">Ping</button>`);
+    }
+    const cLat = c?.latitude, cLon = c?.longitude;
+    if (hasMarker) {
+      btns.push(`<button class="map-popup-btn" onclick="switchTab('map');${hide};setTimeout(()=>{const m=mcMapMarkerById['${jsSafe(markerId)}'];if(m&&leafletMap){leafletMap.setView(m.getLatLng(),Math.max(leafletMap.getZoom(),14));m.openPopup();}},100)">Map</button>`);
+    } else if (cLat != null && cLon != null) {
+      btns.push(`<button class="map-popup-btn" onclick="centerMcOnMap(${cLat},${cLon});${hide}">Map</button>`);
+    } else {
+      btns.push(`<button class="map-popup-btn" style="opacity:0.35;cursor:default" disabled title="No GPS position">Map</button>`);
+    }
+    const btnsHtml = btns.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${btns.join('')}</div>` : '';
     panel.innerHTML = `
       <div style="font-weight:600;color:var(--mc-color);margin-bottom:2px">${escHtml(name)}</div>
-      ${fromId ? `<div style="color:var(--muted);font-size:10px;margin-bottom:6px">${escHtml(fromId.slice(0, 12))}</div>` : ''}
+      ${c?.id ? `<div style="color:var(--muted);font-size:10px;margin-bottom:6px">${escHtml(c.id)}</div>` : ''}
       ${meta ? `<div style="color:var(--muted);font-size:10px;margin-bottom:6px">${escHtml(meta)}</div>` : ''}
       <div style="color:var(--muted)">${escHtml(hopStr)}</div>
       ${path ? `<div style="color:var(--muted);font-size:10px;margin-top:2px;word-break:break-all">${escHtml(path)}</div>` : ''}
       ${seen ? `<div style="color:var(--muted);font-size:10px;margin-top:4px">Last seen: ${escHtml(seen)}</div>` : ''}
-      ${dmBtn}
+      ${btnsHtml}
     `;
-    const x = Math.min(evt.clientX, window.innerWidth - 300);
-    const y = Math.min(evt.clientY + 8, window.innerHeight - 220);
+
+    // Position: right of click, flip above if in lower half of screen
+    panel.style.display = 'block';
+    const pw = panel.offsetWidth  || 290;
+    const ph = panel.offsetHeight || 160;
+    const margin = 8;
+    let x = Math.min(evt.clientX + margin, window.innerWidth  - pw - margin);
+    let y = evt.clientY > window.innerHeight / 2
+      ? Math.max(evt.clientY - ph - margin, margin)
+      : evt.clientY + margin;
+    y = Math.max(margin, Math.min(y, window.innerHeight - ph - margin));
     panel.style.left = x + 'px';
     panel.style.top  = y + 'px';
-    panel.style.display = 'block';
+
     setTimeout(() => {
       document.addEventListener('click', () => { if (panel) panel.style.display = 'none'; }, { once: true });
     }, 0);
@@ -10401,7 +10565,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       const { name, contact } = _mcSenderInfo(m);
       const bodyText = _mcMsgText(m, name);
       const obsSnr = m.rx_snr != null ? ` · obs ${m.rx_snr} dB` : '';
-      const senderHtml = `<span class="msg-sender-link" onclick="showMcContactPopup(event,'${jsSafe(m.from_id || '')}','${jsSafe(m.radio_id || '')}')" title="Contact info">${escHtml(name)}</span>`;
+      const senderHtml = `<span class="msg-sender-link" onclick="showMcContactPopup(event,'${jsSafe(m.from_id || '')}','${jsSafe(m.radio_id || '')}','${jsSafe(name)}')" title="Contact info">${escHtml(name)}</span>`;
       const mcReplyBtn = `<button class="msg-reply-btn" onclick="replyToMc('${jsSafe(m.from_id || '')}','${jsSafe(name)}','${m.subtype || 'channel'}')">↩ Reply</button>`;
       return `<div class="chat-msg received">
         <div class="msg-meta"><span class="mc-msg-tag">MC</span>${escHtml(m.radio_name || '')} · ${senderHtml}${escHtml(obsSnr)} · ${ts}${mcReplyBtn}</div>
@@ -10449,12 +10613,20 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         updateMapMarkers(allNodes);
       }
       if (legend) legend.style.display = 'none';   // hide entire legend in MC Sense
+      const snrBtn = document.getElementById('map-tr-snr-btn');
+      if (snrBtn) snrBtn.style.display = 'none';
+      const trLog = document.getElementById('map-tr-log');
+      if (trLog) trLog.style.display = 'none';
       renderMcMapMarkers();   // also calls renderMcPathLines()
       renderMcSensePanel();
     } else {
       // MT mode: show legend but hide MC section (MC markers not shown in MT Sense)
       if (legend)   legend.style.display   = '';
       if (mcLegend) mcLegend.style.display = 'none';
+      const snrBtn = document.getElementById('map-tr-snr-btn');
+      if (snrBtn) snrBtn.style.display = '';
+      const trLogMt = document.getElementById('map-tr-log');
+      if (trLogMt) trLogMt.style.display = '';
       clearMcPathLines();
       _mcHoverLines.forEach(l => leafletMap && leafletMap.removeLayer(l));
       _mcHoverLines = [];
@@ -12509,6 +12681,10 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       const _leg   = document.querySelector('.map-legend');
       const _mcLeg = document.getElementById('map-legend-mc');
       if (_leg) _leg.style.display = '';
+      const _snrBtn = document.getElementById('map-tr-snr-btn');
+      if (_snrBtn) _snrBtn.style.display = '';
+      const _trLog = document.getElementById('map-tr-log');
+      if (_trLog) _trLog.style.display = '';
       if (_mcLeg) {
         const mcVisible = Object.keys(mcLastStatus).length > 0 && localStorage.getItem('mcHide') !== '1';
         _mcLeg.style.display = mcVisible ? '' : 'none';

@@ -245,6 +245,18 @@ async def _connect_mc_node_async(node_cfg):
         log.warning(f"[MC:{name}] send_appstart failed: {e}")
         node_info = {}
 
+    # Get device info to capture max_channels (and max_contacts) — non-fatal if it fails
+    try:
+        dev_r = await asyncio.wait_for(mc.commands.send_device_query(), timeout=10)
+        if dev_r.type == EventType.DEVICE_INFO:
+            dev = dev_r.payload or {}
+            if dev.get("max_channels"):
+                node_info["max_channels"] = dev["max_channels"]
+            if dev.get("max_contacts"):
+                node_info["max_contacts"] = dev["max_contacts"]
+    except Exception as e:
+        log.warning(f"[MC:{name}] send_device_query failed (max_channels defaulting to 8): {e}")
+
     # radio_bw: reader.py divides raw Hz by 1000 → returns kHz (e.g. 125)
     # No conversion needed; radio_freq uses same formula but raw is kHz → returns MHz
 
@@ -1208,8 +1220,10 @@ async def _get_channels_async(config_id, count):
                 channels.append(r.payload)
             else:
                 break  # ERROR = no more channels at this index
+        except asyncio.TimeoutError:
+            continue  # transient timeout — skip this slot, try next
         except Exception:
-            break
+            break  # connection error — abort
     return channels
 
 

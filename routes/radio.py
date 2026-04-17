@@ -1,3 +1,4 @@
+import hashlib
 import os
 
 from flask import Blueprint, jsonify, request
@@ -277,6 +278,8 @@ def api_radio_channels_get(radio_id):
                 "name":    name,
                 "role":    role,
                 "psk_set": len(psk) > 0,
+                "psk_len": len(psk),
+                "psk_fingerprint": hashlib.sha256(psk).hexdigest()[:16] if psk else None,
             })
         return jsonify(result)
     except Exception as e:

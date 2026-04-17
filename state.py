@@ -54,6 +54,15 @@ notes_lock  = threading.Lock()
 
 traceroute_lock = threading.Lock()
 
+# Pending traceroute response slot.
+# api_traceroute sets this before sending the TR request; on_text_receive in
+# mesh.py reads it and calls done.set() when the TRACEROUTE_APP packet arrives.
+# This avoids per-request pub.subscribe/unsubscribe which can silently fail.
+_tr_pending_lock = threading.Lock()
+_tr_pending      = {"node_id": None, "radio_id": None, "done": None, "result": None,
+                    "started_at": None, "timeout": 30, "token": None,
+                    "cancelled": False}
+
 # ---------------------------------------------------------------------------
 # Bot
 # ---------------------------------------------------------------------------
@@ -66,4 +75,3 @@ _bot_config_cache_lock = threading.Lock()
 
 _motd_last_sent_per_radio = {}          # {radio_id: last_fired_timestamp}
 _motd_event               = threading.Event()   # wake scheduler early on config change
-

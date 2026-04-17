@@ -3,11 +3,10 @@ import threading
 import time
 
 from flask import Blueprint, jsonify, request
-from pubsub import pub
-
+from meshtastic.protobuf import mesh_pb2, portnums_pb2
 from config import CONFIG, _valid_node_id
 from db import get_db_nodes, get_position_history, get_prefs_db, get_traceroute_history, save_message, save_traceroute
-from helpers import _next_msg_id, get_node_data, get_node_name, push_to_sse
+from helpers import _next_msg_id, _radio_id_for_iface, get_node_data, get_node_name, push_to_sse
 from hw_models import hw_model_name
 from mesh import (
     get_any_iface, get_any_iface_with_id, get_iface_by_radio,
@@ -18,11 +17,106 @@ from state import (
     connections, connections_lock,
     pending_acks, pending_acks_lock,
     traceroute_lock,
+    _tr_pending, _tr_pending_lock,
 )
 import logging
 log = logging.getLogger(__name__)
 
 bp = Blueprint('nodes', __name__)
+
+
+def _clear_tr_pending_locked(cancel=False):
+    """Clear the pending TR slot. Caller must hold _tr_pending_lock."""
+    done = _tr_pending.get("done")
+    result = _tr_pending.get("result")
+    if cancel and isinstance(result, dict):
+        result["_cancelled"] = True
+    if cancel and done is not None:
+        try:
+            done.set()
+        except Exception:
+            pass
+    _tr_pending.update({"node_id": None, "radio_id": None,
+                        "done": None, "result": None,
+                        "started_at": None, "timeout": 30,
+                        "token": None, "cancelled": False})
+
+
+def _release_tr_lock():
+    try:
+        traceroute_lock.release()
+        return True
+    except RuntimeError:
+        return False
+
+
+def _tr_state_snapshot_locked():
+    """Return active TR timing state. Caller must hold _tr_pending_lock."""
+    started_at = _tr_pending.get("started_at")
+    timeout    = int(_tr_pending.get("timeout") or 30)
+    done       = _tr_pending.get("done")
+    active     = done is not None and not done.is_set()
+    elapsed    = max(0, time.time() - started_at) if started_at else 0
+    remaining  = max(0, int(timeout - elapsed)) if active else 0
+    stale      = active and started_at is not None and elapsed >= timeout + 5
+    return {
+        "started_at": started_at,
+        "timeout": timeout,
+        "done": done,
+        "active": active,
+        "elapsed": elapsed,
+        "remaining": remaining,
+        "stale": stale,
+        "node_id": _tr_pending.get("node_id"),
+        "radio_id": _tr_pending.get("radio_id"),
+    }
+
+
+def _clear_stale_tr_if_needed():
+    """Recover from a TR slot that outlived its request window."""
+    cleared = False
+    with _tr_pending_lock:
+        snap = _tr_state_snapshot_locked()
+        if snap["stale"]:
+            _clear_tr_pending_locked(cancel=True)
+            cleared = True
+    if cleared:
+        _release_tr_lock()
+    return cleared
+
+
+def _tr_hop_id(node_num):
+    """Return a frontend node id for a TR hop, or None for broadcast/unknown sentinels."""
+    try:
+        n = int(node_num)
+    except (TypeError, ValueError):
+        return None
+    if n in (0, 0xFFFFFFFF):
+        return None
+    return f"!{n:08x}"
+
+
+def _tr_hop_name(node_num):
+    hop_id = _tr_hop_id(node_num)
+    if not hop_id:
+        return "Unknown hop"
+    name = resolve_node_name(int(node_num))
+    if name == hop_id:
+        return f"Unknown node ({hop_id})"
+    return name
+
+
+def _send_traceroute_probe(iface, node_id, hop_limit):
+    """Send TR without Meshtastic's blocking waitForTraceRoute helper."""
+    iface.sendData(
+        mesh_pb2.RouteDiscovery(),
+        destinationId=node_id,
+        portNum=portnums_pb2.PortNum.TRACEROUTE_APP,
+        wantResponse=True,
+        onResponse=getattr(iface, "onResponseTraceRoute", None),
+        channelIndex=0,
+        hopLimit=hop_limit,
+    )
 
 
 @bp.route("/api/nodes")
@@ -219,58 +313,60 @@ def api_traceroute(node_id):
             return jsonify({"error": "Requested radio not connected"}), 503
     else:
         iface = get_any_iface()
+        if iface:
+            radio_id = _radio_id_for_iface(iface)
     if not iface:
         return jsonify({"error": "No radio connected"}), 503
+    _clear_stale_tr_if_needed()
     if not traceroute_lock.acquire(blocking=False):
-        return jsonify({"error": "Another traceroute already in progress. Use /api/traceroute/reset to unlock."}), 429
-
-    result = {}
-    done = threading.Event()
-
-    def on_receive(packet, interface):
-        try:
-            if interface is not iface:
-                return
-            if packet.get("fromId") == node_id:
-                decoded = packet.get("decoded", {})
-                if decoded.get("portnum") == "TRACEROUTE_APP":
-                    tr = decoded.get("traceroute", {})
-                    result["route"]       = tr.get("route", [])
-                    result["routeBack"]   = tr.get("routeBack", [])
-                    result["snrTowards"]  = tr.get("snrTowards", [])
-                    result["snrBack"]     = tr.get("snrBack", [])
-                    done.set()
-        except Exception as e:
-            log.warning(f"Traceroute callback: {e}")
+        with _tr_pending_lock:
+            snap = _tr_state_snapshot_locked()
+            remaining = max(1, snap["remaining"]) if snap["active"] else 30
+        return jsonify({"error": "Traceroute is temporarily unavailable. A previous TR is still finishing.",
+                        "locked": True, "remaining": remaining}), 429
 
     # Read configurable hop limit (default 7 if not set)
     try:
         hop_limit = int(iface.localNode.localConfig.lora.hop_limit) or 7
     except Exception:
         hop_limit = 7
+
+    result = {}
+    done   = threading.Event()
+    token  = object()
+
+    # Register pending TR slot — on_text_receive in mesh.py will set done when
+    # the TRACEROUTE_APP response arrives. This avoids per-request pub.subscribe
+    # which can silently stop working after the first TR.
+    with _tr_pending_lock:
+        _tr_pending.update({"node_id": node_id, "radio_id": radio_id,
+                            "done": done, "result": result,
+                            "started_at": time.time(), "timeout": 30,
+                            "token": token, "cancelled": False})
     try:
         if CONFIG.get("silent_mode"):
             return jsonify({"error": "Silent Running active — transmissions are blocked"}), 409
-        pub.subscribe(on_receive, "meshtastic.receive")
-        iface.sendTraceRoute(node_id, hopLimit=hop_limit)
-        done.wait(timeout=60)
+        try:
+            _send_traceroute_probe(iface, node_id, hop_limit)
+        except Exception as e:
+            log.warning(f"Traceroute send failed for {node_id} via {radio_id}: {e}")
+            return jsonify({"error": f"Traceroute send failed: {e}"}), 503
+        done.wait(timeout=30)
     finally:
-        try:
-            pub.unsubscribe(on_receive, "meshtastic.receive")
-        except Exception:
-            pass
-        try:
-            traceroute_lock.release()
-        except RuntimeError:
-            pass  # Already force-released by /api/traceroute/reset
+        with _tr_pending_lock:
+            if _tr_pending.get("token") is token:
+                _clear_tr_pending_locked()
+        _release_tr_lock()  # May already be force-released by /api/traceroute/reset
 
+    if result.get("_cancelled"):
+        return jsonify({"error": "Traceroute was cancelled."}), 409
     if not done.is_set():
-        return jsonify({"error": "Timeout — node did not respond (60s)"}), 504
+        return jsonify({"error": "Timeout — node did not respond (30s)"}), 504
 
     my_name    = "You"
     dest_name  = get_node_name(node_id)
-    route      = [my_name] + [resolve_node_name(n) for n in result.get("route", [])]     + [dest_name]
-    route_back = [dest_name] + [resolve_node_name(n) for n in result.get("routeBack", [])] + [my_name]
+    route      = [my_name] + [_tr_hop_name(n) for n in result.get("route", [])]     + [dest_name]
+    route_back = [dest_name] + [_tr_hop_name(n) for n in result.get("routeBack", [])] + [my_name]
     # SNR values are stored as int * 4 in the protobuf
     snr_towards = [round(s / 4, 1) for s in result.get("snrTowards", [])]
     snr_back    = [round(s / 4, 1) for s in result.get("snrBack", [])]
@@ -282,8 +378,8 @@ def api_traceroute(node_id):
             local_id = f"!{local_num:08x}"
     except Exception:
         pass
-    route_ids      = [local_id] + [f"!{int(n):08x}" for n in result.get("route", [])]     + [node_id]
-    route_back_ids = [node_id]  + [f"!{int(n):08x}" for n in result.get("routeBack", [])] + [local_id]
+    route_ids      = [local_id] + [_tr_hop_id(n) for n in result.get("route", [])]     + [node_id]
+    route_back_ids = [node_id]  + [_tr_hop_id(n) for n in result.get("routeBack", [])] + [local_id]
     tr = {"route": route, "routeBack": route_back,
           "snrTowards": snr_towards, "snrBack": snr_back,
           "routeIds": route_ids, "routeBackIds": route_back_ids}
@@ -297,13 +393,33 @@ def api_traceroute(node_id):
 @bp.route("/api/traceroute/reset", methods=["POST"])
 def api_traceroute_reset():
     """Force-release the traceroute lock if it got stuck (e.g. node disconnected during TR)."""
+    data = request.get_json(silent=True) or {}
+    force = bool(data.get("force") or request.args.get("force") in ("1", "true", "yes"))
+    with _tr_pending_lock:
+        snap = _tr_state_snapshot_locked()
+        if snap["active"] and not (force or snap["stale"]):
+            remaining = max(1, snap["remaining"])
+            return jsonify({"ok": False, "locked": True, "remaining": remaining,
+                            "error": "Traceroute is still running. Wait for it to finish before releasing the lock."}), 409
+        if force or snap["stale"]:
+            _clear_tr_pending_locked(cancel=True)
     if traceroute_lock.locked():
-        try:
-            traceroute_lock.release()
-            return jsonify({"ok": True, "msg": "Lock released"})
-        except RuntimeError:
-            pass
+        _release_tr_lock()
+        return jsonify({"ok": True, "msg": "Lock released"})
     return jsonify({"ok": True, "msg": "Lock was not held"})
+
+
+@bp.route("/api/traceroute/status")
+def api_traceroute_status():
+    """Return current TR lock state so the frontend can warn before attempting."""
+    stale_cleared = _clear_stale_tr_if_needed()
+    locked = traceroute_lock.locked()
+    with _tr_pending_lock:
+        snap = _tr_state_snapshot_locked()
+    return jsonify({"locked": locked, "active": snap["active"],
+                    "remaining": snap["remaining"],
+                    "stale_cleared": stale_cleared,
+                    "node_id": snap["node_id"], "radio_id": snap["radio_id"]})
 
 
 @bp.route("/api/node/<node_id>/dm", methods=["POST"])

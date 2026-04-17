@@ -22,6 +22,7 @@ from state import (
     connections, connections_lock,
     pending_acks, pending_acks_lock,
     waypoints_cache, waypoints_lock,
+    _tr_pending, _tr_pending_lock,
 )
 
 log = logging.getLogger(__name__)
@@ -159,6 +160,27 @@ def on_text_receive(packet, interface):
                     node_out = dict(entry)
             push_to_sse(json.dumps({"type": "sense_response", "node": node_out,
                                     "radio_id": _radio_id_for_iface(interface)}))
+
+        # Signal pending traceroute if this is the awaited TRACEROUTE_APP response.
+        # This is the authoritative callback path — does not rely on per-request
+        # pub.subscribe/unsubscribe which can miss packets after the first TR.
+        if portnum == "TRACEROUTE_APP":
+            with _tr_pending_lock:
+                pend = _tr_pending
+                if (pend["done"] is not None and
+                        not pend["done"].is_set() and
+                        packet.get("fromId") == pend["node_id"]):
+                    _rid = _radio_id_for_iface(interface)
+                    if pend["radio_id"] is None or _rid == pend["radio_id"]:
+                        tr_data = decoded.get("traceroute", {}) or {}
+                        pend["result"].update({
+                            "route":      tr_data.get("route", []),
+                            "routeBack":  tr_data.get("routeBack", []),
+                            "snrTowards": tr_data.get("snrTowards", []),
+                            "snrBack":    tr_data.get("snrBack", []),
+                        })
+                        pend["done"].set()
+                        log.debug(f"[TR] done.set() for {pend['node_id']} via radio {_rid!r}")
 
         if portnum == "WAYPOINT_APP":
             try:

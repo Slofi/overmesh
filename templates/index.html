@@ -3004,6 +3004,7 @@
   let _accentColor                 = '#4ade80';  // JS-side accent for canvas/dynamic color refs
   let _accentFreshColor            = '#86efac';  // brighter accent for fresh (<30m) map markers
   let _activeTracerouteController  = null;
+  let _activeTracerouteStartedAt   = 0;
   let _activeTrPanel               = null;
   let _activeReplayIdx             = null;
   let _activeReplayPanel           = null;
@@ -3138,7 +3139,6 @@
         }
         chatChannel = 0;
         botInitDone = false;
-        if (_activeTracerouteController) { _activeTracerouteController.abort(); _activeTracerouteController = null; }
         _senseRunId = 0;
         _restoreSenseState(id);
       } else {
@@ -3279,6 +3279,7 @@
         return;
       }
       if (data.type === 'sense_response') {
+        if (data.node && data.radio_id) data.node.radio_id = data.radio_id;
         if (!data.radio_id || data.radio_id === activeRadioId) {
           senseAddNode(data.node);
           // Update map marker colour using the sense timestamp — reliable even after reconnect
@@ -3557,9 +3558,10 @@
 
   function openChatNodeActions(nodeId, nodeName) {
     const safeId = jsSafe(nodeId);
+    const nodeRadioId = (allNodes.find(n => n.id === nodeId) || {}).radio_id || activeRadioId || '';
     openModal(nodeName, `
       <div style="display:flex;flex-direction:column;gap:8px;padding:4px 0">
-        <button class="btn-primary" onclick="closeModal();doTraceroute('${safeId}','${jsSafe(nodeName)}')" title="Run traceroute to this node">Traceroute</button>
+        <button class="btn-primary" onclick="closeModal();doTraceroute('${safeId}','${jsSafe(nodeName)}','${jsSafe(nodeRadioId)}')" title="Run traceroute to this node">Traceroute</button>
         <button class="btn-primary" onclick="closeModal();doDM('${safeId}','${jsSafe(nodeName)}')" title="Send a direct message to this node">Direct Message</button>
         <button class="btn-primary" onclick="closeModal();doNodeInfo('${safeId}','${jsSafe(nodeName)}')" title="Request node info exchange">Node Info</button>
         <button class="btn-primary" onclick="closeModal();doReqPos('${safeId}','${jsSafe(nodeName)}')" title="Request GPS position from this node">Request Position</button>
@@ -3953,7 +3955,7 @@
         <td>${n.hops_away != null ? n.hops_away : '—'}</td>
         <td class="${lhClass(n.last_heard_ts)}">${escHtml(n.last_heard || '—')}</td>
         <td class="node-actions">
-          <button class="act-btn" title="Traceroute" onclick="doTraceroute('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">TR</button>
+          <button class="act-btn" title="Traceroute" onclick="doTraceroute('${jsSafe(n.id)}','${jsSafe(n.long_name)}','${jsSafe(n.radio_id || '')}')">TR</button>
           <button class="act-btn" title="Direct message" onclick="doDM('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">DM</button>
           <button class="act-btn" title="Request position" onclick="doReqPos('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Pos</button>
           <button class="act-btn" title="Exchange info" onclick="doNodeInfo('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Info</button>
@@ -4344,35 +4346,66 @@
     return setInterval(() => { elapsed++; updateFn(elapsed); }, 1000);
   }
 
-  async function doTraceroute(nodeId, nodeName) {
+  function _trBusyText(remaining) {
+    const sec = Math.max(1, parseInt(remaining, 10) || 30);
+    return `Traceroute is temporarily unavailable. A previous TR is still finishing; try again in about ${sec}s.`;
+  }
+
+  function _showTrBusy(bodyEl, remaining) {
+    const msg = _trBusyText(remaining);
+    const isMapPanel = !!bodyEl?.closest?.('.map-panel-body');
+    const clearAction = isMapPanel ? 'unlockTraceroutePanel(this, true)' : 'unlockTraceroute(true)';
+    const clearBtn = `<button class="btn" style="margin-top:10px" onclick="${clearAction}" title="Cancel the pending traceroute and release the OM TR lock">Clear TR lock</button>`;
+    showToast('Traceroute busy', escHtml(msg), 'node', 'traceroute-busy');
+    if (bodyEl) bodyEl.innerHTML = `<div class="modal-error" style="font-weight:600">${escHtml(msg)}</div>${clearBtn}`;
+  }
+
+  async function _trCanStart(bodyEl) {
+    if (_activeTracerouteController) {
+      const elapsed = Math.floor((Date.now() - _activeTracerouteStartedAt) / 1000);
+      _showTrBusy(bodyEl, Math.max(1, 30 - elapsed));
+      return false;
+    }
+    try {
+      const st = await fetch('/api/traceroute/status');
+      const sd = await st.json();
+      if (sd.locked || sd.active) {
+        _showTrBusy(bodyEl, sd.remaining || 30);
+        return false;
+      }
+    } catch(e) { /* proceed; the POST endpoint still enforces the lock */ }
+    return true;
+  }
+
+  async function doTraceroute(nodeId, nodeName, radioId = '') {
     openModal('Traceroute — ' + nodeName,
-      `<div class="modal-loading" id="tr-modal-status">Sending traceroute… 60s</div>`);
-    const controller = new AbortController();
+      `<div class="modal-loading" id="tr-modal-status">Checking…</div>`);
+    const modalBody = document.getElementById('modal-body');
+    if (!await _trCanStart(modalBody)) return;
+    document.getElementById('modal-body').innerHTML =
+      `<div class="modal-loading" id="tr-modal-status">Sending traceroute… 30s</div>`;
+    const controller = {};
     _activeTracerouteController = controller;
-    let timedOut = false;
+    _activeTracerouteStartedAt = Date.now();
     const timerId = trTimerStart(s => {
       const el = document.getElementById('tr-modal-status');
-      if (el) el.textContent = `Sending traceroute… ${60 - s}s`;
-      if (s >= 65) {
-        // Fallback: only abort if the backend hasn't responded after 65s (5s grace)
-        clearInterval(timerId);
-        timedOut = true;
-        controller.abort();
-        fetch('/api/traceroute/reset', {method:'POST'}).catch(()=>{});
-        if (el) el.textContent = 'Timed out — lock released.';
-      }
+      if (!el) return;
+      if (s <= 30) el.textContent = `Sending traceroute… ${30 - s}s`;
+      else el.textContent = 'Waiting for traceroute cleanup…';
     });
     try {
-      const r = await fetch(`/api/node/${encodeURIComponent(nodeId)}/traceroute`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({radio_id: activeRadioId}), signal: controller.signal});
+      const trRadioId = radioId || activeRadioId;
+      const r = await fetch(`/api/node/${encodeURIComponent(nodeId)}/traceroute`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({radio_id: trRadioId})});
       clearInterval(timerId);
-      if (timedOut) return;
       const d = await r.json();
       if (!r.ok) {
-        const unlockBtn = r.status === 429
-          ? `<button class="btn" style="margin-top:10px" onclick="unlockTraceroute()" title="Reset traceroute cooldown and allow another run immediately">Unlock TR</button>`
-          : '';
+        const isLocked = r.status === 429;
+        if (isLocked) {
+          _showTrBusy(document.getElementById('modal-body'), d.remaining || 30);
+          return;
+        }
         document.getElementById('modal-body').innerHTML =
-          `<div class="modal-error">${escHtml(d.error)}</div>${unlockBtn}`;
+          `<div class="modal-error">${escHtml(d.error)}</div>`;
         return;
       }
       // snrTowards[i] = SNR of link route[i]→route[i+1]
@@ -4392,19 +4425,29 @@
         <div class="tr-chain">${buildChain(d.routeBack, d.snrBack)}</div>`;
     } catch(e) {
       clearInterval(timerId);
-      if (timedOut) return;
       document.getElementById('modal-body').innerHTML =
         `<div class="modal-error">Request failed: ${escHtml(e.message)}</div>`;
     } finally {
       if (_activeTracerouteController === controller) _activeTracerouteController = null;
+      _activeTracerouteStartedAt = 0;
     }
   }
 
-  async function unlockTraceroute() {
+  async function unlockTraceroute(force = false) {
     document.getElementById('modal-body').innerHTML =
       '<div class="modal-loading">Releasing lock…</div>';
     try {
-      await fetch('/api/traceroute/reset', {method:'POST'});
+      const r = await fetch('/api/traceroute/reset', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({force})
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        document.getElementById('modal-body').innerHTML =
+          `<div class="modal-error">${escHtml(d.error || 'Traceroute is still running.')}</div>`;
+        return;
+      }
       document.getElementById('modal-body').innerHTML =
         '<div class="modal-success">Lock released. You can now send a new traceroute.</div>';
     } catch(e) {
@@ -4413,11 +4456,20 @@
     }
   }
 
-  async function unlockTraceroutePanel(btn) {
+  async function unlockTraceroutePanel(btn, force = false) {
     const body = btn.closest('.map-panel-body');
     if (body) body.innerHTML = '<div style="color:var(--muted);font-size:12px">Releasing lock…</div>';
     try {
-      await fetch('/api/traceroute/reset', {method:'POST'});
+      const r = await fetch('/api/traceroute/reset', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({force})
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        if (body) body.innerHTML = `<div class="modal-error">${escHtml(d.error || 'Traceroute is still running.')}</div>`;
+        return;
+      }
       // Also clear the frontend controller so the guard in openMapTR stops blocking
       _activeTracerouteController = null;
       if (body) body.innerHTML =
@@ -4842,7 +4894,7 @@
         const pt = _nodeLatLon(id);
         if (!pt) return;
         const snr = i < (snrs?.length || 0) ? snrs[i] : (i > 0 ? snrs?.[i - 1] : null);
-        _traceMapLines.push(L.circleMarker(pt, {radius: 5, color: '#111', fillColor: _snrLineColor(snr ?? null), fillOpacity: 1, weight: 1.5, interactive: false}).addTo(leafletMap));
+        _traceMapLines.push(L.circleMarker(pt, {radius: 6, color: '#111', fillColor: _snrLineColor(snr ?? null), fillOpacity: 1, weight: 1.5, interactive: false}).addTo(leafletMap));
       });
 
       // Draw segments between consecutive known-position nodes.
@@ -4866,7 +4918,7 @@
           const dashArr  = dashed ? '6,5' : (skipped > 0 ? '3,8' : null);
 
           // Shadow
-          _traceMapLines.push(L.polyline([p1, pos], {color: '#111', weight: weight + 4, opacity: 0.2, lineCap: 'round', interactive: false}).addTo(leafletMap));
+          _traceMapLines.push(L.polyline([p1, pos], {color: '#111', weight: weight + 3, opacity: 0.4, lineCap: 'round', interactive: false}).addTo(leafletMap));
 
           const seg = L.polyline([p1, pos], {color, weight, opacity, dashArray: dashArr, lineCap: 'round'});
 
@@ -4886,13 +4938,19 @@
           seg.addTo(leafletMap);
           _traceMapLines.push(seg);
 
-          // Arrowhead at midpoint — shows direction of travel (p1 → pos)
-          const mid = [(p1[0] + pos[0]) / 2, (p1[1] + pos[1]) / 2];
-          const bearing = _mcBearing(p1, pos);
-          const arrowOpacity = skipped > 0 ? 0.45 : opacity;
-          const arrowHtml = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="-8 -8 16 16" style="overflow:visible;opacity:${arrowOpacity}"><polygon points="0,-7 5,4 0,1 -5,4" fill="${color}" stroke="#111" stroke-width="1.5" stroke-linejoin="round" transform="rotate(${bearing})"/></svg>`;
-          const arrowIcon = L.divIcon({ html: arrowHtml, iconSize: [16, 16], iconAnchor: [8, 8], className: '' });
-          _traceMapLines.push(L.marker(mid, { icon: arrowIcon, interactive: false }).addTo(leafletMap));
+          // Wing markers — same style as MC paths
+          const wingArm = _mcWingArm('trace');
+          const wCount  = _mcWingCount(p1, pos);
+          const wingOpacity = skipped > 0 ? 0.45 : 1.0;
+          Array.from({length: wCount}, (_, idx) => (idx + 1) / (wCount + 1)).forEach(t => {
+            const wingPts = _mcWingLatLngs(p1, pos, t, wingArm);
+            if (wingPts.length === 3) {
+              _traceMapLines.push(L.polyline(wingPts, {
+                color, weight: skipped > 0 ? 2 : 4, opacity: wingOpacity,
+                dashArray: null, lineCap: 'round', lineJoin: 'round', interactive: false
+              }).addTo(leafletMap));
+            }
+          });
         }
         prevKnown = { idx: j, pos };
       }
@@ -7577,47 +7635,42 @@
   }
 
   // ── Map Traceroute overlay ─────────────────────────────────────────────────
-  async function openMapTR(nodeId, nodeName) {
+  async function openMapTR(nodeId, nodeName, radioId = '') {
     // Close any existing TR panel (removes stale panel from DOM; old fetch continues silently)
     if (_activeTrPanel) { _activeTrPanel.remove(); _activeTrPanel = null; }
-    // Don't stack TRs — if a fetch is already in flight, show message instead
-    if (_activeTracerouteController) {
-      const { panel, body } = _openMapPanel('TR · ' + nodeName);
-      _activeTrPanel = panel;
-      body.innerHTML = `<div class="modal-error">TR already in progress.</div><button class="btn" style="margin-top:10px" onclick="unlockTraceroutePanel(this)">Unlock TR</button>`;
-      return;
-    }
     const { panel, body } = _openMapPanel('TR · ' + nodeName);
     _activeTrPanel = panel;
     // Clear _activeTrPanel when user manually closes the panel
     const _trCloseBtn = panel.querySelector('.map-tr-close');
-    if (_trCloseBtn) { const _orig = _trCloseBtn.onclick; _trCloseBtn.onclick = () => { _activeTrPanel = null; _orig && _orig(); }; }
-    body.innerHTML = '<div style="color:var(--muted);font-size:12px" class="tr-status">Sending traceroute… 60s</div>';
-    const controller = new AbortController();
+    if (_trCloseBtn) { const _orig = _trCloseBtn.onclick; _trCloseBtn.onclick = () => {
+      _activeTrPanel = null;
+      _clearTraceLines();
+      _orig && _orig();
+    }; }
+    if (!await _trCanStart(body)) return;
+
+    body.innerHTML = '<div style="color:var(--muted);font-size:12px" class="tr-status">Sending traceroute… 30s</div>';
+    const controller = {};
     _activeTracerouteController = controller;
-    let timedOut = false;
+    _activeTracerouteStartedAt = Date.now();
     const timerId = trTimerStart(s => {
       const el = body.querySelector('.tr-status');
-      if (el) el.textContent = `Sending traceroute… ${60 - s}s`;
-      if (s >= 65) {
-        // Fallback: only abort if the backend hasn't responded after 65s (5s grace)
-        clearInterval(timerId);
-        timedOut = true;
-        controller.abort();
-        fetch('/api/traceroute/reset', {method:'POST'}).catch(()=>{});
-        if (el) el.textContent = 'Timed out — lock released.';
-      }
+      if (!el) return;
+      if (s <= 30) el.textContent = `Sending traceroute… ${30 - s}s`;
+      else el.textContent = 'Waiting for traceroute cleanup…';
     });
     try {
-      const r = await fetch(`/api/node/${encodeURIComponent(nodeId)}/traceroute`, { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({radio_id: activeRadioId}), signal: controller.signal });
+      const trRadioId = radioId || activeRadioId;
+      const r = await fetch(`/api/node/${encodeURIComponent(nodeId)}/traceroute`, { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({radio_id: trRadioId}) });
       clearInterval(timerId);
-      if (timedOut) return;
       const d = await r.json();
       if (!r.ok) {
-        const unlockBtn = r.status === 429
-          ? `<button class="btn" style="margin-top:10px" onclick="unlockTraceroutePanel(this)">Unlock TR</button>`
-          : '';
-        body.innerHTML = `<div class="modal-error">${escHtml(d.error)}</div>${unlockBtn}`;
+        const isLocked = r.status === 429;
+        if (isLocked) {
+          _showTrBusy(body, d.remaining || 30);
+          return;
+        }
+        body.innerHTML = `<div class="modal-error">${escHtml(d.error)}</div>`;
         return;
       }
       const buildChain = (nodes, snrs) => nodes.map((node, i) => {
@@ -7641,10 +7694,10 @@
       if (_showTrMap) _drawTraceRouteOnMap(d);
     } catch(e) {
       clearInterval(timerId);
-      if (timedOut) return;
       body.innerHTML = `<div class="modal-error">Request failed: ${escHtml(e.message)}</div>`;
     } finally {
       if (_activeTracerouteController === controller) _activeTracerouteController = null;
+      _activeTracerouteStartedAt = 0;
       // NOTE: _activeTrPanel is intentionally NOT cleared here — it stays set so the next
       // openMapTR call removes the old panel (result, error, or timeout) before creating a new one.
       // It is only nulled when the user manually closes the panel (✕ button).
@@ -7986,7 +8039,7 @@
       <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
         <button class="map-popup-btn" title="Show in Nodes list" onclick="showNodeInList('${jsSafe(n.id)}')">List</button>
         ${!n.is_local ? `<button class="map-popup-btn" title="Send direct message" onclick="openMapDM('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">DM</button>` : ''}
-        ${!n.is_local ? `<button class="map-popup-btn" title="Traceroute to this node" onclick="openMapTR('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">TR</button>` : ''}
+        ${!n.is_local ? `<button class="map-popup-btn" title="Traceroute to this node" onclick="openMapTR('${jsSafe(n.id)}','${jsSafe(n.long_name)}','${jsSafe(n.radio_id || '')}')">TR</button>` : ''}
         ${!n.is_local ? `<button class="map-popup-btn" title="Set position" onclick="openMapPos('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Pos</button>` : ''}
         ${!n.is_local ? `<button class="map-popup-btn" title="Node info &amp; settings" onclick="openMapInfo('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Info</button>` : ''}
         <button class="map-popup-btn" title="GPS movement trail" onclick="openGpsTrail('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Trail</button>
@@ -8073,7 +8126,7 @@
                 <div style="display:flex;gap:4px;flex-wrap:wrap">
                   <button class="map-popup-btn" title="Show in Nodes list" onclick="showNodeInList('${jsSafe(x.id)}')">List</button>
                   ${!x.is_local ? `<button class="map-popup-btn" title="Send direct message" onclick="openMapDM('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">DM</button>` : ''}
-                  ${!x.is_local ? `<button class="map-popup-btn" title="Traceroute to this node" onclick="openMapTR('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">TR</button>` : ''}
+                  ${!x.is_local ? `<button class="map-popup-btn" title="Traceroute to this node" onclick="openMapTR('${jsSafe(x.id)}','${jsSafe(x.long_name)}','${jsSafe(x.radio_id || '')}')">TR</button>` : ''}
                   ${!x.is_local ? `<button class="map-popup-btn" title="Node info &amp; settings" onclick="openMapInfo('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">Info</button>` : ''}
                   <button class="map-popup-btn" title="GPS movement trail" onclick="openGpsTrail('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">Trail</button>
                 </div>
@@ -8105,7 +8158,7 @@
               <div style="display:flex;gap:4px;flex-wrap:wrap">
                 <button class="map-popup-btn" title="Show in Nodes list" onclick="showNodeInList('${jsSafe(x.id)}')">List</button>
                 ${!x.is_local ? `<button class="map-popup-btn" title="Send direct message" onclick="openMapDM('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">DM</button>` : ''}
-                ${!x.is_local ? `<button class="map-popup-btn" title="Traceroute to this node" onclick="openMapTR('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">TR</button>` : ''}
+                ${!x.is_local ? `<button class="map-popup-btn" title="Traceroute to this node" onclick="openMapTR('${jsSafe(x.id)}','${jsSafe(x.long_name)}','${jsSafe(x.radio_id || '')}')">TR</button>` : ''}
                 ${!x.is_local ? `<button class="map-popup-btn" title="Node info &amp; settings" onclick="openMapInfo('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">Info</button>` : ''}
               </div>
             </div>`).join('')}`;
@@ -9963,7 +10016,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
             <button class="mc-route-hop-btn" title="Remove hop" ${saving ? 'disabled' : ''} onclick="mcRouteRemoveHop(${idx})">&#10005;</button>
           </div>`;
         }).join('')}</div>`
-      : `<div class="mc-route-summary" style="margin-top:10px">No repeaters selected. Save now to force direct delivery only, or use <b>Clear path</b> to return to automatic routing.</div>`;
+      : `<div class="mc-route-summary" style="margin-top:10px">No repeaters selected. Click <b>Set Direct Only</b> to force direct delivery, or <b>Clear path</b> to use automatic/flood routing.</div>`;
 
     const candidates = _mcRouteCandidateList(radioId, contactId, query)
       .filter(c => !selected.some(prefix => (c.full_key || c.id || '').toLowerCase().startsWith(String(prefix).toLowerCase())))
@@ -10002,7 +10055,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       ${statusHtml}
       <div class="mc-route-actions">
         <button class="btn" ${saving ? 'disabled' : ''} onclick="saveMcRouteEditor(true)">Clear path</button>
-        <button class="btn btn-net-mc active" ${saving ? 'disabled' : ''} onclick="saveMcRouteEditor(false)">${saving ? 'Saving…' : 'Save route'}</button>
+        <button class="btn btn-net-mc active" ${saving ? 'disabled' : ''} onclick="saveMcRouteEditor(false)">${saving ? 'Saving…' : selected.length === 0 ? 'Set Direct Only' : 'Save route'}</button>
       </div>`;
   }
 
@@ -12736,7 +12789,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         `<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
           <button class="map-popup-btn" title="Show in Nodes list" onclick="showNodeInList('${jsSafe(n.from_id)}')">List</button>
           <button class="map-popup-btn" title="Send direct message" onclick="openMapDM('${jsSafe(n.from_id)}','${safeName}')">DM</button>
-          <button class="map-popup-btn" title="Traceroute to this node" onclick="openMapTR('${jsSafe(n.from_id)}','${safeName}')">TR</button>
+          <button class="map-popup-btn" title="Traceroute to this node" onclick="openMapTR('${jsSafe(n.from_id)}','${safeName}','${jsSafe(n.radio_id || activeRadioId || '')}')">TR</button>
           <button class="map-popup-btn" title="Set position" onclick="openMapPos('${jsSafe(n.from_id)}','${safeName}')">Pos</button>
           <button class="map-popup-btn" title="Node info &amp; settings" onclick="openMapInfo('${jsSafe(n.from_id)}','${safeName}')">Info</button>
         </div>`,

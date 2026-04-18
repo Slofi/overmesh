@@ -4081,8 +4081,10 @@ if (targetEl) {
         const sname  = escHtml((c.short_name || '?').slice(0,4).toUpperCase());
         const path   = (c.out_path_len != null && c.out_path_len >= 0) ? c.out_path_len : '—';
         const last   = c.last_heard_ts ? senseTimeAgo(c.last_heard_ts) : escHtml(c.last_seen || '—');
-        const rname  = escHtml(mcLastStatus[c._rid]?.name || mcLastStatus[c._rid]?.node_name || c._rid || '');
-        const meta   = escHtml(`${mcTypeLabel(c.type ?? 0)}${rname ? ` · ${rname}` : ''}`);
+        const shortKey = (c.full_key || c.id || '').slice(0, 12);
+        const connectedRadios = Object.values(mcLastStatus).filter(s => s?.status === 'connected').length;
+        const metaRadio = connectedRadios > 1 ? (mcLastStatus[c._rid]?.name || mcLastStatus[c._rid]?.node_name || '') : '';
+        const meta   = escHtml([shortKey, metaRadio].filter(Boolean).join(' · '));
         const pk     = jsSafe(c.full_key || c.id || '');
         const rid    = jsSafe(c._rid);
         const lat    = c.latitude ?? c.lat;
@@ -4110,7 +4112,7 @@ if (targetEl) {
               : `<button class="act-btn" title="No coordinates available" style="opacity:0.35;cursor:default" disabled>Map</button>`}
             <button class="act-btn" title="Ping this node (request status)" onclick="doMcPing('${pk}','${rid}','${jsSafe(c.long_name||'')}')">Ping</button>
           </td>
-          <td>${rname}</td>
+          <td>${escHtml(mcLastStatus[c._rid]?.name || mcLastStatus[c._rid]?.node_name || '')}</td>
           <td style="display:flex;gap:8px;align-items:center">
             ${isIgnored
               ? `<span class="unignore-btn" onclick="ignoreMcContact('${jsSafe(cid)}',true)" title="Unignore">&#128683;</span>`
@@ -4228,8 +4230,10 @@ if (targetEl) {
         const sname     = escHtml((c.short_name || '?').slice(0,4).toUpperCase());
         const path      = (c.out_path_len != null && c.out_path_len >= 0) ? c.out_path_len : '—';
         const last      = c.last_heard_ts ? senseTimeAgo(c.last_heard_ts) : escHtml(c.last_seen || '—');
-        const rname     = escHtml(mcLastStatus[c._rid]?.name || mcLastStatus[c._rid]?.node_name || c._rid || '');
-        const meta      = escHtml(`${mcTypeLabel(c.type ?? 0)}${rname ? ` · ${rname}` : ''}`);
+        const shortKey2  = (c.full_key || c.id || '').slice(0, 12);
+        const connRads2  = Object.values(mcLastStatus).filter(s => s?.status === 'connected').length;
+        const metaRad2   = connRads2 > 1 ? (mcLastStatus[c._rid]?.name || mcLastStatus[c._rid]?.node_name || '') : '';
+        const meta       = escHtml([shortKey2, metaRad2].filter(Boolean).join(' · '));
         const pk        = jsSafe(c.full_key || c.id || '');
         const rid       = jsSafe(c._rid);
         return `<tr class="${isFav ? 'is-favorite' : ''}${isIgnored ? ' is-ignored' : ''}">
@@ -8082,6 +8086,12 @@ if (targetEl) {
     return `${Number(lat).toFixed(4)}_${Number(lon).toFixed(4)}`;
   }
 
+  // MC uses a ~55m grid for proximity clustering (0.0005° ≈ 55m latitude)
+  function _mcMapPosKey(lat, lon) {
+    const g = 0.0005;
+    return `${(Math.round(Number(lat) / g) * g).toFixed(4)}_${(Math.round(Number(lon) / g) * g).toFixed(4)}`;
+  }
+
   function markerColor(node) {
     if (node.is_local) return '#3b82f6';   // blue — local node
     if (!node.last_heard_ts) return '#6e7681';
@@ -9975,11 +9985,14 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
 
   // -- MC map markers --
   function mcTypeBadge(type) {
-    // MeshCore contact types: 0=NONE, 1=CLI, 2=REP, 3=ROOM, 4=SENS
-    if (type === 2) return '<span style="font-size:10px;font-weight:600;background:rgba(34,197,94,0.15);color:#22c55e;border:1px solid rgba(34,197,94,0.35);border-radius:3px;padding:1px 4px;margin-left:4px">RPT</span>';
-    if (type === 3) return '<span style="font-size:10px;font-weight:600;background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.35);border-radius:3px;padding:1px 4px;margin-left:4px">Room</span>';
-    if (type === 4) return '<span style="font-size:10px;font-weight:600;background:rgba(139,92,246,0.15);color:#8b5cf6;border:1px solid rgba(139,92,246,0.35);border-radius:3px;padding:1px 4px;margin-left:4px">Sens</span>';
-    return ''; // 0=NONE, 1=CLI — no badge for normal companion nodes
+    // MeshCore contact types: 0=NONE, 1=CLI/Companion, 2=REP/Repeater, 3=ROOM, 4=SENS
+    const b = (label, bg, color, border) =>
+      `<span style="font-size:10px;font-weight:600;background:${bg};color:${color};border:1px solid ${border};border-radius:3px;padding:1px 4px;margin-left:4px">${label}</span>`;
+    if (type === 1) return b('Node', 'rgba(100,116,139,0.15)', '#94a3b8', 'rgba(100,116,139,0.35)');
+    if (type === 2) return b('RPT',  'rgba(34,197,94,0.15)',   '#22c55e', 'rgba(34,197,94,0.35)');
+    if (type === 3) return b('Room', 'rgba(245,158,11,0.15)',  '#f59e0b', 'rgba(245,158,11,0.35)');
+    if (type === 4) return b('Sens', 'rgba(139,92,246,0.15)',  '#8b5cf6', 'rgba(139,92,246,0.35)');
+    return ''; // type 0 = unknown/not yet reported
   }
 
   function mcTypeLabel(type) {
@@ -10324,20 +10337,22 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
 
     const groups = {};
     items.forEach(item => {
-      const key = _mapPosKey(item.latitude, item.longitude);
+      const key = _mcMapPosKey(item.latitude, item.longitude);
       (groups[key] = groups[key] || []).push(item);
     });
 
     items.forEach(item => {
-      const key = _mapPosKey(item.latitude, item.longitude);
+      const key = _mcMapPosKey(item.latitude, item.longitude);
       const group = groups[key] || [item];
       if (group.length > 1) {
         if (mcClusterMarkers[key]) return;
-        const marker = L.marker([item.latitude, item.longitude], {
+        const clat = group.reduce((s, x) => s + x.latitude, 0) / group.length;
+        const clon = group.reduce((s, x) => s + x.longitude, 0) / group.length;
+        const marker = L.marker([clat, clon], {
           icon: _mcClusterIcon(group.length, group.some(entry => entry._kind === 'radio'))
         });
         marker._omClusterItems = group;
-        marker.bindPopup(_mcClusterPopupHtml(group, item.latitude, item.longitude), { className: 'om-popup', maxWidth: 280, maxHeight: 400 });
+        marker.bindPopup(_mcClusterPopupHtml(group, clat, clon), { className: 'om-popup', maxWidth: 280, maxHeight: 400 });
         marker.bindTooltip(`${group.length} nodes`, { permanent: true, direction: 'right', className: 'map-label', offset: [8, 0] });
         marker.addTo(leafletMap);
         if (!mapLabels) marker.closeTooltip();

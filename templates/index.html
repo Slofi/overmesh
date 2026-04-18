@@ -810,8 +810,51 @@
       padding: 8px 12px; border-radius: 8px;
       font-size: 13px; word-break: break-word; line-height: 1.4;
     }
-    .chat-msg.sent .msg-bubble     { background: var(--accent-dim); border: 1px solid var(--accent); color: var(--accent-text); }
-    .chat-msg.received .msg-bubble { background: var(--bg3); border: 1px solid var(--border); color: var(--text); }
+    .chat-msg.sent .msg-bubble     { background: var(--accent-dim); border: 1px solid var(--accent); color: var(--accent-text); border-radius: 12px 12px 4px 12px; }
+    .chat-msg.received .msg-bubble { background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: 12px 12px 12px 4px; }
+    .emoji-chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      background: var(--bg3); border: 1px solid var(--border);
+      border-radius: 12px; padding: 2px 8px;
+      font-size: 18px; line-height: 1.4; cursor: default;
+    }
+    .emoji-chip .emoji-label { font-size: 10px; color: var(--muted); }
+    .msg-reactions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+    .msg-reactions .emoji-chip { font-size: 16px; padding: 1px 6px; }
+    .emoji-btn {
+      background: none; border: none; cursor: pointer; font-size: 18px;
+      padding: 2px 6px; border-radius: 6px; line-height: 1; flex-shrink: 0;
+      color: var(--muted); transition: background 0.15s;
+    }
+    .emoji-btn:hover { background: var(--bg3); color: var(--text); }
+    .emoji-picker {
+      position: fixed; z-index: 9999; width: 320px; max-height: 380px;
+      background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+      padding: 10px; box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .emoji-search {
+      width: 100%; box-sizing: border-box; background: var(--bg3);
+      border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px;
+      color: var(--text); font-size: 13px; outline: none; font-family: inherit;
+    }
+    .emoji-search:focus { border-color: var(--accent); }
+    .emoji-cat-tabs { display: flex; gap: 2px; flex-shrink: 0; overflow-x: auto; }
+    .emoji-cat-tab {
+      background: none; border: none; font-size: 18px; cursor: pointer;
+      padding: 3px 7px; border-radius: 6px; opacity: 0.5; flex-shrink: 0;
+    }
+    .emoji-cat-tab:hover { opacity: 0.85; background: var(--bg3); }
+    .emoji-cat-tab.active { opacity: 1; background: var(--bg3); }
+    .emoji-grid {
+      display: grid; grid-template-columns: repeat(8, 1fr);
+      gap: 1px; overflow-y: auto; flex: 1;
+    }
+    .emoji-item {
+      font-size: 22px; cursor: pointer; text-align: center; padding: 4px 2px;
+      border-radius: 6px; line-height: 1.3;
+    }
+    .emoji-item:hover { background: var(--bg3); }
     .msg-dm-badge {
       font-size: 10px; background: var(--yellow); color: #000;
       padding: 1px 5px; border-radius: 3px; margin-left: 4px; vertical-align: middle;
@@ -1539,6 +1582,7 @@
       <div class="chat-input-bar">
         <input type="text" id="chat-input" placeholder="Message..." maxlength="200"
                onkeydown="if(event.key==='Enter')sendChat()">
+        <button class="emoji-btn" onclick="toggleEmojiPicker('chat-input',this)" title="Emoji">😊</button>
         <button class="dm-send" onclick="sendChat()" title="Send message">Send</button>
       </div>
     </div>
@@ -1552,6 +1596,7 @@
       <div class="chat-input-bar">
         <input type="text" id="mc-chat-input" placeholder="Public channel…" maxlength="200"
                onkeydown="if(event.key==='Enter')sendMcChan()">
+        <button class="emoji-btn" onclick="toggleEmojiPicker('mc-chat-input',this)" title="Emoji">😊</button>
         <button class="dm-send" onclick="sendMcChan()" title="Send message to active MC channel">Send</button>
         <button class="btn btn-net-mc network-accent-mc" style="font-size:12px;padding:4px 10px;flex-shrink:0" onclick="mcSendAdvert()" title="Flood-advertise — announces this node to the MeshCore network">Advert</button>
       </div>
@@ -3531,7 +3576,16 @@
       const meta = `<span class="mt-msg-tag" style="background:rgba(167,139,250,0.18);color:#a78bfa;border-color:rgba(167,139,250,0.4)">Bot</span>${radioPart}→ ${escHtml(target)} · ${t}`;
       const el = document.createElement('div');
       el.className = 'chat-msg received';
+      if (m.pkt_id) el.dataset.pktId = m.pkt_id;
       el.innerHTML = `<div class="msg-meta">${meta}</div><div class="msg-bubble" style="background:rgba(167,139,250,0.15);border:1px solid rgba(167,139,250,0.3)">${escHtml(m.text)}</div>`;
+      return el;
+    }
+    // Emoji reaction — fallback standalone render (used only when target message not found in DOM)
+    if (m.is_emoji) {
+      const sender = m.sent ? 'You' : escHtml(m.from_name || m.from_id);
+      const el = document.createElement('div');
+      el.className = 'chat-msg received';
+      el.innerHTML = `<div class="msg-meta"><span class="mt-msg-tag">MT</span>${radioPart}${sender} · ${t}${snrStr}</div><div class="emoji-chip">${escHtml(m.text)}<span class="emoji-label">reaction</span></div>`;
       return el;
     }
     let meta;
@@ -3552,6 +3606,7 @@
       : '';
     const el = document.createElement('div');
     el.className = `chat-msg ${m.sent ? 'sent' : 'received'}`;
+    if (m.pkt_id) el.dataset.pktId = m.pkt_id;
     el.innerHTML = `<div class="msg-meta">${meta}${replyBtn}</div><div class="msg-bubble">${escHtml(m.text)}</div>${statusHtml}`;
     return el;
   }
@@ -3585,6 +3640,14 @@
     const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
     const pad = n => String(n).padStart(2,'0');
     filtered.forEach(m => {
+      // Emoji reaction — try to attach to the original message element
+      if (m.is_emoji && m.reply_pkt_id) {
+        const targetEl = container.querySelector(`[data-pkt-id="${m.reply_pkt_id}"]`);
+        if (targetEl) {
+          _attachReactionChip(targetEl, m);
+          return;
+        }
+      }
       const d = new Date(m.ts * 1000);
       const dayKey = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
       if (dayKey !== lastDay) {
@@ -3604,11 +3667,33 @@
     container.scrollTop = container.scrollHeight;
   }
 
+  function _attachReactionChip(targetEl, m) {
+    let reactions = targetEl.querySelector('.msg-reactions');
+    if (!reactions) {
+      reactions = document.createElement('div');
+      reactions.className = 'msg-reactions';
+      targetEl.appendChild(reactions);
+    }
+    const chip = document.createElement('span');
+    chip.className = 'emoji-chip';
+    chip.title = `${m.from_name || m.from_id || ''} reacted`;
+    chip.textContent = m.text;
+    reactions.appendChild(chip);
+  }
+
   function appendMessage(m) {
     const container = document.getElementById('chat-messages');
     const empty = container.querySelector('.chat-empty');
     if (empty) empty.remove();
     const wasAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 40;
+    // Emoji reaction — try to attach to original message
+    if (m.is_emoji && m.reply_pkt_id) {
+      const targetEl = container.querySelector(`[data-pkt-id="${m.reply_pkt_id}"]`);
+if (targetEl) {
+        _attachReactionChip(targetEl, m);
+        return;
+      }
+    }
     container.appendChild(buildMsgEl(m));
     if (wasAtBottom) container.scrollTop = container.scrollHeight;
   }
@@ -14376,6 +14461,120 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     _cpH=Math.round(y*360);
     _cpickerUpdateFromHsv();
   }
+
+  // ── Emoji Picker ──────────────────────────────────────────────────────────
+  const _EC = {
+    '😊':['😀','😃','😄','😁','😆','😅','😂','🤣','😊','😇','🙂','🙃','😉','😌','😍','🥰','😘','😗','😙','😚','😋','😛','😝','😜','🤪','🤨','🧐','🤓','😎','🤩','🥳','😏','😒','😞','😔','😟','😕','🙁','☹️','😣','😖','😫','😩','🥺','😢','😭','😤','😠','😡','🤬','😈','👿','💀','☠️','💩','🤡','👹','👺','👻','👽','👾','🤖','😺','😸','😹','😻','😼','😽','🙀','😿','😾'],
+    '👋':['👋','🤚','🖐️','✋','🖖','👌','🤌','🤏','✌️','🤞','🤟','🤘','🤙','👈','👉','👆','🖕','👇','☝️','👍','👎','✊','👊','🤛','🤜','👏','🙌','👐','🤲','🤝','🙏','✍️','💅','💪','🫶','🧑','👦','👧','👨','👩','🧓','👴','👵','👶','🧒','👫','👬','👭','👨‍👩‍👦','👨‍👩‍👧','💆','💇','🚶','🏃','💃','🕺','🧘','🧗','🤸','⛹️','🏋️','🤼','🤾','🤺','🏊','🚴','🛀'],
+    '🐶':['🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🙈','🙉','🙊','🐒','🦆','🐧','🦅','🦉','🦇','🐺','🐴','🦄','🐝','🦋','🐌','🐞','🐜','🦟','🦗','🦂','🐢','🐍','🦎','🐙','🦑','🦐','🦞','🦀','🐡','🐠','🐟','🐬','🐳','🦈','🦭','🐊','🦒','🦘','🦏','🐘','🦛','🦍','🦧','🦮','🐕','🐩','🐈','🐓','🦚','🦜','🦢','🦩','🕊️','🐇','🦝','🦨','🦡','🦦','🦥','🐁','🐀','🐿️','🦔'],
+    '🍕':['🍎','🍊','🍋','🍇','🍓','🫐','🍒','🍑','🥭','🍍','🥥','🥝','🍅','🍆','🥑','🥦','🥬','🥒','🌶️','🌽','🥕','🧅','🧄','🥔','🍠','🥐','🥖','🍞','🧀','🥚','🍳','🧈','🥞','🧇','🥓','🥩','🍗','🍖','🌭','🍔','🍟','🍕','🌮','🌯','🥙','🧆','🍜','🍝','🍲','🍛','🍣','🍱','🥟','🦪','🍤','🍙','🍚','🍘','🧁','🍰','🎂','🍮','🍭','🍬','🍫','🍿','🍩','🍪','🌰','🥜','🍯','🧃','🥤','🧋','☕','🍵','🧉','🍺','🍻','🥂','🍷','🥃','🍸','🍹','🧊','🥄','🍴','🫙'],
+    '✈️':['🚗','🚕','🚙','🚌','🏎️','🚓','🚑','🚒','🚜','🏍️','🛵','🚲','🛴','🛹','🛼','🚁','🛸','🚀','✈️','🛩️','🚂','🚃','⛵','🚢','🛥️','⛽','🏠','🏡','🏢','🏥','🏦','🏨','🏪','🏫','🏬','🏭','🏯','🏰','🗼','🗽','⛩️','🌁','🌃','🌆','🌇','🌉','🌌','⛲','⛺','🏕️','🏖️','🏗️','🏝️','🏜️','🌎','🌍','🌏','🗾','🌋','⛰️','🏔️','🧭','🌅','🌄','🌠','🗺️'],
+    '⚽':['⚽','🏀','🏈','⚾','🥎','🏐','🏉','🎾','🥏','🎱','🏓','🏸','⛳','🎣','🤿','🎿','🛷','🥌','🎯','🎮','🕹️','🎲','♟️','🎭','🎨','🖌️','🎬','🎤','🎧','🎼','🎵','🎶','🎷','🎸','🎹','🎺','🎻','🥁','🪘','🎪','🎠','🎡','🎢','🎟️','🎫','🏆','🥇','🥈','🥉','🏅','🎗️','🎖️','🚵','🏇','🤸','🏋️','⛹️','🤺','🏊','🚴','🧗','🤼','🤾','🧘'],
+    '💡':['📱','💻','🖥️','🖨️','⌨️','🖱️','💾','💿','📀','📷','📸','📹','🎥','📞','☎️','📺','📻','⏱️','⏰','⌚','📡','🔋','🔌','💡','🔦','🕯️','💰','💳','💎','⚖️','🔧','🪛','🔨','⚒️','🛠️','🔩','🧲','🔐','🔑','🗝️','🧳','🧰','🪣','🚪','📦','📫','✏️','✒️','📝','📁','📂','📋','📌','📍','📎','✂️','🔒','🔓','🧪','🔬','🔭','💊','🩺','🩹','🧬','🏥','💉','🩸','🧫','⚗️','🪄','🎩','🪞','🛏️','🛋️','🚿','🛁','🪥','🧴','🪒','🧹','🧺','🧻','🧼'],
+    '❤️':['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💟','✅','❌','⭕','🛑','⚠️','🔰','♻️','💯','🔥','💧','⚡','🌊','✨','💫','⭐','🌟','🌈','☀️','🌙','❄️','🎉','🎊','🎈','🎁','🏳️','🏴','🚩','🏁','🚫','⛔','❓','❗','💬','💭','🔔','🔕','📣','📢','🔇','🔈','🔉','🔊','▶️','⏸️','⏹️','⏺️','⏭️','⏮️','🔀','🔁','🔂','🆕','🆓','🆒','🆙','🆗','🆖','🅰️','🅱️','🆎','🆑','🅾️','🆘','⛔','🚷','🚯','🚳','🚱'],
+  };
+
+  const _emojiKw = {
+    '😀':'grin happy smile laugh','😂':'laugh cry lol funny','😊':'smile happy blush','😍':'love heart eyes','😭':'sob cry sad','😤':'triumph angry','😎':'cool sunglasses','🥺':'pleading puppy eyes','🤔':'thinking hmm','😴':'sleep tired zzz','🤗':'hug happy','😱':'scream shocked','🤣':'rofl laugh rolling','😘':'kiss love','😏':'smirk','😢':'cry sad tear','😡':'angry mad rage','🤯':'mind blown explode','😷':'mask sick ill','🤒':'sick fever ill','😇':'angel halo','🥰':'love smiling hearts','🤩':'star struck wow','😤':'angry frustrated','😬':'grimace nervous','🙈':'see no evil monkey','🙉':'hear no evil','🙊':'speak no evil',
+    '👍':'thumbs up good yes ok','👎':'thumbs down no bad','👋':'wave hello hi bye','🙏':'pray thanks please','💪':'muscle strong flex','👏':'clap applause','🤝':'handshake deal','✌️':'peace victory','👌':'ok perfect','🤞':'fingers crossed luck','🫶':'heart hands love','🤙':'shaka call me','👈':'point left','👉':'point right','👆':'point up','👇':'point down',
+    '🐶':'dog puppy','🐱':'cat kitten','🐭':'mouse','🐹':'hamster','🐰':'rabbit bunny','🦊':'fox','🐻':'bear','🐼':'panda','🐯':'tiger','🦁':'lion','🐮':'cow','🐷':'pig','🐸':'frog','🐵':'monkey','🦆':'duck','🐧':'penguin','🦅':'eagle','🦋':'butterfly','🐌':'snail','🐝':'bee','🐢':'turtle','🐍':'snake','🐙':'octopus','🐬':'dolphin','🐳':'whale','🦈':'shark','🐊':'crocodile','🦒':'giraffe','🐘':'elephant',
+    '🍎':'apple red fruit','🍊':'orange fruit','🍋':'lemon yellow','🍇':'grapes purple','🍓':'strawberry red','🍕':'pizza food','🍔':'burger hamburger','🍟':'fries chips','🌮':'taco mexican','🍣':'sushi japanese','🍺':'beer drink alcohol','🍷':'wine drink','☕':'coffee hot drink','🍵':'tea hot','🧋':'bubble tea boba','🍰':'cake slice sweet','🎂':'birthday cake','🍩':'donut sweet','🍪':'cookie sweet','🍫':'chocolate','🍬':'candy sweet',
+    '🚗':'car vehicle','🚀':'rocket space','✈️':'airplane fly travel','🚂':'train','⛵':'sailboat','🏠':'house home','🏰':'castle','🌎':'earth world globe','🌍':'earth world europe','🌋':'volcano','⛺':'tent camping','🗺️':'map',
+    '⚽':'soccer ball sport','🏀':'basketball sport','🏈':'football sport','🎮':'game controller','🎲':'dice game','🎵':'music note','🎶':'music notes','🎸':'guitar music','🎹':'piano keyboard music','🎤':'microphone sing','🏆':'trophy win champion','🥇':'gold medal first','🎉':'party celebration','🎊':'confetti party','🎈':'balloon party',
+    '💡':'light idea bulb','📱':'phone mobile','💻':'laptop computer','📷':'camera photo','⌚':'watch clock time','🔑':'key','🔒':'lock secure','🔧':'wrench tool','📝':'memo note write','📦':'box package','✂️':'scissors cut',
+    '❤️':'heart love red','💔':'broken heart','💯':'hundred percent perfect','🔥':'fire hot flame','💧':'water drop','⚡':'lightning bolt electric','✨':'sparkle shine glitter','⭐':'star','🌟':'star glowing','🌈':'rainbow','❄️':'snowflake cold ice','🎁':'gift present','🏆':'trophy win','🚫':'no prohibited ban','⚠️':'warning caution','❓':'question','❗':'exclamation','💬':'speech bubble chat','🔔':'bell notification','🎉':'party celebrate',
+  };
+
+  let _emojiInput = null;
+  let _emojiCat = null;
+  let _emojiBuilt = false;
+
+  function _emojiGrid(emojis) {
+    const grid = document.getElementById('emoji-grid');
+    grid.innerHTML = '';
+    emojis.forEach(e => {
+      const s = document.createElement('span');
+      s.className = 'emoji-item';
+      s.textContent = e;
+      s.title = (_emojiKw[e] || '').split(' ')[0] || '';
+      s.onclick = () => { _insertEmoji(e); };
+      grid.appendChild(s);
+    });
+  }
+
+  function _emojiBuild() {
+    if (_emojiBuilt) return;
+    _emojiBuilt = true;
+    const cats = Object.keys(_EC);
+    const tabs = document.getElementById('emoji-cat-tabs');
+    cats.forEach((icon, i) => {
+      const btn = document.createElement('button');
+      btn.className = 'emoji-cat-tab' + (i === 0 ? ' active' : '');
+      btn.textContent = icon;
+      btn.onclick = () => {
+        document.querySelectorAll('.emoji-cat-tab').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        _emojiCat = icon;
+        _emojiGrid(_EC[icon]);
+        document.getElementById('emoji-search').value = '';
+      };
+      tabs.appendChild(btn);
+    });
+    _emojiCat = cats[0];
+    _emojiGrid(_EC[cats[0]]);
+  }
+
+  function _emojiFilter(q) {
+    if (!q.trim()) {
+      _emojiGrid(_EC[_emojiCat] || Object.values(_EC)[0]);
+      return;
+    }
+    const lq = q.toLowerCase();
+    const all = Object.values(_EC).flat();
+    const hits = all.filter(e => {
+      if (e.toLowerCase().includes(lq)) return true;
+      const kw = _emojiKw[e] || '';
+      return kw.toLowerCase().includes(lq);
+    });
+    _emojiGrid(hits.length ? hits : all.filter(e => (_emojiKw[e]||'').toLowerCase().includes(lq.slice(0,3))));
+  }
+
+  function _insertEmoji(e) {
+    const input = document.getElementById(_emojiInput);
+    if (!input) return;
+    const s = input.selectionStart || 0;
+    const end = input.selectionEnd || s;
+    input.value = input.value.slice(0, s) + e + input.value.slice(end);
+    input.selectionStart = input.selectionEnd = s + [...e].length;
+    input.focus();
+  }
+
+  function toggleEmojiPicker(inputId, btn) {
+    const picker = document.getElementById('emoji-picker');
+    const open = picker.style.display !== 'none';
+    if (open && _emojiInput === inputId) { picker.style.display = 'none'; return; }
+    _emojiInput = inputId;
+    _emojiBuild();
+    picker.style.display = 'flex';
+    picker.style.left = 'auto';
+    picker.style.right = '8px';
+    picker.style.top = 'auto';
+    // Anchor bottom of picker just above the input bar — works at any zoom level
+    const inputEl = document.getElementById(inputId);
+    const rect = (inputEl || btn).getBoundingClientRect();
+    const vH = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+    picker.style.bottom = Math.round(vH - rect.top + 6) + 'px';
+    setTimeout(() => document.getElementById('emoji-search').focus(), 50);
+  }
+
+  document.addEventListener('pointerdown', e => {
+    const picker = document.getElementById('emoji-picker');
+    if (!picker || picker.style.display === 'none') return;
+    if (picker.contains(e.target)) return;
+    if (e.target.classList.contains('emoji-btn')) return;
+    picker.style.display = 'none';
+  }, true);
+
 </script>
 
 <!-- Colour Picker Modal -->
@@ -14438,5 +14637,11 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   <div id="mc-statusreq-body" style="color:var(--muted)"></div>
 </div>
 
+<!-- Emoji Picker -->
+<div id="emoji-picker" class="emoji-picker" style="display:none">
+  <input type="text" class="emoji-search" id="emoji-search" placeholder="Search emojis…" oninput="_emojiFilter(this.value)" autocomplete="off">
+  <div class="emoji-cat-tabs" id="emoji-cat-tabs"></div>
+  <div class="emoji-grid" id="emoji-grid"></div>
+</div>
 </body>
 </html>

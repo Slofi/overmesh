@@ -241,18 +241,21 @@ def on_text_receive(packet, interface):
         is_dm    = to_id != "^all"
         radio_id = _radio_id_for_iface(interface)
         msg = {
-            "id":        _next_msg_id(),
-            "from_id":   from_id,
-            "from_name": get_node_name(from_id),
-            "to_id":     to_id,
-            "to_name":   get_node_name(to_id) if is_dm else "All",
-            "channel":   channel,
-            "text":      text,
-            "ts":        ts,
-            "snr":       snr,
-            "sent":      False,
-            "is_dm":     is_dm,
-            "radio_id":  radio_id,
+            "id":           _next_msg_id(),
+            "from_id":      from_id,
+            "from_name":    get_node_name(from_id),
+            "to_id":        to_id,
+            "to_name":      get_node_name(to_id) if is_dm else "All",
+            "channel":      channel,
+            "text":         text,
+            "ts":           ts,
+            "snr":          snr,
+            "sent":         False,
+            "is_dm":        is_dm,
+            "radio_id":     radio_id,
+            "pkt_id":       int(packet.get("id", 0)),
+            "is_emoji":     bool(int(decoded.get("emoji", 0))),
+            "reply_pkt_id": int(decoded.get("replyId", 0)),
         }
         with chat_lock:
             chat_messages.append(msg)

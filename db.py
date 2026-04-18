@@ -233,6 +233,18 @@ def init_msgs_db(db_path):
             c.execute("ALTER TABLE messages ADD COLUMN radio_id TEXT")
         except sqlite3.OperationalError:
             pass
+        try:
+            c.execute("ALTER TABLE messages ADD COLUMN pkt_id INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            c.execute("ALTER TABLE messages ADD COLUMN is_emoji INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            c.execute("ALTER TABLE messages ADD COLUMN reply_pkt_id INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
         conn.commit()
     except Exception:
         conn.rollback()
@@ -526,8 +538,8 @@ def save_message(msg):
         with get_msgs_db(radio_id) as conn:
             conn.execute('''
                 INSERT OR IGNORE INTO messages
-                    (id, from_id, from_name, to_id, to_name, channel, text, ts, sent, is_dm, status, radio_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, from_id, from_name, to_id, to_name, channel, text, ts, sent, is_dm, status, radio_id, pkt_id, is_emoji, reply_pkt_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 msg['id'], msg.get('from_id'), msg.get('from_name'),
                 msg.get('to_id'), msg.get('to_name'), msg.get('channel', 0),
@@ -536,6 +548,9 @@ def save_message(msg):
                 1 if msg.get('is_dm') else 0,
                 msg.get('status', 'pending'),
                 radio_id,
+                msg.get('pkt_id', 0),
+                1 if msg.get('is_emoji') else 0,
+                msg.get('reply_pkt_id', 0),
             ))
             conn.execute('''
                 DELETE FROM messages WHERE id NOT IN (

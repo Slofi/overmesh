@@ -48,6 +48,7 @@ _mc_loop_ready = threading.Event()
 # ---------------------------------------------------------------------------
 _mc_debug_flags: set = set()   # radio config_ids with debug logging enabled
 _mc_recent_rx_logs: dict[str, list[dict]] = {}  # radio id -> recent RX_LOG_DATA payloads
+_mc_drain_active: set[str] = set()
 
 
 def _ensure_mc_tx_allowed(action="MC transmission"):
@@ -162,6 +163,36 @@ def run_mc(coro, timeout=10):
         return future.result(timeout=timeout + 5)
     except (concurrent.futures.TimeoutError, asyncio.TimeoutError):
         raise RuntimeError("MC operation timed out")
+
+
+async def _drain_mc_queue(mc, config_id, name, reason="event", timeout=2, max_messages=25):
+    """Drain queued MC messages once.
+
+    Some MC firmware/USB combinations do not consistently emit MESSAGES_WAITING
+    for every queued channel message. A guarded periodic drain keeps OM's view in
+    sync without stacking concurrent get_msg calls for the same radio.
+    """
+    if config_id in _mc_drain_active:
+        return 0
+    _mc_drain_active.add(config_id)
+    drained = 0
+    try:
+        while drained < max_messages:
+            result = await asyncio.wait_for(mc.commands.get_msg(), timeout=timeout)
+            if result.type in (EventType.NO_MORE_MSGS, EventType.ERROR):
+                break
+            drained += 1
+        if drained:
+            log.info(f"[MC:{name}] Queue drained: {drained} message(s) ({reason})")
+        return drained
+    except Exception as e:
+        if drained:
+            log.info(f"[MC:{name}] Queue drained: {drained} message(s) ({reason}, partial)")
+        else:
+            log.debug(f"[MC:{name}] Queue drain skipped/failed ({reason}): {e}")
+        return drained
+    finally:
+        _mc_drain_active.discard(config_id)
 
 
 # ---------------------------------------------------------------------------
@@ -318,20 +349,21 @@ async def _connect_mc_node_async(node_cfg):
     # Subscribe to live events
     _subscribe_mc_events(mc, config_id, name)
 
-    # Drain any messages queued while OM was offline
-    async def _startup_drain():
-        try:
-            drained = 0
-            while True:
-                result = await asyncio.wait_for(mc.commands.get_msg(), timeout=5)
-                if result.type in (EventType.NO_MORE_MSGS, EventType.ERROR):
-                    break
-                drained += 1
-            if drained:
-                log.info(f"[MC:{name}] Drained {drained} queued message(s) at startup")
-        except Exception as e:
-            log.warning(f"[MC:{name}] Startup message drain error: {e}")
-    asyncio.ensure_future(_startup_drain())
+    # Drain any messages queued while OM was offline, and keep polling lightly in
+    # case the device queues messages without raising MESSAGES_WAITING.
+    asyncio.ensure_future(_drain_mc_queue(mc, config_id, name, reason="startup", timeout=5))
+
+    async def _periodic_drain():
+        await asyncio.sleep(18)
+        while True:
+            with mc_connections_lock:
+                state = mc_connections.get(config_id) or {}
+                still_connected = state.get("status") == "connected" and state.get("mc") is mc
+            if not still_connected:
+                return
+            await _drain_mc_queue(mc, config_id, name, reason="poll")
+            await asyncio.sleep(20)
+    asyncio.ensure_future(_periodic_drain())
 
     # Startup flood advert — announces our identity to the whole mesh.
     # Essential after a reflash or first connection so that remote nodes (repeaters, etc.)
@@ -660,18 +692,7 @@ def _subscribe_mc_events(mc, config_id, name):
         The library dispatches CONTACT_MSG_RECV / CHANNEL_MSG_RECV for each
         message retrieved, so on_dm / on_chan_msg fire automatically."""
         log.info(f"[MC:{name}] MESSAGES_WAITING — draining queue")
-        async def _drain_msgs():
-            try:
-                drained = 0
-                while True:
-                    result = await asyncio.wait_for(mc.commands.get_msg(), timeout=5)
-                    if result.type in (EventType.NO_MORE_MSGS, EventType.ERROR):
-                        break
-                    drained += 1
-                log.info(f"[MC:{name}] Queue drained: {drained} message(s)")
-            except Exception as e:
-                log.warning(f"[MC:{name}] get_msg drain error: {e}")
-        asyncio.ensure_future(_drain_msgs())
+        asyncio.ensure_future(_drain_mc_queue(mc, config_id, name, reason="event", timeout=5))
 
     def on_trace_data(event):
         try:

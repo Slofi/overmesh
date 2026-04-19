@@ -11128,8 +11128,9 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
 
   function decodeMcPath(contact, radioLat, radioLon, radioId = null) {
     const pathHex  = contact.out_path || '';
-    const hashMode = contact.out_path_hash_mode ?? 0;
-    const hashChars = (hashMode + 1) * 2;   // hex chars per hop hash
+    // Prefer observed hash size from events; fall back to configured mode from REST API
+    const hashBytes = contact.out_path_hash_size ?? ((contact.out_path_hash_mode ?? 0) + 1);
+    const hashChars = hashBytes * 2;   // hex chars per hop hash
     const hopCount  = contact.out_path_len ?? -1;
     const cLat = contact.latitude ?? contact.lat;
     const cLon = contact.longitude ?? contact.lon;
@@ -11633,12 +11634,23 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     let quality = entry.routeQuality || (stored?.flood ? 'inferred' : stored ? 'cached' : 'inferred');
     if (entry.radioId) {
       const contact = _mcResolveMessageContact(entry);
+      const [rLat, rLon] = _mcSenseRadioPos(entry.radioId);
       if (contact) {
-        const [rLat, rLon] = _mcSenseRadioPos(entry.radioId);
         const fresh = decodeMcPath(contact, rLat, rLon, entry.radioId);
         if (fresh) {
           const resolved = { ...fresh, kind: 'message', points: [...fresh.points].reverse() };
           return { path: resolved, quality: 'cached', refreshed: !_mcSamePath(resolved, stored) };
+        }
+      }
+      // Re-try the original event path now that hop contacts may have GPS
+      if (entry.rawPath && entry.hopLen > 0) {
+        const fromEvent = decodeMcEventPath(
+          { path: entry.rawPath, path_len: entry.hopLen, path_hash_size: entry.pathHashSize },
+          entry.lat, entry.lon, rLat, rLon, entry.radioId
+        );
+        if (fromEvent) {
+          const resolved = { ...fromEvent, kind: 'message', points: [...fromEvent.points].reverse() };
+          return { path: resolved, quality: 'live', refreshed: !_mcSamePath(resolved, stored) };
         }
       }
     }
@@ -11883,7 +11895,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     if (pathResult && !pathResult.flood) pathResult = { ...pathResult, kind: 'message' };
     // Reverse: message is incoming (sender → relays → our radio), but decodeMcPath builds radio→contact
     if (pathResult?.points) pathResult = _mcReversePathResult(pathResult);
-    const entry   = { kind: 'message', name, text, rawText: full, ts, msgTs: data.ts, radioId: data.radio_id, channel: data.channel ?? 0, fromId: data.from_id, lat, lon, hopLen, pathResult, routeQuality, pathHashSize: data.path_hash_size ?? null };
+    const entry   = { kind: 'message', name, text, rawText: full, ts, msgTs: data.ts, radioId: data.radio_id, channel: data.channel ?? 0, fromId: data.from_id, lat, lon, hopLen, pathResult, routeQuality, pathHashSize: data.path_hash_size ?? null, rawPath: data.path ?? null };
     if (_mcLogPinnedIdx !== null) _mcLogPinnedIdx++;
     _mcSenseLogEntries.unshift(entry);
     if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();

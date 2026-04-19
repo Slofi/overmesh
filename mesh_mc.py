@@ -775,7 +775,10 @@ def _subscribe_mc_events(mc, config_id, name):
                 if r.type == EventType.CONTACTS:
                     with mc_connections_lock:
                         if config_id in mc_connections:
-                            mc_connections[config_id]["contacts"] = r.payload
+                            new_contacts = r.payload or {}
+                            old_contacts = mc_connections[config_id].get("contacts", {})
+                            if new_contacts or not old_contacts:
+                                mc_connections[config_id]["contacts"] = new_contacts
                 with mc_connections_lock:
                     c = mc_connections.get(config_id, {}).get("contacts", {}).get(pubkey, {})
                 if not c:
@@ -1218,7 +1221,12 @@ async def _get_contacts_async(config_id):
     if r.type == EventType.CONTACTS:
         with mc_connections_lock:
             if config_id in mc_connections:
-                mc_connections[config_id]["contacts"] = r.payload
+                new_contacts = r.payload or {}
+                old_contacts = mc_connections[config_id].get("contacts", {})
+                # Don't overwrite a non-empty cache with an empty response —
+                # firmware occasionally returns 0 contacts on a stale/in-progress read.
+                if new_contacts or not old_contacts:
+                    mc_connections[config_id]["contacts"] = new_contacts
     return r
 
 
@@ -1516,7 +1524,10 @@ async def _req_status_async(config_id, pubkey_prefix):
         if refreshed.type == EventType.CONTACTS:
             with mc_connections_lock:
                 if config_id in mc_connections:
-                    mc_connections[config_id]["contacts"] = refreshed.payload
+                    new_contacts = refreshed.payload or {}
+                    old_contacts = mc_connections[config_id].get("contacts", {})
+                    if new_contacts or not old_contacts:
+                        mc_connections[config_id]["contacts"] = new_contacts
             new_contact = dict(refreshed.payload.get(full_key, contact))
             new_contact["public_key"] = full_key
             contact = new_contact

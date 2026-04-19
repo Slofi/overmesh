@@ -12,6 +12,8 @@ from state import chat_lock, chat_messages, mc_connections, mc_connections_lock
 
 log = logging.getLogger(__name__)
 
+CROSS_SYSTEM_ENABLED = False
+
 _RELAY_TAG_RE = re.compile(r'^\[(MT|MC)->(MT|MC)\b', re.IGNORECASE)
 _RECENT_RELAY_WINDOW = 45
 _recent_relays = {}
@@ -75,6 +77,8 @@ def get_cross_config():
 
 
 def get_cross_rules():
+    if not CROSS_SYSTEM_ENABLED:
+        return []
     return [r for r in get_cross_config().get("rules", []) if r.get("enabled")]
 
 

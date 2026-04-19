@@ -36,7 +36,8 @@ def _mc_contact_last_seen_ts(contact):
 
 def _serialize_mc_contact(pubkey, contact, now=None):
     now = int(time.time()) if now is None else int(now)
-    last_seen_ts = _mc_contact_last_seen_ts(contact)
+    raw_last_seen_ts = _mc_contact_last_seen_ts(contact)
+    last_seen_ts = min(raw_last_seen_ts, now) if raw_last_seen_ts else 0
     last_advert = contact.get("last_advert", 0)
     delta = now - last_seen_ts if last_seen_ts else None
     if delta is not None:
@@ -214,6 +215,25 @@ def api_mc_self(radio_id):
 # Messaging
 # ---------------------------------------------------------------------------
 
+MC_MAX_DM_MSG_BYTES = 160
+MC_CHANNEL_NAME_OVERHEAD_BYTES = 2
+MC_CHANNEL_SCOPE_HEADROOM_BYTES = 10
+
+
+def _mc_text_bytes(text):
+    return len((text or "").encode("utf-8"))
+
+
+def _mc_channel_msg_limit(radio_id):
+    """Return the safe user-text byte budget for an MC channel message."""
+    with mc_connections_lock:
+        state = mc_connections.get(radio_id, {}) or {}
+        info = state.get("node_info", {}) or {}
+        advert_name = info.get("name") or state.get("config", {}).get("name") or ""
+    name_bytes = _mc_text_bytes(advert_name)
+    return max(0, MC_MAX_DM_MSG_BYTES - name_bytes - MC_CHANNEL_NAME_OVERHEAD_BYTES - MC_CHANNEL_SCOPE_HEADROOM_BYTES)
+
+
 @bp.route("/api/mc/<radio_id>/send_chan", methods=["POST"])
 def api_mc_send_chan(radio_id):
     """Send a channel message."""
@@ -229,6 +249,10 @@ def api_mc_send_chan(radio_id):
         return jsonify({"error": "text is required"}), 400
     if not (0 <= chan <= 7):
         return jsonify({"error": "channel must be 0–7"}), 400
+    byte_len = _mc_text_bytes(text)
+    max_bytes = _mc_channel_msg_limit(radio_id)
+    if byte_len > max_bytes:
+        return jsonify({"error": f"Message too long ({byte_len} bytes, max {max_bytes})"}), 400
 
     try:
         send_chan_msg(radio_id, chan, text)
@@ -261,6 +285,9 @@ def api_mc_send_dm(radio_id):
         return jsonify({"error": "text is required"}), 400
     if not target or len(target) < 6:
         return jsonify({"error": "target pubkey prefix required (≥6 chars)"}), 400
+    byte_len = _mc_text_bytes(text)
+    if byte_len > MC_MAX_DM_MSG_BYTES:
+        return jsonify({"error": f"Message too long ({byte_len} bytes, max {MC_MAX_DM_MSG_BYTES})"}), 400
 
     try:
         send_dm(radio_id, target, text)
@@ -321,6 +348,7 @@ def api_mc_statusreq(radio_id, node_id):
                 "direct_dups":  result.get("direct_dups"),
                 "observed_path":         result.get("observed_path"),
                 "observed_path_len":     result.get("observed_path_len"),
+                "observed_path_hash_size": result.get("observed_path_hash_size"),
                 "observed_rssi":         result.get("observed_rssi"),
                 "observed_snr":          result.get("observed_snr"),
                 "observed_payload_type": result.get("observed_payload_type"),

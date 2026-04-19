@@ -49,11 +49,88 @@ _mc_loop_ready = threading.Event()
 _mc_debug_flags: set = set()   # radio config_ids with debug logging enabled
 _mc_recent_rx_logs: dict[str, list[dict]] = {}  # radio id -> recent RX_LOG_DATA payloads
 _mc_drain_active: set[str] = set()
+_mc_drain_pending: set[str] = set()   # fired MESSAGES_WAITING while drain was active — re-drain on finish
+_mc_path_refresh_active: set[str] = set()  # rate-limit concurrent get_contacts() from PATH_UPDATE
+
+MC_MAX_DM_MSG_BYTES = 160
+MC_CHANNEL_NAME_OVERHEAD_BYTES = 2
+MC_CHANNEL_SCOPE_HEADROOM_BYTES = 10
+MC_MAX_AUTO_SPLIT_PARTS = 6
+MC_SPLIT_SEND_DELAY_SEC = 1.8
 
 
 def _ensure_mc_tx_allowed(action="MC transmission"):
     if CONFIG.get("silent_mode"):
         raise RuntimeError(f"Silent Running active — {action} blocked")
+
+
+def _mc_text_bytes(text):
+    return len((text or "").encode("utf-8"))
+
+
+def _mc_channel_msg_limit(config_id):
+    with mc_connections_lock:
+        state = mc_connections.get(config_id, {}) or {}
+        info = state.get("node_info", {}) or {}
+        advert_name = info.get("name") or state.get("config", {}).get("name") or ""
+    return max(0, MC_MAX_DM_MSG_BYTES - _mc_text_bytes(advert_name) - MC_CHANNEL_NAME_OVERHEAD_BYTES - MC_CHANNEL_SCOPE_HEADROOM_BYTES)
+
+
+def _mc_take_byte_chunk(text, limit):
+    out = ""
+    for ch in str(text or ""):
+        if _mc_text_bytes(out + ch) > limit:
+            break
+        out += ch
+    return out
+
+
+def _mc_split_plain_text(text, limit):
+    if limit <= 0:
+        raise ValueError("MC message limit is too small to send safely")
+    chunks = []
+    rest = str(text or "").strip()
+    while rest:
+        if _mc_text_bytes(rest) <= limit:
+            chunks.append(rest)
+            break
+        chunk = _mc_take_byte_chunk(rest, limit)
+        split_at = -1
+        for idx, ch in enumerate(chunk):
+            if ch.isspace():
+                split_at = idx
+        if split_at > 0 and _mc_text_bytes(chunk[:split_at]) >= int(limit * 0.5):
+            chunk = chunk[:split_at].rstrip()
+        if not chunk:
+            raise ValueError("MC message contains a character that is too large for the available byte limit")
+        chunks.append(chunk)
+        rest = rest[len(chunk):].lstrip()
+        if len(chunks) > MC_MAX_AUTO_SPLIT_PARTS:
+            break
+    return chunks
+
+
+def _mc_split_text_by_bytes(text, limit):
+    if limit <= 0:
+        raise ValueError("MC message limit is too small to send safely")
+    if _mc_text_bytes(text) <= limit:
+        return [str(text or "").strip()]
+    chunks = _mc_split_plain_text(text, limit)
+    if len(chunks) <= 1:
+        return chunks
+    for _ in range(4):
+        total = len(chunks)
+        if total > MC_MAX_AUTO_SPLIT_PARTS:
+            raise ValueError(f"MC message too long to auto-split (max {MC_MAX_AUTO_SPLIT_PARTS} parts)")
+        prefix = f"[{total}/{total}] "
+        body_limit = limit - _mc_text_bytes(prefix)
+        if body_limit < 40:
+            raise ValueError("MC message limit is too small to auto-split safely")
+        next_chunks = _mc_split_plain_text(text, body_limit)
+        if len(next_chunks) == total:
+            return [f"[{idx + 1}/{total}] {part}" for idx, part in enumerate(next_chunks)]
+        chunks = next_chunks
+    raise ValueError("MC message could not be split into safe chunks")
 
 
 def _remember_rx_log(config_id, payload):
@@ -165,16 +242,22 @@ def run_mc(coro, timeout=10):
         raise RuntimeError("MC operation timed out")
 
 
-async def _drain_mc_queue(mc, config_id, name, reason="event", timeout=2, max_messages=25):
+async def _drain_mc_queue(mc, config_id, name, reason="event", timeout=5, max_messages=25):
     """Drain queued MC messages once.
 
     Some MC firmware/USB combinations do not consistently emit MESSAGES_WAITING
     for every queued channel message. A guarded periodic drain keeps OM's view in
     sync without stacking concurrent get_msg calls for the same radio.
+
+    If MESSAGES_WAITING fires while a drain is already active, _mc_drain_pending
+    records it. After the current drain finishes, one follow-up drain is triggered
+    automatically so those messages are not left waiting until the next periodic poll.
     """
     if config_id in _mc_drain_active:
+        _mc_drain_pending.add(config_id)   # remember — re-drain after current one finishes
         return 0
     _mc_drain_active.add(config_id)
+    _mc_drain_pending.discard(config_id)   # clear any stale pending flag from before this drain
     drained = 0
     try:
         while drained < max_messages:
@@ -193,6 +276,11 @@ async def _drain_mc_queue(mc, config_id, name, reason="event", timeout=2, max_me
         return drained
     finally:
         _mc_drain_active.discard(config_id)
+        # If MESSAGES_WAITING fired while we were draining, re-drain now rather than
+        # waiting up to 8s for the next periodic poll.
+        if config_id in _mc_drain_pending:
+            _mc_drain_pending.discard(config_id)
+            asyncio.ensure_future(_drain_mc_queue(mc, config_id, name, reason=f"{reason}_requeue"))
 
 
 # ---------------------------------------------------------------------------
@@ -354,15 +442,22 @@ async def _connect_mc_node_async(node_cfg):
     asyncio.ensure_future(_drain_mc_queue(mc, config_id, name, reason="startup", timeout=5))
 
     async def _periodic_drain():
-        await asyncio.sleep(18)
+        await asyncio.sleep(8)
         while True:
-            with mc_connections_lock:
-                state = mc_connections.get(config_id) or {}
-                still_connected = state.get("status") == "connected" and state.get("mc") is mc
+            # Non-blocking acquire: if a Flask route holds the lock, don't stall the
+            # asyncio reader loop — assume still connected and attempt the drain anyway.
+            if mc_connections_lock.acquire(blocking=False):
+                try:
+                    state = mc_connections.get(config_id) or {}
+                    still_connected = state.get("status") == "connected" and state.get("mc") is mc
+                finally:
+                    mc_connections_lock.release()
+            else:
+                still_connected = True
             if not still_connected:
                 return
             await _drain_mc_queue(mc, config_id, name, reason="poll")
-            await asyncio.sleep(20)
+            await asyncio.sleep(8)
     asyncio.ensure_future(_periodic_drain())
 
     # Startup flood advert — announces our identity to the whole mesh.
@@ -450,7 +545,15 @@ def _subscribe_mc_events(mc, config_id, name):
         if not pubkey_or_prefix:
             return None
 
-        with mc_connections_lock:
+        # Non-blocking acquire: called from asyncio callbacks in the event loop thread.
+        # If a Flask route holds mc_connections_lock, blocking here would stall the
+        # asyncio serial reader — potentially causing the OS serial buffer to overflow
+        # and dropping subsequent incoming packets. Skipping the last_seen update is
+        # acceptable; message delivery (push_to_sse) is unaffected.
+        if not mc_connections_lock.acquire(blocking=False):
+            return None
+
+        try:
             state = mc_connections.get(config_id)
             if not state:
                 return None
@@ -470,6 +573,8 @@ def _subscribe_mc_events(mc, config_id, name):
             existing["last_seen_ts"] = ts
             contacts[matched_key] = existing
             return existing
+        finally:
+            mc_connections_lock.release()
 
     def on_advert(event):
         try:
@@ -650,12 +755,21 @@ def _subscribe_mc_events(mc, config_id, name):
     def on_path_update(event):
         """PATH_UPDATE signals the contact's routing path changed.
         The library marks contacts dirty but does NOT update our cache in-place.
-        Refresh contacts first so we push the new path data, not stale data."""
+        Refresh contacts first so we push the new path data, not stale data.
+
+        Rate-limited: if a refresh is already in-flight for this radio, skip the
+        new one. A busy mesh can fire PATH_UPDATE rapidly; stacking get_contacts()
+        calls occupies the serial command channel and delays message drains."""
         pubkey = event.payload.get("public_key", "")
         if not pubkey:
             return
 
+        if config_id in _mc_path_refresh_active:
+            log.debug(f"[MC:{name}] on_path_update: refresh already in-flight, skipping for {pubkey[:12]}")
+            return
+
         async def _refresh_and_push():
+            _mc_path_refresh_active.add(config_id)
             try:
                 r = await mc.commands.get_contacts()
                 if r.type == EventType.CONTACTS:
@@ -684,6 +798,8 @@ def _subscribe_mc_events(mc, config_id, name):
                 log.info(f"[MC:{name}] on_path_update: pushed updated path for {pubkey[:12]}")
             except Exception as e:
                 log.warning(f"[MC:{name}] on_path_update error: {e}")
+            finally:
+                _mc_path_refresh_active.discard(config_id)
 
         asyncio.ensure_future(_refresh_and_push())
 
@@ -705,6 +821,7 @@ def _subscribe_mc_events(mc, config_id, name):
                 "radio_id": config_id,
                 "tag":      p.get("tag"),
                 "path_len": p.get("path_len", 0),
+                "path_hash_size": p.get("path_hash_size"),
                 "path":     path,   # [{hash, snr}, ...], last entry has only snr (our radio)
                 "flags":    p.get("flags", 0),
                 "auth_hex": p.get("auth", 0).to_bytes(4, 'little').hex(),  # responding node's 4-byte hash (wire byte order)
@@ -1111,12 +1228,24 @@ async def _get_contacts_async(config_id):
 
 def send_chan_msg(config_id, chan_idx, text, timeout=10):
     _ensure_mc_tx_allowed("MC channel message")
-    return run_mc(_send_chan_msg_async(config_id, chan_idx, text), timeout=timeout)
+    chunks = _mc_split_text_by_bytes(text, _mc_channel_msg_limit(config_id))
+    result = None
+    for idx, chunk in enumerate(chunks):
+        result = run_mc(_send_chan_msg_async(config_id, chan_idx, chunk), timeout=timeout)
+        if len(chunks) > 1 and idx < len(chunks) - 1:
+            time.sleep(MC_SPLIT_SEND_DELAY_SEC)
+    return result
 
 
 def send_dm(config_id, pubkey_prefix, text, timeout=10):
     _ensure_mc_tx_allowed("MC direct message")
-    return run_mc(_send_dm_async(config_id, pubkey_prefix, text), timeout=timeout)
+    chunks = _mc_split_text_by_bytes(text, MC_MAX_DM_MSG_BYTES)
+    result = None
+    for idx, chunk in enumerate(chunks):
+        result = run_mc(_send_dm_async(config_id, pubkey_prefix, chunk), timeout=timeout)
+        if len(chunks) > 1 and idx < len(chunks) - 1:
+            time.sleep(MC_SPLIT_SEND_DELAY_SEC)
+    return result
 
 
 def send_statusreq(config_id, pubkey_prefix, timeout=10):
@@ -1282,6 +1411,7 @@ def _build_reachability_fallback(config_id, pubkey_prefix, full_key, phase, rx_e
         ),
         "observed_path": payload.get("path", ""),
         "observed_path_len": payload.get("path_len"),
+        "observed_path_hash_size": payload.get("path_hash_size"),
         "observed_rssi": payload.get("rssi"),
         "observed_snr": payload.get("snr"),
         "observed_payload_type": payload.get("payload_typename"),

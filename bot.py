@@ -503,6 +503,8 @@ def _mc_contact_name(config_id, pubkey_pre):
 
 
 def _format_delta(delta_s):
+    if delta_s < 0:
+        delta_s = 0
     if delta_s < 60:     return f"{int(delta_s)}s ago"
     if delta_s < 3600:   return f"{int(delta_s) // 60}m ago"
     if delta_s < 86400:  return f"{int(delta_s) // 3600}h ago"
@@ -511,6 +513,12 @@ def _format_delta(delta_s):
 
 def _mc_contact_last_seen_ts(contact):
     return int(contact.get("last_seen_ts") or contact.get("last_advert") or 0)
+
+
+def _mc_contact_seen_ts(contact, now=None):
+    ts = _mc_contact_last_seen_ts(contact)
+    now = int(time.time()) if now is None else int(now)
+    return min(ts, now) if ts else 0
 
 
 def build_mc_sitrep(config_id):
@@ -522,11 +530,11 @@ def build_mc_sitrep(config_id):
         return "👀 MC: 0 contacts"
     now = int(time.time())
     cutoff = now - 3600
-    recent_count = sum(1 for c in contacts.values() if _mc_contact_last_seen_ts(c) > cutoff)
-    recent = sorted(contacts.values(), key=_mc_contact_last_seen_ts, reverse=True)
+    recent_count = sum(1 for c in contacts.values() if _mc_contact_seen_ts(c, now) > cutoff)
+    recent = sorted(contacts.values(), key=lambda c: _mc_contact_seen_ts(c, now), reverse=True)
     seen_lines = "\n".join(
-        f"{c.get('adv_name', '?')[:10]}, {_format_delta(now - _mc_contact_last_seen_ts(c))}"
-        for c in recent[:3] if _mc_contact_last_seen_ts(c)
+        f"{c.get('adv_name', '?')[:10]}, {_format_delta(now - _mc_contact_seen_ts(c, now))}"
+        for c in recent[:3] if _mc_contact_seen_ts(c, now)
     )
     parts = []
     if seen_lines:
@@ -539,8 +547,9 @@ def build_mc_motd_text(cfg, config_id):
     from state import mc_connections, mc_connections_lock
     with mc_connections_lock:
         contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
-    cutoff = int(time.time()) - 3600
-    recent_count = sum(1 for c in contacts.values() if _mc_contact_last_seen_ts(c) > cutoff)
+    now = int(time.time())
+    cutoff = now - 3600
+    recent_count = sum(1 for c in contacts.values() if _mc_contact_seen_ts(c, now) > cutoff)
     total = len(contacts)
     custom = cfg["motd"].get("message", "")
     return (
@@ -554,12 +563,12 @@ def send_mc_bot_response(config_id, text, chan_idx, dest_pre=None):
     if CONFIG.get("silent_mode"):
         log.info(f"[bot] Silent Running active — MC bot response suppressed")
         return
-    from mesh_mc import run_mc, _send_chan_msg_async, _send_dm_async
+    from mesh_mc import send_chan_msg, send_dm
     try:
         if dest_pre:
-            run_mc(_send_dm_async(config_id, dest_pre, text), timeout=15)
+            send_dm(config_id, dest_pre, text, timeout=15)
         else:
-            run_mc(_send_chan_msg_async(config_id, chan_idx, text), timeout=15)
+            send_chan_msg(config_id, chan_idx, text, timeout=15)
     except Exception as e:
         log.warning(f"[MCBot:{config_id}] send failed: {e}")
 

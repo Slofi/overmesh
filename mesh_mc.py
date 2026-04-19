@@ -674,7 +674,8 @@ def _subscribe_mc_events(mc, config_id, name):
                 "rx_rssi":    msg.get("rssi", (rx or {}).get("rssi")),
                 "rx_snr":     msg.get("snr", (rx or {}).get("snr")),
             })
-            log.info(f"[MC:{name}] DM from {msg.get('pubkey_prefix','?')}: {msg.get('text','')[:60]}")
+            log.info(f"[MC:{name}] DM from {msg.get('pubkey_prefix','?')}: {msg.get('text','')[:60]}"
+                     f" | path={repr(msg.get('path') or (rx or {{}}).get('path'))[:40]} path_len={msg.get('path_len', (rx or {{}}).get('path_len'))} hash_size={msg.get('path_hash_size', (rx or {{}}).get('path_hash_size'))}")
             # Bot command handling (background thread to avoid blocking asyncio loop)
             threading.Thread(
                 target=_invoke_mc_bot, args=(dict(msg), config_id, "dm"),

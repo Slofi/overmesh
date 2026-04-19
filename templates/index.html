@@ -11539,21 +11539,24 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         const isPinned = _mcLogPinnedIdx === e._i;
         const msgMeta = _mcResolveEntryPath(e);
         const path = msgMeta.path;
-        const hopLabel = path?.flood ? 'flood' : e.hopLen === 0 ? 'direct' : e.hopLen > 0 ? `${e.hopLen}h` : 'path?';
         const q = msgMeta.quality;
-        const qColor = q === 'live' ? '#22c55e' : q === 'cached' ? '#38bdf8' : '#f59e0b';
-        const qBg = q === 'live' ? 'rgba(34,197,94,0.12)' : q === 'cached' ? 'rgba(56,189,248,0.12)' : 'rgba(245,158,11,0.12)';
-        const qBorder = q === 'live' ? 'rgba(34,197,94,0.28)' : q === 'cached' ? 'rgba(56,189,248,0.28)' : 'rgba(245,158,11,0.28)';
-        const refreshBadge = msgMeta.refreshed ? `<span title="Path refreshed from newer route data" style="margin-left:4px;font-size:9px;color:#38bdf8;background:rgba(56,189,248,0.12);border:1px solid rgba(56,189,248,0.28);border-radius:3px;padding:0 3px">upd</span>` : '';
+        // Show hop label: flood sentinel (255) → "flood", known value → hop count, unknown (-1) → hide
+        const showHop = e.hopLen >= 0;
+        const hopLabel = (e.hopLen === 255 || path?.flood) ? 'flood' : e.hopLen === 0 ? 'direct' : `${e.hopLen}h`;
+        const hopColor = e.hopLen === 255 ? 'rgba(148,163,184,0.8)' : e.hopLen === 0 ? '#22c55e' : '#8b5cf6';
+        // Show quality badge only when it adds info (live/cached, not inferred)
+        const showQ = q && q !== 'inferred';
+        const qColor = q === 'live' ? '#22c55e' : '#38bdf8';
+        const qBg = q === 'live' ? 'rgba(34,197,94,0.12)' : 'rgba(56,189,248,0.12)';
+        const qBorder = q === 'live' ? 'rgba(34,197,94,0.28)' : 'rgba(56,189,248,0.28)';
         return `<div style="padding:2px 0;border-bottom:1px solid var(--border);cursor:pointer;${isPinned ? 'background:rgba(59,130,246,0.12)' : ''}"
           onclick="_mcLogClick(${e._i})"
           onmouseenter="_mcLogHover(${e._i},true)"
           onmouseleave="_mcLogHover(${e._i},false)">
           <span style="color:var(--muted)">${e.ts}</span>
           <span style="margin-left:4px;font-weight:600">${escHtml(e.name)}</span>
-          <span style="margin-left:4px;font-size:10px;color:${path?.flood ? 'rgba(148,163,184,0.8)' : e.hopLen === 0 ? '#22c55e' : '#8b5cf6'}">${hopLabel}</span>
-          <span title="Route source" style="margin-left:4px;font-size:9px;color:${qColor};background:${qBg};border:1px solid ${qBorder};border-radius:3px;padding:0 3px">${q}</span>
-          ${refreshBadge}
+          ${showHop ? `<span style="margin-left:4px;font-size:10px;color:${hopColor}">${hopLabel}</span>` : ''}
+          ${showQ ? `<span title="Route source" style="margin-left:4px;font-size:9px;color:${qColor};background:${qBg};border:1px solid ${qBorder};border-radius:3px;padding:0 3px">${q}</span>` : ''}
           <span style="color:var(--muted);margin-left:4px;font-size:10px">${escHtml(e.text)}</span>
           ${isPinned ? '<span style="float:right;color:#3b82f6;font-size:9px;margin-right:2px">●</span>' : ''}
           <a onclick="event.stopPropagation();jumpToMcChat(${e.msgTs},'${jsSafe(e.radioId)}',${e.channel},'${jsSafe(e.fromId || '')}')" style="margin-left:6px;font-size:10px;color:#3b82f6;cursor:pointer">→ Chat</a>

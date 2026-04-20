@@ -3500,7 +3500,11 @@
         // Fast path: update allNodes directly for nodes with a known user.id
         const node = allNodes.find(n => n.id === data.from_id);
         if (node) {
-          node.last_heard_ts = data.ts;
+          node.last_heard_ts = nodeTs(data.ts);
+          node._last_heard_live = true;
+          node._last_heard_live_at = Math.floor(Date.now() / 1000);
+          node.last_heard = nodeLastHeardLabel(node);
+          renderLive();
           updateMapMarkers(allNodes);
           updateHeaderNodeCount(allNodes);
         }
@@ -4391,7 +4395,23 @@ if (targetEl) {
   function snrClass(v)     { return v == null ? '' : v >= 5 ? 'snr-good' : v >= -5 ? 'snr-ok' : 'snr-bad'; }
   function battClass(v)    { return v == null ? '' : v >= 60 ? 'battery-high' : v >= 30 ? 'battery-mid' : 'battery-low'; }
   function battDisplay(v)  { return v == null ? '—' : v === 101 ? '⚡' : v + '%'; }
-  function lhClass(ts)     { if (!ts) return ''; const age = Date.now()/1000 - ts; return age < 300 ? 'lh-fresh' : age < 1800 ? '' : 'lh-stale'; }
+  function nodeTs(ts) {
+    ts = Number(ts || 0);
+    if (!Number.isFinite(ts) || ts <= 0) return 0;
+    return ts;
+  }
+  function nodeLastHeardLabel(n) {
+    const ts = nodeTs(n?.last_heard_ts);
+    if (n?._last_heard_live && ts) return senseTimeAgo(ts);
+    return n?.last_heard || (ts ? senseTimeAgo(ts) : '—');
+  }
+  function lhClass(ts) {
+    ts = nodeTs(ts);
+    if (!ts) return '';
+    const age = Date.now()/1000 - ts;
+    if (age < 0) return '';
+    return age < 300 ? 'lh-fresh' : age < 1800 ? '' : 'lh-stale';
+  }
 
   function clearSearch(id) {
     const el = document.getElementById(id);
@@ -4453,7 +4473,9 @@ if (targetEl) {
     const real   = !mapShowMt ? [] : allNodes.filter(n => {
       if (!n.id) return false;
       if (!query) return true;
-      return (n.long_name || '').toLowerCase().includes(query) || (n.short_name || '').toLowerCase().includes(query);
+      return (n.long_name || '').toLowerCase().includes(query) ||
+             (n.short_name || '').toLowerCase().includes(query) ||
+             (n.id || '').toLowerCase().includes(query);
     });
     tbody.innerHTML = real.length ? sortedLive(real).map(n => `
       <tr data-id="${n.id}" class="${n.is_favorite ? 'is-favorite' : ''}">
@@ -4463,13 +4485,13 @@ if (targetEl) {
             <span class="name-badge mt">MT</span>
             <span class="name-cell-title">${escHtml(n.long_name)}</span>
           </div>
-          ${n.hw_model ? `<div class="name-cell-meta">${escHtml(n.hw_model)}</div>` : ''}
+          <div class="name-cell-meta">${escHtml([n.hw_model, n.id].filter(Boolean).join(' · '))}</div>
         </td>
         <td><span class="short-name">${escHtml(n.short_name)}</span></td>
         <td class="${snrClass(n.snr)}">${n.snr != null ? n.snr + ' dB' : '—'}</td>
         <td class="${battClass(n.battery)}">${battDisplay(n.battery)}</td>
         <td>${n.hops_away != null ? n.hops_away : '—'}</td>
-        <td class="${lhClass(n.last_heard_ts)}">${escHtml(n.last_heard || '—')}</td>
+        <td class="${lhClass(n.last_heard_ts)}">${escHtml(nodeLastHeardLabel(n))}</td>
         <td class="node-actions">
           <button class="act-btn" title="Traceroute" onclick="doTraceroute('${jsSafe(n.id)}','${jsSafe(n.long_name)}','${jsSafe(n.radio_id || '')}')">TR</button>
           <button class="act-btn" title="Direct message" onclick="doDM('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">DM</button>
@@ -4764,10 +4786,25 @@ if (targetEl) {
     const mtSelected = [...selectedRadioIds].filter(id => !id.startsWith('mc_'));
     const radioParam = mtSelected.length === 1 ? `?radio_id=${encodeURIComponent(mtSelected[0])}` : '';
     fetch(`/api/nodes${radioParam}`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(nodes => {
-      // Preserve any last_heard_ts values that SSE already updated to something newer
-      const tsCache = {};
-      allNodes.forEach(n => { if (n.last_heard_ts) tsCache[n.id] = n.last_heard_ts; });
-      nodes.forEach(n => { if (tsCache[n.id] > (n.last_heard_ts || 0)) n.last_heard_ts = tsCache[n.id]; });
+      // Preserve recent true live packet timestamps over nodeDB refresh data.
+      const liveCache = {};
+      const nowSec = Math.floor(Date.now() / 1000);
+      allNodes.forEach(n => {
+        const ts = nodeTs(n.last_heard_ts);
+        const liveAt = nodeTs(n._last_heard_live_at);
+        if (ts && n._last_heard_live && liveAt && (nowSec - liveAt) < 900) {
+          liveCache[n.id] = {ts, liveAt};
+        }
+      });
+      nodes.forEach(n => {
+        n.last_heard_ts = nodeTs(n.last_heard_ts);
+        if (liveCache[n.id]) {
+          n.last_heard_ts = liveCache[n.id].ts;
+          n._last_heard_live = true;
+          n._last_heard_live_at = liveCache[n.id].liveAt;
+        }
+        n.last_heard = nodeLastHeardLabel(n);
+      });
       allNodes = nodes;
       renderLive();
       updateMapMarkers(nodes);
@@ -9433,10 +9470,19 @@ if (targetEl) {
     const runBtn = document.getElementById('settings-update-run-btn');
     const restartBtn = document.getElementById('settings-update-restart-btn');
     const running = !!state?.running;
-    if (checkBtn) checkBtn.disabled = running;
+    if (checkBtn) {
+      checkBtn.disabled = running;
+      if (!running) checkBtn.textContent = 'Check';
+    }
     if (runBtn) {
-      runBtn.disabled = running || !info?.managed || !!info?.dirty || !info?.update_available || (info?.ahead || 0) > 0;
+      let disabledReason = '';
+      if (!info?.managed) disabledReason = 'This install is not managed by Git.';
+      else if (info?.dirty) disabledReason = 'Local file changes are present. Update is blocked until they are committed or cleaned.';
+      else if ((info?.ahead || 0) > 0) disabledReason = `Local commits are ahead of GitHub by ${info.ahead}. Push or reconcile first.`;
+      else if (!info?.update_available) disabledReason = 'No GitHub update is available.';
+      runBtn.disabled = running || !!disabledReason;
       runBtn.textContent = running ? 'Updating…' : 'Update';
+      runBtn.title = running ? 'Update is running.' : (disabledReason || 'Pull the latest OverMesh code from GitHub.');
     }
     if (restartBtn) restartBtn.style.display = state?.ok && /Restart required/i.test(state?.message || '') ? '' : 'none';
   }
@@ -9464,6 +9510,8 @@ if (targetEl) {
     ];
     if (info.dirty) {
       parts.push('<span style="color:var(--red)">local changes present</span>');
+      const dirtyLines = (info.dirty_summary || []).slice(0, 5).map(x => escHtml(x)).join('<br>');
+      if (dirtyLines) parts.push(`<span style="color:var(--muted)">Changed:<br>${dirtyLines}</span>`);
     } else if ((info.ahead || 0) > 0) {
       parts.push(`<span style="color:var(--yellow)">ahead by ${info.ahead}</span>`);
     } else if (info.update_available) {
@@ -9486,6 +9534,13 @@ if (targetEl) {
   }
 
   async function settingsLoadUpdateStatus(fetchRemote = false) {
+    const checkBtn = document.getElementById('settings-update-check-btn');
+    const summary = document.getElementById('settings-update-summary');
+    if (checkBtn && fetchRemote) {
+      checkBtn.disabled = true;
+      checkBtn.textContent = 'Checking…';
+    }
+    if (summary && fetchRemote) summary.innerHTML = '<span style="color:var(--muted)">Checking GitHub…</span>';
     try {
       const r = await fetch(`/api/settings/update/status${fetchRemote ? '?fetch=1' : ''}`);
       const data = await r.json().catch(() => ({}));
@@ -9500,10 +9555,18 @@ if (targetEl) {
       }
     } catch(e) {
       _renderUpdateStatus({error: String(e.message || e)});
+    } finally {
+      if (checkBtn) checkBtn.textContent = 'Check';
     }
   }
 
   async function runOverMeshUpdate() {
+    await settingsLoadUpdateStatus(false);
+    const runBtn = document.getElementById('settings-update-run-btn');
+    if (runBtn?.disabled) {
+      showAlert(runBtn.title || 'Update is currently unavailable.');
+      return;
+    }
     document.getElementById('confirm-ok').textContent = 'Update';
     showConfirm('Update OverMesh now? Local changes will block the update, and a restart will be required after a successful pull.', async () => {
       try {
@@ -14148,10 +14211,12 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   function senseTimeAgo(ts) {
     if (!ts) return '';
-    const diff = Math.max(0, Math.floor(Date.now() / 1000) - ts);
+    const diff = Math.floor(Date.now() / 1000) - ts;
+    if (diff < 0)      return '—';
     if (diff < 60)   return diff + 's ago';
     if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
-    return Math.floor(diff / 3600) + 'h ago';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+    return Math.floor(diff / 86400) + 'd ago';
   }
 
   function _senseNodeMeta(n) {

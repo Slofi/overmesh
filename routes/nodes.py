@@ -3,10 +3,14 @@ import threading
 import time
 
 from flask import Blueprint, jsonify, request
+from pubsub import pub
 from meshtastic.protobuf import mesh_pb2, portnums_pb2
 from config import CONFIG, _valid_node_id
 from db import get_db_nodes, get_position_history, get_prefs_db, get_traceroute_history, save_message, save_traceroute
-from helpers import _next_msg_id, _radio_id_for_iface, get_node_data, get_node_name, push_to_sse
+from helpers import (
+    _format_last_heard, _next_msg_id, _node_ts, _radio_id_for_iface,
+    get_node_data, get_node_name, push_to_sse,
+)
 from hw_models import hw_model_name
 from mesh import (
     get_any_iface, get_any_iface_with_id, get_iface_by_radio,
@@ -541,24 +545,17 @@ def api_node_info(node_id):
     # Read the (now updated) node data from iface.nodes
     try:
         nodes = iface.nodes or {}
+        host_now = int(time.time())
+        newest_node_ts = max((_node_ts(n.get("lastHeard")) for n in nodes.values()), default=0)
+        last_heard_now = newest_node_ts if newest_node_ts > host_now + 300 else host_now
         for node_num, node in nodes.items():
             user = node.get("user", {})
             if user.get("id") == node_id:
                 pos     = node.get("position", {}) or {}
                 metrics = node.get("deviceMetrics", {}) or {}
                 env     = node.get("environmentMetrics", {}) or {}
-                last_heard = node.get("lastHeard")
-                last_heard_str = None
-                if last_heard:
-                    delta = int(time.time()) - last_heard
-                    if delta < 60:
-                        last_heard_str = f"{delta}s ago"
-                    elif delta < 3600:
-                        last_heard_str = f"{delta // 60}m ago"
-                    elif delta < 86400:
-                        last_heard_str = f"{delta // 3600}h ago"
-                    else:
-                        last_heard_str = f"{delta // 86400}d ago"
+                last_heard = _node_ts(node.get("lastHeard"))
+                last_heard_str = _format_last_heard(last_heard, last_heard_now)
                 uptime = metrics.get("uptimeSeconds")
                 uptime_str = None
                 if uptime:

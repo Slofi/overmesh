@@ -64,6 +64,16 @@ MODEM_PRESETS = {
     8: "SHORT_TURBO",
 }
 
+
+def _packet_rx_ts(packet):
+    try:
+        ts = int(packet.get("rxTime") or 0)
+    except (TypeError, ValueError):
+        ts = 0
+    now = int(time.time())
+    return max(0, min(ts or now, now))
+
+
 # ---------------------------------------------------------------------------
 # Packet handler
 # ---------------------------------------------------------------------------
@@ -77,10 +87,15 @@ def on_text_receive(packet, interface):
         # Update it here for ALL packet types so Nodes tab reflects any received response.
         _fid = packet.get("fromId")
         if _fid:
-            _new_ts = packet.get("rxTime") or int(time.time())
+            _new_ts = _packet_rx_ts(packet)
             _nodes = interface.nodes or {}
             if _fid in _nodes:
                 _nodes[_fid]["lastHeard"] = _new_ts
+            else:
+                for _node in _nodes.values():
+                    if (_node or {}).get("user", {}).get("id") == _fid:
+                        _node["lastHeard"] = _new_ts
+                        break
             # Always push SSE for non-ACK packets so frontend can refresh map colours.
             # The frontend uses a debounced loadLive() as fallback for nodes without user.id.
             if portnum != "ROUTING_APP":

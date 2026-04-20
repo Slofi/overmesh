@@ -81,6 +81,31 @@ def get_node_short_name(from_id):
     return from_id
 
 
+def _node_ts(ts):
+    if not ts:
+        return 0
+    try:
+        ts = int(ts)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, ts)
+
+
+def _format_last_heard(ts, now_ts=None):
+    ts = _node_ts(ts)
+    if not ts:
+        return None
+    now_ts = int(now_ts if now_ts is not None else time.time())
+    delta = max(0, now_ts - ts)
+    if delta < 60:
+        return f"{delta}s ago"
+    if delta < 3600:
+        return f"{delta // 60}m ago"
+    if delta < 86400:
+        return f"{delta // 3600}h ago"
+    return f"{delta // 86400}d ago"
+
+
 def get_node_data():
     result    = []
     favorites = get_favorites()
@@ -110,33 +135,29 @@ def get_node_data():
             nodes          = dict(iface.nodes or {})   # snapshot to avoid RuntimeError if deleted concurrently
             local_id       = getattr(iface, "myInfo", None)
             local_node_num = getattr(local_id, "my_node_num", None) if local_id else None
+            host_now       = int(time.time())
+            newest_node_ts = max((_node_ts(n.get("lastHeard")) for n in nodes.values()), default=0)
+            # Some radios keep a nodeDB clock ahead of the host. For nodeDB-derived
+            # "last seen", use that radio snapshot's newest timestamp as the clock
+            # instead of making every future value look freshly heard on refresh.
+            last_heard_now = newest_node_ts if newest_node_ts > host_now + 300 else host_now
 
             for node_num, node in nodes.items():
                 user     = node.get("user", {})
                 pos      = node.get("position", {})
                 metrics  = node.get("deviceMetrics", {})
                 snr      = node.get("snr")
-                last_heard = node.get("lastHeard")
+                last_heard = _node_ts(node.get("lastHeard"))
                 battery  = metrics.get("batteryLevel")
                 lat      = pos.get("latitude")
                 lon      = pos.get("longitude")
 
-                last_seen_str = None
-                if last_heard:
-                    delta = int(time.time()) - last_heard
-                    if delta < 0:
-                        last_seen_str = None   # bogus future timestamp — skip
-                    elif delta < 60:
-                        last_seen_str = f"{delta}s ago"
-                    elif delta < 3600:
-                        last_seen_str = f"{delta // 60}m ago"
-                    elif delta < 86400:
-                        last_seen_str = f"{delta // 3600}h ago"
-                    else:
-                        last_seen_str = f"{delta // 86400}d ago"
-
                 is_local    = (node.get("num") == local_node_num)
                 node_id_str = user.get("id") or node_num  # fall back to iface.nodes key if user.id is empty
+                if is_local:
+                    last_heard = host_now
+
+                last_seen_str = _format_last_heard(last_heard, host_now if is_local else last_heard_now)
 
                 # For the local node with fixed position: use cached coords to prevent
                 # stale firmware broadcasts from overriding what the user set.

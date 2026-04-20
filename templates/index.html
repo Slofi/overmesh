@@ -735,6 +735,13 @@
       border-radius: 3px; background: rgba(34,197,94,0.18); color: #86efac;
       font-size: 10px; font-weight: 800; text-align: center; letter-spacing: 0.3px;
     }
+    .mc-path-warn {
+      width: 20px; height: 20px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--bg2); border: 2px solid var(--accent);
+      color: var(--accent); font-size: 13px; font-weight: 900;
+      box-shadow: 0 1px 6px rgba(0,0,0,0.65);
+    }
     .mc-node-label {
       background: rgba(15,23,42,0.92) !important;
       border-color: rgba(59,130,246,0.38) !important;
@@ -4106,7 +4113,7 @@ if (targetEl) {
         const isFav  = !!mcFavs[cid];
         const name   = mcContactNameHtml(c);
         const sname  = escHtml((c.short_name || '?').slice(0,4).toUpperCase());
-        const path   = (c.out_path_len != null && c.out_path_len >= 0) ? c.out_path_len : '—';
+        const path   = c.out_path_len != null ? mcPathHopLabel(c.out_path_len, true) : '—';
         const last   = c.last_heard_ts ? senseTimeAgo(c.last_heard_ts) : escHtml(c.last_seen || '—');
         const shortKey = (c.full_key || c.id || '').slice(0, 12);
         const connectedRadios = Object.values(mcLastStatus).filter(s => s?.status === 'connected').length;
@@ -4255,7 +4262,7 @@ if (targetEl) {
         const isIgnored = mcIgnored.has(cid);
         const name      = mcContactNameHtml(c);
         const sname     = escHtml((c.short_name || '?').slice(0,4).toUpperCase());
-        const path      = (c.out_path_len != null && c.out_path_len >= 0) ? c.out_path_len : '—';
+        const path      = c.out_path_len != null ? mcPathHopLabel(c.out_path_len, true) : '—';
         const last      = c.last_heard_ts ? senseTimeAgo(c.last_heard_ts) : escHtml(c.last_seen || '—');
         const shortKey2  = (c.full_key || c.id || '').slice(0, 12);
         const connRads2  = Object.values(mcLastStatus).filter(s => s?.status === 'connected').length;
@@ -9926,6 +9933,8 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
             fc.last_seen = 'just now';
             if (data.path_len != null) fc.out_path_len = data.path_len;
             if (data.path      != null) fc.out_path     = data.path;
+            if (data.path_hash_mode != null) fc.out_path_hash_mode = data.path_hash_mode;
+            if (data.path_hash_size != null) fc.out_path_hash_size = data.path_hash_size;
             if (data.rx_snr    != null) fc.snr          = data.rx_snr;
           }
         }
@@ -9933,6 +9942,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       _mcTouchContactActivity(data.radio_id, data.from_id, {
         out_path_len: data.path_len,
         out_path: data.path,
+        out_path_hash_mode: data.path_hash_mode,
         out_path_hash_size: data.path_hash_size,
         snr: data.rx_snr,
         rssi: data.rx_rssi,
@@ -10057,10 +10067,47 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     return `${mcContactPrefixChip(contact)}${escHtml(raw)}`;
   }
 
+  function mcPathHopLabel(hopLen, compact = false) {
+    if (hopLen === 255) return compact ? 'route' : 'Route';
+    if (hopLen === 0) return compact ? 'direct' : 'Direct (0 hops)';
+    if (hopLen > 0) return compact ? `${hopLen}h` : `${hopLen} hop${hopLen !== 1 ? 's' : ''}`;
+    return compact ? 'flood' : 'Flood';
+  }
+
+  function mcPathHopColor(hopLen) {
+    if (hopLen === 255) return '#38bdf8';
+    if (hopLen === 0) return '#22c55e';
+    if (hopLen > 0) return '#3b82f6';
+    return 'rgba(148,163,184,0.6)';
+  }
+
+  function _mcPathHashChars(contact) {
+    const size = Number(contact?.out_path_hash_size);
+    if (Number.isFinite(size) && size >= 1 && size <= 3) return size * 2;
+    const mode = Number(contact?.out_path_hash_mode ?? 0);
+    return (Number.isFinite(mode) && mode >= 0 && mode <= 2 ? mode + 1 : 1) * 2;
+  }
+
+  function _mcPathHashSize(value, mode = null) {
+    const size = Number(value);
+    if (Number.isFinite(size) && size >= 1 && size <= 3) return size;
+    const m = Number(mode);
+    if (Number.isFinite(m) && m >= 0 && m <= 2) return m + 1;
+    return 1;
+  }
+
+  function _mcExplicitPathHashSize(evt) {
+    const size = Number(evt?.path_hash_size);
+    if (Number.isFinite(size) && size >= 1 && size <= 3) return size;
+    const mode = Number(evt?.path_hash_mode);
+    if (Number.isFinite(mode) && mode >= 0 && mode <= 2) return mode + 1;
+    return null;
+  }
+
   function _mcStoredRouteHopPrefixes(contact) {
     if (!contact || (contact.out_path_len ?? -1) <= 0 || !contact.out_path) return [];
     const hopCount = contact.out_path_len ?? 0;
-    const hashChars = ((contact.out_path_hash_mode ?? 0) + 1) * 2;
+    const hashChars = _mcPathHashChars(contact);
     const hops = [];
     for (let i = 0; i < hopCount; i++) {
       const hop = (contact.out_path || '').slice(i * hashChars, (i + 1) * hashChars);
@@ -10307,7 +10354,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const safePk = jsSafe(item.full_key || item.id || '');
     const safeRid = jsSafe(item._rid || '');
     const safeName = jsSafe(label);
-    const hops = (item.out_path_len != null && item.out_path_len >= 0) ? item.out_path_len : null;
+    const hops = item.out_path_len ?? null;
     const bat = item.battery ?? item.bat_pct ?? item.bat;
     const batStr = bat != null ? `${bat}%` : '—';
     const snrText = item.snr != null ? `${item.snr} dB` : '—';
@@ -10319,7 +10366,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         ${keyStr ? `<div style="font-size:10px;color:var(--muted)">${escHtml(keyStr)}</div>` : ''}
         <div style="font-size:10px;color:var(--muted);margin-top:2px">${escHtml(mcContactMetaLabel(item, item._rid))}</div>
         <div style="font-size:11px;color:var(--muted);margin-bottom:4px">
-          <b>SNR:</b> ${snrText} &nbsp; <b>Battery:</b> ${batStr} &nbsp; <b>Hops:</b> ${hops !== null ? hops : '—'} &nbsp; <b>Seen:</b> ${tsText}
+          <b>SNR:</b> ${snrText} &nbsp; <b>Path:</b> ${hops !== null ? escHtml(mcPathHopLabel(hops, true)) : '—'} &nbsp; <b>Seen:</b> ${tsText}
         </div>
         <div style="display:flex;gap:4px;flex-wrap:wrap">
           <button class="map-popup-btn" title="Show in Nodes list" onclick="leafletMap.closePopup();showMcNodeInList('${jsSafe(item.id || '')}')">List</button>
@@ -10435,7 +10482,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       const safePk = jsSafe(c.full_key || c.id || '');
       const safeRid = jsSafe(c._rid);
       const safeName = jsSafe(labelRaw);
-      const hops = (c.out_path_len != null && c.out_path_len >= 0) ? c.out_path_len : null;
+      const hops = c.out_path_len ?? null;
       const marker = L.marker([c.latitude, c.longitude], { icon: makeMcIcon() });
       const bat = c.battery ?? c.bat_pct ?? c.bat;
       const batStr = bat != null ? `${bat}%` : '—';
@@ -10448,7 +10495,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         + (keyStr ? `<div style="font-size:10px;color:var(--muted)">${escHtml(keyStr)}</div>` : '')
         + `<div style="font-size:10px;color:var(--muted);margin-top:2px">${escHtml(mcContactMetaLabel(c, c._rid))}</div>`
         + `<div><b>SNR:</b> ${snrText} &nbsp; <b>Battery:</b> ${batStr}</div>`
-        + `<div><b>Hops:</b> ${hops !== null ? hops : '—'} &nbsp; <b>Last seen:</b> ${tsText}</div>`
+        + `<div><b>Path:</b> ${hops !== null ? escHtml(mcPathHopLabel(hops, true)) : '—'} &nbsp; <b>Last seen:</b> ${tsText}</div>`
         + `<div style="font-size:11px;color:var(--muted)">${c.latitude.toFixed(5)}, ${c.longitude.toFixed(5)}</div>`
         + `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">`
         + `<button class="map-popup-btn" title="Show in Nodes list" onclick="leafletMap.closePopup();showMcNodeInList('${jsSafe(c.id || '')}')">List</button>`
@@ -10528,8 +10575,8 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         const c    = activeMcRadioId ? (mcContacts[activeMcRadioId] || {})[pre] : null;
         const hops = c?.out_path_len ?? -1;
         const path = c?.out_path || '';
-        if (hops >= 0) {
-          const hopLabel = hops === 0 ? 'Direct (0 hops)' : `${hops} hop${hops !== 1 ? 's' : ''} away`;
+        if (hops >= 0 || hops === 255) {
+          const hopLabel = mcPathHopLabel(hops);
           pathBar.innerHTML = `<span style="color:var(--mc-color)">${escHtml(hopLabel)}</span>${path ? ` · <span style="font-size:10px;opacity:0.7">${escHtml(path)}</span>` : ''}`;
           pathBar.style.display = 'block';
         } else {
@@ -10643,7 +10690,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const hops   = c?.out_path_len ?? -1;
     const path   = c?.out_path || '';
     const seen   = _mcContactSeenLabel(c);
-    const hopStr = c ? (hops === 0 ? 'Direct (0 hops)' : hops > 0 ? `${hops} hop${hops !== 1 ? 's' : ''} away` : 'Path unknown') : 'Not in contacts';
+    const hopStr = c ? (hops >= 0 ? mcPathHopLabel(hops) : 'Path unknown') : 'Not in contacts';
     const meta   = c ? mcContactMetaLabel(c, radioId) : '';
     const markerId  = c?.id || (fromId !== '?' ? fromId.slice(0, 12) : '');
     const hasMarker = !!mcMapMarkerById[markerId];
@@ -10662,7 +10709,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
           c.last_heard_ts = bestMsg.ts;
           c.last_seen_ts  = bestMsg.ts;
         }
-        if (c.out_path_len == null && bestMsg.path_len != null) c.out_path_len = bestMsg.path_len;
+        if (c.out_path_len == null && bestMsg.path_len != null && bestMsg.path_len !== 255) c.out_path_len = bestMsg.path_len;
         if (!c.out_path     && bestMsg.path)                    c.out_path     = bestMsg.path;
       }
     }
@@ -10914,9 +10961,9 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       const displayLabel = _rawLabel.match(/^[0-9a-f]{6,}$/i) ? (id ? id.slice(0,4)+'…' : '?') : _rawLabel;
       const name    = `${mcContactPrefixChip(c)}${escHtml(displayLabel)}`;
       const hopLen  = c.out_path_len ?? -1;
-      const hopLabel = hopLen === 0 ? 'Direct' : hopLen > 0 ? `${hopLen} hop${hopLen !== 1 ? 's' : ''}` : 'Flood';
-      const hopColor = hopLen === 0 ? '#22c55e' : hopLen > 0 ? '#3b82f6' : 'rgba(148,163,184,0.6)';
-      const borderC  = hopLen === 0 ? '#22c55e' : hopLen > 0 ? '#3b82f6' : 'rgba(148,163,184,0.35)';
+      const hopLabel = mcPathHopLabel(hopLen);
+      const hopColor = mcPathHopColor(hopLen);
+      const borderC  = hopLen === 255 ? '#38bdf8' : hopLen === 0 ? '#22c55e' : hopLen > 0 ? '#3b82f6' : 'rgba(148,163,184,0.35)';
       const lat     = c.latitude ?? c.lat;
       const lon     = c.longitude ?? c.lon;
       const hasGps  = lat != null && lon != null;
@@ -10982,8 +11029,8 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const typeLabel = _MC_TYPE_LABELS[typeIdx] || '?';
     const typeColor = _MC_TYPE_COLORS[typeIdx] || 'var(--muted)';
     const hopLen    = c.out_path_len ?? -1;
-    const hopLabel  = hopLen === 0 ? 'Direct (0 hops)' : hopLen > 0 ? `${hopLen} hop${hopLen !== 1 ? 's' : ''}` : 'Flood';
-    const hopColor  = hopLen === 0 ? '#22c55e' : hopLen > 0 ? '#3b82f6' : 'rgba(148,163,184,0.7)';
+    const hopLabel  = mcPathHopLabel(hopLen);
+    const hopColor  = mcPathHopColor(hopLen);
     const hashBytes = c.out_path_hash_size ?? (c.out_path_hash_mode != null ? c.out_path_hash_mode + 1 : null);
     const hashBadge = hashBytes != null ? `<span style="font-size:9px;padding:1px 4px;border-radius:3px;background:rgba(148,163,184,0.1);color:var(--muted);margin-left:6px;vertical-align:1px">${hashBytes}B/hop</span>` : '';
     const lat       = c.latitude ?? c.lat;
@@ -11129,7 +11176,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
   function decodeMcPath(contact, radioLat, radioLon, radioId = null) {
     const pathHex  = contact.out_path || '';
     // Prefer observed hash size from events; fall back to configured mode from REST API
-    const hashBytes = contact.out_path_hash_size ?? ((contact.out_path_hash_mode ?? 0) + 1);
+    const hashBytes = _mcPathHashSize(contact.out_path_hash_size, contact.out_path_hash_mode);
     const hashChars = hashBytes * 2;   // hex chars per hop hash
     const hopCount  = contact.out_path_len ?? -1;
     const cLat = contact.latitude ?? contact.lat;
@@ -11172,16 +11219,16 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
   function decodeMcEventPath(evt, endpointLat, endpointLon, radioLat, radioLon, radioId = null) {
     const pathHex = evt?.path || '';
     const hopCount = evt?.path_len;
-    const hashSize = evt?.path_hash_size;
+    const hashSize = _mcPathHashSize(evt?.path_hash_size, evt?.path_hash_mode);
     if (endpointLat == null || endpointLon == null) return null;
-    if (hopCount == null || hopCount < 0 || hopCount === 255) return null;  // 255 = flood, no path tracking
+    if (hopCount == null || hopCount < 0 || hopCount === 255) return null;  // 255 = direct-mode/no embedded hop list in message events
     if (hopCount === 0) {
       if (radioLat != null && radioLon != null) return { points: [[radioLat, radioLon], [endpointLat, endpointLon]], partial: false };
       return null;
     }
     // hopCount > 0 but no path hashes — relay identities unavailable, let caller fall back to decodeMcPath
     if (!pathHex) return null;
-    const hashChars = hashSize ? hashSize * 2 : 2;
+    const hashChars = hashSize * 2;
     const points = [];
     const hops = [];
     let partial = false;
@@ -11199,6 +11246,42 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     }
     points.push([endpointLat, endpointLon]);
     return points.length >= 2 ? { points, partial, hops } : null;
+  }
+
+  function decodeMcRelayPath(evt, radioLat, radioLon, radioId = null) {
+    const pathHex = evt?.path || '';
+    if (radioLat == null || radioLon == null) return null;
+    if (!pathHex) return null;
+    const rawHopCount = evt?.path_len;
+    const explicitSize = _mcExplicitPathHashSize(evt);
+    const candidates = explicitSize ? [explicitSize] : [1, 2, 3].filter(size => pathHex.length >= size * 2 && pathHex.length % (size * 2) === 0);
+    let best = null;
+    candidates.forEach(hashSize => {
+      const hashChars = hashSize * 2;
+      const hopCount = (rawHopCount != null && rawHopCount > 0 && rawHopCount !== 255)
+        ? rawHopCount
+        : Math.floor(pathHex.length / hashChars);
+      if (!hopCount) return;
+      const points = [[radioLat, radioLon]];
+      const hops = [];
+      let unresolved = 0;
+      for (let i = 0; i < hopCount; i++) {
+        const hashHex = pathHex.slice(i * hashChars, (i + 1) * hashChars);
+        if (!hashHex || hashHex.replace(/0/g, '') === '') break;
+        const hopContact = _mcPickPathHop(hashHex, radioId, radioLat, radioLon, null, null, i, hopCount);
+        if (!hopContact) { unresolved++; continue; }
+        const hLat = hopContact.latitude ?? hopContact.lat;
+        const hLon = hopContact.longitude ?? hopContact.lon;
+        if (hLat == null || hLon == null) { unresolved++; continue; }
+        points.push([hLat, hLon]);
+        hops.push(_mcPathHopMeta(hashHex, hopContact, points.length - 1));
+      }
+      if (points.length < 2) return;
+      const score = (hops.length * 100) - unresolved - Math.abs(hopCount - hops.length);
+      const result = { points, partial: true, endpointUnknown: true, hops, unresolved, inferredPathHashSize: hashSize, inferredHopLen: hopCount };
+      if (!best || score > best.score) best = { score, result };
+    });
+    return best?.result || null;
   }
 
   function renderMcPathLines() {
@@ -11396,6 +11479,24 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
           }
         });
       }
+      if (kind === 'message' && pathResult?.endpointUnknown && points.length) {
+        const [warnLat, warnLon] = points[0];
+        const warn = L.marker([warnLat, warnLon], {
+          icon: L.divIcon({
+            className: 'mc-path-warn-icon',
+            html: '<div class="mc-path-warn">!</div>',
+            iconSize: [20, 20],
+            iconAnchor: [10, 10],
+          }),
+          interactive: true,
+        }).addTo(leafletMap);
+        warn.bindTooltip('Known relay only - sender location unknown', {
+          direction: 'top',
+          className: 'map-label',
+          offset: [0, -10],
+        });
+        _mcHoverLines.push(warn);
+      }
     }
   }
 
@@ -11412,7 +11513,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
 
   function addMcSenseLogEntry(data) {
     const hopLen  = data.out_path_len ?? -1;
-    const hopStr  = hopLen === 0 ? 'direct' : hopLen > 0 ? `${hopLen}h` : 'flood';
+    const hopStr  = mcPathHopLabel(hopLen, true);
     // Prefer name from contacts cache (may be richer than current advert payload)
     const cached  = data.radio_id && data.id ? (mcContacts[data.radio_id] || {})[data.id] : null;
     // Prefer a real name; fall back to first 4 chars of id as a short anonymous label
@@ -11482,7 +11583,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     el.innerHTML = entries.map(e => {
       if (e.kind === 'trace') {
         const isPinned = _mcLogPinnedIdx === e._i;
-        const hopColor = e.hopLen === 0 ? '#22c55e' : '#3b82f6';
+        const hopColor = mcPathHopColor(e.hopLen);
         const rLabel = e.responderName ? escHtml(e.responderName) : '?';
         const snrLabel = e.finalSnr != null ? ` · ${e.finalSnr.toFixed(1)}dB` : '';
         const iconColor = e.ours ? '#a78bfa' : 'rgba(167,139,250,0.4)';
@@ -11540,10 +11641,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         const msgMeta = _mcResolveEntryPath(e);
         const path = msgMeta.path;
         const q = msgMeta.quality;
-        // Show hop label: flood sentinel (255) → "flood", known value → hop count, unknown (-1) → hide
-        const showHop = e.hopLen >= 0;
-        const hopLabel = (e.hopLen === 255 || path?.flood) ? 'flood' : e.hopLen === 0 ? 'direct' : `${e.hopLen}h`;
-        const hopColor = e.hopLen === 255 ? 'rgba(148,163,184,0.8)' : e.hopLen === 0 ? '#22c55e' : '#8b5cf6';
+        const hopMeta = _mcMessageHopMeta(e, path);
         // Show quality badge only when it adds info (live/cached, not inferred)
         const showQ = q && q !== 'inferred';
         const qColor = q === 'live' ? '#22c55e' : '#38bdf8';
@@ -11555,7 +11653,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
           onmouseleave="_mcLogHover(${e._i},false)">
           <span style="color:var(--muted)">${e.ts}</span>
           <span style="margin-left:4px;font-weight:600">${escHtml(e.name)}</span>
-          ${showHop ? `<span style="margin-left:4px;font-size:10px;color:${hopColor}">${hopLabel}</span>` : ''}
+          ${hopMeta ? `<span style="margin-left:4px;font-size:10px;color:${hopMeta.color}">${escHtml(hopMeta.label)}</span>` : ''}
           ${showQ ? `<span title="Route source" style="margin-left:4px;font-size:9px;color:${qColor};background:${qBg};border:1px solid ${qBorder};border-radius:3px;padding:0 3px">${q}</span>` : ''}
           <span style="color:var(--muted);margin-left:4px;font-size:10px">${escHtml(e.text)}</span>
           ${isPinned ? '<span style="float:right;color:#3b82f6;font-size:9px;margin-right:2px">●</span>' : ''}
@@ -11574,8 +11672,8 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       const hasPts    = e.pathResult?.points?.length >= 2;
       const isPartial = e.pathResult?.partial;
       const nameColor = _MC_TYPE_COLORS[e.typeIdx] || 'var(--muted)';
-      const hopLabel  = e.hopLen === 0 ? 'direct' : e.hopLen > 0 ? `${e.hopLen}h` : 'flood';
-      const hopColor  = e.hopLen === 0 ? '#22c55e' : e.hopLen > 0 ? '#3b82f6' : 'rgba(148,163,184,0.6)';
+      const hopLabel  = mcPathHopLabel(e.hopLen, true);
+      const hopColor  = mcPathHopColor(e.hopLen);
       const isPinned  = _mcLogPinnedIdx === e._i;
       return `<div style="padding:2px 0;border-bottom:1px solid var(--border);cursor:pointer;${isPinned ? 'background:rgba(59,130,246,0.12)' : ''}"
         data-idx="${e._i}"
@@ -11630,30 +11728,52 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     return !!a.flood === !!b.flood;
   }
 
+  function _mcMessageHopMeta(entry, path) {
+    const routeType = String(entry?.routeType || '').toUpperCase();
+    const hopLen = entry?.hopLen;
+    if (hopLen === 255) {
+      if (routeType === 'FLOOD') return { label: 'flood', detail: 'Flood', color: 'rgba(148,163,184,0.8)' };
+      return { label: 'direct route', detail: 'Direct route', color: '#38bdf8' };
+    }
+    if (path?.flood) return { label: 'flood', detail: 'Flood', color: 'rgba(148,163,184,0.8)' };
+    if (hopLen === 0) return { label: 'direct', detail: 'Direct', color: '#22c55e' };
+    if (hopLen > 0) return { label: `${hopLen}h`, detail: `${hopLen} hop${hopLen !== 1 ? 's' : ''}`, color: '#8b5cf6' };
+    return null;
+  }
+
   function _mcResolveEntryPath(entry) {
     if (!entry) return { path: null, quality: null, refreshed: false };
     if (entry.kind !== 'message') return { path: entry.pathResult || null, quality: null, refreshed: false };
     const stored = entry.pathResult || null;
     let quality = entry.routeQuality || (stored?.flood ? 'inferred' : stored ? 'cached' : 'inferred');
     if (entry.radioId) {
-      const contact = _mcResolveMessageContact(entry);
       const [rLat, rLon] = _mcSenseRadioPos(entry.radioId);
-      if (contact) {
-        const fresh = decodeMcPath(contact, rLat, rLon, entry.radioId);
-        if (fresh) {
-          const resolved = { ...fresh, kind: 'message', points: [...fresh.points].reverse() };
-          return { path: resolved, quality: 'cached', refreshed: !_mcSamePath(resolved, stored) };
-        }
-      }
-      // Re-try the original event path now that hop contacts may have GPS
+      // Prefer the original packet/RX-log path. Contact cache paths can be newer
+      // but unrelated to this exact received message.
       if (entry.rawPath && entry.hopLen > 0) {
         const fromEvent = decodeMcEventPath(
-          { path: entry.rawPath, path_len: entry.hopLen, path_hash_size: entry.pathHashSize },
+          { path: entry.rawPath, path_len: entry.hopLen, path_hash_size: entry.pathHashSize, path_hash_mode: entry.pathHashMode },
           entry.lat, entry.lon, rLat, rLon, entry.radioId
         );
         if (fromEvent) {
           const resolved = { ...fromEvent, kind: 'message', points: [...fromEvent.points].reverse() };
           return { path: resolved, quality: 'live', refreshed: !_mcSamePath(resolved, stored) };
+        }
+        const relayOnly = decodeMcRelayPath(
+          { path: entry.rawPath, path_len: entry.hopLen, path_hash_size: entry.pathHashSize, path_hash_mode: entry.pathHashMode },
+          rLat, rLon, entry.radioId
+        );
+        if (relayOnly) {
+          const resolved = { ...relayOnly, kind: 'message', points: [...relayOnly.points].reverse() };
+          return { path: resolved, quality: 'live', refreshed: !_mcSamePath(resolved, stored) };
+        }
+      }
+      const contact = _mcResolveMessageContact(entry);
+      if (contact) {
+        const fresh = decodeMcPath(contact, rLat, rLon, entry.radioId);
+        if (fresh) {
+          const resolved = { ...fresh, kind: 'message', points: [...fresh.points].reverse() };
+          return { path: resolved, quality: 'cached', refreshed: !_mcSamePath(resolved, stored) };
         }
       }
     }
@@ -11802,7 +11922,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       title.textContent = entry.name || '?';
       const contact = findMcContactByKeyPrefix(entry.id || '', entry.radioId);
       const typeLabel = (_MC_TYPE_LABELS || [])[contact?.type ?? entry.typeIdx] || '?';
-      const hopLabel = entry.hopLen === 0 ? 'Direct (0 hops)' : entry.hopLen > 0 ? `${entry.hopLen} hop${entry.hopLen !== 1 ? 's' : ''}` : 'Flood';
+      const hopLabel = mcPathHopLabel(entry.hopLen);
       const advHashBytes = contact?.out_path_hash_size ?? (contact?.out_path_hash_mode != null ? contact.out_path_hash_mode + 1 : null);
       const advHashSuffix = advHashBytes != null ? ` · ${advHashBytes}B/hop` : '';
       let rows = td('Type', escHtml(typeLabel));
@@ -11811,8 +11931,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       if (entry.lat != null && entry.lon != null) rows += td('Position', `${entry.lat.toFixed(5)}, ${entry.lon.toFixed(5)}`);
       if (contact && contact.out_path_len > 0 && contact.out_path) {
         rows += th('Via');
-        const hashMode = contact.out_path_hash_mode ?? 0;
-        const hashChars = (hashMode + 1) * 2;
+        const hashChars = _mcPathHashChars(contact);
         for (let i = 0; i < contact.out_path_len; i++) {
           const hashHex = contact.out_path.slice(i * hashChars, (i + 1) * hashChars);
           const [rLat, rLon] = _mcSenseRadioPos(entry.radioId);
@@ -11835,12 +11954,8 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       const msgMeta = _mcResolveEntryPath(entry);
       title.textContent = entry.name || '?';
       const chanLabel = mcKnownChannels[entry.channel] || (entry.channel === 0 ? 'Public channel' : `Channel ${entry.channel}`);
-      const hopLabel = msgMeta.path?.flood
-        ? 'Flood'
-        : entry.hopLen >= 0
-          ? (entry.hopLen === 0 ? 'Direct' : `${entry.hopLen} hop${entry.hopLen !== 1 ? 's' : ''}`)
-          : 'Unknown';
-      const msgHashBytes = entry.pathHashSize ?? (() => { const c = (mcContacts[entry.radioId] || {})[entry.fromId]; return c?.out_path_hash_size ?? (c?.out_path_hash_mode != null ? c.out_path_hash_mode + 1 : null); })();
+      const hopLabel = _mcMessageHopMeta(entry, msgMeta.path)?.detail || 'Unknown';
+      const msgHashBytes = entry.pathHashSize ?? (entry.pathHashMode != null ? Number(entry.pathHashMode) + 1 : null) ?? (() => { const c = (mcContacts[entry.radioId] || {})[entry.fromId]; return c?.out_path_hash_size ?? (c?.out_path_hash_mode != null ? c.out_path_hash_mode + 1 : null); })();
       const msgHashSuffix = msgHashBytes != null ? ` · ${msgHashBytes}B/hop` : '';
       let rows = td('Via', escHtml(chanLabel));
       rows += td('Path', hopLabel + escHtml(msgHashSuffix));
@@ -11882,11 +11997,16 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const contact = realContact || cached;
     const lat = contact?.latitude ?? contact?.lat ?? null;
     const lon = contact?.longitude ?? contact?.lon ?? null;
-    const hopLen = data.path_len ?? contact?.out_path_len ?? -1;
+    let hopLen = data.path_len ?? contact?.out_path_len ?? -1;
     const [radioLat, radioLon] = _mcSenseRadioPos(data.radio_id);
     let routeQuality = 'inferred';
     let pathResult = decodeMcEventPath(data, lat, lon, radioLat, radioLon, data.radio_id);
     if (pathResult) routeQuality = 'live';
+    if (!pathResult) {
+      pathResult = decodeMcRelayPath(data, radioLat, radioLon, data.radio_id);
+      if (pathResult) routeQuality = 'live';
+    }
+    if (pathResult?.inferredHopLen != null && (hopLen == null || hopLen < 0 || hopLen === 255)) hopLen = pathResult.inferredHopLen;
     if (!pathResult && contact) {
       pathResult = decodeMcPath(contact, radioLat, radioLon, data.radio_id);
       if (pathResult) routeQuality = 'cached';
@@ -11898,7 +12018,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     if (pathResult && !pathResult.flood) pathResult = { ...pathResult, kind: 'message' };
     // Reverse: message is incoming (sender → relays → our radio), but decodeMcPath builds radio→contact
     if (pathResult?.points) pathResult = _mcReversePathResult(pathResult);
-    const entry   = { kind: 'message', name, text, rawText: full, ts, msgTs: data.ts, radioId: data.radio_id, channel: data.channel ?? 0, fromId: data.from_id, lat, lon, hopLen, pathResult, routeQuality, pathHashSize: data.path_hash_size ?? null, rawPath: data.path ?? null };
+    const entry   = { kind: 'message', name, text, rawText: full, ts, msgTs: data.ts, radioId: data.radio_id, channel: data.channel ?? 0, fromId: data.from_id, lat, lon, hopLen, pathResult, routeQuality, pathHashSize: data.path_hash_size ?? pathResult?.inferredPathHashSize ?? null, pathHashMode: data.path_hash_mode ?? null, routeType: data.route_type ?? null, rawPath: data.path ?? null };
     if (_mcLogPinnedIdx !== null) _mcLogPinnedIdx++;
     _mcSenseLogEntries.unshift(entry);
     if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
@@ -12526,6 +12646,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     contact.last_seen = 'just now';
     if (extra.out_path_len != null) contact.out_path_len = extra.out_path_len;
     if (extra.out_path != null) contact.out_path = extra.out_path;
+    if (extra.out_path_hash_mode != null) contact.out_path_hash_mode = extra.out_path_hash_mode;
     if (extra.out_path_hash_size != null) contact.out_path_hash_size = extra.out_path_hash_size;
     if (extra.snr != null) contact.snr = extra.snr;
     if (extra.rssi != null) contact.rssi = extra.rssi;

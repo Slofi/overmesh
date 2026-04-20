@@ -156,13 +156,79 @@ def _payload_matches_subtype(payload_typename, subtype):
         return False
     name = str(payload_typename).upper()
     if subtype == "dm":
-        return any(token in name for token in ("DM", "CONTACT", "DIRECT"))
+        return any(token in name for token in ("DM", "CONTACT", "DIRECT", "PRIV", "TEXT_MSG"))
     if subtype == "channel":
-        return any(token in name for token in ("CHAN", "CHANNEL", "BROADCAST", "TEXT", "MSG"))
+        return any(token in name for token in ("CHAN", "CHANNEL", "BROADCAST", "GRP_TXT", "GRP_DATA", "TXT", "MSG", "TEXT"))
     return False
 
 
-def _best_recent_rx_for_message(config_id, subtype, now_ts, sender_prefix=None):
+def _mc_path_len_from_hex(path, path_hash_size):
+    if not path:
+        return None
+    try:
+        size = int(path_hash_size)
+    except (TypeError, ValueError):
+        return None
+    if size <= 0:
+        return None
+    return max(0, len(str(path)) // (size * 2))
+
+
+def _mc_path_hash_size_from_msg(msg, rx=None):
+    for source in (rx or {}, msg or {}):
+        value = source.get("path_hash_size")
+        if value is not None:
+            try:
+                size = int(value)
+                if size > 0:
+                    return size
+            except (TypeError, ValueError):
+                pass
+    mode = (msg or {}).get("path_hash_mode")
+    if mode is not None:
+        try:
+            mode = int(mode)
+            if mode >= 0:
+                return mode + 1
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
+def _mc_message_path_fields(msg, rx=None):
+    msg = msg or {}
+    rx = rx or {}
+    if rx.get("path"):
+        rx_size = _mc_path_hash_size_from_msg(msg, rx)
+        rx_len = rx.get("path_len")
+        if rx_len in (None, -1, 255):
+            rx_len = _mc_path_len_from_hex(rx.get("path"), rx_size)
+        return {
+            "path": rx.get("path"),
+            "path_len": rx_len,
+            "path_hash_mode": (rx_size - 1) if rx_size else msg.get("path_hash_mode"),
+            "path_hash_size": rx_size,
+        }
+    if msg.get("path"):
+        msg_size = _mc_path_hash_size_from_msg(msg, None)
+        msg_len = msg.get("path_len")
+        if msg_len in (None, -1, 255):
+            msg_len = _mc_path_len_from_hex(msg.get("path"), msg_size)
+        return {
+            "path": msg.get("path"),
+            "path_len": msg_len,
+            "path_hash_mode": msg.get("path_hash_mode"),
+            "path_hash_size": msg_size,
+        }
+    return {
+        "path": None,
+        "path_len": msg.get("path_len", rx.get("path_len")),
+        "path_hash_mode": msg.get("path_hash_mode"),
+        "path_hash_size": _mc_path_hash_size_from_msg(msg, rx),
+    }
+
+
+def _best_recent_rx_for_message(config_id, subtype, now_ts, sender_prefix=None, msg=None):
     """Best-effort correlation between a message event and a recent RX_LOG_DATA event.
 
     Prefer entries that match the sender prefix and payload subtype. Fall back
@@ -171,7 +237,7 @@ def _best_recent_rx_for_message(config_id, subtype, now_ts, sender_prefix=None):
     entries = _mc_recent_rx_logs.get(config_id, [])
     if not entries:
         return None
-    cutoff = now_ts - 5.0
+    cutoff = now_ts - 45.0
     recent = [e for e in entries if e.get("stored_at", 0) >= cutoff]
     if not recent:
         return None
@@ -183,26 +249,33 @@ def _best_recent_rx_for_message(config_id, subtype, now_ts, sender_prefix=None):
     if not usable:
         usable = recent
 
-    if sender_prefix:
-        sender_matches = [
-            e for e in usable
-            if _rx_sender_prefix(e).startswith(sender_prefix[:12])
-        ]
-        if sender_matches:
-            subtype_matches = [
-                e for e in sender_matches
-                if _payload_matches_subtype(e.get("payload_typename"), subtype)
-            ]
-            return subtype_matches[-1] if subtype_matches else sender_matches[-1]
+    msg = msg or {}
+    sender_key = (sender_prefix or "")[:12]
+    msg_text = str(msg.get("text") or "")
+    msg_ts = msg.get("sender_timestamp") or msg.get("time")
 
-    subtype_matches = [
-        e for e in usable
-        if _payload_matches_subtype(e.get("payload_typename"), subtype)
-    ]
-    if subtype_matches:
-        return subtype_matches[-1]
+    def _score(e):
+        age = max(0.0, now_ts - float(e.get("stored_at", now_ts) or now_ts))
+        score = -age
+        if e.get("path"):
+            score += 1000
+        if _payload_matches_subtype(e.get("payload_typename"), subtype):
+            score += 250
+        e_sender = _rx_sender_prefix(e)
+        if sender_key and e_sender and e_sender.startswith(sender_key):
+            score += 500
+        if msg_ts is not None and e.get("sender_timestamp") == msg_ts:
+            score += 700
+        if msg_text and e.get("message") and str(e.get("message")) == msg_text:
+            score += 700
+        return score
 
-    return usable[-1]
+    scored = sorted(usable, key=_score)
+    best = scored[-1] if scored else None
+    if best and (_payload_matches_subtype(best.get("payload_typename"), subtype) or best.get("path")):
+        return best
+
+    return best
 
 
 def _run_event_loop():
@@ -521,6 +594,7 @@ async def _retry_contacts_async(mc, config_id, name):
                 "out_path_len":       c.get("out_path_len", -1),
                 "out_path":           c.get("out_path", ""),
                 "out_path_hash_mode": c.get("out_path_hash_mode", 0),
+                "out_path_hash_size": c.get("out_path_hash_size"),
                 "contact_type": c.get("type", 0),
                 "network":     "mc",
             })
@@ -603,6 +677,7 @@ def _subscribe_mc_events(mc, config_id, name):
                 "out_path_len":      existing.get("out_path_len", -1),
                 "out_path":          existing.get("out_path", ""),
                 "out_path_hash_mode": existing.get("out_path_hash_mode", 0),
+                "out_path_hash_size": existing.get("out_path_hash_size"),
                 "contact_type":      existing.get("type", 0),
                 "network":           "mc",
             })
@@ -615,8 +690,9 @@ def _subscribe_mc_events(mc, config_id, name):
             now = int(time.time())
             _touch_contact_seen(msg.get("pubkey_pre"), now)
             rx = _best_recent_rx_for_message(
-                config_id, "channel", time.time(), sender_prefix=msg.get("pubkey_pre")
+                config_id, "channel", time.time(), sender_prefix=msg.get("pubkey_pre"), msg=msg
             )
+            path_fields = _mc_message_path_fields(msg, rx)
             sse_msg = {
                 "type":       "mc_message",
                 "radio_id":   config_id,
@@ -629,9 +705,10 @@ def _subscribe_mc_events(mc, config_id, name):
                 "ts":         msg.get("time", now),
                 "sent":       False,
                 "route_type": msg.get("route_typename") or (rx or {}).get("route_typename"),
-                "path":       msg.get("path") or (rx or {}).get("path"),
-                "path_len":   msg.get("path_len", (rx or {}).get("path_len")),
-                "path_hash_size": msg.get("path_hash_size", (rx or {}).get("path_hash_size")),
+                "path":       path_fields["path"],
+                "path_len":   path_fields["path_len"],
+                "path_hash_mode": path_fields["path_hash_mode"],
+                "path_hash_size": path_fields["path_hash_size"],
                 "rx_rssi":    msg.get("rssi", (rx or {}).get("rssi")),
                 "rx_snr":     msg.get("snr", (rx or {}).get("snr")),
             }
@@ -655,9 +732,10 @@ def _subscribe_mc_events(mc, config_id, name):
             now = int(time.time())
             _touch_contact_seen(msg.get("pubkey_prefix"), now)
             rx = _best_recent_rx_for_message(
-                config_id, "dm", time.time(), sender_prefix=msg.get("pubkey_prefix")
+                config_id, "dm", time.time(), sender_prefix=msg.get("pubkey_prefix"), msg=msg
             )
-            push_to_sse({
+            path_fields = _mc_message_path_fields(msg, rx)
+            sse_msg = {
                 "type":       "mc_message",
                 "radio_id":   config_id,
                 "radio_name": name,
@@ -668,14 +746,16 @@ def _subscribe_mc_events(mc, config_id, name):
                 "ts":         msg.get("time", now),
                 "sent":       False,
                 "route_type": msg.get("route_typename") or (rx or {}).get("route_typename"),
-                "path":       msg.get("path") or (rx or {}).get("path"),
-                "path_len":   msg.get("path_len", (rx or {}).get("path_len")),
-                "path_hash_size": msg.get("path_hash_size", (rx or {}).get("path_hash_size")),
+                "path":       path_fields["path"],
+                "path_len":   path_fields["path_len"],
+                "path_hash_mode": path_fields["path_hash_mode"],
+                "path_hash_size": path_fields["path_hash_size"],
                 "rx_rssi":    msg.get("rssi", (rx or {}).get("rssi")),
                 "rx_snr":     msg.get("snr", (rx or {}).get("snr")),
-            })
+            }
+            push_to_sse(sse_msg)
             log.info(f"[MC:{name}] DM from {msg.get('pubkey_prefix','?')}: {msg.get('text','')[:60]}"
-                     f" | path={repr(msg.get('path') or (rx or {{}}).get('path'))[:40]} path_len={msg.get('path_len', (rx or {{}}).get('path_len'))} hash_size={msg.get('path_hash_size', (rx or {{}}).get('path_hash_size'))}")
+                     f" | path={repr(sse_msg.get('path'))[:40]} path_len={sse_msg.get('path_len')} hash_size={sse_msg.get('path_hash_size')}")
             # Bot command handling (background thread to avoid blocking asyncio loop)
             threading.Thread(
                 target=_invoke_mc_bot, args=(dict(msg), config_id, "dm"),
@@ -706,6 +786,7 @@ def _subscribe_mc_events(mc, config_id, name):
                 "out_path_len":      c.get("out_path_len", -1),
                 "out_path":          c.get("out_path", ""),
                 "out_path_hash_mode": c.get("out_path_hash_mode", 0),
+                "out_path_hash_size": c.get("out_path_hash_size"),
                 "contact_type":      c.get("type", 0),
                 "network":           "mc",
             })
@@ -797,6 +878,7 @@ def _subscribe_mc_events(mc, config_id, name):
                     "out_path_len":      c.get("out_path_len", -1),
                     "out_path":          c.get("out_path", ""),
                     "out_path_hash_mode": c.get("out_path_hash_mode", 0),
+                    "out_path_hash_size": c.get("out_path_hash_size"),
                     "network":           "mc",
                 })
                 log.info(f"[MC:{name}] on_path_update: pushed updated path for {pubkey[:12]}")
@@ -1004,8 +1086,8 @@ async def _set_contact_path_async(config_id, pubkey_prefix, hop_prefixes=None, c
             path_hash_mode = int(path_hash_mode)
         except (TypeError, ValueError):
             raise ValueError("path_hash_mode must be an integer")
-        if path_hash_mode < 0 or path_hash_mode > 3:
-            raise ValueError("path_hash_mode must be between 0 and 3")
+        if path_hash_mode < 0 or path_hash_mode > 2:
+            raise ValueError("path_hash_mode must be between 0 and 2")
 
         hash_chars = (path_hash_mode + 1) * 2
         path_hex_parts = []
@@ -1523,13 +1605,15 @@ async def _req_status_async(config_id, pubkey_prefix):
     try:
         refreshed = await mc.commands.get_contacts()
         if refreshed.type == EventType.CONTACTS:
+            refreshed_contacts = refreshed.payload or {}
             with mc_connections_lock:
                 if config_id in mc_connections:
-                    new_contacts = refreshed.payload or {}
                     old_contacts = mc_connections[config_id].get("contacts", {})
-                    if new_contacts or not old_contacts:
-                        mc_connections[config_id]["contacts"] = new_contacts
-            new_contact = dict(refreshed.payload.get(full_key, contact))
+                    if refreshed_contacts or not old_contacts:
+                        mc_connections[config_id]["contacts"] = refreshed_contacts
+                    else:
+                        refreshed_contacts = old_contacts
+            new_contact = dict(refreshed_contacts.get(full_key, contact))
             new_contact["public_key"] = full_key
             contact = new_contact
             log.info(

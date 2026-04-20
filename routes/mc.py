@@ -65,6 +65,7 @@ def _serialize_mc_contact(pubkey, contact, now=None):
         "out_path_len": contact.get("out_path_len", -1),
         "out_path": contact.get("out_path", ""),
         "out_path_hash_mode": contact.get("out_path_hash_mode", 0),
+        "out_path_hash_size": contact.get("out_path_hash_size"),
         "type": contact.get("type", 0),
         "network": "mc",
     }
@@ -160,6 +161,8 @@ def api_mc_set_contact_route(radio_id, contact_id):
             path_hash_mode = int(raw_mode)
         except (TypeError, ValueError):
             return jsonify({"error": "path_hash_mode must be an integer"}), 400
+        if path_hash_mode < 0 or path_hash_mode > 2:
+            return jsonify({"error": "path_hash_mode must be between 0 and 2"}), 400
 
     try:
         updated_contact, _result = set_contact_path(

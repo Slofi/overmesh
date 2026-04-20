@@ -10,6 +10,10 @@ OverMesh uses date-based release versions:
 
 The version in `VERSION` must be updated every time an OverMesh update is pushed to GitHub. The Settings updater also shows the Git commit hash for exact build identification.
 
+## 2026.04.20.3
+
+- Added an update reminder to the first-launch OverMesh intro, pointing users to Settings -> App for update checks.
+
 ## 2026.04.20.2
 
 - Hardened MT Last Seen handling:

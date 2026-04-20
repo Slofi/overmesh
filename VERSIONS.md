@@ -10,6 +10,11 @@ OverMesh uses date-based release versions:
 
 The version in `VERSION` must be updated every time an OverMesh update is pushed to GitHub. The Settings updater also shows the Git commit hash for exact build identification.
 
+## 2026.04.20.5
+
+- Allowed the Settings updater from trusted local/private access paths, including Tailscale `100.64.0.0/10`, so a headless G501 install can be updated from the operator browser.
+- Updated the manual wording for the updater access restriction.
+
 ## 2026.04.20.4
 
 - Added MT message hop metadata persistence and route badges in Chat/Sense.

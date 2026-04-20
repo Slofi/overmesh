@@ -1,4 +1,5 @@
 import json
+import ipaddress
 import os
 import re
 import subprocess
@@ -39,7 +40,26 @@ def _can_remove_mt_node():
 
 
 def _settings_local_request():
-    return request.remote_addr in ("127.0.0.1", "::1", "localhost")
+    addr = request.remote_addr or ""
+    if addr == "localhost":
+        return True
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        return False
+    if ip.is_loopback:
+        return True
+    if ip.version == 4:
+        trusted_v4 = (
+            ipaddress.ip_network("10.0.0.0/8"),
+            ipaddress.ip_network("172.16.0.0/12"),
+            ipaddress.ip_network("192.168.0.0/16"),
+            ipaddress.ip_network("100.64.0.0/10"),  # Tailscale/CGNAT admin networks
+        )
+        return any(ip in net for net in trusted_v4)
+    if ip.version == 6:
+        return ip.is_private or ip.is_link_local
+    return False
 
 
 def _git_cmd(args, timeout=30, check=False):

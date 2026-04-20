@@ -1463,6 +1463,48 @@
   </div>
 </div>
 
+<!-- First launch modal -->
+<div id="intro-modal" class="modal-overlay" onclick="if(event.target===this)closeOmIntro(true)">
+  <div class="modal-box" style="width:420px;max-width:calc(100vw - 24px)">
+    <div class="modal-header">
+      <span class="modal-title">OverMesh</span>
+      <button class="modal-close" onclick="closeOmIntro(true)" title="Close">&#x2715;</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:13px;color:var(--text);line-height:1.45">
+        <p style="margin:0 0 10px">OverMesh is a local operator console for Meshtastic and MeshCore radios.</p>
+        <div style="display:grid;gap:8px;margin:12px 0">
+          <div><b>1.</b> Add radios in <span style="color:var(--accent)">Settings</span>.</div>
+          <div><b>2.</b> Use <span style="color:var(--accent)">Chat</span>, <span style="color:var(--accent)">Nodes</span>, and <span style="color:var(--accent)">Sense/Map</span> for daily operation.</div>
+          <div><b>3.</b> Keep radio transmit actions deliberate; Silent Running blocks OM-initiated transmissions when enabled.</div>
+        </div>
+        <div style="color:var(--muted);font-size:12px">This intro can be opened again from Settings → App.</div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button class="btn-secondary" onclick="switchTab('settings');switchSettingsTab('app');closeOmIntro(true)">Settings</button>
+        <button class="btn-secondary" style="border-color:var(--accent);color:var(--accent)" onclick="closeOmIntro(true)">Start</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Manual modal -->
+<div id="manual-modal" class="modal-overlay" onclick="if(event.target===this)closeOmManual()">
+  <div class="modal-box" style="width:760px;max-width:calc(100vw - 24px);max-height:calc(100vh - 40px);display:flex;flex-direction:column">
+    <div class="modal-header">
+      <span class="modal-title">OverMesh Manual</span>
+      <button class="modal-close" onclick="closeOmManual()" title="Close">&#x2715;</button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;min-height:0">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input id="manual-search" class="settings-input" placeholder="Search manual..." style="flex:1;min-width:180px" oninput="renderOmManual(this.value)">
+        <button class="btn-secondary" onclick="document.getElementById('manual-search').value='';renderOmManual('')" title="Clear search">Clear</button>
+      </div>
+      <div id="manual-results" style="overflow:auto;min-height:180px;max-height:calc(100vh - 210px);padding-right:4px"></div>
+    </div>
+  </div>
+</div>
+
 <!-- Node action modal -->
 <div id="action-modal" class="modal-overlay" onclick="if(event.target===this)closeModal()">
   <div class="modal-box">
@@ -2442,6 +2484,34 @@
              onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'"></div>
         <button class="btn" onclick="settingsResetAccentColor()" style="font-size:12px;padding:3px 10px" title="Reset to default accent colour">Reset</button>
         <span style="font-size:11px;color:var(--muted)">Pick any hue — shades auto-derive</span>
+      </div>
+    </div>
+
+    <!-- System -->
+    <div class="settings-section">
+      <h2 class="settings-title">System</h2>
+      <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:start">
+        <div>
+          <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px">OverMesh update</div>
+          <div id="settings-update-summary" style="font-size:12px;color:var(--muted);line-height:1.45">Checking version…</div>
+          <div id="settings-update-log" style="display:none;margin-top:8px;max-height:120px;overflow:auto;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px;font-family:monospace;font-size:11px;color:var(--muted);white-space:pre-wrap"></div>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+          <button class="btn" id="settings-update-check-btn" onclick="settingsLoadUpdateStatus(true)" title="Check GitHub for a newer OverMesh commit">Check</button>
+          <button class="btn" id="settings-update-run-btn" onclick="runOverMeshUpdate()" disabled title="Pull the latest OverMesh code">Update</button>
+          <button class="btn" id="settings-update-restart-btn" onclick="restartOverMeshNow()" style="display:none" title="Restart OverMesh after an update">Restart</button>
+        </div>
+      </div>
+      <div style="border-top:1px solid var(--border);margin:14px 0 10px 0"></div>
+      <div style="display:flex;align-items:center;gap:10px;justify-content:space-between;flex-wrap:wrap">
+        <div>
+          <div style="font-size:13px;font-weight:600;color:var(--text)">Help</div>
+          <div style="font-size:12px;color:var(--muted)">Open the short intro or the searchable app manual.</div>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn" onclick="showOmIntro(true)" title="Open the OverMesh intro guide">Show Intro</button>
+          <button class="btn" onclick="showOmManual()" title="Open the searchable OverMesh manual">Manual</button>
+        </div>
       </div>
     </div>
 
@@ -3575,6 +3645,333 @@
   }
   function alertClose() {
     document.getElementById('alert-modal').classList.remove('open');
+  }
+
+  const OM_INTRO_KEY = 'overmeshIntroSeen:v1';
+  function showOmIntro(force = false) {
+    if (!force && localStorage.getItem(OM_INTRO_KEY) === '1') return;
+    document.getElementById('intro-modal')?.classList.add('open');
+  }
+  function closeOmIntro(markSeen = true) {
+    if (markSeen) localStorage.setItem(OM_INTRO_KEY, '1');
+    document.getElementById('intro-modal')?.classList.remove('open');
+  }
+  function showOmIntroIfNeeded() {
+    setTimeout(() => showOmIntro(false), 500);
+  }
+
+  const OM_MANUAL_SECTIONS = [
+    {
+      title: 'Start Here',
+      tags: 'overview first launch setup radios update local dashboard',
+      body: [
+        'OverMesh is a local dashboard for Meshtastic and MeshCore radios. It runs in your browser and talks to radios connected to this machine.',
+        'Normal flow: add radios in Settings, watch activity in Sense/Map, inspect nodes in Nodes, send traffic in Chat, and use Map for positions, overlays, routes, and field context.',
+        'MT and MC can be used together or separately. Cross-system bridge controls are intentionally hidden for now.'
+      ],
+      buttons: [
+        ['Settings', 'Open radio setup, app preferences, GPS, offline maps, updates, and help.'],
+        ['Show Intro', 'Open the short first-launch overview again.'],
+        ['Manual', 'Open this searchable reference. Search by tab name, button name, or feature.'],
+        ['Restart', 'Restart the OverMesh server after updates or when the app needs a clean reload.']
+      ]
+    },
+    {
+      title: 'Top Bar and Global Controls',
+      tags: 'header top bar status pills radio selector silent running power restart shutdown refresh',
+      body: [
+        'The top bar is for global state: active radios, current tab, Silent Running, refresh, and server power actions.',
+        'Radio pills show connected MT and MC radios. They give quick confidence that OM is actually attached to the hardware.',
+        'Silent Running is enforced by the backend. It blocks OM-initiated transmissions even if a browser tries to bypass the UI.'
+      ],
+      buttons: [
+        ['Nodes', 'Open the node/contact table.'],
+        ['Chat', 'Open MT or MC text messaging.'],
+        ['Map', 'Open the main map, markers, marks, notes, and overlays.'],
+        ['Sense/Map', 'Open live RF activity and path visualization.'],
+        ['Bot', 'Configure and monitor automatic bot replies.'],
+        ['Settings', 'Open app, radio, update, GPS, offline-map, and help controls.'],
+        ['Refresh', 'Reload visible app data from the backend.'],
+        ['Silent Running', 'Toggle monitor-only mode for OM transmit paths.'],
+        ['Restart', 'Restart the OverMesh service/process.'],
+        ['Shut down', 'Stop the OverMesh server.']
+      ]
+    },
+    {
+      title: 'Nodes',
+      tags: 'nodes contacts table favorites ignored map dm traceroute route path mc mt ping trace info position',
+      body: [
+        'Nodes lists known Meshtastic nodes and MeshCore contacts. Use it when you need identity, last-heard time, battery, signal, position, and route state.',
+        'MC rows include short hash chips. These help connect contacts to path hashes shown by MC traces and message paths.',
+        'Path labels mean: direct is no known repeater, flood is unknown/open routing, route means a stored route exists, and hop counts describe known repeaters.'
+      ],
+      buttons: [
+        ['Map', 'Center the map on that node/contact and open its popup when a position is known.'],
+        ['DM', 'Open or send a direct message to the selected node/contact.'],
+        ['Info', 'Request or show detailed node information such as telemetry and device data.'],
+        ['Pos', 'Request a position broadcast from an MT node.'],
+        ['TR', 'Send an MT traceroute and draw the route if a response arrives.'],
+        ['Clear TR lock', 'Release a stuck traceroute lock if a previous request did not complete cleanly.'],
+        ['Ping', 'Check MC reachability. When a true response is not available, OM can show fallback observed RF reachability.'],
+        ['Trace', 'Send an MC broadcast trace and draw known hops from trace data.'],
+        ['Route', 'Edit a stored MC contact route using repeater hash prefixes.'],
+        ['★', 'Mark an MC contact as a favorite so it sorts higher.'],
+        ['Ignore', 'Hide noisy or unwanted contacts from normal views.'],
+        ['Unignore', 'Restore an ignored contact.']
+      ]
+    },
+    {
+      title: 'Chat',
+      tags: 'chat messages mt mc channel dm reply split byte limit send history delete mention',
+      body: [
+        'Chat is for normal text traffic. Use the MT/MC selector when both networks are enabled.',
+        'MC messages are byte-limited by firmware and sender/channel overhead. OM checks byte length and auto-splits longer sends into safe parts.',
+        'Reply attempts to use native mention formatting where supported, so the other side sees a proper mention rather than plain text where possible.'
+      ],
+      buttons: [
+        ['MT', 'Switch Chat to Meshtastic channels and DMs.'],
+        ['MC', 'Switch Chat to MeshCore channels and DMs.'],
+        ['Send', 'Transmit the current message. Blocked when Silent Running is active.'],
+        ['Reply', 'Insert a reply/mention prefix for the selected message.'],
+        ['Delete History', 'Delete saved visible history for the current conversation or channel.'],
+        ['Advert', 'Send a MeshCore advert from the selected MC radio so other nodes learn its identity.'],
+        ['Scan', 'Refresh MC contacts/channels where the connected firmware supports it.'],
+        ['DM tab close', 'Close a direct-message tab without deleting history.'],
+        ['Channel tab', 'Switch between public/private MT channels or MC channel slots.']
+      ]
+    },
+    {
+      title: 'Map',
+      tags: 'map markers pins filters overlays marks notes traceroute gps paths layers center popup',
+      body: [
+        'Map is the main geographic view. It shows MT nodes, MC contacts, local radios, marks, self notes, overlays, and paths drawn by tools.',
+        'Click markers for quick actions. MT and MC filters let you reduce clutter when both networks are active.',
+        'Marks are mesh waypoints. Self Notes are local-only notes. Overlays are local shapes and imported GeoJSON.'
+      ],
+      buttons: [
+        ['MT', 'Show or hide Meshtastic markers and paths on the map.'],
+        ['MC', 'Show or hide MeshCore markers and paths on the map.'],
+        ['Marks', 'Open the map waypoint panel for mesh-shared marks.'],
+        ['Self Notes', 'Open local-only map notes.'],
+        ['Overlays', 'Open the overlay editor/import panel.'],
+        ['Add Mark', 'Create a mesh waypoint/mark at the selected position.'],
+        ['Add Note', 'Create a local-only map note.'],
+        ['Point', 'Start drawing a point overlay.'],
+        ['Line', 'Start drawing a line/route overlay.'],
+        ['Area', 'Start drawing a polygon overlay.'],
+        ['Circle', 'Start drawing a circular overlay.'],
+        ['Finish', 'Finish the current overlay draft.'],
+        ['Save', 'Save the current mark, note, overlay, or edited settings.'],
+        ['Cancel', 'Cancel the current map edit/draft.'],
+        ['Zoom', 'Zoom the map to a saved overlay or known node position.']
+      ]
+    },
+    {
+      title: 'Sense/Map',
+      tags: 'sense activity passive active live rf map mc path hops ping trace log warning path refresh',
+      body: [
+        'Sense/Map is the live RF activity view. It is the best place to watch recent packets, adverts, messages, pings, traces, and path hops.',
+        'Hover or click activity entries to draw known paths. Partial MC paths show only the known relay chain; the warning marker means the endpoint is not the sender location.',
+        'Route source labels explain where a message path came from: live means packet/RX data, cached means contact route cache, inferred means OM drew a fallback line.'
+      ],
+      buttons: [
+        ['Start Sense', 'Start active Sense activity where supported.'],
+        ['Stop Sense', 'Stop active Sense activity.'],
+        ['Path refresh', 'Refresh contact/path data for the selected message or node and redraw if better data exists.'],
+        ['Ping', 'Run MC reachability check from Sense/Map or contact actions.'],
+        ['Trace', 'Run MC broadcast trace and draw resolved hops.'],
+        ['Clear', 'Clear the current Sense activity list when available.'],
+        ['📍', 'Indicates a known position or map-focus action for the entry.'],
+        ['!', 'Path warning marker: known relay only, not final sender/contact location.']
+      ]
+    },
+    {
+      title: 'Bot',
+      tags: 'bot commands motd weather ping automatic replies per radio settings activity test',
+      body: [
+        'Bot settings are per radio. A bot can answer enabled commands, send MOTD, and log activity.',
+        'Bot sends use the same backend transmit safeguards as manual sends. MC bot replies use the same byte-safe splitting behavior.',
+        'Use Bot activity to check what OM received and what it tried to answer.'
+      ],
+      buttons: [
+        ['Enable bot', 'Turn bot handling on for the selected radio.'],
+        ['Settings', 'Open per-radio bot command and response configuration.'],
+        ['Activity', 'Show recent bot command/reply activity.'],
+        ['Test MOTD', 'Send or preview the configured message-of-the-day path.'],
+        ['Save', 'Store bot command, MOTD, and response settings.'],
+        ['Same channel', 'Respond in the channel where the command arrived.'],
+        ['DM', 'Respond privately when the command and network support it.']
+      ]
+    },
+    {
+      title: 'Settings - Meshtastic',
+      tags: 'settings meshtastic mt radios add remove delete node config lora channels gps telemetry mqtt bluetooth wifi reboot shutdown',
+      body: [
+        'Settings -> Meshtastic manages MT radios and MT node configuration.',
+        'Add radios by serial device or TCP/WiFi. OM remembers USB serials so a radio can reconnect even if the port name changes.',
+        'Node settings write directly to the connected node. Reboot may be required for some firmware settings.'
+      ],
+      buttons: [
+        ['Serial', 'Add a Meshtastic radio by USB serial device.'],
+        ['TCP / WiFi', 'Add a Meshtastic radio reachable by host and TCP port.'],
+        ['↻', 'Rescan available serial ports.'],
+        ['Add', 'Add the selected/configured radio to OM.'],
+        ['Enable', 'Allow OM to connect this configured radio.'],
+        ['Disable', 'Keep the radio configured but disconnect/ignore it.'],
+        ['Remove', 'Remove the radio from OM but keep its message DB unless deleted separately.'],
+        ['Delete', 'Remove the radio and delete its associated saved message DB when applicable.'],
+        ['Edit', 'Open or edit the selected channel/config item.'],
+        ['Save', 'Write the current node/channel/settings block.'],
+        ['Reboot', 'Ask the connected MT node to reboot.'],
+        ['Shutdown', 'Ask the connected MT node to shut down if supported.']
+      ]
+    },
+    {
+      title: 'Settings - MeshCore',
+      tags: 'settings meshcore mc radios channels tx power coords advert scan reboot import contacts radio params route',
+      body: [
+        'Settings -> MeshCore manages MC radios, channels, device identity, coordinates, TX power, and radio parameters.',
+        'MC capabilities vary by firmware. If a function returns unavailable, it usually means the radio or current connection state cannot do it right now.',
+        'Import Contact accepts meshcore:// share links and writes the contact to the selected radio.'
+      ],
+      buttons: [
+        ['Add', 'Add the selected MeshCore USB radio to OM.'],
+        ['Enable', 'Allow OM to connect this MC radio.'],
+        ['Disable', 'Keep the MC radio configured but disconnected.'],
+        ['Remove', 'Remove the MC radio from OM settings.'],
+        ['Advert', 'Send the radio advert so other MC nodes learn this radio.'],
+        ['Scan', 'Refresh MC contacts or query radio state where supported.'],
+        ['Import', 'Import a meshcore:// contact share link.'],
+        ['Save Radio', 'Write frequency, bandwidth, spreading factor, coding rate, or similar radio parameters.'],
+        ['Save TX Power', 'Write MC transmit power.'],
+        ['Save Name', 'Write MC device name.'],
+        ['Save Coords', 'Write MC device coordinates.'],
+        ['Reboot Device', 'Try to reboot the connected MC radio.'],
+        ['Delete History', 'Delete saved MC channel history.']
+      ]
+    },
+    {
+      title: 'Settings - App',
+      tags: 'settings app appearance zoom accent notifications offline maps gps update manual intro cache regions',
+      body: [
+        'Settings -> App controls UI zoom, accent color, notifications, GPS receiver, offline map tiles, map regions, updates, and help.',
+        'The updater is conservative: local machine only, no dirty worktree, fast-forward only, explicit restart afterward.',
+        'Offline maps are stored in browser IndexedDB; they are per browser/profile.'
+      ],
+      buttons: [
+        ['−', 'Decrease UI zoom.'],
+        ['+', 'Increase UI zoom.'],
+        ['Reset', 'Reset accent color to the default.'],
+        ['Check', 'Fetch/check GitHub origin and show whether an update is available.'],
+        ['Update', 'Pull the latest GitHub main branch if the local checkout is clean and fast-forwardable.'],
+        ['Restart', 'Restart OM after a successful update.'],
+        ['Show Intro', 'Open the first-launch overview.'],
+        ['Manual', 'Open this searchable manual.'],
+        ['Clear cache', 'Delete cached offline map tiles from this browser.'],
+        ['Save current map view', 'Download map tiles for the current map viewport.'],
+        ['Search', 'Find a map region/place for offline tile download.'],
+        ['Send to nodes now', 'Push the current GPS receiver fix to connected nodes.']
+      ]
+    },
+    {
+      title: 'Overlays and Geofences',
+      tags: 'overlays geojson geofence zones area circle alerts enter leave map import split edit',
+      body: [
+        'Map overlays are local GeoJSON points, lines, areas, or circles. Use them for routes, zones, boundaries, and reference markers.',
+        'Area and circle overlays can become geofences. Geofence alerts can watch MT, MC, or both networks and notify on enter or leave.',
+        'Imported multi-feature GeoJSON renders as one overlay, but can be split into editable single-feature overlays.'
+      ],
+      buttons: [
+        ['Import', 'Import pasted or uploaded GeoJSON overlay data.'],
+        ['Edit', 'Edit a saved single-feature overlay on the map.'],
+        ['Split', 'Split a multi-feature overlay into editable single-feature overlays.'],
+        ['Geofence', 'Enable or disable geofence behavior for an area or circle.'],
+        ['Alert on enter', 'Notify when a tracked node/contact enters the geofence.'],
+        ['Alert on leave', 'Notify when a tracked node/contact leaves the geofence.'],
+        ['Both', 'Track MT and MC positions for this geofence.'],
+        ['MT only', 'Track only Meshtastic positions.'],
+        ['MC only', 'Track only MeshCore positions.']
+      ]
+    },
+    {
+      title: 'Version and Updates',
+      tags: 'version update github build release restart dirty worktree fast forward',
+      body: [
+        'OM versions use YYYY.MM.DD.N. The Settings updater also shows the exact Git build hash.',
+        'Every GitHub push should bump VERSION and add a VERSIONS.md entry.',
+        'If Update is disabled, the local install is probably dirty, ahead of GitHub, not a Git checkout, or already current.'
+      ],
+      buttons: [
+        ['Check', 'Refresh version/build status from origin/GitHub.'],
+        ['Update', 'Run a safe fast-forward update. Refuses dirty or locally-ahead installs.'],
+        ['Restart', 'Restart the server so updated code takes effect.']
+      ]
+    },
+    {
+      title: 'Limits and Troubleshooting',
+      tags: 'limits troubleshooting restart hard refresh no path direct usb firmware cache stale reconnect',
+      body: [
+        'After code changes, restart OverMesh and hard-refresh the browser if the UI looks stale.',
+        'Some MC path data depends on firmware and packet type. OM shows all known hops when available, but older packets or missing RX metadata may only show sender/receiver or a partial path.',
+        'If a USB radio stops responding after restart, unplug/replug can be necessary on some devices. Reconnect loops will pick it up again once the OS exposes the serial port.'
+      ],
+      buttons: [
+        ['Restart', 'Cleanly reload the OM server process.'],
+        ['Refresh', 'Reload visible frontend/backend data.'],
+        ['Path refresh', 'Try to refresh route/path data for a selected message/contact.'],
+        ['Clear TR lock', 'Release a stuck MT traceroute lock.'],
+        ['Enable', 'Reconnect a disabled configured radio.'],
+        ['Disable', 'Temporarily disconnect a configured radio without deleting it.']
+      ]
+    }
+  ];
+
+  function _manualText(section) {
+    const buttonText = (section.buttons || []).map(([label, desc]) => `${label} ${desc}`).join(' ');
+    return [section.title, section.tags, ...(section.body || []), buttonText].join(' ').toLowerCase();
+  }
+
+  function _manualButtonHtml(item) {
+    const label = Array.isArray(item) ? item[0] : item?.label;
+    const desc = Array.isArray(item) ? item[1] : item?.desc;
+    return `<div style="display:grid;grid-template-columns:minmax(92px,max-content) minmax(0,1fr);gap:9px;align-items:start;margin:6px 0">
+      <span class="btn" style="display:inline-flex;align-items:center;justify-content:center;min-height:24px;padding:2px 9px;font-size:11px;line-height:1.2;cursor:default;pointer-events:none;white-space:nowrap">${escHtml(label || '')}</span>
+      <span style="font-size:12px;line-height:1.4;color:var(--muted);padding-top:2px">${escHtml(desc || '')}</span>
+    </div>`;
+  }
+
+  function renderOmManual(query = '') {
+    const el = document.getElementById('manual-results');
+    if (!el) return;
+    const q = String(query || '').trim().toLowerCase();
+    const terms = q.split(/\s+/).filter(Boolean);
+    const sections = terms.length
+      ? OM_MANUAL_SECTIONS.filter(section => terms.every(term => _manualText(section).includes(term)))
+      : OM_MANUAL_SECTIONS;
+    if (!sections.length) {
+      el.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:12px 0">No manual sections match that search.</div>';
+      return;
+    }
+    el.innerHTML = sections.map(section => `
+      <div class="manual-section" style="border:1px solid var(--border);background:var(--bg2);border-radius:8px;padding:12px 14px;margin-bottom:10px">
+        <div style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:7px">${escHtml(section.title)}</div>
+        ${(section.body || []).map(line => `<p style="font-size:12px;line-height:1.45;color:var(--text);margin:0 0 7px">${escHtml(line)}</p>`).join('')}
+        ${(section.buttons || []).length ? `<div style="border-top:1px solid var(--border);margin-top:9px;padding-top:7px">${section.buttons.map(_manualButtonHtml).join('')}</div>` : ''}
+      </div>
+    `).join('');
+  }
+
+  function showOmManual() {
+    const modal = document.getElementById('manual-modal');
+    const search = document.getElementById('manual-search');
+    if (search) search.value = '';
+    renderOmManual('');
+    modal?.classList.add('open');
+    setTimeout(() => search?.focus(), 50);
+  }
+
+  function closeOmManual() {
+    document.getElementById('manual-modal')?.classList.remove('open');
   }
 
   function closeDmTab(id, event) {
@@ -4730,16 +5127,20 @@ if (targetEl) {
     document.getElementById('power-menu')?.classList.remove('open');
   });
 
-  function doRestart() {
-    document.getElementById('power-menu').classList.remove('open');
-    document.getElementById('confirm-ok').textContent = 'Restart';
-    showConfirm('Restart the OverMesh server?', async () => {
+  async function restartOverMeshNow() {
       try { await fetch('/api/restart', {method: 'POST'}); } catch(_) {}
       document.body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;color:var(--muted)">
         <div style="font-size:32px">&#x21BA;</div>
         <div style="font-size:16px">OverMesh will restart in a few seconds…</div>
       </div>`;
       setTimeout(() => location.reload(), 8000);
+  }
+
+  function doRestart() {
+    document.getElementById('power-menu')?.classList.remove('open');
+    document.getElementById('confirm-ok').textContent = 'Restart';
+    showConfirm('Restart the OverMesh server?', async () => {
+      await restartOverMeshNow();
     });
   }
 
@@ -9025,6 +9426,98 @@ if (targetEl) {
     if (CROSS_SYSTEM_ENABLED && name === 'cross' && !_crossLoadedOnce) loadCrossSettings();
   }
 
+  let _settingsUpdatePoll = null;
+
+  function _updateSetButtons(info, state) {
+    const checkBtn = document.getElementById('settings-update-check-btn');
+    const runBtn = document.getElementById('settings-update-run-btn');
+    const restartBtn = document.getElementById('settings-update-restart-btn');
+    const running = !!state?.running;
+    if (checkBtn) checkBtn.disabled = running;
+    if (runBtn) {
+      runBtn.disabled = running || !info?.managed || !!info?.dirty || !info?.update_available || (info?.ahead || 0) > 0;
+      runBtn.textContent = running ? 'Updating…' : 'Update';
+    }
+    if (restartBtn) restartBtn.style.display = state?.ok && /Restart required/i.test(state?.message || '') ? '' : 'none';
+  }
+
+  function _renderUpdateStatus(payload) {
+    const info = payload?.info || {};
+    const state = payload?.state || {};
+    const summary = document.getElementById('settings-update-summary');
+    const logEl = document.getElementById('settings-update-log');
+    if (!summary) return;
+    if (payload?.error) {
+      summary.innerHTML = `<span style="color:var(--red)">${escHtml(payload.error)}</span>`;
+      _updateSetButtons(info, state);
+      return;
+    }
+    if (!info.managed) {
+      summary.innerHTML = `<span style="color:var(--muted)">${escHtml(info.error || 'This install is not managed by Git.')}</span>`;
+      _updateSetButtons(info, state);
+      return;
+    }
+    const parts = [
+      `Version <code>${escHtml(info.version || '0.0.0')}</code>`,
+      `Build <code>${escHtml(info.commit || '?')}</code>`,
+      info.remote_commit ? `GitHub <code>${escHtml(info.remote_commit)}</code>` : 'GitHub unknown',
+    ];
+    if (info.dirty) {
+      parts.push('<span style="color:var(--red)">local changes present</span>');
+    } else if ((info.ahead || 0) > 0) {
+      parts.push(`<span style="color:var(--yellow)">ahead by ${info.ahead}</span>`);
+    } else if (info.update_available) {
+      parts.push(`<span style="color:var(--accent)">${info.behind} update${info.behind !== 1 ? 's' : ''} available</span>`);
+    } else {
+      parts.push('<span style="color:var(--green)">up to date</span>');
+    }
+    if (state.message) {
+      const color = state.ok === false ? 'var(--red)' : state.ok === true ? 'var(--green)' : 'var(--muted)';
+      parts.push(`<span style="color:${color}">${escHtml(state.message)}</span>`);
+    }
+    summary.innerHTML = parts.join(' · ');
+    if (logEl) {
+      const lines = Array.isArray(state.log) ? state.log : [];
+      logEl.style.display = lines.length ? '' : 'none';
+      logEl.textContent = lines.join('\n');
+      if (lines.length) logEl.scrollTop = logEl.scrollHeight;
+    }
+    _updateSetButtons(info, state);
+  }
+
+  async function settingsLoadUpdateStatus(fetchRemote = false) {
+    try {
+      const r = await fetch(`/api/settings/update/status${fetchRemote ? '?fetch=1' : ''}`);
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) data.error = data.error || `HTTP ${r.status}`;
+      _renderUpdateStatus(data);
+      if (data.state?.running && !_settingsUpdatePoll) {
+        _settingsUpdatePoll = setInterval(() => settingsLoadUpdateStatus(false), 1500);
+      }
+      if (!data.state?.running && _settingsUpdatePoll) {
+        clearInterval(_settingsUpdatePoll);
+        _settingsUpdatePoll = null;
+      }
+    } catch(e) {
+      _renderUpdateStatus({error: String(e.message || e)});
+    }
+  }
+
+  async function runOverMeshUpdate() {
+    document.getElementById('confirm-ok').textContent = 'Update';
+    showConfirm('Update OverMesh now? Local changes will block the update, and a restart will be required after a successful pull.', async () => {
+      try {
+        const r = await fetch('/api/settings/update/run', {method: 'POST'});
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+        await settingsLoadUpdateStatus(false);
+        if (!_settingsUpdatePoll) _settingsUpdatePoll = setInterval(() => settingsLoadUpdateStatus(false), 1500);
+      } catch(e) {
+        showAlert(String(e.message || e));
+      }
+    });
+  }
+
   function initSettings() {
     switchSettingsTab(localStorage.getItem('settingsTab') || 'mt');
     settingsLoadNodes();
@@ -9043,6 +9536,7 @@ if (targetEl) {
       settingsInited = true;
       if (CROSS_SYSTEM_ENABLED && localStorage.getItem('settingsTab') !== 'cross' && !_crossLoadedOnce) loadCrossSettings();
       settingsScanPorts();
+      settingsLoadUpdateStatus(false);
       fetch('/api/settings/app').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(cfg => {
         loadInAppNotifPrefs(cfg);
         settingsApplyZoom(cfg.zoom || 100);
@@ -14619,6 +15113,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   initMapFilterPills();
   requestNotifPermission();
   loadLive();
+  showOmIntroIfNeeded();
   setInterval(loadLive, 15000);
   setInterval(() => { if (currentTab === 'settings') settingsRefresh(); }, 4000);
   // Keep sense card timers ticking

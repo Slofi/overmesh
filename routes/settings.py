@@ -1,13 +1,15 @@
 import json
 import os
 import re
+import subprocess
+import sys
 import threading
 import time
 import uuid
 
 from flask import Blueprint, jsonify, request
 
-from config import CONFIG, CONFIG_LOCK, DATA_DIR, save_config
+from config import BASE_DIR, CONFIG, CONFIG_LOCK, DATA_DIR, save_config
 from cross import _normalize_rule, get_cross_config
 from helpers import push_to_sse
 from mesh import connect_node
@@ -17,6 +19,15 @@ log = logging.getLogger(__name__)
 
 bp = Blueprint('settings', __name__)
 
+_UPDATE_LOCK = threading.Lock()
+_UPDATE_STATE = {
+    "running": False,
+    "ok": None,
+    "message": "",
+    "log": [],
+    "updated_at": None,
+}
+
 
 def _has_any_mc_nodes():
     return bool(CONFIG.get("mc_nodes", []))
@@ -25,6 +36,150 @@ def _has_any_mc_nodes():
 def _can_remove_mt_node():
     """Allow removing the last MT radio only if the app still has MC radios configured."""
     return len(CONFIG["nodes"]) > 1 or _has_any_mc_nodes()
+
+
+def _settings_local_request():
+    return request.remote_addr in ("127.0.0.1", "::1", "localhost")
+
+
+def _git_cmd(args, timeout=30, check=False):
+    result = subprocess.run(
+        ["git", *args],
+        cwd=BASE_DIR,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+    out = (result.stdout or "").strip()
+    err = (result.stderr or "").strip()
+    if check and result.returncode != 0:
+        msg = err or out or f"git {' '.join(args)} failed"
+        raise RuntimeError(msg)
+    return result.returncode, out, err
+
+
+def _app_version():
+    try:
+        with open(os.path.join(BASE_DIR, "VERSION"), encoding="utf-8") as f:
+            return f.read().strip() or "0.0.0"
+    except OSError:
+        return "0.0.0"
+
+
+def _update_append(line):
+    with _UPDATE_LOCK:
+        _UPDATE_STATE["log"].append(line)
+        _UPDATE_STATE["log"] = _UPDATE_STATE["log"][-80:]
+        _UPDATE_STATE["updated_at"] = int(time.time())
+
+
+def _git_info(fetch=False):
+    if not os.path.isdir(os.path.join(BASE_DIR, ".git")):
+        return {"managed": False, "error": "This install is not a Git checkout."}
+
+    info = {"managed": True}
+    _, branch, _ = _git_cmd(["rev-parse", "--abbrev-ref", "HEAD"], timeout=10)
+    _, commit, _ = _git_cmd(["rev-parse", "--short", "HEAD"], timeout=10)
+    _, full_commit, _ = _git_cmd(["rev-parse", "HEAD"], timeout=10)
+    _, remote, _ = _git_cmd(["config", "--get", "remote.origin.url"], timeout=10)
+    info.update({
+        "version": _app_version(),
+        "branch": branch or "unknown",
+        "commit": commit or "unknown",
+        "full_commit": full_commit or "",
+        "remote": remote or "",
+    })
+
+    rc, status, _ = _git_cmd(["status", "--porcelain"], timeout=10)
+    info["dirty"] = bool(status) if rc == 0 else True
+    info["dirty_summary"] = status.splitlines()[:12] if status else []
+
+    if fetch:
+        frc, fout, ferr = _git_cmd(["fetch", "--prune", "origin"], timeout=45)
+        info["fetch_ok"] = frc == 0
+        if frc != 0:
+            info["fetch_error"] = ferr or fout or "Fetch failed."
+
+    upstream = "origin/main"
+    rc, remote_commit, _ = _git_cmd(["rev-parse", "--short", upstream], timeout=10)
+    if rc == 0 and remote_commit:
+        info["remote_commit"] = remote_commit
+        rc, counts, _ = _git_cmd(["rev-list", "--left-right", "--count", f"HEAD...{upstream}"], timeout=10)
+        if rc == 0 and counts:
+            parts = counts.split()
+            if len(parts) == 2:
+                info["ahead"] = int(parts[0])
+                info["behind"] = int(parts[1])
+                info["update_available"] = info["behind"] > 0
+    else:
+        info["remote_commit"] = None
+        info["update_available"] = False
+    return info
+
+
+def _run_update_job():
+    with _UPDATE_LOCK:
+        _UPDATE_STATE.update({
+            "running": True,
+            "ok": None,
+            "message": "Updating...",
+            "log": [],
+            "updated_at": int(time.time()),
+        })
+    try:
+        _update_append("Checking repository state...")
+        info = _git_info(fetch=True)
+        if not info.get("managed"):
+            raise RuntimeError(info.get("error") or "Not a Git checkout.")
+        if info.get("dirty"):
+            raise RuntimeError("Local changes detected. Update aborted.")
+        if info.get("ahead", 0) > 0:
+            raise RuntimeError("Local commits are ahead of origin. Push or reconcile before updating.")
+        if not info.get("update_available"):
+            with _UPDATE_LOCK:
+                _UPDATE_STATE.update({"running": False, "ok": True, "message": "Already up to date."})
+            _update_append("Already up to date.")
+            return
+
+        rc, changed, _ = _git_cmd(["diff", "--name-only", "HEAD", "origin/main"], timeout=15)
+        changed_files = set(changed.splitlines()) if rc == 0 and changed else set()
+
+        _update_append("Pulling latest code...")
+        _git_cmd(["pull", "--ff-only", "origin", "main"], timeout=60, check=True)
+
+        if "requirements.txt" in changed_files:
+            _update_append("requirements.txt changed; installing Python dependencies...")
+            pip = subprocess.run(
+                [sys.executable or "python3", "-m", "pip", "install", "-r", "requirements.txt", "--user"],
+                cwd=BASE_DIR,
+                capture_output=True,
+                text=True,
+                timeout=180,
+                check=False,
+            )
+            if pip.returncode != 0:
+                raise RuntimeError((pip.stderr or pip.stdout or "pip install failed").strip())
+            _update_append("Dependencies updated.")
+
+        final = _git_info(fetch=False)
+        with _UPDATE_LOCK:
+            _UPDATE_STATE.update({
+                "running": False,
+                "ok": True,
+                "message": f"Updated to {final.get('commit', 'latest')}. Restart required.",
+            })
+        _update_append("Update complete. Restart required.")
+    except Exception as e:
+        log.warning(f"Update failed: {e}")
+        with _UPDATE_LOCK:
+            _UPDATE_STATE.update({
+                "running": False,
+                "ok": False,
+                "message": str(e),
+                "updated_at": int(time.time()),
+            })
+        _update_append(f"Error: {e}")
 
 
 @bp.route("/api/settings/ports")
@@ -46,6 +201,38 @@ def api_settings_ports():
         })
     ports.sort(key=lambda x: x["device"])
     return jsonify({"ports": ports})
+
+
+@bp.route("/api/settings/update/status")
+def api_settings_update_status():
+    if not _settings_local_request():
+        return jsonify({"error": "Updater is only available from the local machine."}), 403
+    fetch = request.args.get("fetch") in ("1", "true", "yes")
+    try:
+        info = _git_info(fetch=fetch)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    with _UPDATE_LOCK:
+        state = dict(_UPDATE_STATE)
+    return jsonify({"info": info, "state": state})
+
+
+@bp.route("/api/settings/update/run", methods=["POST"])
+def api_settings_update_run():
+    if not _settings_local_request():
+        return jsonify({"error": "Updater is only available from the local machine."}), 403
+    with _UPDATE_LOCK:
+        if _UPDATE_STATE.get("running"):
+            return jsonify({"error": "Update already running.", "state": dict(_UPDATE_STATE)}), 409
+        _UPDATE_STATE.update({
+            "running": True,
+            "ok": None,
+            "message": "Starting update...",
+            "log": ["Starting update..."],
+            "updated_at": int(time.time()),
+        })
+    threading.Thread(target=_run_update_job, daemon=True).start()
+    return jsonify({"ok": True, "state": dict(_UPDATE_STATE)})
 
 
 @bp.route("/api/settings/nodes")

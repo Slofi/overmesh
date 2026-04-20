@@ -6,7 +6,15 @@ import sys
 import threading
 import time
 
-__version__ = "2.0.0"
+def _load_app_version():
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION"), encoding="utf-8") as f:
+            return f.read().strip() or "0.0.0"
+    except OSError:
+        return "0.0.0"
+
+
+__version__ = _load_app_version()
 
 from flask import Flask, jsonify, render_template
 from pubsub import pub

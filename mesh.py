@@ -160,6 +160,8 @@ def on_text_receive(packet, interface):
                 "pressure":       env.get("barometricPressure") or None,
                 "route":          [get_node_name(f"!{r:08x}") or f"!{r:08x}" for r in tr_route] if tr_route else None,
                 "neighbor_count": len(nb_list) if nb_list else None,
+                "text":           decoded.get("text") if portnum == "TEXT_MESSAGE_APP" else None,
+                "pkt_id":         int(packet.get("id", 0) or 0),
                 "ts":             int(time.time()),
             }
             with _sense_lock:
@@ -253,6 +255,9 @@ def on_text_receive(packet, interface):
         text     = decoded.get("text", "")
         ts       = packet.get("rxTime") or int(time.time())
         snr      = packet.get("rxSnr")
+        hop_limit = packet.get("hopLimit")
+        hop_start = packet.get("hopStart")
+        hops     = (hop_start - hop_limit) if (hop_start is not None and hop_limit is not None) else None
         is_dm    = to_id != "^all"
         radio_id = _radio_id_for_iface(interface)
         msg = {
@@ -271,6 +276,9 @@ def on_text_receive(packet, interface):
             "pkt_id":       int(packet.get("id", 0)),
             "is_emoji":     bool(int(decoded.get("emoji", 0))),
             "reply_pkt_id": int(decoded.get("replyId", 0)),
+            "hop_start":    hop_start,
+            "hop_limit":    hop_limit,
+            "hops":         hops,
         }
         with chat_lock:
             chat_messages.append(msg)

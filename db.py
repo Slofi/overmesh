@@ -245,6 +245,11 @@ def init_msgs_db(db_path):
             c.execute("ALTER TABLE messages ADD COLUMN reply_pkt_id INTEGER DEFAULT 0")
         except sqlite3.OperationalError:
             pass
+        for col in ("hop_start", "hop_limit", "hops"):
+            try:
+                c.execute(f"ALTER TABLE messages ADD COLUMN {col} INTEGER DEFAULT NULL")
+            except sqlite3.OperationalError:
+                pass
         conn.commit()
     except Exception:
         conn.rollback()
@@ -538,8 +543,8 @@ def save_message(msg):
         with get_msgs_db(radio_id) as conn:
             conn.execute('''
                 INSERT OR IGNORE INTO messages
-                    (id, from_id, from_name, to_id, to_name, channel, text, ts, sent, is_dm, status, radio_id, pkt_id, is_emoji, reply_pkt_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, from_id, from_name, to_id, to_name, channel, text, ts, sent, is_dm, status, radio_id, pkt_id, is_emoji, reply_pkt_id, hop_start, hop_limit, hops)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 msg['id'], msg.get('from_id'), msg.get('from_name'),
                 msg.get('to_id'), msg.get('to_name'), msg.get('channel', 0),
@@ -551,6 +556,9 @@ def save_message(msg):
                 msg.get('pkt_id', 0),
                 1 if msg.get('is_emoji') else 0,
                 msg.get('reply_pkt_id', 0),
+                msg.get('hop_start'),
+                msg.get('hop_limit'),
+                msg.get('hops'),
             ))
             conn.execute('''
                 DELETE FROM messages WHERE id NOT IN (

@@ -227,6 +227,20 @@
     .mt-badge { font-size: 9px; font-weight: bold; color: var(--accent); margin-right: 3px; opacity: 0.85; }
     .mt-msg-tag { font-size: 10px; color: var(--accent); background: rgba(74,222,128,0.12); border: 1px solid rgba(74,222,128,0.25); border-radius: 3px; padding: 0 4px; margin-right: 4px; }
     .mc-msg-tag { font-size: 10px; color: var(--mc-color); background: rgba(56,189,248,0.12); border: 1px solid rgba(56,189,248,0.25); border-radius: 3px; padding: 0 4px; margin-right: 4px; }
+    .mt-route-badge { border: 1px solid rgba(74,222,128,0.28); background: rgba(74,222,128,0.10); color: var(--accent); border-radius: 3px; padding: 0 4px; margin-left: 4px; font-size: 10px; line-height: 15px; cursor: pointer; vertical-align: 1px; }
+    .mt-route-badge.cached { border-color: rgba(59,130,246,0.28); background: rgba(59,130,246,0.10); color: #93c5fd; }
+    .mt-route-badge:hover { border-color: var(--accent); color: var(--text); }
+    #sense-log > .mt-route-selected,
+    #sense-mc-log > .mc-route-selected {
+      background: rgba(74,222,128,0.10);
+      box-shadow: inset 3px 0 0 var(--accent);
+      padding-left: 7px !important;
+      box-sizing: border-box;
+    }
+    #sense-mc-log > .mc-route-selected {
+      background: rgba(56,189,248,0.10);
+      box-shadow: inset 3px 0 0 var(--mc-color);
+    }
     #chat-mt-pane, #chat-mc-pane { flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
     #mc-radio-selector { display: flex; gap: 4px; align-items: center; }
     .net-mc:not(.channel-tab) { color: var(--mc-color) !important; }
@@ -3158,6 +3172,10 @@
   let _activeTrPanel               = null;
   let _activeReplayIdx             = null;
   let _activeReplayPanel           = null;
+  let _activeMtRouteKey            = null;
+  let _mtHoverRouteKey             = null;
+  let _mtHoverHadTraceLines        = false;
+  let _mtHoverPrevShowTrMap        = null;
   let _nodeInfoTimer               = null;
   const inactiveRadioUnread = new Set();       // radio_ids with any unread (drives radio btn dot)
   const radioUnreadChannels = {};              // radio_id → Set of channels with unread (drives Chat tab + sub-tab dots)
@@ -3569,6 +3587,7 @@
             ? msgCh === chatChannel
             : data.channel === chatChannel && !data.is_dm;
           if (isCurrentCh && (!data.radio_id || data.radio_id === activeRadioId)) appendMessage(data);
+          if (!data.sent && !data.is_history && (!data.radio_id || data.radio_id === activeRadioId)) addMtMessageSenseEntry(data);
           // Also update map DM window if it's open and this message is for that contact
           if (mapDmContactId && data.is_dm) {
             if (dmContactId(data) === mapDmContactId) renderMapDM();
@@ -3707,22 +3726,55 @@
       tags: 'nodes contacts table favorites ignored map dm traceroute route path mc mt ping trace info position',
       body: [
         'Nodes lists known Meshtastic nodes and MeshCore contacts. Use it when you need identity, last-heard time, battery, signal, position, and route state.',
-        'MC rows include short hash chips. These help connect contacts to path hashes shown by MC traces and message paths.',
-        'Path labels mean: direct is no known repeater, flood is unknown/open routing, route means a stored route exists, and hop counts describe known repeaters.'
+        'The table is shared, but MT and MC route information means different things because the protocols expose different metadata.'
+      ],
+      split: [
+        {
+          title: 'MT Nodes',
+          kind: 'mt',
+          body: [
+            'MT rows show Meshtastic node IDs, names, signal, battery, position, and Last Seen. Hops is the radio/nodeDB view of how many repeaters away a node appears to be.',
+            'TR runs a real Meshtastic traceroute. That is the source OM uses when it can draw MT route lines on the map.',
+            'Last Seen from real received packets should stay fresh across Refresh; nodeDB-only timestamps are treated more cautiously.'
+          ],
+          buttons: [
+            ['TR', 'Send an MT traceroute and draw route-to-node / route-back if the node responds.'],
+            ['Pos', 'Request an MT position broadcast.'],
+            ['Info', 'Request MT node info and telemetry.'],
+            ['DM', 'Open an MT direct message.'],
+            ['Ignore', 'Hide a noisy MT node from normal views.'],
+            ['Unignore', 'Restore an ignored MT node from History.']
+          ]
+        },
+        {
+          title: 'MC Contacts',
+          kind: 'mc',
+          body: [
+            'MC rows include short hash chips before names. These help match contacts to MC path hashes shown by messages, pings, and traces.',
+            'Path labels: direct means no known repeater, flood means open/unknown routing, route means a stored route exists, and 1 hop / 2 hops means known repeaters.',
+            'MC path hashes may be 1, 2, or 3 bytes. Short hashes can collide, so OM marks uncertain matches instead of pretending every hop is exact.'
+          ],
+          buttons: [
+            ['Ping', 'Check MC reachability and draw observed path metadata when available.'],
+            ['Trace', 'Send an MC broadcast trace and draw known hops.'],
+            ['Route', 'Edit a stored MC contact route using repeater hash prefixes.'],
+            ['★', 'Favorite an MC contact so it sorts higher.'],
+            ['Ignore', 'Hide a noisy MC contact from normal views.'],
+            ['Unignore', 'Restore an ignored MC contact from History.']
+          ]
+        }
       ],
       buttons: [
-        ['Map', 'Center the map on that node/contact and open its popup when a position is known.'],
-        ['DM', 'Open or send a direct message to the selected node/contact.'],
-        ['Info', 'Request or show detailed node information such as telemetry and device data.'],
-        ['Pos', 'Request a position broadcast from an MT node.'],
-        ['TR', 'Send an MT traceroute and draw the route if a response arrives.'],
+        ['Live', 'Show currently active MT nodes and MC contacts.'],
+        ['History', 'Browse all remembered MT nodes and MC contacts.'],
+        ['Search', 'Filter visible node/contact rows by name, short name, ID, or radio metadata.'],
+        ['★ Fav first', 'Sort favorites above other rows.'],
+        ['MT', 'Show or hide MT rows in the shared table.'],
+        ['MC', 'Show or hide MC rows in the shared table.'],
         ['Clear TR lock', 'Release a stuck traceroute lock if a previous request did not complete cleanly.'],
-        ['Ping', 'Check MC reachability. When a true response is not available, OM can show fallback observed RF reachability.'],
-        ['Trace', 'Send an MC broadcast trace and draw known hops from trace data.'],
-        ['Route', 'Edit a stored MC contact route using repeater hash prefixes.'],
-        ['★', 'Mark an MC contact as a favorite so it sorts higher.'],
-        ['Ignore', 'Hide noisy or unwanted contacts from normal views.'],
-        ['Unignore', 'Restore an ignored contact.']
+        ['MT ignored', 'Show ignored MT nodes in History.'],
+        ['MC ignored', 'Show ignored MC contacts in History.'],
+        ['Map', 'Center the map on that node/contact and open its popup when a position is known.']
       ]
     },
     {
@@ -3730,17 +3782,45 @@
       tags: 'chat messages mt mc channel dm reply split byte limit send history delete mention',
       body: [
         'Chat is for normal text traffic. Use the MT/MC selector when both networks are enabled.',
-        'MC messages are byte-limited by firmware and sender/channel overhead. OM checks byte length and auto-splits longer sends into safe parts.',
-        'Reply attempts to use native mention formatting where supported, so the other side sees a proper mention rather than plain text where possible.'
+        'Chat stays intentionally compact. Route details belong in Sense/Map, while Chat only shows small badges or links when useful.'
+      ],
+      split: [
+        {
+          title: 'MT Chat',
+          kind: 'mt',
+          body: [
+            'MT messages can show a small route badge: direct, 1 hop, 2 hops, etc.',
+            'A plain hop badge comes from packet hop metadata. It tells you hop count only, not the exact repeaters.',
+            'A cached-route badge means OM has a recent traceroute for that exact peer. Clicking it draws the cached MT route on Map.'
+          ],
+          buttons: [
+            ['Route badge', 'Shows packet hop count or a cached traceroute link for the exact MT peer.'],
+            ['Reply', 'Insert a reply prefix for MT text.'],
+            ['TR', 'Run traceroute from node actions when you need exact route nodes.']
+          ]
+        },
+        {
+          title: 'MC Chat',
+          kind: 'mc',
+          body: [
+            'MC messages are byte-limited by firmware and sender/channel overhead. OM checks byte length and auto-splits longer sends into safe parts.',
+            'MC Reply inserts native bracketed mentions where possible, so original MC users see a proper mention.',
+            'MC message route inspection is shown in Sense/Map instead of inside busy chat bubbles.'
+          ],
+          buttons: [
+            ['Reply', 'Insert a native MC mention/reply prefix when possible.'],
+            ['Advert', 'Send this MC radio advert so other nodes learn its identity.'],
+            ['Byte counter', 'Shows remaining safe bytes; longer text is split into numbered parts when possible.']
+          ]
+        }
       ],
       buttons: [
         ['MT', 'Switch Chat to Meshtastic channels and DMs.'],
         ['MC', 'Switch Chat to MeshCore channels and DMs.'],
         ['Send', 'Transmit the current message. Blocked when Silent Running is active.'],
-        ['Reply', 'Insert a reply/mention prefix for the selected message.'],
         ['Delete History', 'Delete saved visible history for the current conversation or channel.'],
-        ['Advert', 'Send a MeshCore advert from the selected MC radio so other nodes learn its identity.'],
-        ['Scan', 'Refresh MC contacts/channels where the connected firmware supports it.'],
+        ['Emoji', 'Open the emoji picker for the current message input.'],
+        ['Byte counter', 'MC only: shows remaining safe bytes or split-message state for the current input.'],
         ['DM tab close', 'Close a direct-message tab without deleting history.'],
         ['Channel tab', 'Switch between public/private MT channels or MC channel slots.']
       ]
@@ -3752,6 +3832,34 @@
         'Map is the main geographic view. It shows MT nodes, MC contacts, local radios, marks, self notes, overlays, and paths drawn by tools.',
         'Click markers for quick actions. MT and MC filters let you reduce clutter when both networks are active.',
         'Marks are mesh waypoints. Self Notes are local-only notes. Overlays are local shapes and imported GeoJSON.'
+      ],
+      split: [
+        {
+          title: 'MT Map',
+          kind: 'mt',
+          body: [
+            'MT route lines come from traceroute results or cached traceroute replay. They can show route-to-node and route-back with SNR coloring.',
+            'If an intermediate MT node has no GPS, OM draws a bypass segment and marks that some hops had no map position.'
+          ],
+          buttons: [
+            ['SNR Paths', 'Toggle MT traceroute/SNR route lines.'],
+            ['TR log', 'Replay recent MT traceroutes from the map layer menu.'],
+            ['TR', 'Run a traceroute from an MT marker popup.']
+          ]
+        },
+        {
+          title: 'MC Map',
+          kind: 'mc',
+          body: [
+            'MC route lines come from adverts, messages, pings, traces, or stored contact routes. OM shows all known hops it can resolve.',
+            'A warning marker means OM only knows a relay chain or partial path; it is not the final sender/contact position.'
+          ],
+          buttons: [
+            ['Ping', 'Run MC reachability check and draw observed path when available.'],
+            ['Trace', 'Run MC broadcast trace and draw resolved hops.'],
+            ['!', 'Known relay only or partial MC path warning.']
+          ]
+        }
       ],
       buttons: [
         ['MT', 'Show or hide Meshtastic markers and paths on the map.'],
@@ -3766,6 +3874,9 @@
         ['Area', 'Start drawing a polygon overlay.'],
         ['Circle', 'Start drawing a circular overlay.'],
         ['Finish', 'Finish the current overlay draft.'],
+        ['Layer menu', 'Choose map tiles and open map-layer tools.'],
+        ['Polar Grid', 'Show or hide the polar/range grid overlay.'],
+        ['Customize', 'Adjust polar grid appearance.'],
         ['Save', 'Save the current mark, note, overlay, or edited settings.'],
         ['Cancel', 'Cancel the current map edit/draft.'],
         ['Zoom', 'Zoom the map to a saved overlay or known node position.']
@@ -3776,18 +3887,62 @@
       tags: 'sense activity passive active live rf map mc path hops ping trace log warning path refresh',
       body: [
         'Sense/Map is the live RF activity view. It is the best place to watch recent packets, adverts, messages, pings, traces, and path hops.',
-        'Hover or click activity entries to draw known paths. Partial MC paths show only the known relay chain; the warning marker means the endpoint is not the sender location.',
-        'Route source labels explain where a message path came from: live means packet/RX data, cached means contact route cache, inferred means OM drew a fallback line.'
+        'Hover or click activity entries to draw known paths. Shared controls are separated below because MT and MC expose different route data.'
+      ],
+      split: [
+        {
+          title: 'MT Sense/Map',
+          kind: 'mt',
+          body: [
+            'MT Sense logs heard packets and active Sense responses. Text entries can show SNR, a message preview, and hop count.',
+            'MT route badges in Sense use packet hop metadata when available. If a cached traceroute exists for the exact sender, hovering the response-log row previews that route; clicking pins it, and clicking the same row again clears it.',
+            'MT hop count alone does not identify which repeaters were used; run TR when you need exact route nodes.'
+          ],
+          buttons: [
+            ['Sense Mesh', 'Broadcast an active MT Sense request and collect responses.'],
+            ['Passive', 'Continuously capture heard MT packets without transmitting.'],
+            ['Active', 'Periodically run MT Sense requests using the configured cooldown.'],
+            ['Response log', 'Lists heard MT packets and active Sense responses; cached-route rows preview on hover and pin/clear on click.'],
+            ['direct', 'Packet metadata says the message was heard directly.'],
+            ['1 hop / 2 hops', 'MT badge for one/two packet hops. This is hop count, not exact route nodes.'],
+            ['cached route', 'A recent MT traceroute exists for this exact peer; hover to preview, click to pin or clear it.'],
+            ['Clear', 'Clear the current MT Sense detected-node list.']
+          ]
+        },
+        {
+          title: 'MC Sense/Map',
+          kind: 'mc',
+          body: [
+            'MC Sense logs adverts, messages, pings, traces, scans, and bot replies. It is the main place to inspect MC paths.',
+            'Route source badges: live means the path came from the received packet/RX log; cached means contact route cache; inferred means OM drew a fallback; refreshed means later contact data changed the path.',
+            'When MC SNR is available, path segments use the same quality colors as MT traceroutes. Hover a colored segment to see its SNR value.',
+            'Confidence labels: likely, estimated, and ambiguous mean OM resolved a short hash but it is not guaranteed exact. Partial paths show only known relays.',
+            'MC hop badges say 1 hop / 2 hops to avoid confusing h with hours.'
+          ],
+          buttons: [
+            ['Scan', 'Flood-advertise on MC and collect responses/contacts for the scan window.'],
+            ['MC activity', 'Right-side log of MC adverts, messages, pings, traces, scans, and bot replies. Click entries to pin or clear paths.'],
+            ['live', 'Path came from this packet/RX-log metadata. Best source, but not a guarantee if hashes are short.'],
+            ['cached', 'Path came from stored MC contact route/cache, not necessarily this exact message.'],
+            ['inferred', 'OM drew a fallback such as sender/receiver or partial known line.'],
+            ['refreshed', 'Path changed after OM re-resolved it with newer contact/path data.'],
+            ['1 hop / 2 hops', 'Known MC repeater count for this entry.'],
+            ['likely', 'Best candidate was selected, but another match existed.'],
+            ['estimated', 'Short/ambiguous hash; use as likely route, not proof.'],
+            ['ambiguous', 'Candidates were too close to call confidently.'],
+            ['Path refresh', 'Refresh contact/path data for the selected message or node and redraw if better data exists.'],
+            ['!', 'Known relay only; marker is not final sender/contact location.'],
+            ['Clear', 'Clear the MC activity log.']
+          ]
+        }
       ],
       buttons: [
-        ['Start Sense', 'Start active Sense activity where supported.'],
-        ['Stop Sense', 'Stop active Sense activity.'],
-        ['Path refresh', 'Refresh contact/path data for the selected message or node and redraw if better data exists.'],
-        ['Ping', 'Run MC reachability check from Sense/Map or contact actions.'],
-        ['Trace', 'Run MC broadcast trace and draw resolved hops.'],
-        ['Clear', 'Clear the current Sense activity list when available.'],
-        ['📍', 'Indicates a known position or map-focus action for the entry.'],
-        ['!', 'Path warning marker: known relay only, not final sender/contact location.']
+        ['Map', 'Show the normal map panel.'],
+        ['Sense', 'Open the live RF Sense side panels.'],
+        ['MT', 'Show MT Sense controls and MT response log.'],
+        ['MC', 'Show MC Sense contacts and MC activity log.'],
+        ['Filter', 'Search/filter the visible Sense contact list or activity log.'],
+        ['📍', 'Indicates a known position or map-focus action for the entry.']
       ]
     },
     {
@@ -3827,8 +3982,11 @@
         ['Delete', 'Remove the radio and delete its associated saved message DB when applicable.'],
         ['Edit', 'Open or edit the selected channel/config item.'],
         ['Save', 'Write the current node/channel/settings block.'],
+        ['Turn off', 'Set the MT node screen timeout to 10 seconds.'],
+        ['Always on', 'Set the MT node screen timeout to never sleep.'],
         ['Reboot', 'Ask the connected MT node to reboot.'],
-        ['Shutdown', 'Ask the connected MT node to shut down if supported.']
+        ['Shutdown', 'Ask the connected MT node to shut down if supported.'],
+        ['Clear known nodes', 'Clear remembered remote nodes for the selected MT radio from OM history/live cache.']
       ]
     },
     {
@@ -3847,10 +4005,13 @@
         ['Advert', 'Send the radio advert so other MC nodes learn this radio.'],
         ['Scan', 'Refresh MC contacts or query radio state where supported.'],
         ['Import', 'Import a meshcore:// contact share link.'],
-        ['Save Radio', 'Write frequency, bandwidth, spreading factor, coding rate, or similar radio parameters.'],
+        ['Save Radio Params', 'Write frequency, bandwidth, spreading factor, and coding rate.'],
         ['Save TX Power', 'Write MC transmit power.'],
-        ['Save Name', 'Write MC device name.'],
-        ['Save Coords', 'Write MC device coordinates.'],
+        ['Rename', 'Write MC device name.'],
+        ['Select on map', 'Pick MC device coordinates from the map.'],
+        ['Set Coords', 'Write MC device coordinates.'],
+        ['Debug Events', 'Log raw MC serial events for 60 seconds for troubleshooting.'],
+        ['Set', 'Set or edit an MC channel slot.'],
         ['Reboot Device', 'Try to reboot the connected MC radio.'],
         ['Delete History', 'Delete saved MC channel history.']
       ]
@@ -3872,9 +4033,12 @@
         ['Restart', 'Restart OM after a successful update.'],
         ['Show Intro', 'Open the first-launch overview.'],
         ['Manual', 'Open this searchable manual.'],
+        ['New messages', 'Enable or disable in-app/browser message notifications.'],
+        ['New node seen', 'Enable or disable node/contact seen notifications.'],
         ['Clear cache', 'Delete cached offline map tiles from this browser.'],
         ['Save current map view', 'Download map tiles for the current map viewport.'],
         ['Search', 'Find a map region/place for offline tile download.'],
+        ['GPS receiver', 'Select/configure the local GPS source used for OM and node position updates.'],
         ['Send to nodes now', 'Push the current GPS receiver fix to connected nodes.']
       ]
     },
@@ -3933,7 +4097,12 @@
 
   function _manualText(section) {
     const buttonText = (section.buttons || []).map(([label, desc]) => `${label} ${desc}`).join(' ');
-    return [section.title, section.tags, ...(section.body || []), buttonText].join(' ').toLowerCase();
+    const splitText = (section.split || []).map(group => [
+      group.title,
+      ...(group.body || []),
+      ...(group.buttons || []).map(([label, desc]) => `${label} ${desc}`)
+    ].flat().join(' ')).join(' ');
+    return [section.title, section.tags, ...(section.body || []), buttonText, splitText].join(' ').toLowerCase();
   }
 
   function _manualButtonHtml(item) {
@@ -3942,6 +4111,19 @@
     return `<div style="display:grid;grid-template-columns:minmax(92px,max-content) minmax(0,1fr);gap:9px;align-items:start;margin:6px 0">
       <span class="btn" style="display:inline-flex;align-items:center;justify-content:center;min-height:24px;padding:2px 9px;font-size:11px;line-height:1.2;cursor:default;pointer-events:none;white-space:nowrap">${escHtml(label || '')}</span>
       <span style="font-size:12px;line-height:1.4;color:var(--muted);padding-top:2px">${escHtml(desc || '')}</span>
+    </div>`;
+  }
+
+  function _manualSplitHtml(groups) {
+    if (!groups?.length) return '';
+    return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-top:9px">
+      ${groups.map(group => `
+        <div style="border:1px solid ${group.kind === 'mc' ? 'rgba(56,189,248,0.25)' : 'rgba(74,222,128,0.22)'};border-radius:8px;padding:10px;background:${group.kind === 'mc' ? 'rgba(56,189,248,0.045)' : 'rgba(74,222,128,0.035)'}">
+          <div style="font-size:12px;font-weight:700;color:${group.kind === 'mc' ? 'var(--mc-color)' : 'var(--accent)'};margin-bottom:7px">${escHtml(group.title || '')}</div>
+          ${(group.body || []).map(line => `<p style="font-size:12px;line-height:1.42;color:var(--text);margin:0 0 7px">${escHtml(line)}</p>`).join('')}
+          ${(group.buttons || []).length ? `<div style="border-top:1px solid var(--border);margin-top:8px;padding-top:6px">${group.buttons.map(_manualButtonHtml).join('')}</div>` : ''}
+        </div>
+      `).join('')}
     </div>`;
   }
 
@@ -3961,6 +4143,7 @@
       <div class="manual-section" style="border:1px solid var(--border);background:var(--bg2);border-radius:8px;padding:12px 14px;margin-bottom:10px">
         <div style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:7px">${escHtml(section.title)}</div>
         ${(section.body || []).map(line => `<p style="font-size:12px;line-height:1.45;color:var(--text);margin:0 0 7px">${escHtml(line)}</p>`).join('')}
+        ${_manualSplitHtml(section.split)}
         ${(section.buttons || []).length ? `<div style="border-top:1px solid var(--border);margin-top:9px;padding-top:7px">${section.buttons.map(_manualButtonHtml).join('')}</div>` : ''}
       </div>
     `).join('');
@@ -4040,10 +4223,14 @@
     const replyBtn = !m.sent
       ? `<button class="msg-reply-btn" onclick="replyToMt('${jsSafe(m.from_name || '')}')">↩ Reply</button>`
       : '';
+    const routeMeta = _mtMessageRouteMeta(m);
+    const routeBtn = routeMeta
+      ? `<button class="mt-route-badge ${routeMeta.cached ? 'cached' : ''}" title="${escHtml(routeMeta.detail)}" onclick="event.stopPropagation();showMtMessageRoute('${jsSafe(m.id)}')">${escHtml(routeMeta.label)}</button>`
+      : '';
     const el = document.createElement('div');
     el.className = `chat-msg ${m.sent ? 'sent' : 'received'}`;
     if (m.pkt_id) el.dataset.pktId = m.pkt_id;
-    el.innerHTML = `<div class="msg-meta">${meta}${replyBtn}</div><div class="msg-bubble">${escHtml(m.text)}</div>${statusHtml}`;
+    el.innerHTML = `<div class="msg-meta">${meta}${routeBtn}${replyBtn}</div><div class="msg-bubble">${escHtml(m.text)}</div>${statusHtml}`;
     return el;
   }
 
@@ -5434,6 +5621,11 @@ if (targetEl) {
     _traceMapLines = [];
   }
 
+  function _currentMtTraceMapData() {
+    if (_activeReplayIdx !== null && _traceHistory[_activeReplayIdx]?.data) return _traceHistory[_activeReplayIdx].data;
+    return _lastTraceData;
+  }
+
   function _drawTraceRouteOnMap(trData) {
     _clearTraceLines();
     if (!_showTrMap || !leafletMap) return;
@@ -5500,15 +5692,19 @@ if (targetEl) {
           seg.addTo(leafletMap);
           _traceMapLines.push(seg);
 
-          // Wing markers — same style as MC paths
-          const wingArm = _mcWingArm('trace');
-          const wCount  = _mcWingCount(p1, pos);
+          // Wing markers — same approved style as MC paths, with pixel-size stable across zoom.
+          const wingArm = _mcWingArm('trace') * 1.28;
+          const wCount  = Math.max(1, Math.min(6, Math.ceil(_mcWingCount(p1, pos) * 0.55)));
           const wingOpacity = skipped > 0 ? 0.45 : 1.0;
           Array.from({length: wCount}, (_, idx) => (idx + 1) / (wCount + 1)).forEach(t => {
-            const wingPts = _mcWingLatLngs(p1, pos, t, wingArm);
+            const wingPts = _mcWingLatLngs(p1, pos, t, wingArm, 19);
             if (wingPts.length === 3) {
               _traceMapLines.push(L.polyline(wingPts, {
-                color, weight: skipped > 0 ? 2 : 4, opacity: wingOpacity,
+                color: '#111', weight: weight + 3, opacity: skipped > 0 ? 0.32 : 0.52,
+                dashArray: null, lineCap: 'round', lineJoin: 'round', interactive: false
+              }).addTo(leafletMap));
+              _traceMapLines.push(L.polyline(wingPts, {
+                color, weight: (skipped > 0 ? 2 : 4) + 1, opacity: wingOpacity,
                 dashArray: null, lineCap: 'round', lineJoin: 'round', interactive: false
               }).addTo(leafletMap));
             }
@@ -5525,8 +5721,189 @@ if (targetEl) {
     _showTrMap = !_showTrMap;
     try { localStorage.setItem('mapShowTrSnr', _showTrMap ? '1' : '0'); } catch(e) {}
     document.getElementById('map-tr-snr-btn')?.classList.toggle('active', _showTrMap);
-    if (!_showTrMap) _clearTraceLines();
+    if (!_showTrMap) {
+      _clearTraceLines();
+      _activeMtRouteKey = null;
+      _mtRefreshSenseRouteSelection();
+    }
     else if (_lastTraceData) _drawTraceRouteOnMap(_lastTraceData);
+  }
+
+  function _mtCachedTraceForNode(nodeId, radioId = null) {
+    if (!nodeId || nodeId === 'local' || nodeId === '^all') return null;
+    return _traceHistory.find(e => {
+      if (!e?.data) return false;
+      if (radioId && e.radioId && e.radioId !== radioId) return false;
+      const ids = e.data.routeIds || [];
+      const backIds = e.data.routeBackIds || [];
+      return e.nodeId === nodeId || ids[ids.length - 1] === nodeId || backIds[0] === nodeId;
+    }) || null;
+  }
+
+  function _mtHopRouteLabel(hops) {
+    if (hops == null) return 'route';
+    return hops === 0 ? 'direct' : `${hops} hop${hops !== 1 ? 's' : ''}`;
+  }
+
+  function _mtRouteKey(targetId, radioId = '') {
+    return `${radioId || activeRadioId || 'mt'}:${targetId || ''}`;
+  }
+
+  function _mtRefreshSenseRouteSelection() {
+    document.querySelectorAll('#sense-log > .mt-route-selected').forEach(el => el.classList.remove('mt-route-selected'));
+    if (!_activeMtRouteKey) return;
+    document.querySelectorAll('#sense-log > div[data-mt-route-key]').forEach(el => {
+      if (el.dataset.mtRouteKey === _activeMtRouteKey) el.classList.add('mt-route-selected');
+    });
+  }
+
+  function _mtClearSelectedRoute() {
+    _clearTraceLines();
+    _activeMtRouteKey = null;
+    _mtHoverRouteKey = null;
+    _mtHoverHadTraceLines = false;
+    _mtHoverPrevShowTrMap = null;
+    if (_activeReplayPanel) { _activeReplayPanel.remove(); _activeReplayPanel = null; }
+    _activeReplayIdx = null;
+    _updateTrLogPanel();
+    _mtRefreshSenseRouteSelection();
+  }
+
+  function _mtSetTraceMapVisible(show) {
+    _showTrMap = !!show;
+    try { localStorage.setItem('mapShowTrSnr', _showTrMap ? '1' : '0'); } catch(_) {}
+    document.getElementById('map-tr-snr-btn')?.classList.toggle('active', _showTrMap);
+  }
+
+  function _mtMessageRouteMeta(m) {
+    if (!m || m.is_emoji) return null;
+    const targetId = m.sent ? (m.to_id || null) : (m.from_id || null);
+    if (!targetId || targetId === 'local' || targetId === '^all') return null;
+    const hopNum = m.hops != null ? Number(m.hops) : NaN;
+    const hasHopCount = Number.isFinite(hopNum) && hopNum >= 0;
+    const cached = _mtCachedTraceForNode(targetId, m.radio_id || activeRadioId);
+    if (!hasHopCount && !cached) return null;
+    const routeIds = cached?.data?.routeIds || [];
+    const inferred = routeIds.length >= 2 ? Math.max(0, routeIds.length - 2) : null;
+    const hops = hasHopCount ? hopNum : inferred;
+    const label = _mtHopRouteLabel(hops);
+    return {
+      targetId,
+      label,
+      hops,
+      cached,
+      source: cached ? (hasHopCount ? 'packet hops + cached route' : 'cached route') : 'packet hop count',
+      detail: cached
+        ? `Show cached traceroute for ${cached.nodeName || targetId}`
+        : `${hops === 0 ? 'Direct packet' : `${hops} hop${hops !== 1 ? 's' : ''}`} reported by packet metadata`,
+    };
+  }
+
+  function showMtMessageRoute(msgId) {
+    const m = chatMsgs.find(x => x.id === msgId);
+    const meta = _mtMessageRouteMeta(m);
+    if (!meta) return;
+    const routeKey = _mtRouteKey(meta.targetId, m?.radio_id || activeRadioId);
+    if (_activeMtRouteKey === routeKey) {
+      _mtClearSelectedRoute();
+      return;
+    }
+    if (meta.cached?.data) {
+      switchTab('map');
+      if (!_showTrMap) {
+        _showTrMap = true;
+        try { localStorage.setItem('mapShowTrSnr', '1'); } catch(_) {}
+        document.getElementById('map-tr-snr-btn')?.classList.add('active');
+      }
+      _drawTraceRouteOnMap(meta.cached.data);
+      _lastTraceData = meta.cached.data;
+      _activeMtRouteKey = routeKey;
+      if (_activeReplayPanel) { _activeReplayPanel.remove(); _activeReplayPanel = null; }
+      _activeReplayIdx = null;
+      _updateTrLogPanel();
+      _mtRefreshSenseRouteSelection();
+      const targetPos = _nodeLatLon(meta.targetId);
+      if (targetPos && leafletMap) leafletMap.panTo(targetPos);
+    } else {
+      showToast('MT route', escHtml(meta.detail), 'node', `mt-route-${msgId}`);
+    }
+  }
+
+  function _mtSenseRouteMeta(n) {
+    if (!n?.from_id || n.from_id === 'local') return null;
+    const msg = n.msg_id ? chatMsgs.find(m => m.id === n.msg_id) : null;
+    if (msg) return _mtMessageRouteMeta(msg);
+    const hopNum = n.hops != null ? Number(n.hops) : NaN;
+    const hasHopCount = Number.isFinite(hopNum) && hopNum >= 0;
+    const cached = _mtCachedTraceForNode(n.from_id, n.radio_id || activeRadioId);
+    if (!hasHopCount && !cached) return null;
+    const routeIds = cached?.data?.routeIds || [];
+    const inferred = routeIds.length >= 2 ? Math.max(0, routeIds.length - 2) : null;
+    const hops = hasHopCount ? hopNum : inferred;
+    return {
+      targetId: n.from_id,
+      label: _mtHopRouteLabel(hops),
+      hops,
+      cached,
+      detail: cached ? `Show cached traceroute for ${cached.nodeName || n.from_id}` : 'Packet hop count only',
+    };
+  }
+
+  function showMtSenseRoute(fromId, radioId = '') {
+    const routeKey = _mtRouteKey(fromId, radioId || activeRadioId);
+    if (_activeMtRouteKey === routeKey) {
+      _mtClearSelectedRoute();
+      return;
+    }
+    const cached = _mtCachedTraceForNode(fromId, radioId || activeRadioId);
+    if (!cached?.data) {
+      showToast('MT route', 'No cached traceroute is available for this node yet.', 'node', `mt-sense-route-${fromId}`);
+      return;
+    }
+    switchTab('map');
+    if (!_showTrMap) {
+      _showTrMap = true;
+      try { localStorage.setItem('mapShowTrSnr', '1'); } catch(_) {}
+      document.getElementById('map-tr-snr-btn')?.classList.add('active');
+    }
+    _drawTraceRouteOnMap(cached.data);
+    _lastTraceData = cached.data;
+    _activeMtRouteKey = routeKey;
+    if (_activeReplayPanel) { _activeReplayPanel.remove(); _activeReplayPanel = null; }
+    _activeReplayIdx = null;
+    _updateTrLogPanel();
+    _mtRefreshSenseRouteSelection();
+    const targetPos = _nodeLatLon(fromId);
+    if (targetPos && leafletMap) leafletMap.panTo(targetPos);
+  }
+
+  function previewMtSenseRoute(fromId, radioId = '', on = true) {
+    const routeKey = _mtRouteKey(fromId, radioId || activeRadioId);
+    if (_activeMtRouteKey) return;
+    if (!on) {
+      if (_mtHoverRouteKey !== routeKey) return;
+      const restoreData = _mtHoverHadTraceLines ? _currentMtTraceMapData() : null;
+      _mtHoverRouteKey = null;
+      if (_mtHoverPrevShowTrMap === false) _mtSetTraceMapVisible(false);
+      else if (_mtHoverPrevShowTrMap === true) _mtSetTraceMapVisible(true);
+      if (restoreData && _showTrMap) _drawTraceRouteOnMap(restoreData);
+      else _clearTraceLines();
+      _mtHoverHadTraceLines = false;
+      _mtHoverPrevShowTrMap = null;
+      return;
+    }
+    const cached = _mtCachedTraceForNode(fromId, radioId || activeRadioId);
+    if (!cached?.data) return;
+    _mtHoverRouteKey = routeKey;
+    _mtHoverHadTraceLines = _traceMapLines.length > 0;
+    _mtHoverPrevShowTrMap = _showTrMap;
+    if (!_showTrMap) _mtSetTraceMapVisible(true);
+    _drawTraceRouteOnMap(cached.data);
+  }
+
+  function _mtSensePacketKey(n) {
+    if (!n?.pkt_id) return '';
+    return `sense-mt-pkt-${String(n.radio_id || activeRadioId || 'mt').replace(/[^A-Za-z0-9_-]/g, '_')}-${String(n.from_id || '').replace(/[^A-Za-z0-9_-]/g, '_')}-${n.pkt_id}`;
   }
 
   function setTileLayer(key) {
@@ -6990,9 +7367,10 @@ if (targetEl) {
     if (_showPolarGrid) _drawPolarGrid();
     fetch('/api/traceroute/history').then(r => r.json()).then(rows => {
       if (!Array.isArray(rows) || !rows.length) return;
-      _traceHistory = rows.map(r => ({ ts: r.ts * 1000, nodeId: r.node_id, nodeName: r.node_name, data: r.data }));
+      _traceHistory = rows.map(r => ({ ts: r.ts * 1000, nodeId: r.node_id, nodeName: r.node_name, radioId: r.radio_id, data: r.data }));
       if (_traceHistory.length) _lastTraceData = _traceHistory[0].data;
       _updateTrLogPanel();
+      if (chatNetwork === 'mt') renderMessages();
     }).catch(() => {});
 
     // Save map position on every move so it survives refresh
@@ -7001,6 +7379,10 @@ if (targetEl) {
       try { localStorage.setItem('mapView', JSON.stringify({lat: c.lat, lng: c.lng, zoom: leafletMap.getZoom()})); } catch(e) {}
     });
     leafletMap.on('zoomend', () => {
+      if (_showTrMap && _traceMapLines.length) {
+        const trData = _currentMtTraceMapData();
+        if (trData) _drawTraceRouteOnMap(trData);
+      }
       if (_mcActiveHoverPath) showMcHoverPath(_mcActiveHoverPath, true);
     });
 
@@ -8250,9 +8632,10 @@ if (targetEl) {
         <div class="tr-section">Route back</div>
         <div class="tr-chain">${buildChain(d.routeBack, d.snrBack)}</div>`;
       _lastTraceData = d;
-      _traceHistory.unshift({ ts: Date.now(), nodeId, nodeName, data: d });
+      _traceHistory.unshift({ ts: Date.now(), nodeId, nodeName, radioId: trRadioId, data: d });
       if (_traceHistory.length > 10) _traceHistory.pop();
       _updateTrLogPanel();
+      if (chatNetwork === 'mt') renderMessages();
       if (_showTrMap) _drawTraceRouteOnMap(d);
     } catch(e) {
       clearInterval(timerId);
@@ -10554,7 +10937,11 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       renderMcMessages();
       // Retain all heard MC activity, even if the Sense panel is not currently visible.
       if (!data.sent && data.subtype !== 'system') {
-        addMcSenseMessageEntry(data);
+        try {
+          addMcSenseMessageEntry(data);
+        } catch (e) {
+          console.warn('MC activity message log failed:', e);
+        }
       }
       return;
     }
@@ -10628,7 +11015,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
   function mcPathHopLabel(hopLen, compact = false) {
     if (hopLen === 255) return compact ? 'route' : 'Route';
     if (hopLen === 0) return compact ? 'direct' : 'Direct (0 hops)';
-    if (hopLen > 0) return compact ? `${hopLen}h` : `${hopLen} hop${hopLen !== 1 ? 's' : ''}`;
+    if (hopLen > 0) return `${hopLen} hop${hopLen !== 1 ? 's' : ''}`;
     return compact ? 'flood' : 'Flood';
   }
 
@@ -11424,6 +11811,12 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const legend   = document.querySelector('.map-legend');
     const mcLegend = document.getElementById('map-legend-mc');
     if (net === 'mc') {
+      _clearTraceLines();
+      _activeMtRouteKey = null;
+      if (_activeReplayPanel) { _activeReplayPanel.remove(); _activeReplayPanel = null; }
+      _activeReplayIdx = null;
+      _updateTrLogPanel();
+      _mtRefreshSenseRouteSelection();
       // Show MC markers, hide MT node markers
       if (!mapShowMc) {
         mapShowMc = true;
@@ -11681,54 +12074,176 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     return matches;
   }
 
-  function _mcPathScore(candidate, expectedLat, expectedLon) {
+  function _mcPathDistanceScore(candidate, expectedLat, expectedLon) {
     const lat = candidate.latitude ?? candidate.lat;
     const lon = candidate.longitude ?? candidate.lon;
     if (lat == null || lon == null) return Number.POSITIVE_INFINITY;
     const dLat = lat - expectedLat;
     const dLon = (lon - expectedLon) * Math.cos((expectedLat || 0) * Math.PI / 180);
-    let score = dLat * dLat + dLon * dLon;
-    if ((candidate.type ?? 0) === 2) score *= 0.85;
+    return dLat * dLat + dLon * dLon;
+  }
+
+  function _mcPathGeoKm(candidate, expectedLat, expectedLon) {
+    const score = _mcPathDistanceScore(candidate, expectedLat, expectedLon);
+    if (!Number.isFinite(score)) return Number.POSITIVE_INFINITY;
+    return Math.sqrt(score) * 111.32;
+  }
+
+  function _mcPathCandidateScore(candidate, ctx = {}) {
+    const hashBytes = Number(ctx.hashBytes || 1);
+    let score = hashBytes >= 3 ? 46 : hashBytes === 2 ? 34 : 16;
+    const type = Number(candidate.type ?? 0);
+    if (type === 2) score += 24;       // MeshCore repeater/router
+    else if (type > 0) score += 3;
+
+    const lat = candidate.latitude ?? candidate.lat;
+    const lon = candidate.longitude ?? candidate.lon;
+    if (lat != null && lon != null) score += 8;
+
+    const seenTs = _mcContactSeenTs(candidate);
+    if (seenTs) {
+      const age = Math.max(0, Math.floor(Date.now() / 1000) - seenTs);
+      if (age < 3600) score += 16;
+      else if (age < 6 * 3600) score += 11;
+      else if (age < 24 * 3600) score += 7;
+      else if (age < 7 * 24 * 3600) score += 3;
+    }
+
+    if (ctx.expectedLat != null && ctx.expectedLon != null && lat != null && lon != null) {
+      const km = _mcPathGeoKm(candidate, ctx.expectedLat, ctx.expectedLon);
+      score += Math.max(0, 42 - Math.min(42, km * 1.35));
+    }
+
+    const outLen = Number(candidate.out_path_len);
+    if (Number.isFinite(outLen) && outLen >= 0) score += 2;
     return score;
   }
 
-  function _mcPickPathHop(hashHex, radioId, radioLat, radioLon, endpointLat, endpointLon, hopIdx, hopCount) {
-    let candidates = findMcContactsByKeyPrefix(hashHex, radioId)
-      .filter(c => (c.latitude ?? c.lat) != null && (c.longitude ?? c.lon) != null);
-    if (!candidates.length) return null;
-    const repeaters = candidates.filter(c => (c.type ?? 0) === 2);
-    if (repeaters.length) candidates = repeaters;
-    if (radioLat == null || radioLon == null || endpointLat == null || endpointLon == null) {
-      return candidates.length === 1 ? candidates[0] : null;
+  function _mcPathConfidence(hashBytes, matchCount, selectedCount, scoreGap, ambiguous) {
+    if (ambiguous) return 'ambiguous';
+    if (matchCount <= 1) {
+      if (hashBytes >= 3) return 'exact';
+      if (hashBytes === 2) return 'unique-2B';
+      return 'unique-1B';
     }
-    const frac = (hopIdx + 1) / (hopCount + 1);
-    const expectedLat = radioLat + (endpointLat - radioLat) * frac;
-    const expectedLon = radioLon + (endpointLon - radioLon) * frac;
-    candidates.sort((a, b) =>
-      _mcPathScore(a, expectedLat, expectedLon) - _mcPathScore(b, expectedLat, expectedLon)
-    );
-    return candidates[0] || null;
+    if (hashBytes >= 3 && scoreGap >= 6) return 'likely';
+    if (hashBytes === 2 && scoreGap >= 10) return 'likely';
+    if (hashBytes === 1 && scoreGap >= 16) return 'estimated';
+    return selectedCount <= 1 ? 'likely' : 'estimated';
   }
 
-  function _mcPathHopMeta(hashHex, contact, pointIndex) {
+  function _mcPickPathHopResolution(hashHex, radioId, radioLat, radioLon, endpointLat, endpointLon, hopIdx, hopCount, opts = {}) {
+    const hash = String(hashHex || '').toLowerCase();
+    if (!hash) return null;
+    const hashBytes = Math.max(1, Math.min(3, Math.ceil(hash.length / 2)));
+    const allMatches = findMcContactsByKeyPrefix(hash, radioId);
+    if (!allMatches.length) return null;
+
+    let candidates = opts.requireGps === false
+      ? [...allMatches]
+      : allMatches.filter(c => (c.latitude ?? c.lat) != null && (c.longitude ?? c.lon) != null);
+    if (!candidates.length) return null;
+
+    const repeaters = candidates.filter(c => (c.type ?? 0) === 2);
+    if (repeaters.length) candidates = repeaters;
+
+    let expectedLat = null;
+    let expectedLon = null;
+    if (radioLat != null && radioLon != null && endpointLat != null && endpointLon != null) {
+      const frac = (hopIdx + 1) / (hopCount + 1);
+      expectedLat = radioLat + (endpointLat - radioLat) * frac;
+      expectedLon = radioLon + (endpointLon - radioLon) * frac;
+    }
+
+    const ranked = candidates.map(contact => ({
+      contact,
+      score: _mcPathCandidateScore(contact, { hashBytes, expectedLat, expectedLon }),
+    })).sort((a, b) => b.score - a.score);
+    const best = ranked[0];
+    if (!best) return null;
+
+    const second = ranked[1] || null;
+    const scoreGap = second ? best.score - second.score : Number.POSITIVE_INFINITY;
+    const gapNeeded = hashBytes >= 3 ? 4 : hashBytes === 2 ? 8 : 14;
+    const noGeometry = expectedLat == null || expectedLon == null;
+    const ambiguous = ranked.length > 1 && (scoreGap < gapNeeded || (noGeometry && hashBytes <= 1 && scoreGap < 22));
+
+    return {
+      contact: best.contact,
+      hash,
+      hashBytes,
+      matchCount: allMatches.length,
+      selectedCount: candidates.length,
+      ambiguous,
+      confidence: _mcPathConfidence(hashBytes, allMatches.length, candidates.length, scoreGap, ambiguous),
+      scoreGap,
+      alternatives: ranked.slice(1, 4).map(r => ({
+        id: r.contact.id || r.contact.full_key || '',
+        name: r.contact.long_name || r.contact.name || r.contact.id || '',
+        score: r.score,
+      })),
+    };
+  }
+
+  function _mcPickPathHop(hashHex, radioId, radioLat, radioLon, endpointLat, endpointLon, hopIdx, hopCount) {
+    return _mcPickPathHopResolution(hashHex, radioId, radioLat, radioLon, endpointLat, endpointLon, hopIdx, hopCount)?.contact || null;
+  }
+
+  function _mcPathHopMeta(hashHex, contact, pointIndex, resolution = null) {
     const name = contact ? (contact.long_name || contact.name || contact.id || hashHex) : (hashHex || '?');
     return {
       hash: String(hashHex || '').toLowerCase(),
       name,
       pointIndex,
       contactId: contact?.id || contact?.full_key || null,
+      confidence: resolution?.confidence || null,
+      ambiguous: !!resolution?.ambiguous,
+      matchCount: resolution?.matchCount || null,
+      alternatives: resolution?.alternatives || [],
     };
+  }
+
+  function _mcHopConfidenceLabel(hop) {
+    const confidence = hop?.ambiguous ? 'ambiguous' : (hop?.confidence || '');
+    return confidence && !['exact', 'unique-2B', 'unique-1B'].includes(confidence) ? confidence : '';
   }
 
   function _mcReversePathResult(pathResult) {
     if (!pathResult?.points) return pathResult;
     const lastIdx = pathResult.points.length - 1;
     const hops = (pathResult.hops || []).map(h => ({ ...h, pointIndex: lastIdx - h.pointIndex }));
-    return { ...pathResult, points: [...pathResult.points].reverse(), hops };
+    const segmentSnrs = Array.isArray(pathResult.segmentSnrs) ? [...pathResult.segmentSnrs].reverse() : pathResult.segmentSnrs;
+    return { ...pathResult, points: [...pathResult.points].reverse(), hops, segmentSnrs };
   }
 
   function _mcHopTooltipHtml(hop) {
-    return `<span class="mc-hop-prefix">${escHtml(hop.hash || '?')}</span>${escHtml(hop.name || '?')}`;
+    const confidence = _mcHopConfidenceLabel(hop);
+    const suffix = confidence
+      ? `<span style="margin-left:4px;color:#f59e0b;font-size:9px">${escHtml(confidence)}</span>`
+      : '';
+    const title = hop.matchCount && hop.matchCount > 1 ? ` title="${escHtml(`${hop.matchCount} hash matches; ${confidence || 'resolved'}`)}"` : '';
+    return `<span class="mc-hop-prefix"${title}>${escHtml(hop.hash || '?')}</span>${escHtml(hop.name || '?')}${suffix}`;
+  }
+
+  function _mcPathLengthKm(points) {
+    if (!points || points.length < 2) return Number.POSITIVE_INFINITY;
+    let meters = 0;
+    for (let i = 0; i < points.length - 1; i++) {
+      const a = points[i], b = points[i + 1];
+      if (!a || !b) continue;
+      meters += _haversineMeters(a[0], a[1], b[0], b[1]);
+    }
+    return meters / 1000;
+  }
+
+  function _mcDecodedPathScore(result, expectedHopCount) {
+    if (!result?.points || result.points.length < 2) return Number.POSITIVE_INFINITY;
+    const directKm = _mcPathLengthKm([result.points[0], result.points[result.points.length - 1]]);
+    const pathKm = _mcPathLengthKm(result.points);
+    const missing = Math.max(0, (expectedHopCount || 0) - (result.hops || []).length);
+    const ambiguity = (result.hops || []).filter(h => h.ambiguous || ['likely', 'estimated'].includes(h.confidence)).length;
+    const detourKm = Number.isFinite(directKm) ? Math.max(0, pathKm - directKm) : pathKm;
+    return pathKm + detourKm * 0.75 + missing * 250 + ambiguity * 60;
   }
 
   function decodeMcPath(contact, radioLat, radioLon, radioId = null) {
@@ -11762,13 +12277,15 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     for (let i = 0; i < hopCount; i++) {
       const hashHex = pathHex.slice(i * hashChars, (i + 1) * hashChars);
       if (!hashHex || hashHex.replace(/0/g, '') === '') break;
-      const hopContact = _mcPickPathHop(hashHex, radioId, radioLat, radioLon, cLat, cLon, i, hopCount);
+      const hopResolution = _mcPickPathHopResolution(hashHex, radioId, radioLat, radioLon, cLat, cLon, i, hopCount);
+      const hopContact = hopResolution?.contact || null;
       if (!hopContact) { partial = true; continue; }  // unknown repeater — skip, draw partial
       const hLat = hopContact.latitude ?? hopContact.lat;
       const hLon = hopContact.longitude ?? hopContact.lon;
       if (hLat == null || hLon == null) { partial = true; continue; }
       points.push([hLat, hLon]);
-      hops.push(_mcPathHopMeta(hashHex, hopContact, points.length - 1));
+      hops.push(_mcPathHopMeta(hashHex, hopContact, points.length - 1, hopResolution));
+      if (hopResolution?.ambiguous) partial = true;
     }
     points.push([cLat, cLon]);
     return points.length >= 2 ? { points, partial, hops } : null;
@@ -11787,23 +12304,38 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     // hopCount > 0 but no path hashes — relay identities unavailable, let caller fall back to decodeMcPath
     if (!pathHex) return null;
     const hashChars = hashSize * 2;
-    const points = [];
-    const hops = [];
-    let partial = false;
-    if (radioLat != null && radioLon != null) points.push([radioLat, radioLon]);
+    const hashList = [];
     for (let i = 0; i < hopCount; i++) {
       const hashHex = pathHex.slice(i * hashChars, (i + 1) * hashChars);
       if (!hashHex || hashHex.replace(/0/g, '') === '') break;
-      const hopContact = _mcPickPathHop(hashHex, radioId, radioLat, radioLon, endpointLat, endpointLon, i, hopCount);
-      if (!hopContact) { partial = true; continue; }
-      const hLat = hopContact.latitude ?? hopContact.lat;
-      const hLon = hopContact.longitude ?? hopContact.lon;
-      if (hLat == null || hLon == null) { partial = true; continue; }
-      points.push([hLat, hLon]);
-      hops.push(_mcPathHopMeta(hashHex, hopContact, points.length - 1));
+      hashList.push(hashHex);
     }
-    points.push([endpointLat, endpointLon]);
-    return points.length >= 2 ? { points, partial, hops } : null;
+    const build = (hashes, orderLabel) => {
+      const points = [];
+      const hops = [];
+      let partial = false;
+      if (radioLat != null && radioLon != null) points.push([radioLat, radioLon]);
+      hashes.forEach((hashHex, i) => {
+        const hopResolution = _mcPickPathHopResolution(hashHex, radioId, radioLat, radioLon, endpointLat, endpointLon, i, hashes.length);
+        const hopContact = hopResolution?.contact || null;
+        if (!hopContact) { partial = true; return; }
+        const hLat = hopContact.latitude ?? hopContact.lat;
+        const hLon = hopContact.longitude ?? hopContact.lon;
+        if (hLat == null || hLon == null) { partial = true; return; }
+        points.push([hLat, hLon]);
+        hops.push(_mcPathHopMeta(hashHex, hopContact, points.length - 1, hopResolution));
+        if (hopResolution?.ambiguous) partial = true;
+      });
+      points.push([endpointLat, endpointLon]);
+      return points.length >= 2 ? { points, partial, hops, rawPathOrder: orderLabel } : null;
+    };
+    const forward = build(hashList, 'as-received');
+    const reverse = hashList.length > 1 ? build([...hashList].reverse(), 'reversed') : null;
+    if (!forward) return reverse;
+    if (!reverse) return forward;
+    const forwardScore = _mcDecodedPathScore(forward, hopCount);
+    const reverseScore = _mcDecodedPathScore(reverse, hopCount);
+    return reverseScore + 25 < forwardScore ? reverse : forward;
   }
 
   function decodeMcRelayPath(evt, radioLat, radioLon, radioId = null) {
@@ -11826,13 +12358,15 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       for (let i = 0; i < hopCount; i++) {
         const hashHex = pathHex.slice(i * hashChars, (i + 1) * hashChars);
         if (!hashHex || hashHex.replace(/0/g, '') === '') break;
-        const hopContact = _mcPickPathHop(hashHex, radioId, radioLat, radioLon, null, null, i, hopCount);
+        const hopResolution = _mcPickPathHopResolution(hashHex, radioId, radioLat, radioLon, null, null, i, hopCount);
+        const hopContact = hopResolution?.contact || null;
         if (!hopContact) { unresolved++; continue; }
         const hLat = hopContact.latitude ?? hopContact.lat;
         const hLon = hopContact.longitude ?? hopContact.lon;
         if (hLat == null || hLon == null) { unresolved++; continue; }
         points.push([hLat, hLon]);
-        hops.push(_mcPathHopMeta(hashHex, hopContact, points.length - 1));
+        hops.push(_mcPathHopMeta(hashHex, hopContact, points.length - 1, hopResolution));
+        if (hopResolution?.ambiguous) unresolved += 0.5;
       }
       if (points.length < 2) return;
       const score = (hops.length * 100) - unresolved - Math.abs(hopCount - hops.length);
@@ -11932,7 +12466,21 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     return Math.max(1, Math.min(10, Math.floor(segPx / spacing)));
   }
 
-  function _mcWingLatLngs(p1, p2, t, arm) {
+  function _mcPathSegmentSnr(pathResult, idx) {
+    if (!pathResult || Array.isArray(pathResult)) return null;
+    const seg = Array.isArray(pathResult.segmentSnrs) ? pathResult.segmentSnrs[idx] : null;
+    if (seg != null && Number.isFinite(Number(seg))) return Number(seg);
+    const hop = (pathResult.hops || []).find(h => h.pointIndex === idx + 1);
+    if (hop?.snr != null && Number.isFinite(Number(hop.snr))) return Number(hop.snr);
+    const fallback = pathResult.snr;
+    return fallback != null && Number.isFinite(Number(fallback)) ? Number(fallback) : null;
+  }
+
+  function _mcPathPointSnr(pathResult, idx) {
+    return _mcPathSegmentSnr(pathResult, Math.max(0, idx - 1)) ?? _mcPathSegmentSnr(pathResult, idx);
+  }
+
+  function _mcWingLatLngs(p1, p2, t, arm, angleDeg = 14) {
     if (!leafletMap) return [];
     const start = leafletMap.latLngToLayerPoint([p1[0], p1[1]]);
     const end   = leafletMap.latLngToLayerPoint([p2[0], p2[1]]);
@@ -11942,7 +12490,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const ux = dx / len, uy = dy / len;   // forward unit vector
     const px = -uy,       py =  ux;        // perpendicular (left)
     const cx = start.x + dx * t, cy = start.y + dy * t;
-    const angle = 14 * Math.PI / 180;
+    const angle = angleDeg * Math.PI / 180;
     const back = arm * Math.cos(angle);
     const side = arm * Math.sin(angle);
     const leftEnd  = leafletMap.layerPointToLatLng(L.point(cx - ux * back + px * side, cy - uy * back + py * side));
@@ -11992,22 +12540,26 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       _mcHoverLines.push(halo);
     }
 
-    const _mcLineSnr = Array.isArray(pathResult) ? null : (pathResult.snr ?? null);
-    const line = L.polyline(points, {
-      color: lineColor, weight: lineWeight, opacity: lineOpacity,
-      dashArray: lineDash, lineCap: 'round', lineJoin: 'round',
-      interactive: kind === 'trace' && _mcLineSnr != null
-    });
-    if (kind === 'trace' && _mcLineSnr != null) line.bindTooltip(`${_mcLineSnr.toFixed(1)} dB`, {sticky: true, direction: 'top'});
-    line.addTo(leafletMap);
-    _mcHoverLines.push(line);
+    for (let i = 0; i < points.length - 1; i++) {
+      const segSnr = _mcPathSegmentSnr(pathResult, i);
+      const segColor = segSnr != null ? _snrLineColor(segSnr) : lineColor;
+      const line = L.polyline([points[i], points[i + 1]], {
+        color: segColor, weight: lineWeight, opacity: lineOpacity,
+        dashArray: lineDash, lineCap: 'round', lineJoin: 'round',
+        interactive: segSnr != null
+      });
+      if (segSnr != null) line.bindTooltip(`SNR ${segSnr.toFixed(1)} dB`, {sticky: true, direction: 'top'});
+      line.addTo(leafletMap);
+      _mcHoverLines.push(line);
+    }
 
     if (dotColor) {
       // Dot at each hop point
       const hopByPoint = new Map(((pathResult && !Array.isArray(pathResult) && pathResult.hops) || []).map(h => [h.pointIndex, h]));
       points.forEach(([lat, lon], idx) => {
+        const ptSnr = _mcPathPointSnr(pathResult, idx);
         const c = L.circleMarker([lat, lon], {
-          radius: kind === 'trace' ? 8 : 6, color: '#000', fillColor: dotColor,
+          radius: kind === 'trace' ? 8 : 6, color: '#000', fillColor: ptSnr != null ? _snrLineColor(ptSnr) : dotColor,
           fillOpacity: 1.0, weight: 2, interactive: false
         }).addTo(leafletMap);
         const hop = hopByPoint.get(idx);
@@ -12022,15 +12574,21 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         _mcHoverLines.push(c);
       });
       // Directional wings along each segment — V-shaped tick marks, same color/weight/dash as line
-      const arm = _mcWingArm(kind);
+      const arm = _mcWingArm(kind) * 1.28;
       for (let i = 0; i < points.length - 1; i++) {
         const p1 = points[i], p2 = points[i + 1];
-        const wCount = _mcWingCount(p1, p2);
+        const wCount = Math.min(12, _mcWingCount(p1, p2) + 1);
+        const segSnr = _mcPathSegmentSnr(pathResult, i);
+        const segColor = segSnr != null ? _snrLineColor(segSnr) : lineColor;
         Array.from({length: wCount}, (_, idx) => (idx + 1) / (wCount + 1)).forEach(t => {
-          const wingPts = _mcWingLatLngs(p1, p2, t, arm);
+          const wingPts = _mcWingLatLngs(p1, p2, t, arm, 19);
           if (wingPts.length === 3) {
+            _mcHoverLines.push(L.polyline(wingPts, {
+              color: '#111', weight: lineWeight + 3, opacity: 0.52,
+              dashArray: null, lineCap: 'round', lineJoin: 'round', interactive: false
+            }).addTo(leafletMap));
             const wing = L.polyline(wingPts, {
-              color: lineColor, weight: lineWeight, opacity: 1.0,
+              color: segColor, weight: lineWeight + 1, opacity: 1.0,
               dashArray: null, lineCap: 'round', lineJoin: 'round', interactive: false
             }).addTo(leafletMap);
             _mcHoverLines.push(wing);
@@ -12146,7 +12704,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         const snrLabel = e.finalSnr != null ? ` · ${e.finalSnr.toFixed(1)}dB` : '';
         const iconColor = e.ours ? '#a78bfa' : 'rgba(167,139,250,0.4)';
         const rowOpacity = e.ours ? '' : 'opacity:0.6;';
-        return `<div style="padding:2px 0;border-bottom:1px solid var(--border);cursor:pointer;${rowOpacity}${isPinned ? 'background:rgba(59,130,246,0.12)' : ''}"
+        return `<div class="${isPinned ? 'mc-route-selected' : ''}" style="padding:2px 0;border-bottom:1px solid var(--border);cursor:pointer;${rowOpacity}"
           onclick="_mcLogClick(${e._i})"
           onmouseenter="_mcLogHover(${e._i},true)"
           onmouseleave="_mcLogHover(${e._i},false)">
@@ -12154,7 +12712,6 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
           <span style="color:${iconColor};margin-left:4px">⟳</span>
           <span style="margin-left:4px">${rLabel}</span>
           <span style="color:${hopColor};margin-left:4px;font-size:10px">${e.hopStr}${snrLabel}</span>
-          ${isPinned ? '<span style="float:right;color:#3b82f6;font-size:9px;margin-right:2px">●</span>' : ''}
         </div>`;
       }
       if (e.kind === 'scan') {
@@ -12166,7 +12723,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       if (e.kind === 'ping') {
         const isPinned = _mcLogPinnedIdx === e._i;
         const snr = e.snrLabel ? ` · ${e.snrLabel}` : '';
-        return `<div style="padding:2px 0;border-bottom:1px solid var(--border);cursor:pointer;${isPinned ? 'background:rgba(59,130,246,0.12)' : ''}"
+        return `<div class="${isPinned ? 'mc-route-selected' : ''}" style="padding:2px 0;border-bottom:1px solid var(--border);cursor:pointer"
           onclick="_mcLogClick(${e._i})"
           onmouseenter="_mcLogHover(${e._i},true)"
           onmouseleave="_mcLogHover(${e._i},false)">
@@ -12174,7 +12731,6 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
           <span style="color:#22c55e;font-size:9px;font-weight:600;background:rgba(34,197,94,0.15);border:1px solid rgba(34,197,94,0.3);border-radius:3px;padding:0 3px;margin-left:4px">ping</span>
           <span style="margin-left:4px;font-weight:600">${escHtml(e.name)}</span>
           <span style="color:var(--muted);margin-left:4px;font-size:10px">${e.hopStr}${snr}</span>
-          ${isPinned ? '<span style="float:right;color:#3b82f6;font-size:9px;margin-right:2px">●</span>' : ''}
         </div>`;
       }
       if (e.kind === 'self_advert') {
@@ -12205,7 +12761,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         const qColor = q === 'live' ? '#22c55e' : '#38bdf8';
         const qBg = q === 'live' ? 'rgba(34,197,94,0.12)' : 'rgba(56,189,248,0.12)';
         const qBorder = q === 'live' ? 'rgba(34,197,94,0.28)' : 'rgba(56,189,248,0.28)';
-        return `<div style="padding:2px 0;border-bottom:1px solid var(--border);cursor:pointer;${isPinned ? 'background:rgba(59,130,246,0.12)' : ''}"
+        return `<div class="${isPinned ? 'mc-route-selected' : ''}" style="padding:2px 0;border-bottom:1px solid var(--border);cursor:pointer"
           onclick="_mcLogClick(${e._i})"
           onmouseenter="_mcLogHover(${e._i},true)"
           onmouseleave="_mcLogHover(${e._i},false)">
@@ -12214,7 +12770,6 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
           ${hopMeta ? `<span style="margin-left:4px;font-size:10px;color:${hopMeta.color}">${escHtml(hopMeta.label)}</span>` : ''}
           ${showQ ? `<span title="Route source" style="margin-left:4px;font-size:9px;color:${qColor};background:${qBg};border:1px solid ${qBorder};border-radius:3px;padding:0 3px">${q}</span>` : ''}
           <span style="color:var(--muted);margin-left:4px;font-size:10px">${escHtml(e.text)}</span>
-          ${isPinned ? '<span style="float:right;color:#3b82f6;font-size:9px;margin-right:2px">●</span>' : ''}
           <a onclick="event.stopPropagation();jumpToMcChat(${e.msgTs},'${jsSafe(e.radioId)}',${e.channel},'${jsSafe(e.fromId || '')}')" style="margin-left:6px;font-size:10px;color:#3b82f6;cursor:pointer">→ Chat</a>
         </div>`;
       }
@@ -12233,7 +12788,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       const hopLabel  = mcPathHopLabel(e.hopLen, true);
       const hopColor  = mcPathHopColor(e.hopLen);
       const isPinned  = _mcLogPinnedIdx === e._i;
-      return `<div style="padding:2px 0;border-bottom:1px solid var(--border);cursor:pointer;${isPinned ? 'background:rgba(59,130,246,0.12)' : ''}"
+      return `<div class="${isPinned ? 'mc-route-selected' : ''}" style="padding:2px 0;border-bottom:1px solid var(--border);cursor:pointer"
         data-idx="${e._i}"
         onclick="_mcLogClick(${e._i})"
         onmouseenter="_mcLogHover(${e._i},true)"
@@ -12243,7 +12798,6 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         <span style="color:${nameColor};margin-left:3px;font-weight:600">${escHtml(e.name)}</span>
         <span style="color:${hopColor};margin-left:4px;font-size:10px">${hopLabel}</span>
         ${isPartial ? '<span style="color:var(--muted);margin-left:4px;font-size:9px" title="Partial path">~</span>' : ''}
-        ${isPinned ? '<span style="float:right;color:#3b82f6;font-size:9px;margin-right:2px">●</span>' : ''}
       </div>`;
     }).join('');
     if (wasAtBottom) el.scrollTop = el.scrollHeight;
@@ -12289,13 +12843,17 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
   function _mcMessageHopMeta(entry, path) {
     const routeType = String(entry?.routeType || '').toUpperCase();
     const hopLen = entry?.hopLen;
+    const uncertain = (path?.hops || []).some(h => h.ambiguous || ['estimated', 'likely'].includes(h.confidence));
+    const suffix = uncertain ? ' · estimated' : '';
+    const labelSuffix = uncertain ? '?' : '';
+    const routeColor = uncertain ? '#f59e0b' : '#8b5cf6';
     if (hopLen === 255) {
       if (routeType === 'FLOOD') return { label: 'flood', detail: 'Flood', color: 'rgba(148,163,184,0.8)' };
       return { label: 'direct route', detail: 'Direct route', color: '#38bdf8' };
     }
     if (path?.flood) return { label: 'flood', detail: 'Flood', color: 'rgba(148,163,184,0.8)' };
     if (hopLen === 0) return { label: 'direct', detail: 'Direct', color: '#22c55e' };
-    if (hopLen > 0) return { label: `${hopLen}h`, detail: `${hopLen} hop${hopLen !== 1 ? 's' : ''}`, color: '#8b5cf6' };
+    if (hopLen > 0) return { label: `${hopLen} hop${hopLen !== 1 ? 's' : ''}${labelSuffix}`, detail: `${hopLen} hop${hopLen !== 1 ? 's' : ''}${suffix}`, color: routeColor };
     return null;
   }
 
@@ -12314,7 +12872,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
           entry.lat, entry.lon, rLat, rLon, entry.radioId
         );
         if (fromEvent) {
-          const resolved = { ...fromEvent, kind: 'message', points: [...fromEvent.points].reverse() };
+          const resolved = _mcReversePathResult({ ...fromEvent, kind: 'message', snr: entry.snr ?? null });
           return { path: resolved, quality: 'live', refreshed: !_mcSamePath(resolved, stored) };
         }
         const relayOnly = decodeMcRelayPath(
@@ -12322,7 +12880,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
           rLat, rLon, entry.radioId
         );
         if (relayOnly) {
-          const resolved = { ...relayOnly, kind: 'message', points: [...relayOnly.points].reverse() };
+          const resolved = _mcReversePathResult({ ...relayOnly, kind: 'message', snr: entry.snr ?? null });
           return { path: resolved, quality: 'live', refreshed: !_mcSamePath(resolved, stored) };
         }
       }
@@ -12330,7 +12888,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       if (contact) {
         const fresh = decodeMcPath(contact, rLat, rLon, entry.radioId);
         if (fresh) {
-          const resolved = { ...fresh, kind: 'message', points: [...fresh.points].reverse() };
+          const resolved = _mcReversePathResult({ ...fresh, kind: 'message', snr: entry.snr ?? null });
           return { path: resolved, quality: 'cached', refreshed: !_mcSamePath(resolved, stored) };
         }
       }
@@ -12450,7 +13008,9 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
           const node = path[i] || {};
           const snr = node.snr != null ? node.snr.toFixed(1) + ' dB' : '—';
           const hashChip = `<span class="mc-hop-prefix">${escHtml(hop.hash || node.hash || '?')}</span>`;
-          rows += td(`Hop ${i+1}`, `${hashChip}${escHtml(hop.name || node.hash || '?')} · received at ${snr}`);
+          const confLabel = _mcHopConfidenceLabel(hop);
+          const conf = confLabel ? ` · ${confLabel}` : '';
+          rows += td(`Hop ${i+1}`, `${hashChip}${escHtml(hop.name || node.hash || '?')}${escHtml(conf)} · received at ${snr}`);
         });
         const finalNode = path[hops];
         if (finalNode?.snr != null) {
@@ -12460,10 +13020,13 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       } else {
         path.forEach((node, i) => {
           if (i < hops) {
-            const contact = node.hash ? findMcContactByKeyPrefix(node.hash, entry.radioId) : null;
+            const resolution = node.hash ? _mcPickPathHopResolution(node.hash, entry.radioId, null, null, null, null, i, hops, { requireGps: false }) : null;
+            const contact = resolution?.contact || (node.hash ? findMcContactByKeyPrefix(node.hash, entry.radioId) : null);
             const label = contact ? escHtml(contact.long_name || contact.id || node.hash) : escHtml(node.hash || '?');
             const snr = node.snr != null ? node.snr.toFixed(1) + ' dB' : '—';
-            rows += td(`Hop ${i+1}: ${label}`, `received at ${snr}`);
+            const confLabel = _mcHopConfidenceLabel(resolution);
+            const conf = confLabel ? ` · ${confLabel}` : '';
+            rows += td(`Hop ${i+1}: ${label}`, `received at ${snr}${escHtml(conf)}`);
           } else {
             if (node.snr != null) {
               const snrLabel = entry.ours ? 'Response back to us' : 'Received by our radio';
@@ -12493,14 +13056,17 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         for (let i = 0; i < contact.out_path_len; i++) {
           const hashHex = contact.out_path.slice(i * hashChars, (i + 1) * hashChars);
           const [rLat, rLon] = _mcSenseRadioPos(entry.radioId);
-          const hopC = hashHex ? _mcPickPathHop(
+          const hopR = hashHex ? _mcPickPathHopResolution(
             hashHex, entry.radioId, rLat, rLon,
             contact.latitude ?? contact.lat, contact.longitude ?? contact.lon,
             i, contact.out_path_len
           ) : null;
+          const hopC = hopR?.contact || null;
           const hopName = hopC ? escHtml(hopC.long_name || hopC.id || hashHex) : escHtml(hashHex || '?');
           const hashChip = `<span class="mc-hop-prefix">${escHtml(hashHex || '?')}</span>`;
-          rows += td(`Hop ${i+1}`, `${hashChip}${hopName}`);
+          const confLabel = _mcHopConfidenceLabel(hopR);
+          const conf = confLabel ? ` · ${confLabel}` : '';
+          rows += td(`Hop ${i+1}`, `${hashChip}${hopName}${escHtml(conf)}`);
         }
       }
       body.innerHTML = `<table style="border-collapse:collapse;width:100%">${rows}</table>
@@ -12551,6 +13117,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const full    = _mcMsgText(data, name);
     const text    = full.length > 60 ? full.slice(0, 60) + '…' : full;
     const ts      = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
+    const msgSnr  = data.rx_snr ?? data.snr ?? data.last_snr ?? data.observed_snr ?? null;
     // Capture sender's path at message time so clicking the row shows it on the map
     const contact = realContact || cached;
     const lat = contact?.latitude ?? contact?.lat ?? null;
@@ -12573,10 +13140,10 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       pathResult = { points: [[radioLat, radioLon], [lat, lon]], flood: true };
       routeQuality = 'inferred';
     }
-    if (pathResult && !pathResult.flood) pathResult = { ...pathResult, kind: 'message' };
+    if (pathResult && !pathResult.flood) pathResult = { ...pathResult, kind: 'message', snr: msgSnr };
     // Reverse: message is incoming (sender → relays → our radio), but decodeMcPath builds radio→contact
     if (pathResult?.points) pathResult = _mcReversePathResult(pathResult);
-    const entry   = { kind: 'message', name, text, rawText: full, ts, msgTs: data.ts, radioId: data.radio_id, channel: data.channel ?? 0, fromId: data.from_id, lat, lon, hopLen, pathResult, routeQuality, pathHashSize: data.path_hash_size ?? pathResult?.inferredPathHashSize ?? null, pathHashMode: data.path_hash_mode ?? null, routeType: data.route_type ?? null, rawPath: data.path ?? null };
+    const entry   = { kind: 'message', name, text, rawText: full, ts, msgTs: data.ts, radioId: data.radio_id, channel: data.channel ?? 0, fromId: data.from_id, lat, lon, hopLen, pathResult, routeQuality, pathHashSize: data.path_hash_size ?? pathResult?.inferredPathHashSize ?? null, pathHashMode: data.path_hash_mode ?? null, routeType: data.route_type ?? null, rawPath: data.path ?? null, snr: msgSnr };
     if (_mcLogPinnedIdx !== null) _mcLogPinnedIdx++;
     _mcSenseLogEntries.unshift(entry);
     if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
@@ -13073,7 +13640,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
           pathResult = { points: [[radioLat, radioLon], [cLat, cLon]], flood: true };
         }
         if (pathResult) {
-          showMcHoverPath({ ...pathResult, kind: 'ping' }, true);
+          showMcHoverPath({ ...pathResult, kind: 'ping', snr: data.observed_snr ?? data.last_snr ?? null }, true);
           _mcPingPathActive = true;
           if (cLat != null) {
             if (leafletMap) leafletMap.panTo([cLat, cLon]);
@@ -13120,7 +13687,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         pathResult = { points: [[radioLat, radioLon], [pingContact.latitude, pingContact.longitude]], flood: true };
       }
       if (pathResult) {
-        showMcHoverPath({ ...pathResult, kind: 'ping' }, true);
+        showMcHoverPath({ ...pathResult, kind: 'ping', snr: data.observed_snr ?? data.last_snr ?? null }, true);
         _mcPingPathActive = true;
         if (pingContact.latitude != null) {
           if (leafletMap) leafletMap.panTo([pingContact.latitude, pingContact.longitude]);
@@ -13171,7 +13738,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const snr  = data.last_snr ?? data.observed_snr ?? null;
     const snrLabel = snr != null ? snr.toFixed(1) + 'dB' : null;
     const hopLen = data.observed_path_len ?? 0;
-    const hopStr = hopLen === 0 ? 'direct' : `${hopLen}h`;
+    const hopStr = hopLen === 0 ? 'direct' : `${hopLen} hop${hopLen !== 1 ? 's' : ''}`;
     const lat = contact?.latitude ?? null;
     const lon = contact?.longitude ?? null;
     if (!pathResult && contact && lat != null) {
@@ -13184,7 +13751,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       if (!pathResult && rLat != null) pathResult = { points: [[rLat, rLon], [lat, lon]] };
     }
     // Tag with kind:'ping' so showMcHoverPath uses green ping styling (overrides flood style)
-    if (pathResult) pathResult = { ...pathResult, kind: 'ping' };
+    if (pathResult) pathResult = { ...pathResult, kind: 'ping', snr };
     const entry = { kind: 'ping', name, ts, hopStr, hopLen, snrLabel, pathResult, lat, lon, radioId: data.radio_id };
     _mcSenseLogEntries.unshift(entry);
     if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
@@ -13277,31 +13844,35 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     // Start from radio position if known; omit it if no GPS (don't abort entirely)
     const points = (radioLat != null) ? [[radioLat, radioLon]] : [];
     const hopMeta = [];
+    const segmentSnrs = [];
     // Add intermediate relay nodes (path[0..hops-1])
     let relayResolved = 0;
     path.slice(0, hops).forEach((node, idx) => {
       if (!node.hash) return;
-      const contact = _mcPickPathHop(
+      const resolution = _mcPickPathHopResolution(
         node.hash, data.radio_id, radioLat, radioLon, endpointLat, endpointLon, idx, hops
-      ) || findMcContactByKeyPrefix(node.hash, data.radio_id);
+      );
+      const contact = resolution?.contact || findMcContactByKeyPrefix(node.hash, data.radio_id);
       if (!contact) return;
       const lat = contact.latitude ?? contact.lat;
       const lon = contact.longitude ?? contact.lon;
       if (lat != null && lon != null) {
+        if (points.length > 0) segmentSnrs.push(node.snr ?? null);
         points.push([lat, lon]);
-        hopMeta.push(_mcPathHopMeta(node.hash, contact, points.length - 1));
+        hopMeta.push({ ..._mcPathHopMeta(node.hash, contact, points.length - 1, resolution), snr: node.snr ?? null });
         relayResolved++;
       }
     });
-    // partial = radio GPS missing OR some relay hops couldn't be resolved
-    const partial = (radioLat == null) || (relayResolved < hops);
+    // partial = radio GPS missing, some relay hops unresolved, or a short hash was ambiguous
+    const partial = (radioLat == null) || (relayResolved < hops) || hopMeta.some(h => h.ambiguous);
     // Add the responding node as the final endpoint (identified via auth_hex)
     if (endpointLat != null && endpointLon != null) {
       points.push([endpointLat, endpointLon]);
     }
     const finalEntry = path[hops];
     const finalSnr = (finalEntry?.snr != null) ? finalEntry.snr : null;
-    const pathResult = points.length >= 2 ? { points, partial, kind: 'trace', snr: finalSnr, hops: hopMeta } : null;
+    if (endpointLat != null && endpointLon != null && points.length >= 2) segmentSnrs.push(finalSnr);
+    const pathResult = points.length >= 2 ? { points, partial, kind: 'trace', snr: finalSnr, segmentSnrs, hops: hopMeta } : null;
     return { pathResult, responderContact, finalSnr };
   }
 
@@ -13314,7 +13885,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
   function _addMcTraceLogEntry(data, ours = false) {
     const path = data.path || [];
     const hops = data.path_len || 0;
-    const hopStr = hops === 0 ? 'direct' : `${hops}h`;
+    const hopStr = hops === 0 ? 'direct' : `${hops} hop${hops !== 1 ? 's' : ''}`;
     const ts = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
 
     // Identify the actual responding node via auth_hex (4-byte hash from TRACE_DATA packet)
@@ -14281,6 +14852,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     if (!n || !n.from_id) return;
     const log = document.getElementById('sense-log');
     if (!log) return;
+    const pktKey = _mtSensePacketKey(n);
+    if (pktKey && document.getElementById(pktKey)) return;
     const label = n.name && n.name !== 'null' ? n.name : n.from_id;
     const hasGps = n.lat != null && n.lon != null;
     const pktType = {
@@ -14308,20 +14881,41 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     dataRow += (n.voltage != null ? ` · ${n.voltage.toFixed ? n.voltage.toFixed(2) : n.voltage}V` : '');
     dataRow += (hasGps ? ' · 📍' : '');
     dataRow += (n.route ? ` · route: ${n.route.map(escHtml).join(' → ')}` : '');
+    dataRow += (n.text ? ` · "${escHtml(String(n.text).slice(0, 70))}${String(n.text).length > 70 ? '…' : ''}"` : '');
     dataRow += (n.neighbor_count != null ? ` · ${n.neighbor_count} neighbors` : '');
     dataRow = dataRow.replace(/^ · /, '');
+    const routeMeta = _mtSenseRouteMeta(n);
+    const routeKey = routeMeta ? _mtRouteKey(routeMeta.targetId || n.from_id, n.radio_id || activeRadioId) : '';
+    const routeChip = routeMeta
+      ? `<button class="mt-route-badge ${routeMeta.cached ? 'cached' : ''}" title="${escHtml(routeMeta.detail)}" onclick="event.stopPropagation();showMtSenseRoute('${jsSafe(n.from_id)}','${jsSafe(n.radio_id || '')}')">${escHtml(routeMeta.label)}</button>`
+      : '';
     const line = document.createElement('div');
-    line.style.cssText = 'border-bottom:1px solid var(--border);padding:3px 0' + (clickPos ? ';cursor:pointer' : '');
+    if (pktKey) line.id = pktKey;
+    else if (n.msg_id) line.id = `sense-msg-${n.msg_id}`;
+    if (routeKey) line.dataset.mtRouteKey = routeKey;
+    if (routeKey && routeKey === _activeMtRouteKey) line.classList.add('mt-route-selected');
+    line.style.cssText = 'border-bottom:1px solid var(--border);padding:3px 0' + ((routeMeta || clickPos) ? ';cursor:pointer' : '');
     line.innerHTML =
       `<div style="display:flex;gap:6px;align-items:baseline">` +
         `<span style="color:var(--accent);flex-shrink:0">${ts}</span>` +
         `<span style="color:#e6edf3;font-weight:600">${escHtml(shortName)}</span>` +
         `<span style="color:var(--muted);font-style:italic">${pktType}</span>` +
+        routeChip +
       `</div>` +
       (dataRow ? `<div style="color:var(--muted);padding-left:4px">${dataRow}</div>` : '');
-    if (clickPos) line.onclick = () => { setMapLock(false); leafletMap && leafletMap.setView(clickPos, leafletMap.getZoom()); };
-    line.onmouseenter = function() { if (clickPos) this.style.background = 'rgba(255,255,255,0.04)'; };
-    line.onmouseleave = function() { this.style.background = ''; };
+    if (routeMeta) {
+      line.onclick = () => showMtSenseRoute(n.from_id, n.radio_id || '');
+    } else if (clickPos) {
+      line.onclick = () => { setMapLock(false); leafletMap && leafletMap.setView(clickPos, leafletMap.getZoom()); };
+    }
+    line.onmouseenter = function() {
+      if (routeMeta?.cached) previewMtSenseRoute(n.from_id, n.radio_id || '', true);
+      if (routeMeta || clickPos) this.style.background = 'rgba(255,255,255,0.04)';
+    };
+    line.onmouseleave = function() {
+      if (routeMeta?.cached) previewMtSenseRoute(n.from_id, n.radio_id || '', false);
+      this.style.background = '';
+    };
     log.prepend(line);
     const logEntries = log.querySelectorAll('div');
     if (logEntries.length > 200) {
@@ -14337,6 +14931,31 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     senseMapAddMarker(n);
     senseSummaryUpdate();
     updateHeaderNodeCount(allNodes);
+  }
+
+  function addMtMessageSenseEntry(m) {
+    if (!m || m.sent || m.is_history || m.is_emoji) return;
+    if (_senseNet !== 'mt') return;
+    if (document.getElementById('sense-panel')?.style.display === 'none') return;
+    if (m.id && document.getElementById(`sense-msg-${m.id}`)) return;
+    const pktKey = _mtSensePacketKey({pkt_id: m.pkt_id, radio_id: m.radio_id, from_id: m.from_id});
+    if (pktKey && document.getElementById(pktKey)) return;
+    const node = allNodes.find(n => n.id === m.from_id) || {};
+    _senseAddLogEntry({
+      from_id: m.from_id,
+      name: m.from_name,
+      short_name: node.short_name,
+      portnum: 'TEXT_MESSAGE_APP',
+      snr: m.snr,
+      hops: m.hops,
+      lat: node.latitude,
+      lon: node.longitude,
+      text: m.text,
+      ts: m.ts || Math.floor(Date.now() / 1000),
+      radio_id: m.radio_id,
+      msg_id: m.id,
+      pkt_id: m.pkt_id,
+    });
   }
 
   function filterSenseNodes() {

@@ -10,6 +10,17 @@ OverMesh uses date-based release versions:
 
 The version in `VERSION` must be updated every time an OverMesh update is pushed to GitHub. The Settings updater also shows the Git commit hash for exact build identification.
 
+## 2026.04.20.4
+
+- Added MT message hop metadata persistence and route badges in Chat/Sense.
+- Added MT Sense message entries, cached-route row hover previews, and click-to-pin/clear route behavior.
+- Added MC message/ping/trace path hardening for short/ambiguous MeshCore hop hashes, including uncertainty labels.
+- Added MC message path order scoring so live paths choose the more plausible hop direction.
+- Added SNR-colored MC path segments and matching hover SNR labels.
+- Improved MT/MC map route arrows, including stable zoom sizing and lower MT arrow density.
+- Updated Sense/Map route selection styling with padded left-side indicators and removed the old MC selected-dot marker.
+- Expanded the in-app manual with MT/MC-specific button, badge, route-source, and Sense/Map explanations.
+
 ## 2026.04.20.3
 
 - Added an update reminder to the first-launch OverMesh intro, pointing users to Settings -> App for update checks.

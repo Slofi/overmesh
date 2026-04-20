@@ -227,7 +227,7 @@
     .mt-badge { font-size: 9px; font-weight: bold; color: var(--accent); margin-right: 3px; opacity: 0.85; }
     .mt-msg-tag { font-size: 10px; color: var(--accent); background: rgba(74,222,128,0.12); border: 1px solid rgba(74,222,128,0.25); border-radius: 3px; padding: 0 4px; margin-right: 4px; }
     .mc-msg-tag { font-size: 10px; color: var(--mc-color); background: rgba(56,189,248,0.12); border: 1px solid rgba(56,189,248,0.25); border-radius: 3px; padding: 0 4px; margin-right: 4px; }
-    .mt-route-badge { border: 1px solid rgba(74,222,128,0.28); background: rgba(74,222,128,0.10); color: var(--accent); border-radius: 3px; padding: 0 4px; margin-left: 4px; font-size: 10px; line-height: 15px; cursor: pointer; vertical-align: 1px; }
+    .mt-route-badge { border: 1px solid rgba(74,222,128,0.28); background: rgba(74,222,128,0.10); color: var(--accent); border-radius: 3px; padding: 0 4px; margin-left: 4px; font-size: 10px; line-height: 15px; cursor: pointer; vertical-align: 1px; display:inline-flex; align-items:center; white-space:nowrap; flex-shrink:0; }
     .mt-route-badge.cached { border-color: rgba(59,130,246,0.28); background: rgba(59,130,246,0.10); color: #93c5fd; }
     .mt-route-badge.info { cursor: default; opacity: 0.85; }
     .mt-route-badge:hover { border-color: var(--accent); color: var(--text); }
@@ -3841,11 +3841,10 @@
           title: 'MT Map',
           kind: 'mt',
           body: [
-            'MT route lines come from traceroute results or cached traceroute replay. They can show route-to-node and route-back with SNR coloring.',
+            'MT route lines come from traceroute results or cached traceroute replay. Response log hover/click controls preview and pinned routes, with SNR coloring when available.',
             'If an intermediate MT node has no GPS, OM draws a bypass segment and marks that some hops had no map position.'
           ],
           buttons: [
-            ['SNR Paths', 'Toggle MT traceroute/SNR route lines.'],
             ['TR log', 'Replay recent MT traceroutes from the map layer menu.'],
             ['TR', 'Run a traceroute from an MT marker popup.']
           ]
@@ -5749,6 +5748,29 @@ if (targetEl) {
     return hops === 0 ? 'direct' : `${hops} hop${hops !== 1 ? 's' : ''}`;
   }
 
+  function _mtCachedTraceHopSummary(cached) {
+    if (!cached?.data) return null;
+    const routeIds = cached.data.routeIds || [];
+    const backIds = cached.data.routeBackIds || [];
+    const routeHops = routeIds.length >= 2 ? Math.max(0, routeIds.length - 2) : null;
+    const backHops = backIds.length >= 2 ? Math.max(0, backIds.length - 2) : null;
+    const fmt = h => h === 0 ? '0' : String(h);
+    if (routeHops != null && backHops != null && routeHops !== backHops) {
+      return {
+        label: `${fmt(routeHops)}/${fmt(backHops)} hops`,
+        detail: `${_mtHopRouteLabel(routeHops)} toward node, ${_mtHopRouteLabel(backHops)} back`,
+        hops: Math.max(routeHops, backHops),
+      };
+    }
+    const hops = routeHops ?? backHops;
+    if (hops == null) return null;
+    return {
+      label: _mtHopRouteLabel(hops),
+      detail: `${_mtHopRouteLabel(hops)} cached traceroute`,
+      hops,
+    };
+  }
+
   function _mtRouteKey(targetId, radioId = '') {
     return `${radioId || activeRadioId || 'mt'}:${targetId || ''}`;
   }
@@ -5843,15 +5865,18 @@ if (targetEl) {
     const hasHopCount = Number.isFinite(hopNum) && hopNum >= 0;
     const cached = _mtCachedTraceForNode(n.from_id, n.radio_id || activeRadioId);
     if (!hasHopCount && !cached) return null;
-    const routeIds = cached?.data?.routeIds || [];
-    const inferred = routeIds.length >= 2 ? Math.max(0, routeIds.length - 2) : null;
+    const cachedSummary = _mtCachedTraceHopSummary(cached);
+    const inferred = cachedSummary?.hops ?? null;
     const hops = hasHopCount ? hopNum : inferred;
+    const label = cachedSummary ? cachedSummary.label : _mtHopRouteLabel(hops);
     return {
       targetId: n.from_id,
-      label: _mtHopRouteLabel(hops),
+      label,
       hops,
       cached,
-      detail: cached ? `Show cached traceroute for ${cached.nodeName || n.from_id}` : 'Packet hop count only',
+      detail: cached
+        ? `Show cached traceroute for ${cached.nodeName || n.from_id}: ${cachedSummary?.detail || 'route available'}`
+        : 'Packet hop count only',
     };
   }
 
@@ -7519,13 +7544,6 @@ if (targetEl) {
         custBtn.onmouseenter = () => { custBtn.style.color = 'var(--text)'; };
         custBtn.onmouseleave = () => { custBtn.style.color = 'var(--muted)'; };
         L.DomEvent.on(custBtn, 'click', (e) => { L.DomEvent.stopPropagation(e); openPolarCustomize(); });
-
-        // SNR paths toggle
-        const snrOpt = L.DomUtil.create('div', 'map-layer-opt', panel);
-        snrOpt.id = 'map-tr-snr-btn';
-        snrOpt.textContent = 'SNR Paths';
-        if (_showTrMap) snrOpt.classList.add('active');
-        L.DomEvent.on(snrOpt, 'click', (e) => { L.DomEvent.stopPropagation(e); toggleTrMap(); });
 
         // TR history log
         const trLog = L.DomUtil.create('div', '', panel);

@@ -10,6 +10,13 @@ OverMesh uses date-based release versions:
 
 The version in `VERSION` must be updated every time an OverMesh update is pushed to GitHub. The Settings updater also shows the Git commit hash for exact build identification.
 
+## 2026.04.20.7
+
+- Removed the old `SNR Paths` toggle from the map layer menu because MT route visibility is now controlled from the Response log.
+- Updated the manual so MT Map route visibility points users to Response log hover/click behavior.
+- Tidied MT route badges so hop labels stay on one line.
+- Improved cached MT Sense route labels for asymmetric traceroutes, such as direct toward the node but multiple hops back.
+
 ## 2026.04.20.6
 
 - Refined MT Sense Response log route selection:

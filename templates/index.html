@@ -972,11 +972,6 @@
     #map-layer-panel.open { display: flex; }
     /* Ensure top-left controls (including the layer panel) render above bottom controls (legend) */
     .leaflet-top { z-index: 1001 !important; }
-    .map-tr-log-entry {
-      padding: 3px 10px; font-size: 10px; color: var(--muted);
-      cursor: pointer; border-top: 1px solid var(--border); white-space: nowrap;
-    }
-    .map-tr-log-entry:hover { color: var(--text); background: var(--bg3); }
     .map-layer-opt {
       padding: 6px 10px; border-radius: 5px; cursor: pointer;
       font-size: 12px; color: var(--text); white-space: nowrap;
@@ -3845,7 +3840,6 @@
             'If an intermediate MT node has no GPS, OM draws a bypass segment and marks that some hops had no map position.'
           ],
           buttons: [
-            ['TR log', 'Replay recent MT traceroutes from the map layer menu.'],
             ['TR', 'Run a traceroute from an MT marker popup.']
           ]
         },
@@ -7545,11 +7539,6 @@ if (targetEl) {
         custBtn.onmouseleave = () => { custBtn.style.color = 'var(--muted)'; };
         L.DomEvent.on(custBtn, 'click', (e) => { L.DomEvent.stopPropagation(e); openPolarCustomize(); });
 
-        // TR history log
-        const trLog = L.DomUtil.create('div', '', panel);
-        trLog.id = 'map-tr-log';
-        trLog.style.cssText = 'max-height:100px;overflow-y:auto';
-
         L.DomEvent.on(btn, 'click', L.DomEvent.stopPropagation);
         L.DomEvent.on(btn, 'click', () => panel.classList.toggle('open'));
         leafletMap.on('click', () => panel.classList.remove('open'));
@@ -8675,72 +8664,7 @@ if (targetEl) {
   }
 
   function _updateTrLogPanel() {
-    const el = document.getElementById('map-tr-log');
-    if (!el) return;
-    el.innerHTML = _traceHistory.length === 0 ? '' : _traceHistory.map((e, i) => {
-      const t   = new Date(e.ts).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
-      const dot = _activeReplayIdx === i
-        ? '<span style="color:var(--accent);margin-right:4px;font-size:9px;vertical-align:middle">●</span>'
-        : '';
-      return `<div class="map-tr-log-entry" onclick="_replayTrace(${i})" title="${_activeReplayIdx === i ? 'Hide' : 'Show'} path · ${escHtml(e.nodeName)}">${dot}${t} · ${escHtml(e.nodeName)}</div>`;
-    }).join('');
-  }
-
-  function _replayTrace(idx) {
-    const e = _traceHistory[idx];
-    if (!e) return;
-
-    // Toggle off if same entry clicked again
-    if (_activeReplayIdx === idx) {
-      _clearTraceLines();
-      if (_activeReplayPanel) { _activeReplayPanel.remove(); _activeReplayPanel = null; }
-      _activeReplayIdx = null;
-      _updateTrLogPanel();
-      return;
-    }
-
-    // Close any existing replay panel before opening new one
-    if (_activeReplayPanel) { _activeReplayPanel.remove(); _activeReplayPanel = null; }
-
-    if (!_showTrMap) {
-      _showTrMap = true;
-      try { localStorage.setItem('mapShowTrSnr', '1'); } catch(_) {}
-      document.getElementById('map-tr-snr-btn')?.classList.add('active');
-    }
-    _drawTraceRouteOnMap(e.data);
-    _activeReplayIdx = idx;
-    _updateTrLogPanel();
-
-    const { panel, body } = _openMapPanel('TR · ' + e.nodeName);
-    _activeReplayPanel = panel;
-
-    // Hook close button — clear path + state when user hits ✕
-    const closeBtn = panel.querySelector('.map-tr-close');
-    if (closeBtn) {
-      const origClose = closeBtn.onclick;
-      closeBtn.onclick = () => {
-        _clearTraceLines();
-        _activeReplayIdx = null;
-        _activeReplayPanel = null;
-        _updateTrLogPanel();
-        origClose && origClose();
-      };
-    }
-
-    const buildChain = (nodes, snrs) => nodes.map((node, i) => {
-      const isEnd = i === 0 || i === nodes.length - 1;
-      const snr   = snrs?.[i];
-      const nodeEl = `<div class="tr-node${isEnd ? ' tr-end' : ''}">${escHtml(node)}</div>`;
-      const linkEl = i < nodes.length - 1
-        ? `<div class="tr-link ${snr != null ? snrClass(snr) : 'tr-link-muted'}">${snr != null ? `↓ ${snr} dB` : '↓'}</div>`
-        : '';
-      return nodeEl + linkEl;
-    }).join('');
-    body.innerHTML = `
-      <div class="tr-section">Route to node</div>
-      <div class="tr-chain">${buildChain(e.data.route, e.data.snrTowards)}</div>
-      <div class="tr-section">Route back</div>
-      <div class="tr-chain">${buildChain(e.data.routeBack, e.data.snrBack)}</div>`;
+    // Trace history is kept only as a cache for Response log route matching.
   }
 
   // ── Map Info overlay ────────────────────────────────────────────────────
@@ -11858,8 +11782,6 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       if (legend) legend.style.display = 'none';   // hide entire legend in MC Sense
       const snrBtn = document.getElementById('map-tr-snr-btn');
       if (snrBtn) snrBtn.style.display = 'none';
-      const trLog = document.getElementById('map-tr-log');
-      if (trLog) trLog.style.display = 'none';
       renderMcMapMarkers();   // also calls renderMcPathLines()
       renderMcSensePanel();
     } else {
@@ -11868,8 +11790,6 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       if (mcLegend) mcLegend.style.display = 'none';
       const snrBtn = document.getElementById('map-tr-snr-btn');
       if (snrBtn) snrBtn.style.display = '';
-      const trLogMt = document.getElementById('map-tr-log');
-      if (trLogMt) trLogMt.style.display = '';
       clearMcPathLines();
       _mcHoverLines.forEach(l => leafletMap && leafletMap.removeLayer(l));
       _mcHoverLines = [];
@@ -14451,8 +14371,6 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       if (_leg) _leg.style.display = '';
       const _snrBtn = document.getElementById('map-tr-snr-btn');
       if (_snrBtn) _snrBtn.style.display = '';
-      const _trLog = document.getElementById('map-tr-log');
-      if (_trLog) _trLog.style.display = '';
       if (_mcLeg) {
         const mcVisible = Object.keys(mcLastStatus).length > 0 && localStorage.getItem('mcHide') !== '1';
         _mcLeg.style.display = mcVisible ? '' : 'none';

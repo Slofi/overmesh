@@ -10,6 +10,12 @@ OverMesh uses date-based release versions:
 
 The version in `VERSION` must be updated every time an OverMesh update is pushed to GitHub. The Settings updater also shows the Git commit hash for exact build identification.
 
+## 2026.04.20.8
+
+- Removed the remaining MT traceroute history list from the map layer menu.
+- Removed the old layer-menu trace replay renderer/handler and related styles.
+- Kept traceroute history internally for MT Response log cached-route matching.
+
 ## 2026.04.20.7
 
 - Removed the old `SNR Paths` toggle from the map layer menu because MT route visibility is now controlled from the Response log.

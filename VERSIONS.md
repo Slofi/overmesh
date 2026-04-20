@@ -10,6 +10,14 @@ OverMesh uses date-based release versions:
 
 The version in `VERSION` must be updated every time an OverMesh update is pushed to GitHub. The Settings updater also shows the Git commit hash for exact build identification.
 
+## 2026.04.20.6
+
+- Refined MT Sense Response log route selection:
+  - cached traceroute lookup remains node-based because MT packets do not identify exact per-message repeater chains
+  - selected highlighting is now per log entry, so clicking one row no longer highlights every entry from the same node
+  - hop-count-only badges are informational and no longer behave like route buttons when no cached traceroute exists
+  - updated the manual wording for MT cached-route rows
+
 ## 2026.04.20.5
 
 - Allowed the Settings updater from trusted local/private access paths, including Tailscale `100.64.0.0/10`, so a headless G501 install can be updated from the operator browser.

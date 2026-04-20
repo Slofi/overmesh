@@ -229,7 +229,9 @@
     .mc-msg-tag { font-size: 10px; color: var(--mc-color); background: rgba(56,189,248,0.12); border: 1px solid rgba(56,189,248,0.25); border-radius: 3px; padding: 0 4px; margin-right: 4px; }
     .mt-route-badge { border: 1px solid rgba(74,222,128,0.28); background: rgba(74,222,128,0.10); color: var(--accent); border-radius: 3px; padding: 0 4px; margin-left: 4px; font-size: 10px; line-height: 15px; cursor: pointer; vertical-align: 1px; }
     .mt-route-badge.cached { border-color: rgba(59,130,246,0.28); background: rgba(59,130,246,0.10); color: #93c5fd; }
+    .mt-route-badge.info { cursor: default; opacity: 0.85; }
     .mt-route-badge:hover { border-color: var(--accent); color: var(--text); }
+    .mt-route-badge.info:hover { border-color: rgba(74,222,128,0.28); color: var(--accent); }
     #sense-log > .mt-route-selected,
     #sense-mc-log > .mc-route-selected {
       background: rgba(74,222,128,0.10);
@@ -3173,6 +3175,7 @@
   let _activeReplayIdx             = null;
   let _activeReplayPanel           = null;
   let _activeMtRouteKey            = null;
+  let _activeMtRouteEntryKey       = null;
   let _mtHoverRouteKey             = null;
   let _mtHoverHadTraceLines        = false;
   let _mtHoverPrevShowTrMap        = null;
@@ -3895,17 +3898,17 @@
           kind: 'mt',
           body: [
             'MT Sense logs heard packets and active Sense responses. Text entries can show SNR, a message preview, and hop count.',
-            'MT route badges in Sense use packet hop metadata when available. If a cached traceroute exists for the exact sender, hovering the response-log row previews that route; clicking pins it, and clicking the same row again clears it.',
+            'MT route badges in Sense use packet hop metadata when available. Hop-only badges are informational. If a cached traceroute exists for the exact sender, hovering the response-log row previews that route; clicking pins that one row, and clicking the same row again clears it.',
             'MT hop count alone does not identify which repeaters were used; run TR when you need exact route nodes.'
           ],
           buttons: [
             ['Sense Mesh', 'Broadcast an active MT Sense request and collect responses.'],
             ['Passive', 'Continuously capture heard MT packets without transmitting.'],
             ['Active', 'Periodically run MT Sense requests using the configured cooldown.'],
-            ['Response log', 'Lists heard MT packets and active Sense responses; cached-route rows preview on hover and pin/clear on click.'],
+            ['Response log', 'Lists heard MT packets and active Sense responses; only cached-route rows preview on hover and pin/clear on click.'],
             ['direct', 'Packet metadata says the message was heard directly.'],
             ['1 hop / 2 hops', 'MT badge for one/two packet hops. This is hop count, not exact route nodes.'],
-            ['cached route', 'A recent MT traceroute exists for this exact peer; hover to preview, click to pin or clear it.'],
+            ['cached route', 'A recent MT traceroute exists for this exact peer; hover to preview, click to pin only that entry or clear it.'],
             ['Clear', 'Clear the current MT Sense detected-node list.']
           ]
         },
@@ -5724,6 +5727,7 @@ if (targetEl) {
     if (!_showTrMap) {
       _clearTraceLines();
       _activeMtRouteKey = null;
+      _activeMtRouteEntryKey = null;
       _mtRefreshSenseRouteSelection();
     }
     else if (_lastTraceData) _drawTraceRouteOnMap(_lastTraceData);
@@ -5751,15 +5755,16 @@ if (targetEl) {
 
   function _mtRefreshSenseRouteSelection() {
     document.querySelectorAll('#sense-log > .mt-route-selected').forEach(el => el.classList.remove('mt-route-selected'));
-    if (!_activeMtRouteKey) return;
-    document.querySelectorAll('#sense-log > div[data-mt-route-key]').forEach(el => {
-      if (el.dataset.mtRouteKey === _activeMtRouteKey) el.classList.add('mt-route-selected');
+    if (!_activeMtRouteEntryKey) return;
+    document.querySelectorAll('#sense-log > div[data-mt-entry-key]').forEach(el => {
+      if (el.dataset.mtEntryKey === _activeMtRouteEntryKey) el.classList.add('mt-route-selected');
     });
   }
 
   function _mtClearSelectedRoute() {
     _clearTraceLines();
     _activeMtRouteKey = null;
+    _activeMtRouteEntryKey = null;
     _mtHoverRouteKey = null;
     _mtHoverHadTraceLines = false;
     _mtHoverPrevShowTrMap = null;
@@ -5818,6 +5823,7 @@ if (targetEl) {
       _drawTraceRouteOnMap(meta.cached.data);
       _lastTraceData = meta.cached.data;
       _activeMtRouteKey = routeKey;
+      _activeMtRouteEntryKey = null;
       if (_activeReplayPanel) { _activeReplayPanel.remove(); _activeReplayPanel = null; }
       _activeReplayIdx = null;
       _updateTrLogPanel();
@@ -5849,9 +5855,9 @@ if (targetEl) {
     };
   }
 
-  function showMtSenseRoute(fromId, radioId = '') {
+  function showMtSenseRoute(fromId, radioId = '', entryKey = '') {
     const routeKey = _mtRouteKey(fromId, radioId || activeRadioId);
-    if (_activeMtRouteKey === routeKey) {
+    if (_activeMtRouteKey === routeKey && _activeMtRouteEntryKey === entryKey) {
       _mtClearSelectedRoute();
       return;
     }
@@ -5869,6 +5875,7 @@ if (targetEl) {
     _drawTraceRouteOnMap(cached.data);
     _lastTraceData = cached.data;
     _activeMtRouteKey = routeKey;
+    _activeMtRouteEntryKey = entryKey || routeKey;
     if (_activeReplayPanel) { _activeReplayPanel.remove(); _activeReplayPanel = null; }
     _activeReplayIdx = null;
     _updateTrLogPanel();
@@ -11813,6 +11820,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     if (net === 'mc') {
       _clearTraceLines();
       _activeMtRouteKey = null;
+      _activeMtRouteEntryKey = null;
       if (_activeReplayPanel) { _activeReplayPanel.remove(); _activeReplayPanel = null; }
       _activeReplayIdx = null;
       _updateTrLogPanel();
@@ -14886,15 +14894,19 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     dataRow = dataRow.replace(/^ · /, '');
     const routeMeta = _mtSenseRouteMeta(n);
     const routeKey = routeMeta ? _mtRouteKey(routeMeta.targetId || n.from_id, n.radio_id || activeRadioId) : '';
+    const routeEntryKey = pktKey || (n.msg_id ? `sense-msg-${n.msg_id}` : `sense-mt-entry-${String(n.radio_id || activeRadioId || 'mt').replace(/[^A-Za-z0-9_-]/g, '_')}-${String(n.from_id || '').replace(/[^A-Za-z0-9_-]/g, '_')}-${n.ts || Date.now()}`);
     const routeChip = routeMeta
-      ? `<button class="mt-route-badge ${routeMeta.cached ? 'cached' : ''}" title="${escHtml(routeMeta.detail)}" onclick="event.stopPropagation();showMtSenseRoute('${jsSafe(n.from_id)}','${jsSafe(n.radio_id || '')}')">${escHtml(routeMeta.label)}</button>`
+      ? (routeMeta.cached
+        ? `<button class="mt-route-badge cached" title="${escHtml(routeMeta.detail)}" onclick="event.stopPropagation();showMtSenseRoute('${jsSafe(n.from_id)}','${jsSafe(n.radio_id || '')}','${jsSafe(routeEntryKey)}')">${escHtml(routeMeta.label)}</button>`
+        : `<span class="mt-route-badge info" title="${escHtml(routeMeta.detail)}">${escHtml(routeMeta.label)}</span>`)
       : '';
     const line = document.createElement('div');
     if (pktKey) line.id = pktKey;
     else if (n.msg_id) line.id = `sense-msg-${n.msg_id}`;
     if (routeKey) line.dataset.mtRouteKey = routeKey;
-    if (routeKey && routeKey === _activeMtRouteKey) line.classList.add('mt-route-selected');
-    line.style.cssText = 'border-bottom:1px solid var(--border);padding:3px 0' + ((routeMeta || clickPos) ? ';cursor:pointer' : '');
+    if (routeMeta?.cached) line.dataset.mtEntryKey = routeEntryKey;
+    if (routeMeta?.cached && routeEntryKey === _activeMtRouteEntryKey) line.classList.add('mt-route-selected');
+    line.style.cssText = 'border-bottom:1px solid var(--border);padding:3px 0' + ((routeMeta?.cached || clickPos) ? ';cursor:pointer' : '');
     line.innerHTML =
       `<div style="display:flex;gap:6px;align-items:baseline">` +
         `<span style="color:var(--accent);flex-shrink:0">${ts}</span>` +
@@ -14903,14 +14915,14 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         routeChip +
       `</div>` +
       (dataRow ? `<div style="color:var(--muted);padding-left:4px">${dataRow}</div>` : '');
-    if (routeMeta) {
-      line.onclick = () => showMtSenseRoute(n.from_id, n.radio_id || '');
+    if (routeMeta?.cached) {
+      line.onclick = () => showMtSenseRoute(n.from_id, n.radio_id || '', routeEntryKey);
     } else if (clickPos) {
       line.onclick = () => { setMapLock(false); leafletMap && leafletMap.setView(clickPos, leafletMap.getZoom()); };
     }
     line.onmouseenter = function() {
       if (routeMeta?.cached) previewMtSenseRoute(n.from_id, n.radio_id || '', true);
-      if (routeMeta || clickPos) this.style.background = 'rgba(255,255,255,0.04)';
+      if (routeMeta?.cached || clickPos) this.style.background = 'rgba(255,255,255,0.04)';
     };
     line.onmouseleave = function() {
       if (routeMeta?.cached) previewMtSenseRoute(n.from_id, n.radio_id || '', false);

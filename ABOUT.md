@@ -1,6 +1,6 @@
 # About OverMesh
 
-I build things. Meshtastic networks, portable computers, antennas; mostly for the satisfaction of making something that actually works, not just something that sort of works most of the time.
+I build things. Meshtastic and Meshcore networks, portable computers, antennas; mostly for the satisfaction of making something that actually works, not just something that looks cool and sort of works..
 
 I'd been putting together a Cyberdeck — a portable, self-contained field computer built around a Rock 5B single-board computer. Meshtastic was already part of the setup: several DIY nodes, a small local mesh, the whole thing. The Cyberdeck needed a dashboard. Something to show the network at a glance: who's online, signal quality, active channels, maybe send a message.
 

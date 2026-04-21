@@ -3169,8 +3169,6 @@
   let _activeTracerouteController  = null;
   let _activeTracerouteStartedAt   = 0;
   let _activeTrPanel               = null;
-  let _activeReplayIdx             = null;
-  let _activeReplayPanel           = null;
   let _activeMtRouteKey            = null;
   let _activeMtRouteEntryKey       = null;
   let _mtHoverRouteKey             = null;
@@ -4124,11 +4122,9 @@
     let out = escHtml(text || '');
     const needles = [...new Set([parts?.raw, ...(parts?.terms || [])].filter(s => s && s.length >= 2))]
       .sort((a, b) => b.length - a.length);
-    needles.forEach(needle => {
-      const re = new RegExp(`(${_manualEscapeRegExp(escHtml(needle))})`, 'ig');
-      out = out.replace(re, '<mark style="background:rgba(250,204,21,0.28);color:var(--text);border-radius:2px;padding:0 2px">$1</mark>');
-    });
-    return out;
+    if (!needles.length) return out;
+    const re = new RegExp(`(${needles.map(needle => _manualEscapeRegExp(escHtml(needle))).join('|')})`, 'ig');
+    return out.replace(re, '<mark style="background:rgba(250,204,21,0.28);color:var(--text);border-radius:2px;padding:0 2px">$1</mark>');
   }
 
   function _manualScore(section, parts) {
@@ -5681,7 +5677,6 @@ if (targetEl) {
   }
 
   function _currentMtTraceMapData() {
-    if (_activeReplayIdx !== null && _traceHistory[_activeReplayIdx]?.data) return _traceHistory[_activeReplayIdx].data;
     return _lastTraceData;
   }
 
@@ -5779,7 +5774,6 @@ if (targetEl) {
   function toggleTrMap() {
     _showTrMap = !_showTrMap;
     try { localStorage.setItem('mapShowTrSnr', _showTrMap ? '1' : '0'); } catch(e) {}
-    document.getElementById('map-tr-snr-btn')?.classList.toggle('active', _showTrMap);
     if (!_showTrMap) {
       _clearTraceLines();
       _activeMtRouteKey = null;
@@ -5847,16 +5841,12 @@ if (targetEl) {
     _mtHoverRouteKey = null;
     _mtHoverHadTraceLines = false;
     _mtHoverPrevShowTrMap = null;
-    if (_activeReplayPanel) { _activeReplayPanel.remove(); _activeReplayPanel = null; }
-    _activeReplayIdx = null;
-    _updateTrLogPanel();
     _mtRefreshSenseRouteSelection();
   }
 
   function _mtSetTraceMapVisible(show) {
     _showTrMap = !!show;
     try { localStorage.setItem('mapShowTrSnr', _showTrMap ? '1' : '0'); } catch(_) {}
-    document.getElementById('map-tr-snr-btn')?.classList.toggle('active', _showTrMap);
   }
 
   function _mtMessageRouteMeta(m) {
@@ -5897,15 +5887,11 @@ if (targetEl) {
       if (!_showTrMap) {
         _showTrMap = true;
         try { localStorage.setItem('mapShowTrSnr', '1'); } catch(_) {}
-        document.getElementById('map-tr-snr-btn')?.classList.add('active');
       }
       _drawTraceRouteOnMap(meta.cached.data);
       _lastTraceData = meta.cached.data;
       _activeMtRouteKey = routeKey;
       _activeMtRouteEntryKey = null;
-      if (_activeReplayPanel) { _activeReplayPanel.remove(); _activeReplayPanel = null; }
-      _activeReplayIdx = null;
-      _updateTrLogPanel();
       _mtRefreshSenseRouteSelection();
       const targetPos = _nodeLatLon(meta.targetId);
       if (targetPos && leafletMap) leafletMap.panTo(targetPos);
@@ -5952,15 +5938,11 @@ if (targetEl) {
     if (!_showTrMap) {
       _showTrMap = true;
       try { localStorage.setItem('mapShowTrSnr', '1'); } catch(_) {}
-      document.getElementById('map-tr-snr-btn')?.classList.add('active');
     }
     _drawTraceRouteOnMap(cached.data);
     _lastTraceData = cached.data;
     _activeMtRouteKey = routeKey;
     _activeMtRouteEntryKey = entryKey || routeKey;
-    if (_activeReplayPanel) { _activeReplayPanel.remove(); _activeReplayPanel = null; }
-    _activeReplayIdx = null;
-    _updateTrLogPanel();
     _mtRefreshSenseRouteSelection();
     const targetPos = _nodeLatLon(fromId);
     if (targetPos && leafletMap) leafletMap.panTo(targetPos);
@@ -7458,7 +7440,6 @@ if (targetEl) {
       if (!Array.isArray(rows) || !rows.length) return;
       _traceHistory = rows.map(r => ({ ts: r.ts * 1000, nodeId: r.node_id, nodeName: r.node_name, radioId: r.radio_id, data: r.data }));
       if (_traceHistory.length) _lastTraceData = _traceHistory[0].data;
-      _updateTrLogPanel();
       if (chatNetwork === 'mt') renderMessages();
     }).catch(() => {});
 
@@ -8711,7 +8692,6 @@ if (targetEl) {
       _lastTraceData = d;
       _traceHistory.unshift({ ts: Date.now(), nodeId, nodeName, radioId: trRadioId, data: d });
       if (_traceHistory.length > 10) _traceHistory.pop();
-      _updateTrLogPanel();
       if (chatNetwork === 'mt') renderMessages();
       if (_showTrMap) _drawTraceRouteOnMap(d);
     } catch(e) {
@@ -8724,10 +8704,6 @@ if (targetEl) {
       // openMapTR call removes the old panel (result, error, or timeout) before creating a new one.
       // It is only nulled when the user manually closes the panel (✕ button).
     }
-  }
-
-  function _updateTrLogPanel() {
-    // Trace history is kept only as a cache for Response log route matching.
   }
 
   // ── Map Info overlay ────────────────────────────────────────────────────
@@ -11845,9 +11821,6 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       _clearTraceLines();
       _activeMtRouteKey = null;
       _activeMtRouteEntryKey = null;
-      if (_activeReplayPanel) { _activeReplayPanel.remove(); _activeReplayPanel = null; }
-      _activeReplayIdx = null;
-      _updateTrLogPanel();
       _mtRefreshSenseRouteSelection();
       // Show MC markers, hide MT node markers
       if (!mapShowMc) {
@@ -11862,16 +11835,12 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         updateMapMarkers(allNodes);
       }
       if (legend) legend.style.display = 'none';   // hide entire legend in MC Sense
-      const snrBtn = document.getElementById('map-tr-snr-btn');
-      if (snrBtn) snrBtn.style.display = 'none';
       renderMcMapMarkers();   // also calls renderMcPathLines()
       renderMcSensePanel();
     } else {
       // MT mode: show legend but hide MC section (MC markers not shown in MT Sense)
       if (legend)   legend.style.display   = '';
       if (mcLegend) mcLegend.style.display = 'none';
-      const snrBtn = document.getElementById('map-tr-snr-btn');
-      if (snrBtn) snrBtn.style.display = '';
       clearMcPathLines();
       _mcHoverLines.forEach(l => leafletMap && leafletMap.removeLayer(l));
       _mcHoverLines = [];
@@ -12976,10 +12945,10 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     switchTab('map');
     toggleSensePanel(true);
     switchSenseNet('mc');
-    requestAnimationFrame(() => {
+    setTimeout(() => {
       _mcLogClick(idx);
       renderMcSenseLog();
-    });
+    }, 80);
   }
 
   function _mcLogHover(idx, on) {
@@ -14507,8 +14476,6 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       const _leg   = document.querySelector('.map-legend');
       const _mcLeg = document.getElementById('map-legend-mc');
       if (_leg) _leg.style.display = '';
-      const _snrBtn = document.getElementById('map-tr-snr-btn');
-      if (_snrBtn) _snrBtn.style.display = '';
       if (_mcLeg) {
         const mcVisible = Object.keys(mcLastStatus).length > 0 && localStorage.getItem('mcHide') !== '1';
         _mcLeg.style.display = mcVisible ? '' : 'none';

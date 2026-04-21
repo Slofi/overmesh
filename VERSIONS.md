@@ -10,6 +10,14 @@ OverMesh uses date-based release versions:
 
 The version in `VERSION` must be updated every time an OverMesh update is pushed to GitHub. The Settings updater also shows the Git commit hash for exact build identification.
 
+## 2026.04.21.3
+
+- Bug-sweep cleanup after MT route UI changes:
+  - removed stale frontend references to the deleted MT map-layer SNR/TR-history controls
+  - removed unused MT trace replay state and no-op update calls
+  - fixed manual search highlighting for multi-word searches
+  - delayed MC Chat route-badge pinning slightly after opening Map/Sense to avoid map initialization races
+
 ## 2026.04.21.2
 
 - Added MC Chat route/hop badges for received MC messages.

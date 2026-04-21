@@ -223,7 +223,7 @@ The big changes were better MC support across the app, cleaner MT and MC UI pari
 
 OverMesh is now clearly the MT plus MC app.
 
-If you want the short public summary and the current release-prep status, see `RELEASE_NOTES.md` and `RELEASE_CHECKLIST.md` in this repo.
+If you want the short public summary, see `RELEASE_NOTES.md` in this repo.
 
 If you are coming from the older OverMesh setup, see `MIGRATION.md`.
 

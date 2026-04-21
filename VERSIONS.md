@@ -10,6 +10,10 @@ OverMesh uses date-based release versions:
 
 The version in `VERSION` must be updated every time an OverMesh update is pushed to GitHub. The Settings updater also shows the Git commit hash for exact build identification.
 
+## 2026.04.21.4
+
+- Removed `RELEASE_CHECKLIST.md` from the public repository because it contained local/live release notes that are not useful to users and expose unnecessary environment details.
+
 ## 2026.04.21.3
 
 - Bug-sweep cleanup after MT route UI changes:

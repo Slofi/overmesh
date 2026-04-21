@@ -10,6 +10,14 @@ OverMesh uses date-based release versions:
 
 The version in `VERSION` must be updated every time an OverMesh update is pushed to GitHub. The Settings updater also shows the Git commit hash for exact build identification.
 
+## 2026.04.21.2
+
+- Added MC Chat route/hop badges for received MC messages.
+- Clicking an MC Chat route badge opens Sense/Map, switches to MC, and pins the matching message path.
+- Renamed visible MC message route label from `flood` to `flood mode`.
+- Expanded manual explanations for MC route-source badges, flood mode, and 1B/2B/3B per-hop hash metadata.
+- Improved manual search with relevance ranking, partial matches, result counts, and highlighted matches.
+
 ## 2026.04.21.1
 
 - Fixed bot reply handling for MT DMs:

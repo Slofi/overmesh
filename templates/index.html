@@ -232,6 +232,8 @@
     .mt-route-badge.info { cursor: default; opacity: 0.85; }
     .mt-route-badge:hover { border-color: var(--accent); color: var(--text); }
     .mt-route-badge.info:hover { border-color: rgba(74,222,128,0.28); color: var(--accent); }
+    .mc-route-badge { border: 1px solid rgba(56,189,248,0.30); background: rgba(56,189,248,0.10); color: var(--mc-color); border-radius: 3px; padding: 0 4px; margin-left: 4px; font-size: 10px; line-height: 15px; cursor: pointer; vertical-align: 1px; display:inline-flex; align-items:center; white-space:nowrap; flex-shrink:0; }
+    .mc-route-badge:hover { border-color: var(--mc-color); color: var(--text); }
     #sense-log > .mt-route-selected,
     #sense-mc-log > .mc-route-selected {
       background: rgba(74,222,128,0.10);
@@ -3749,7 +3751,7 @@
           kind: 'mc',
           body: [
             'MC rows include short hash chips before names. These help match contacts to MC path hashes shown by messages, pings, and traces.',
-            'Path labels: direct means no known repeater, flood means open/unknown routing, route means a stored route exists, and 1 hop / 2 hops means known repeaters.',
+            'Path labels: direct means no known repeater, flood mode means open/unknown routing, route means a stored route exists, and 1 hop / 2 hops means known repeaters.',
             'MC path hashes may be 1, 2, or 3 bytes. Short hashes can collide, so OM marks uncertain matches instead of pretending every hop is exact.'
           ],
           buttons: [
@@ -3803,9 +3805,11 @@
           body: [
             'MC messages are byte-limited by firmware and sender/channel overhead. OM checks byte length and auto-splits longer sends into safe parts.',
             'MC Reply inserts native bracketed mentions where possible, so original MC users see a proper mention.',
-            'MC message route inspection is shown in Sense/Map instead of inside busy chat bubbles.'
+            'Received MC messages can show a small hop badge. Clicking it opens Sense/Map and pins the matching message path when OM has enough path data.',
+            'A badge such as flood mode describes route mode; a detail such as 2B/hop describes hop-hash size. They are separate facts.'
           ],
           buttons: [
+            ['Route badge', 'Shows MC direct/hop/flood-mode path metadata; click to open Sense/Map and inspect the message path.'],
             ['Reply', 'Insert a native MC mention/reply prefix when possible.'],
             ['Advert', 'Send this MC radio advert so other nodes learn its identity.'],
             ['Byte counter', 'Shows remaining safe bytes; longer text is split into numbered parts when possible.']
@@ -3910,7 +3914,8 @@
           kind: 'mc',
           body: [
             'MC Sense logs adverts, messages, pings, traces, scans, and bot replies. It is the main place to inspect MC paths.',
-            'Route source badges: live means the path came from the received packet/RX log; cached means contact route cache; inferred means OM drew a fallback; refreshed means later contact data changed the path.',
+            'Route source badges explain where OM got the path: live means this packet/RX-log metadata; cached means stored contact route; inferred means a fallback line; refreshed means newer contact/path data changed the entry.',
+            'Flood mode is a route/delivery mode, not a byte size. 1B/hop, 2B/hop, or 3B/hop are hop-hash widths; larger widths reduce repeater ID collisions.',
             'When MC SNR is available, path segments use the same quality colors as MT traceroutes. Hover a colored segment to see its SNR value.',
             'Confidence labels: likely, estimated, and ambiguous mean OM resolved a short hash but it is not guaranteed exact. Partial paths show only known relays.',
             'MC hop badges say 1 hop / 2 hops to avoid confusing h with hours.'
@@ -3922,6 +3927,8 @@
             ['cached', 'Path came from stored MC contact route/cache, not necessarily this exact message.'],
             ['inferred', 'OM drew a fallback such as sender/receiver or partial known line.'],
             ['refreshed', 'Path changed after OM re-resolved it with newer contact/path data.'],
+            ['flood mode', 'Open/unknown routing mode for the message. It can still have 1B/2B/3B hop metadata.'],
+            ['1B/2B/3B per hop', 'Hop-hash size used in path metadata. 2B/hop is more precise than 1B/hop, but still separate from route mode.'],
             ['1 hop / 2 hops', 'Known MC repeater count for this entry.'],
             ['likely', 'Best candidate was selected, but another match existed.'],
             ['estimated', 'Short/ambiguous hash; use as likely route, not proof.'],
@@ -4101,23 +4108,74 @@
     return [section.title, section.tags, ...(section.body || []), buttonText, splitText].join(' ').toLowerCase();
   }
 
-  function _manualButtonHtml(item) {
+  function _manualSearchParts(query = '') {
+    const raw = String(query || '').trim().toLowerCase();
+    return {
+      raw,
+      terms: raw.split(/\s+/).filter(Boolean),
+    };
+  }
+
+  function _manualEscapeRegExp(s) {
+    return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function _manualHighlight(text, parts) {
+    let out = escHtml(text || '');
+    const needles = [...new Set([parts?.raw, ...(parts?.terms || [])].filter(s => s && s.length >= 2))]
+      .sort((a, b) => b.length - a.length);
+    needles.forEach(needle => {
+      const re = new RegExp(`(${_manualEscapeRegExp(escHtml(needle))})`, 'ig');
+      out = out.replace(re, '<mark style="background:rgba(250,204,21,0.28);color:var(--text);border-radius:2px;padding:0 2px">$1</mark>');
+    });
+    return out;
+  }
+
+  function _manualScore(section, parts) {
+    if (!parts?.terms?.length) return { score: 1, matches: 0 };
+    const title = String(section.title || '').toLowerCase();
+    const tags = String(section.tags || '').toLowerCase();
+    const body = (section.body || []).join(' ').toLowerCase();
+    const buttons = (section.buttons || []).map(([label, desc]) => `${label} ${desc}`).join(' ').toLowerCase();
+    const split = (section.split || []).map(group => [
+      group.title,
+      ...(group.body || []),
+      ...(group.buttons || []).map(([label, desc]) => `${label} ${desc}`)
+    ].flat().join(' ')).join(' ').toLowerCase();
+    const all = [title, tags, body, buttons, split].join(' ');
+    let score = 0;
+    let matches = 0;
+    if (parts.raw && all.includes(parts.raw)) score += 12;
+    parts.terms.forEach(term => {
+      if (!all.includes(term)) return;
+      matches++;
+      if (title.includes(term)) score += 12;
+      if (tags.includes(term)) score += 8;
+      if (buttons.includes(term)) score += 5;
+      if (split.includes(term)) score += 4;
+      if (body.includes(term)) score += 3;
+    });
+    if (matches === parts.terms.length) score += 10;
+    return { score, matches };
+  }
+
+  function _manualButtonHtml(item, parts = null) {
     const label = Array.isArray(item) ? item[0] : item?.label;
     const desc = Array.isArray(item) ? item[1] : item?.desc;
     return `<div style="display:grid;grid-template-columns:minmax(92px,max-content) minmax(0,1fr);gap:9px;align-items:start;margin:6px 0">
-      <span class="btn" style="display:inline-flex;align-items:center;justify-content:center;min-height:24px;padding:2px 9px;font-size:11px;line-height:1.2;cursor:default;pointer-events:none;white-space:nowrap">${escHtml(label || '')}</span>
-      <span style="font-size:12px;line-height:1.4;color:var(--muted);padding-top:2px">${escHtml(desc || '')}</span>
+      <span class="btn" style="display:inline-flex;align-items:center;justify-content:center;min-height:24px;padding:2px 9px;font-size:11px;line-height:1.2;cursor:default;pointer-events:none;white-space:nowrap">${_manualHighlight(label || '', parts)}</span>
+      <span style="font-size:12px;line-height:1.4;color:var(--muted);padding-top:2px">${_manualHighlight(desc || '', parts)}</span>
     </div>`;
   }
 
-  function _manualSplitHtml(groups) {
+  function _manualSplitHtml(groups, parts = null) {
     if (!groups?.length) return '';
     return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-top:9px">
       ${groups.map(group => `
         <div style="border:1px solid ${group.kind === 'mc' ? 'rgba(56,189,248,0.25)' : 'rgba(74,222,128,0.22)'};border-radius:8px;padding:10px;background:${group.kind === 'mc' ? 'rgba(56,189,248,0.045)' : 'rgba(74,222,128,0.035)'}">
-          <div style="font-size:12px;font-weight:700;color:${group.kind === 'mc' ? 'var(--mc-color)' : 'var(--accent)'};margin-bottom:7px">${escHtml(group.title || '')}</div>
-          ${(group.body || []).map(line => `<p style="font-size:12px;line-height:1.42;color:var(--text);margin:0 0 7px">${escHtml(line)}</p>`).join('')}
-          ${(group.buttons || []).length ? `<div style="border-top:1px solid var(--border);margin-top:8px;padding-top:6px">${group.buttons.map(_manualButtonHtml).join('')}</div>` : ''}
+          <div style="font-size:12px;font-weight:700;color:${group.kind === 'mc' ? 'var(--mc-color)' : 'var(--accent)'};margin-bottom:7px">${_manualHighlight(group.title || '', parts)}</div>
+          ${(group.body || []).map(line => `<p style="font-size:12px;line-height:1.42;color:var(--text);margin:0 0 7px">${_manualHighlight(line, parts)}</p>`).join('')}
+          ${(group.buttons || []).length ? `<div style="border-top:1px solid var(--border);margin-top:8px;padding-top:6px">${group.buttons.map(btn => _manualButtonHtml(btn, parts)).join('')}</div>` : ''}
         </div>
       `).join('')}
     </div>`;
@@ -4126,21 +4184,26 @@
   function renderOmManual(query = '') {
     const el = document.getElementById('manual-results');
     if (!el) return;
-    const q = String(query || '').trim().toLowerCase();
-    const terms = q.split(/\s+/).filter(Boolean);
-    const sections = terms.length
-      ? OM_MANUAL_SECTIONS.filter(section => terms.every(term => _manualText(section).includes(term)))
-      : OM_MANUAL_SECTIONS;
+    const parts = _manualSearchParts(query);
+    const ranked = parts.terms.length
+      ? OM_MANUAL_SECTIONS.map(section => ({ section, ..._manualScore(section, parts) }))
+        .filter(r => r.score > 0 && r.matches > 0)
+        .sort((a, b) => b.score - a.score || a.section.title.localeCompare(b.section.title))
+      : OM_MANUAL_SECTIONS.map(section => ({ section, score: 1, matches: 0 }));
+    const sections = ranked.map(r => r.section);
     if (!sections.length) {
       el.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:12px 0">No manual sections match that search.</div>';
       return;
     }
-    el.innerHTML = sections.map(section => `
+    const summary = parts.terms.length
+      ? `<div style="font-size:12px;color:var(--muted);padding:2px 0 9px">Showing ${sections.length} section${sections.length !== 1 ? 's' : ''} ranked by relevance.</div>`
+      : '';
+    el.innerHTML = summary + sections.map(section => `
       <div class="manual-section" style="border:1px solid var(--border);background:var(--bg2);border-radius:8px;padding:12px 14px;margin-bottom:10px">
-        <div style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:7px">${escHtml(section.title)}</div>
-        ${(section.body || []).map(line => `<p style="font-size:12px;line-height:1.45;color:var(--text);margin:0 0 7px">${escHtml(line)}</p>`).join('')}
-        ${_manualSplitHtml(section.split)}
-        ${(section.buttons || []).length ? `<div style="border-top:1px solid var(--border);margin-top:9px;padding-top:7px">${section.buttons.map(_manualButtonHtml).join('')}</div>` : ''}
+        <div style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:7px">${_manualHighlight(section.title, parts)}</div>
+        ${(section.body || []).map(line => `<p style="font-size:12px;line-height:1.45;color:var(--text);margin:0 0 7px">${_manualHighlight(line, parts)}</p>`).join('')}
+        ${_manualSplitHtml(section.split, parts)}
+        ${(section.buttons || []).length ? `<div style="border-top:1px solid var(--border);margin-top:9px;padding-top:7px">${section.buttons.map(btn => _manualButtonHtml(btn, parts)).join('')}</div>` : ''}
       </div>
     `).join('');
   }
@@ -10265,6 +10328,7 @@ if (targetEl) {
     try { const s = JSON.parse(localStorage.getItem('mcSenseLog') || '[]'); return Array.isArray(s) ? s.slice(-200) : []; }
     catch(e) { return []; }
   })(); // {text, ts, points} — MC activity log, persisted across refresh
+  let _mcChatRouteByKey = {};
   let mcMessages = (() => {
     try { const s = JSON.parse(localStorage.getItem('mcMessages') || '[]'); return Array.isArray(s) ? s.slice(-500) : []; }
     catch(e) { return []; }
@@ -10274,6 +10338,17 @@ if (targetEl) {
   }
   function _mcLocalMsgId() {
     return `mc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  function _mcChatRouteKey(m) {
+    return [
+      m?.radio_id || '',
+      m?.id || m?.ts || '',
+      m?.subtype || '',
+      m?.channel ?? '',
+      m?.from_id || '',
+      m?.to_id || '',
+    ].join('|');
   }
 
   function _parseCrossCommand(text) {
@@ -11692,6 +11767,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     }
     const hadNoContent = !container.children.length || !!container.querySelector('.chat-empty');
     const wasAtBottom = hadNoContent || container.scrollHeight - container.scrollTop <= container.clientHeight + 40;
+    _mcChatRouteByKey = {};
     container.innerHTML = msgs.map(m => {
       let ts = '';
       if (m.ts) {
@@ -11727,8 +11803,14 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       const obsSnr = m.rx_snr != null ? ` · obs ${m.rx_snr} dB` : '';
       const senderHtml = `<span class="msg-sender-link" onclick="showMcContactPopup(event,'${jsSafe(m.from_id || '')}','${jsSafe(m.radio_id || '')}','${jsSafe(name)}')" title="Contact info">${escHtml(name)}</span>`;
       const mcReplyBtn = `<button class="msg-reply-btn" onclick="replyToMc('${jsSafe(m.from_id || '')}','${jsSafe(name)}','${m.subtype || 'channel'}')">↩ Reply</button>`;
+      const routeMeta = _mcChatRouteMeta(m);
+      const routeKey = _mcChatRouteKey(m);
+      if (routeMeta) _mcChatRouteByKey[routeKey] = m;
+      const routeBtn = routeMeta
+        ? `<button class="mc-route-badge" title="${escHtml(routeMeta.detail)}" onclick="event.stopPropagation();showMcChatMessageRoute('${jsSafe(routeKey)}')">${escHtml(routeMeta.label)}</button>`
+        : '';
       return `<div class="chat-msg received">
-        <div class="msg-meta"><span class="mc-msg-tag">MC</span>${escHtml(m.radio_name || '')} · ${senderHtml}${escHtml(obsSnr)} · ${ts}${mcReplyBtn}</div>
+        <div class="msg-meta"><span class="mc-msg-tag">MC</span>${escHtml(m.radio_name || '')} · ${senderHtml}${escHtml(obsSnr)} · ${ts}${routeBtn}${mcReplyBtn}</div>
         <div class="msg-bubble">${_mcFormatMessageBody(bodyText)}</div>
       </div>`;
     }).join('');
@@ -12794,10 +12876,10 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const labelSuffix = uncertain ? '?' : '';
     const routeColor = uncertain ? '#f59e0b' : '#8b5cf6';
     if (hopLen === 255) {
-      if (routeType === 'FLOOD') return { label: 'flood', detail: 'Flood', color: 'rgba(148,163,184,0.8)' };
+      if (routeType === 'FLOOD') return { label: 'flood mode', detail: 'Flood mode', color: 'rgba(148,163,184,0.8)' };
       return { label: 'direct route', detail: 'Direct route', color: '#38bdf8' };
     }
-    if (path?.flood) return { label: 'flood', detail: 'Flood', color: 'rgba(148,163,184,0.8)' };
+    if (path?.flood) return { label: 'flood mode', detail: 'Flood mode', color: 'rgba(148,163,184,0.8)' };
     if (hopLen === 0) return { label: 'direct', detail: 'Direct', color: '#22c55e' };
     if (hopLen > 0) return { label: `${hopLen} hop${hopLen !== 1 ? 's' : ''}${labelSuffix}`, detail: `${hopLen} hop${hopLen !== 1 ? 's' : ''}${suffix}`, color: routeColor };
     return null;
@@ -12847,6 +12929,57 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
   // Re-resolving at hover/click time picks up any route updates that arrived since.
   function _mcFreshPath(entry) {
     return _mcResolveEntryPath(entry).path;
+  }
+
+  function _mcFindMessageLogEntry(msg) {
+    if (!msg) return null;
+    return _mcSenseLogEntries.find(e => {
+      if (e.kind !== 'message') return false;
+      if ((e.radioId || '') !== (msg.radio_id || '')) return false;
+      if (msg.id && e.msgId && e.msgId === msg.id) return true;
+      const sameTs = String(e.msgTs || '') === String(msg.ts || '');
+      const sameFrom = String(e.fromId || '') === String(msg.from_id || '');
+      const sameChan = Number(e.channel ?? 0) === Number(msg.channel ?? 0);
+      return sameTs && sameFrom && sameChan;
+    }) || null;
+  }
+
+  function _mcChatRouteMeta(msg) {
+    if (!msg || msg.sent || msg.from_id === 'bot' || msg.subtype === 'system') return null;
+    const entry = _mcFindMessageLogEntry(msg) || _mcBuildSenseMessageEntry(msg);
+    if (!entry) return null;
+    const resolved = _mcResolveEntryPath(entry);
+    const hopMeta = _mcMessageHopMeta(entry, resolved.path);
+    if (!hopMeta) return null;
+    const source = resolved.quality && resolved.quality !== 'inferred' ? ` · ${resolved.quality}` : '';
+    return {
+      label: hopMeta.label,
+      detail: `Show MC message path: ${hopMeta.detail}${source}`,
+      entry,
+    };
+  }
+
+  function showMcChatMessageRoute(routeKey) {
+    const msg = _mcChatRouteByKey[routeKey] || mcMessages.find(m => _mcChatRouteKey(m) === routeKey);
+    if (!msg) return;
+    let entry = _mcFindMessageLogEntry(msg);
+    if (!entry) {
+      entry = _mcBuildSenseMessageEntry(msg);
+      if (!entry) return;
+      if (_mcLogPinnedIdx !== null) _mcLogPinnedIdx++;
+      _mcSenseLogEntries.unshift(entry);
+      if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
+      try { localStorage.setItem('mcSenseLog', JSON.stringify(_mcSenseLogEntries.slice(0, 100))); } catch(e) {}
+    }
+    const idx = _mcSenseLogEntries.indexOf(entry);
+    if (idx < 0) return;
+    switchTab('map');
+    toggleSensePanel(true);
+    switchSenseNet('mc');
+    requestAnimationFrame(() => {
+      _mcLogClick(idx);
+      renderMcSenseLog();
+    });
   }
 
   function _mcLogHover(idx, on) {
@@ -13050,7 +13183,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     renderMcSenseLog();
   }
 
-  function addMcSenseMessageEntry(data) {
+  function _mcBuildSenseMessageEntry(data) {
     // Channel messages (from_id='?') don't carry a sender pubkey in the MC protocol.
     // Try a name-based fallback: extract "Name: message" prefix and match against known contacts.
     const isChanAnon = !data.from_id || data.from_id === '?';
@@ -13089,7 +13222,12 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     if (pathResult && !pathResult.flood) pathResult = { ...pathResult, kind: 'message', snr: msgSnr };
     // Reverse: message is incoming (sender → relays → our radio), but decodeMcPath builds radio→contact
     if (pathResult?.points) pathResult = _mcReversePathResult(pathResult);
-    const entry   = { kind: 'message', name, text, rawText: full, ts, msgTs: data.ts, radioId: data.radio_id, channel: data.channel ?? 0, fromId: data.from_id, lat, lon, hopLen, pathResult, routeQuality, pathHashSize: data.path_hash_size ?? pathResult?.inferredPathHashSize ?? null, pathHashMode: data.path_hash_mode ?? null, routeType: data.route_type ?? null, rawPath: data.path ?? null, snr: msgSnr };
+    return { kind: 'message', name, text, rawText: full, ts, msgTs: data.ts, msgId: data.id || null, radioId: data.radio_id, channel: data.channel ?? 0, fromId: data.from_id, lat, lon, hopLen, pathResult, routeQuality, pathHashSize: data.path_hash_size ?? pathResult?.inferredPathHashSize ?? null, pathHashMode: data.path_hash_mode ?? null, routeType: data.route_type ?? null, rawPath: data.path ?? null, snr: msgSnr };
+  }
+
+  function addMcSenseMessageEntry(data) {
+    const entry = _mcBuildSenseMessageEntry(data);
+    if (!entry) return;
     if (_mcLogPinnedIdx !== null) _mcLogPinnedIdx++;
     _mcSenseLogEntries.unshift(entry);
     if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();

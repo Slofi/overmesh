@@ -10,6 +10,14 @@ OverMesh uses date-based release versions:
 
 The version in `VERSION` must be updated every time an OverMesh update is pushed to GitHub. The Settings updater also shows the Git commit hash for exact build identification.
 
+## 2026.04.21.1
+
+- Fixed bot reply handling for MT DMs:
+  - MT bot sends now use `wantAck=True`, matching normal Chat sends
+  - MT bot DM replies use the triggering packet's channel index instead of forcing channel `0`
+  - MT bot command replies are shown in Chat only after the radio send call succeeds
+- Hardened MC bot reply display similarly so MC bot replies are surfaced only after the MC send helper succeeds.
+
 ## 2026.04.20.8
 
 - Removed the remaining MT traceroute history list from the map layer menu.

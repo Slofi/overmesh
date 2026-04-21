@@ -335,14 +335,21 @@ def build_motd_text(cfg):
 def send_bot_response(iface, text, channel_index, dest_id=None):
     if CONFIG.get("silent_mode"):
         log.info("[bot] Silent Running active — MT bot response suppressed")
-        return
+        return False
     try:
         if dest_id:
-            iface.sendText(text, destinationId=dest_id, channelIndex=channel_index)
+            iface.sendText(text, destinationId=dest_id, channelIndex=channel_index, wantAck=True)
         else:
-            iface.sendText(text, channelIndex=channel_index)
+            iface.sendText(text, channelIndex=channel_index, wantAck=True)
+        return True
     except Exception as e:
         log.warning(f"Bot send error: {e}")
+        return False
+
+
+def send_and_record_bot_response(iface, text, channel_index, radio_id, dest_id=None, to_name=None):
+    if send_bot_response(iface, text, channel_index, dest_id):
+        push_bot_chat_message(text, channel_index, radio_id, dest_id, to_name)
 
 # ---------------------------------------------------------------------------
 # Command handler
@@ -470,19 +477,17 @@ def handle_bot_command(packet, interface):
 
         if respond_via == "dm" or is_dm:
             dest         = from_id
-            resp_channel = 0
+            resp_channel = channel
         else:
             dest         = None
             resp_channel = channel
 
+        log_bot_activity(from_name, cmd, response, channel)
         threading.Thread(
-            target=send_bot_response,
-            args=(interface, response, resp_channel, dest),
+            target=send_and_record_bot_response,
+            args=(interface, response, resp_channel, radio_id, dest, from_name if dest else None),
             daemon=True,
         ).start()
-
-        log_bot_activity(from_name, cmd, response, channel)
-        push_bot_chat_message(response, resp_channel, radio_id, dest, from_name if dest else None)
 
     except Exception as e:
         log.warning(f"Bot command error: {e}")
@@ -562,15 +567,30 @@ def send_mc_bot_response(config_id, text, chan_idx, dest_pre=None):
     """Send bot reply via MC. Runs in a background thread — blocks until sent or timeout."""
     if CONFIG.get("silent_mode"):
         log.info(f"[bot] Silent Running active — MC bot response suppressed")
-        return
+        return False
     from mesh_mc import send_chan_msg, send_dm
     try:
         if dest_pre:
             send_dm(config_id, dest_pre, text, timeout=15)
         else:
             send_chan_msg(config_id, chan_idx, text, timeout=15)
+        return True
     except Exception as e:
         log.warning(f"[MCBot:{config_id}] send failed: {e}")
+        return False
+
+
+def send_and_record_mc_bot_response(config_id, text, chan_idx, dest_pre=None, to_name=None, cmd=""):
+    if send_mc_bot_response(config_id, text, chan_idx, dest_pre):
+        push_to_sse({
+            "type": "mc_bot_reply",
+            "radio_id": config_id,
+            "to_id": dest_pre,
+            "to_name": to_name,
+            "cmd": cmd,
+            "text": text,
+            "channel": chan_idx,
+        })
 
 
 def handle_mc_bot_command(msg, config_id, subtype):
@@ -642,21 +662,19 @@ def handle_mc_bot_command(msg, config_id, subtype):
                         log_bot_activity(from_name, "relay", f"FAILED: {e}", channel)
                     resp_dest = from_pre if is_dm else None
                     threading.Thread(
-                        target=send_mc_bot_response,
-                        args=(config_id, response, channel, resp_dest),
+                        target=send_and_record_mc_bot_response,
+                        args=(config_id, response, channel, resp_dest, from_name, "relay"),
                         daemon=True,
                     ).start()
-                    push_to_sse({"type": "mc_bot_reply", "radio_id": config_id, "to_id": resp_dest, "to_name": from_name, "cmd": "relay", "text": response, "channel": channel})
                     return
 
             resp_dest = from_pre if is_dm else None
             threading.Thread(
-                target=send_mc_bot_response,
-                args=(config_id, response, channel, resp_dest),
+                target=send_and_record_mc_bot_response,
+                args=(config_id, response, channel, resp_dest, from_name, "relay"),
                 daemon=True,
             ).start()
             log_bot_activity(from_name, "relay", response, channel)
-            push_to_sse({"type": "mc_bot_reply", "radio_id": config_id, "to_id": resp_dest, "to_name": from_name, "cmd": "relay", "text": response, "channel": channel})
             return
 
         # --- Single-word commands ---
@@ -700,13 +718,12 @@ def handle_mc_bot_command(msg, config_id, subtype):
             dest_pre = None
             resp_ch  = channel
 
+        log_bot_activity(from_name, cmd, response, channel)
         threading.Thread(
-            target=send_mc_bot_response,
-            args=(config_id, response, resp_ch, dest_pre),
+            target=send_and_record_mc_bot_response,
+            args=(config_id, response, resp_ch, dest_pre, from_name, cmd),
             daemon=True,
         ).start()
-        log_bot_activity(from_name, cmd, response, channel)
-        push_to_sse({"type": "mc_bot_reply", "radio_id": config_id, "to_id": dest_pre, "to_name": from_name, "cmd": cmd, "text": response, "channel": resp_ch})
 
     except Exception as e:
         log.warning(f"[MCBot:{config_id}] command error: {e}")

@@ -2396,6 +2396,21 @@
       </div>
       <div id="mc-radio-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-bottom:14px"></div>
 
+      <h2 class="settings-title">Path Hash Mode</h2>
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:6px">
+        <div>
+          <label class="settings-label">Default MC path hash</label>
+          <select id="mc-path-hash-mode" class="settings-select" title="Preferred MeshCore path hash size for stored routes and firmware default when supported">
+            <option value="0">1B/hop - legacy compatible</option>
+            <option value="1">2B/hop - balanced</option>
+            <option value="2">3B/hop - most specific</option>
+          </select>
+        </div>
+        <button class="btn btn-net-mc" onclick="saveMcPathHashMode()" title="Save preferred MeshCore path hash mode">Save Path Mode</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted);max-width:560px;margin-bottom:4px">OM applies this to the radio when supported and uses it when saving MC contact routes. If the radio rejects the selected mode, OM falls back to the highest mode it can apply.</div>
+      <div id="mc-path-hash-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-bottom:14px"></div>
+
       <h2 class="settings-title">Device Info <button class="btn" onclick="loadMcDeviceInfo()" style="font-size:11px;padding:2px 8px;margin-left:6px" title="Query device for fresh info">↻ Refresh</button></h2>
       <div id="mc-device-info-content" style="color:var(--muted);font-size:12px;margin-bottom:14px">—</div>
 
@@ -3750,7 +3765,8 @@
           body: [
             'MC rows include short hash chips before names. These help match contacts to MC path hashes shown by messages, pings, and traces.',
             'Path labels: direct means no known repeater, flood mode means open/unknown routing, route means a stored route exists, and 1 hop / 2 hops means known repeaters.',
-            'MC path hashes may be 1, 2, or 3 bytes. Short hashes can collide, so OM marks uncertain matches instead of pretending every hop is exact.'
+            'MC path hashes may be 1, 2, or 3 bytes. Short hashes can collide, so OM marks uncertain matches instead of pretending every hop is exact.',
+            'Route editing lets you choose the path hash size for the stored route. The Settings -> MeshCore default is used as the starting point.'
           ],
           buttons: [
             ['Ping', 'Check MC reachability and draw observed path metadata when available.'],
@@ -3994,8 +4010,9 @@
       title: 'Settings - MeshCore',
       tags: 'settings meshcore mc radios channels tx power coords advert scan reboot import contacts radio params route',
       body: [
-        'Settings -> MeshCore manages MC radios, channels, device identity, coordinates, TX power, and radio parameters.',
+        'Settings -> MeshCore manages MC radios, channels, device identity, coordinates, TX power, radio parameters, and default MC path hash size.',
         'MC capabilities vary by firmware. If a function returns unavailable, it usually means the radio or current connection state cannot do it right now.',
+        'Path Hash Mode chooses the preferred 1B/2B/3B per-hop hash for MC stored routes and the radio default when firmware supports it. OM tries the selected mode first and falls back to the highest mode the radio accepts.',
         'Import Contact accepts meshcore:// share links and writes the contact to the selected radio.'
       ],
       buttons: [
@@ -4008,6 +4025,7 @@
         ['Import', 'Import a meshcore:// contact share link.'],
         ['Save Radio Params', 'Write frequency, bandwidth, spreading factor, and coding rate.'],
         ['Save TX Power', 'Write MC transmit power.'],
+        ['Save Path Mode', 'Write the preferred MC path hash size.'],
         ['Rename', 'Write MC device name.'],
         ['Select on map', 'Pick MC device coordinates from the map.'],
         ['Set Coords', 'Write MC device coordinates.'],
@@ -11041,6 +11059,22 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     return 1;
   }
 
+  function _mcPreferredPathHashMode(radioId, contact = null) {
+    const contactMode = Number(contact?.out_path_hash_mode);
+    const contactPathLen = Number(contact?.out_path_len);
+    if (Number.isFinite(contactPathLen) && contactPathLen >= 0 && Number.isFinite(contactMode) && contactMode >= 0 && contactMode <= 2) return contactMode;
+    const radioMode = Number(mcLastStatus[radioId]?.path_hash_mode);
+    if (Number.isFinite(radioMode) && radioMode >= 0 && radioMode <= 2) return radioMode;
+    return 2;
+  }
+
+  function _mcPathHashModeLabel(mode) {
+    const m = Number(mode);
+    if (m === 0) return '1B/hop';
+    if (m === 1) return '2B/hop';
+    return '3B/hop';
+  }
+
   function _mcExplicitPathHashSize(evt) {
     const size = Number(evt?.path_hash_size);
     if (Number.isFinite(size) && size >= 1 && size <= 3) return size;
@@ -11124,6 +11158,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       contactId,
       contactName: contact.long_name || contact.id || contactId,
       selected: _mcStoredRouteHopPrefixes(contact),
+      pathHashMode: _mcPreferredPathHashMode(radioId, contact),
       query: '',
       saving: false,
       statusMessage: '',
@@ -11138,7 +11173,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     if (!_mcRouteEditor) return;
     const body = document.getElementById('modal-body');
     if (!body) return;
-    const { radioId, contactId, contactName, selected, query, saving } = _mcRouteEditor;
+    const { radioId, contactId, contactName, selected, query, saving, pathHashMode } = _mcRouteEditor;
     const contact = mcContacts[radioId]?.[contactId];
     const radioLabel = mcLastStatus[radioId]?.name || mcLastStatus[radioId]?.node_name || radioId;
     const currentSummary = contact ? _mcStoredRouteSummary(contact, radioId) : 'Automatic / flood routing';
@@ -11186,6 +11221,17 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       </div>
       <div style="font-size:12px;color:var(--muted)">Selected repeaters</div>
       ${hopHtml}
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin:10px 0">
+        <div>
+          <label class="settings-label">Path hash for this route</label>
+          <select class="settings-select" onchange="mcRouteSetPathHashMode(this.value)" ${saving ? 'disabled' : ''}>
+            <option value="0"${Number(pathHashMode) === 0 ? ' selected' : ''}>1B/hop - legacy compatible</option>
+            <option value="1"${Number(pathHashMode) === 1 ? ' selected' : ''}>2B/hop - balanced</option>
+            <option value="2"${Number(pathHashMode) === 2 ? ' selected' : ''}>3B/hop - most specific</option>
+          </select>
+        </div>
+        <div style="font-size:11px;color:var(--muted);max-width:300px">Uses ${escHtml(_mcPathHashModeLabel(pathHashMode))} when saving this stored route. Older radios may fall back.</div>
+      </div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Search known repeaters</div>
       <div class="mc-route-search-row">
         <input id="mc-route-search" class="mc-route-search" value="${escHtml(query)}" placeholder="Search repeaters..." oninput="mcRouteSetQuery(this.value)" ${saving ? 'disabled' : ''}>
@@ -11209,6 +11255,13 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         input.setSelectionRange(input.value.length, input.value.length);
       }
     }, 0);
+  }
+
+  function mcRouteSetPathHashMode(value) {
+    if (!_mcRouteEditor) return;
+    const mode = Number(value);
+    _mcRouteEditor.pathHashMode = Number.isFinite(mode) ? Math.max(0, Math.min(2, mode)) : 2;
+    renderMcRouteEditor();
   }
 
   function mcRouteAddHop(prefix) {
@@ -11243,7 +11296,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       const r = await fetch(`/api/mc/${encodeURIComponent(state.radioId)}/contacts/${encodeURIComponent(state.contactId)}/route`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({clear, hops: clear ? [] : state.selected}),
+        body: JSON.stringify({clear, hops: clear ? [] : state.selected, path_hash_mode: state.pathHashMode}),
       });
       const data = await r.json();
       if (!r.ok || data.error) throw new Error(data.error || `HTTP ${r.status}`);
@@ -11253,6 +11306,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       mcContacts[state.radioId][contact.id] = Object.assign({}, prev, contact);
       state.contactId = contact.id;
       state.selected = clear ? [] : _mcStoredRouteHopPrefixes(contact);
+      state.pathHashMode = _mcPreferredPathHashMode(state.radioId, contact);
       state.statusMessage = clear ? 'Stored path cleared.' : 'Stored route updated.';
       state.statusKind = 'success';
       renderMcMapMarkers();
@@ -13261,6 +13315,10 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     fetch('/api/settings/mc_nodes').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
       const list = document.getElementById('settings-mc-nodes-list');
       if (!list) return;
+      (data.mc_nodes || []).forEach(n => {
+        if (!mcLastStatus[n.id]) mcLastStatus[n.id] = {};
+        mcLastStatus[n.id].path_hash_mode = n.path_hash_mode ?? mcLastStatus[n.id].path_hash_mode ?? 2;
+      });
       if (!data.mc_nodes.length) {
         list.innerHTML = '<p style="color:var(--muted);font-size:12px;margin:0">No MC radios configured.</p>';
         return;
@@ -13271,6 +13329,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
           <span class="status-dot ${dot}"></span>
           <span class="radio-row-name"><span class="mc-badge">MC</span>${escHtml(n.name)}</span>
           <span class="radio-row-port" title="${escHtml(n.usb_serial || n.port)}">${escHtml(n.port)}</span>
+          <span class="radio-row-status" title="Preferred MC path hash size">${escHtml(_mcPathHashModeLabel(n.path_hash_mode ?? 2))}</span>
           <span class="radio-row-status" style="${!n.enabled ? 'color:var(--muted)' : ''}">${n.enabled ? n.status : 'disabled'}</span>
           <button class="btn-secondary" style="font-size:11px;padding:3px 8px;${n.enabled ? '' : 'color:var(--accent);border-color:var(--accent)'}"
             title="${n.enabled ? 'Pause scanning for this radio — keeps config and message history intact' : 'Resume scanning and connecting to this radio'}"
@@ -14059,11 +14118,13 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const crSel  = document.getElementById('mc-radio-cr');
     const txEl   = document.getElementById('mc-tx-power');
     const maxEl  = document.getElementById('mc-tx-power-max');
+    const hashSel = document.getElementById('mc-path-hash-mode');
     if (freqEl && s.freq != null) freqEl.value = s.freq;
     if (bwSel  && s.bw   != null) bwSel.value  = String(s.bw);
     if (sfSel  && s.sf   != null) sfSel.value  = String(s.sf);
     if (crSel  && s.cr   != null) crSel.value  = String(s.cr);
     if (txEl   && s.tx_power   != null) txEl.value = s.tx_power;
+    if (hashSel) hashSel.value = String(_mcPreferredPathHashMode(radioId));
     if (maxEl  && s.max_tx_power != null) maxEl.textContent = `max ${s.max_tx_power} dBm`;
     if (maxEl  && s.max_tx_power != null && txEl) txEl.max = s.max_tx_power;
     const latEl = document.getElementById('mc-coords-lat');
@@ -14237,6 +14298,40 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         }
         setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
       }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
+  }
+
+  function saveMcPathHashMode() {
+    const radioId = mcSettingsRadioId || activeMcRadioId;
+    const sel = document.getElementById('mc-path-hash-mode');
+    const statusEl = document.getElementById('mc-path-hash-status');
+    if (!radioId || !sel) return;
+    const requested = parseInt(sel.value);
+    if (!Number.isFinite(requested) || requested < 0 || requested > 2) {
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Invalid path mode.</span>';
+      return;
+    }
+    if (statusEl) statusEl.textContent = 'Saving...';
+    fetch(`/api/settings/mc_nodes/${encodeURIComponent(radioId)}/path_hash_mode`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({path_hash_mode: requested}),
+    }).then(r => r.json().then(d => ({ok: r.ok, d})))
+      .then(({ok, d}) => {
+        if (!ok || d.error) throw new Error(d.error || 'Request failed.');
+        const applied = Number(d.applied ?? requested);
+        if (!mcLastStatus[radioId]) mcLastStatus[radioId] = {};
+        mcLastStatus[radioId].path_hash_mode = applied;
+        sel.value = String(applied);
+        loadMcSettingsNodes();
+        const label = _mcPathHashModeLabel(applied);
+        const suffix = d.fallback
+          ? ` ${d.warning || `Selected mode unavailable; using ${label}.`}`
+          : ` Saved ${label}.`;
+        if (statusEl) statusEl.innerHTML = `<span style="color:var(--accent)">${escHtml(suffix)}</span>`;
+        setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 5000);
+      }).catch(e => {
+        if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`;
+      });
   }
 
   function saveMcDeviceName() {

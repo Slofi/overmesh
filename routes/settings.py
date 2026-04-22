@@ -39,6 +39,16 @@ def _can_remove_mt_node():
     return len(CONFIG["nodes"]) > 1 or _has_any_mc_nodes()
 
 
+def _parse_mc_path_hash_mode(value):
+    try:
+        mode = int(value)
+    except (TypeError, ValueError):
+        raise ValueError("path_hash_mode must be an integer")
+    if mode < 0 or mode > 2:
+        raise ValueError("path_hash_mode must be between 0 and 2")
+    return mode
+
+
 def _settings_local_request():
     addr = request.remote_addr or ""
     if addr == "localhost":
@@ -530,6 +540,7 @@ def api_settings_mc_nodes():
             "usb_serial": n.get("usb_serial", ""),
             "enabled":    n.get("enabled", True),
             "status":     statuses.get(n["id"], "disconnected"),
+            "path_hash_mode": n.get("path_hash_mode", 2),
         }
         for n in CONFIG.get("mc_nodes", [])
     ]
@@ -558,7 +569,7 @@ def api_settings_mc_nodes_add():
     if not usb_serial and any(n.get("port") == port and not n.get("usb_serial") for n in CONFIG.get("nodes", [])):
         return jsonify({"error": f"Port {port} is already configured as an MT node"}), 400
     node_id  = f"mc_node_{uuid.uuid4().hex[:12]}"
-    new_node = {"id": node_id, "name": name, "enabled": True}
+    new_node = {"id": node_id, "name": name, "enabled": True, "path_hash_mode": 2}
     if usb_serial:
         new_node["usb_serial"] = usb_serial
         new_node["port"]       = port
@@ -625,3 +636,62 @@ def api_settings_mc_nodes_set_enabled(node_id):
             from mesh_mc import connect_mc_node
             threading.Thread(target=connect_mc_node, args=(node,), daemon=True).start()
     return jsonify({"ok": True})
+
+
+@bp.route("/api/settings/mc_nodes/<node_id>/path_hash_mode", methods=["POST"])
+def api_settings_mc_nodes_path_hash_mode(node_id):
+    data = request.get_json(silent=True) or {}
+    try:
+        requested_mode = _parse_mc_path_hash_mode(data.get("path_hash_mode"))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    with CONFIG_LOCK:
+        mc_nodes = CONFIG.get("mc_nodes", [])
+        node = next((n for n in mc_nodes if n["id"] == node_id), None)
+        if not node:
+            return jsonify({"error": "MC node not found"}), 404
+        node["path_hash_mode"] = requested_mode
+        save_config()
+
+    applied_mode = requested_mode
+    fallback = False
+    warning = None
+    connected = False
+    with mc_connections_lock:
+        connected = bool(
+            mc_connections.get(node_id, {}).get("status") == "connected"
+            and mc_connections.get(node_id, {}).get("mc")
+        )
+
+    if connected:
+        try:
+            from mesh_mc import set_path_hash_mode
+            result = set_path_hash_mode(node_id, requested_mode)
+            applied_mode = int(result.get("applied", requested_mode))
+            fallback = bool(result.get("fallback")) or applied_mode != requested_mode
+        except Exception as e:
+            log.warning(f"[MC:{node_id}] path hash mode {requested_mode} failed: {e}")
+            applied_mode = 0
+            fallback = True
+            warning = "Radio did not accept path hash mode command; using 1B/hop fallback."
+
+        if applied_mode != requested_mode:
+            with CONFIG_LOCK:
+                node = next((n for n in CONFIG.get("mc_nodes", []) if n["id"] == node_id), None)
+                if node:
+                    node["path_hash_mode"] = applied_mode
+                    save_config()
+        with mc_connections_lock:
+            if node_id in mc_connections:
+                mc_connections[node_id].setdefault("config", {})["path_hash_mode"] = applied_mode
+                mc_connections[node_id].setdefault("node_info", {})["path_hash_mode"] = applied_mode
+
+    return jsonify({
+        "ok": True,
+        "requested": requested_mode,
+        "applied": applied_mode,
+        "fallback": fallback,
+        "connected": connected,
+        "warning": warning,
+    })

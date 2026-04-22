@@ -99,6 +99,7 @@ def api_mc_status():
                 "lon":        info.get("adv_lon"),
                 "contacts":   len(v.get("contacts", {})),
                 "enabled":    v.get("config", {}).get("enabled", True),
+                "path_hash_mode": v.get("config", {}).get("path_hash_mode", info.get("path_hash_mode")),
             })
     return jsonify({"mc_nodes": result})
 

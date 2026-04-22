@@ -15,7 +15,7 @@ import time
 from meshcore import MeshCore, EventType
 from meshcore.packets import BinaryReqType
 
-from config import CONFIG, save_config
+from config import CONFIG, CONFIG_LOCK, save_config
 from cross import maybe_forward_mc_message
 from db import log_position
 from helpers import push_to_sse
@@ -57,6 +57,37 @@ MC_CHANNEL_NAME_OVERHEAD_BYTES = 2
 MC_CHANNEL_SCOPE_HEADROOM_BYTES = 10
 MC_MAX_AUTO_SPLIT_PARTS = 6
 MC_SPLIT_SEND_DELAY_SEC = 1.8
+
+
+def _valid_path_hash_mode(value):
+    if value in ("", None):
+        return None
+    try:
+        mode = int(value)
+    except (TypeError, ValueError):
+        raise ValueError("path_hash_mode must be an integer")
+    if mode < 0 or mode > 2:
+        raise ValueError("path_hash_mode must be between 0 and 2")
+    return mode
+
+
+def _path_hash_mode_attempts(preferred):
+    """Try the requested mode first, then fall back from highest to lowest."""
+    preferred = _valid_path_hash_mode(preferred)
+    attempts = []
+    if preferred is not None:
+        attempts.append(preferred)
+    for mode in (2, 1, 0):
+        if mode not in attempts:
+            attempts.append(mode)
+    return attempts
+
+
+def _configured_path_hash_mode(config_id):
+    for node in CONFIG.get("mc_nodes", []):
+        if node.get("id") == config_id:
+            return _valid_path_hash_mode(node.get("path_hash_mode", 2))
+    return None
 
 
 def _ensure_mc_tx_allowed(action="MC transmission"):
@@ -469,6 +500,34 @@ async def _connect_mc_node_async(node_cfg):
             log.info(f"[MC:{name}] Re-applied saved radio params: {saved_radio}")
         except Exception as e:
             log.warning(f"[MC:{name}] Could not re-apply radio params: {e}")
+
+    saved_hash_mode = node_cfg.get("path_hash_mode", 2)
+    if saved_hash_mode not in ("", None):
+        try:
+            result = await _set_path_hash_mode_on_mc(mc, saved_hash_mode)
+            node_info["path_hash_mode"] = result["applied"]
+            if result["applied"] != _valid_path_hash_mode(saved_hash_mode):
+                with CONFIG_LOCK:
+                    for node in CONFIG.get("mc_nodes", []):
+                        if node.get("id") == config_id:
+                            node["path_hash_mode"] = result["applied"]
+                            break
+                    save_config()
+                log.warning(
+                    f"[MC:{name}] Requested path hash mode {saved_hash_mode} unavailable; "
+                    f"using {result['applied']}"
+                )
+            else:
+                log.info(f"[MC:{name}] Applied path hash mode {result['applied']}")
+        except Exception as e:
+            log.warning(f"[MC:{name}] Could not apply saved path hash mode {saved_hash_mode}: {e}")
+            node_info["path_hash_mode"] = 0
+            with CONFIG_LOCK:
+                for node in CONFIG.get("mc_nodes", []):
+                    if node.get("id") == config_id:
+                        node["path_hash_mode"] = 0
+                        break
+                save_config()
 
     node_id = node_info.get("public_key", "")[:12]  # 6-byte pubkey prefix as ID
 
@@ -1039,6 +1098,33 @@ def _get_mc(config_id):
     return mc, state
 
 
+async def _set_path_hash_mode_on_mc(mc, preferred_mode):
+    last_error = None
+    for mode in _path_hash_mode_attempts(preferred_mode):
+        try:
+            await mc.commands.set_path_hash_mode(mode)
+            return {
+                "requested": _valid_path_hash_mode(preferred_mode),
+                "applied": mode,
+                "fallback": mode != _valid_path_hash_mode(preferred_mode),
+            }
+        except Exception as e:
+            last_error = e
+    raise last_error or RuntimeError("Could not set MC path hash mode")
+
+
+async def _set_path_hash_mode_async(config_id, preferred_mode):
+    mc, _ = _get_mc(config_id)
+    result = await _set_path_hash_mode_on_mc(mc, preferred_mode)
+    with mc_connections_lock:
+        if config_id in mc_connections:
+            info = mc_connections[config_id].setdefault("node_info", {})
+            info["path_hash_mode"] = result["applied"]
+            cfg = mc_connections[config_id].setdefault("config", {})
+            cfg["path_hash_mode"] = result["applied"]
+    return result
+
+
 async def _send_chan_msg_async(config_id, chan_idx, text):
     mc, _ = _get_mc(config_id)
     return await mc.commands.send_chan_msg(chan_idx, text)
@@ -1081,20 +1167,30 @@ async def _set_contact_path_async(config_id, pubkey_prefix, hop_prefixes=None, c
     else:
         hop_prefixes = list(hop_prefixes or [])
         if path_hash_mode is None:
-            path_hash_mode = await mc.commands.get_path_hash_mode()
-        try:
-            path_hash_mode = int(path_hash_mode)
-        except (TypeError, ValueError):
-            raise ValueError("path_hash_mode must be an integer")
-        if path_hash_mode < 0 or path_hash_mode > 2:
-            raise ValueError("path_hash_mode must be between 0 and 2")
+            path_hash_mode = _configured_path_hash_mode(config_id)
+            if path_hash_mode is None:
+                path_hash_mode = await mc.commands.get_path_hash_mode()
 
-        hash_chars = (path_hash_mode + 1) * 2
-        path_hex_parts = []
-        for hop_prefix in hop_prefixes:
-            hop_full_key, _ = _resolve_mc_contact(contacts, hop_prefix)
-            path_hex_parts.append(hop_full_key[:hash_chars])
-        result = await mc.commands.change_contact_path(contact, "".join(path_hex_parts), path_hash_mode=path_hash_mode)
+        result = None
+        last_error = None
+        for mode in _path_hash_mode_attempts(path_hash_mode):
+            try:
+                hash_chars = (mode + 1) * 2
+                path_hex_parts = []
+                for hop_prefix in hop_prefixes:
+                    hop_full_key, _ = _resolve_mc_contact(contacts, hop_prefix)
+                    path_hex_parts.append(hop_full_key[:hash_chars])
+                result = await mc.commands.change_contact_path(
+                    dict(contact),
+                    "".join(path_hex_parts),
+                    path_hash_mode=mode,
+                )
+                path_hash_mode = mode
+                break
+            except Exception as e:
+                last_error = e
+        if result is None:
+            raise last_error or RuntimeError("Could not update contact path")
 
     refreshed = await _get_contacts_async(config_id)
     if refreshed is None:
@@ -1337,6 +1433,10 @@ def send_dm(config_id, pubkey_prefix, text, timeout=10):
         if len(chunks) > 1 and idx < len(chunks) - 1:
             time.sleep(MC_SPLIT_SEND_DELAY_SEC)
     return result
+
+
+def set_path_hash_mode(config_id, preferred_mode, timeout=10):
+    return run_mc(_set_path_hash_mode_async(config_id, preferred_mode), timeout=timeout)
 
 
 def send_statusreq(config_id, pubkey_prefix, timeout=10):

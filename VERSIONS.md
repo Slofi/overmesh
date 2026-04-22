@@ -10,6 +10,15 @@ OverMesh uses date-based release versions:
 
 The version in `VERSION` must be updated every time an OverMesh update is pushed to GitHub. The Settings updater also shows the Git commit hash for exact build identification.
 
+## 2026.04.22.1
+
+- Added MeshCore path-hash mode controls:
+  - Settings -> MeshCore now has a per-radio default path hash mode selector for `1B/hop`, `2B/hop`, or `3B/hop`
+  - MC Route editor now lets stored contact routes be saved with a selected path hash size
+  - OM applies the configured MC path-hash mode on connect when firmware supports it
+  - fallback handling tries the selected mode first, then lower supported modes as needed
+- Updated the in-app manual for MC path-hash mode and route-editor behavior.
+
 ## 2026.04.21.4
 
 - Removed `RELEASE_CHECKLIST.md` from the public repository because it contained local/live release notes that are not useful to users and expose unnecessary environment details.

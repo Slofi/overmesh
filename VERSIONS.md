@@ -10,6 +10,14 @@ OverMesh uses date-based release versions:
 
 The version in `VERSION` must be updated every time an OverMesh update is pushed to GitHub. The Settings updater also shows the Git commit hash for exact build identification.
 
+## 2026.04.23.1
+
+- Updated the Meshtastic Device Role setting in Settings -> Meshtastic -> Node:
+  - OM now reads the role enum directly from the installed Meshtastic library instead of using a stale hard-coded list
+  - fixed incorrect role numbering from `REPEATER` onward
+  - added the current Meshtastic roles such as `Router Late` and `Client Base`
+  - improved the dropdown labels to readable names like `Client Mute`, `Client Hidden`, and `TAK Tracker`
+
 ## 2026.04.22.1
 
 - Added MeshCore path-hash mode controls:

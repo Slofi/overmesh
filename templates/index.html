@@ -15318,7 +15318,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         const roleSel = document.getElementById('node-cfg-role');
         roleSel.innerHTML = Object.entries(d.device_roles)
           .sort((a,b) => parseInt(a[0]) - parseInt(b[0]))
-          .map(([v,n]) => `<option value="${escHtml(v)}">${escHtml(n)}</option>`).join('');
+          .map(([v,n]) => `<option value="${escHtml(v)}">${escHtml(_formatMtDeviceRoleLabel(n))}</option>`).join('');
         roleSel.value = d.role;
 
         // Populate region dropdown
@@ -15404,6 +15404,15 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       .catch(e => {
         err.innerHTML = `<span style="color:var(--red)">Load failed: ${escHtml(String(e))}. Press ↻ Reload to retry.</span>`;
       });
+  }
+
+  function _formatMtDeviceRoleLabel(name) {
+    const raw = String(name || '').trim();
+    if (!raw) return 'Unknown';
+    return raw.split('_').map(part => {
+      if (part === 'TAK') return 'TAK';
+      return part.charAt(0) + part.slice(1).toLowerCase();
+    }).join(' ');
   }
 
   function nodeCfgStatus(key, msg, ok) {

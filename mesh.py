@@ -9,6 +9,7 @@ import time
 
 import meshtastic.serial_interface
 import meshtastic.tcp_interface
+from meshtastic import config_pb2
 from pubsub import pub
 
 from bot import handle_bot_command
@@ -32,17 +33,11 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 DEVICE_ROLES = {
-    0: "CLIENT",
-    1: "CLIENT_MUTE",
-    2: "ROUTER",
-    3: "ROUTER_CLIENT",
-    5: "REPEATER",
-    6: "TRACKER",
-    7: "SENSOR",
-    8: "TAK",
-    9: "CLIENT_HIDDEN",
-    10: "LOST_AND_FOUND",
-    11: "TAK_TRACKER",
+    value: name
+    for name, value in sorted(
+        config_pb2.Config.DeviceConfig.Role.items(),
+        key=lambda kv: kv[1],
+    )
 }
 
 LORA_REGIONS = {

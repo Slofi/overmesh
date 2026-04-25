@@ -13,7 +13,7 @@ from mesh import get_any_iface, get_any_iface_with_id, get_iface_by_radio
 from state import (
     chat_lock, chat_messages,
     pending_acks, pending_acks_lock,
-    sse_clients, sse_lock,
+    sse_clients, sse_lock, _sse_queue_last_ok,
 )
 import logging
 log = logging.getLogger(__name__)
@@ -56,6 +56,7 @@ def api_chat_stream():
     q = queue.Queue(maxsize=100)
     with sse_lock:
         sse_clients.append(q)
+        _sse_queue_last_ok[id(q)] = time.time()
 
     def generate():
         try:
@@ -77,6 +78,7 @@ def api_chat_stream():
                     sse_clients.remove(q)
                 except ValueError:
                     pass
+                _sse_queue_last_ok.pop(id(q), None)
 
     resp = Response(generate(), mimetype="text/event-stream")
     resp.headers["Cache-Control"]      = "no-cache"

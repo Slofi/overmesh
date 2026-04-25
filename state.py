@@ -33,8 +33,9 @@ mc_connections_lock = threading.Lock()
 
 chat_messages     = []          # rolling buffer, last 500
 chat_lock         = threading.Lock()
-sse_clients       = []          # queues, evicted when full in push_to_sse()
+sse_clients       = []          # queues, evicted only when stale in push_to_sse()
 sse_lock          = threading.Lock()
+_sse_queue_last_ok  = {}          # id(q) -> last successful enqueue; tracks stale/full ghost queues
 pending_acks      = {}          # packet_id -> (msg_id, radio_id, ts)
 pending_acks_lock = threading.Lock()
 

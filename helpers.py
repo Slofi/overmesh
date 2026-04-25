@@ -1,11 +1,12 @@
 import json
 import logging
+import queue as _queue
 import threading
 import time
 
 from db import get_favorites, get_ignored, upsert_node
 from hw_models import hw_model_name
-from state import connections, connections_lock, sse_clients, sse_lock
+from state import connections, connections_lock, sse_clients, sse_lock, _sse_queue_last_ok
 
 log = logging.getLogger(__name__)
 
@@ -24,18 +25,28 @@ def _next_msg_id():
         return f"{int(time.time())}-{_msg_counter}"
 
 
+_SSE_QUEUE_TTL = 600  # seconds before a persistently full queue is treated as a ghost
+
 def push_to_sse(data):
     if isinstance(data, (dict, list)):
         data = json.dumps(data)
+    now = time.time()
     with sse_lock:
         dead = []
         for q in sse_clients:
             try:
                 q.put_nowait(data)
+                _sse_queue_last_ok[id(q)] = now
+            except _queue.Full:
+                # Don't evict immediately — client may be momentarily slow.
+                # Only evict if the queue has been unable to accept any event for a long time.
+                if now - _sse_queue_last_ok.get(id(q), now) > _SSE_QUEUE_TTL:
+                    dead.append(q)
             except Exception:
                 dead.append(q)
         for q in dead:
             sse_clients.remove(q)
+            _sse_queue_last_ok.pop(id(q), None)
 
 
 # ---------------------------------------------------------------------------

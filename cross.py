@@ -87,7 +87,7 @@ def _filter_tokens(cfg):
 
 
 def _relay_tagged(text):
-    return bool(_RELAY_TAG_RE.match((text or "").strip()))
+    return bool(_RELAY_TAG_RE.search((text or "").strip()))
 
 
 def _dedupe_key(net, radio_id, channel, sender_id, text):

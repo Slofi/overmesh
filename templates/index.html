@@ -3613,7 +3613,7 @@
             // Browser notification
             if (document.hidden || currentTab !== 'chat' || chatChannel !== msgCh) {
               const title = data.is_dm ? `DM from ${data.from_name}` : `${data.from_name} on CH${data.channel}`;
-              maybeShowInAppMessage(title, data.text, `toast-msg-${data.id}`);
+              maybeShowInAppMessage(title, escHtml(data.text), `toast-msg-${data.id}`);
               sendNotif(title, data.text, `msg-${data.id}`, 'message');
             }
           }
@@ -11053,7 +11053,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
           const title = data.subtype === 'dm'
             ? `MC DM from ${mcDmContacts[data.from_id] || data.from_id || '?'}`
             : `MC ${mcKnownChannels[data.channel ?? 0] || ('CH' + (data.channel ?? 0))}`;
-          maybeShowInAppMessage(title, _mcMsgText(data, mcDmContacts[data.from_id] || ''), `toast-mc-msg-${data.radio_id}-${data.id || data.ts || Date.now()}`);
+          maybeShowInAppMessage(title, escHtml(_mcMsgText(data, mcDmContacts[data.from_id] || '')), `toast-mc-msg-${data.radio_id}-${data.id || data.ts || Date.now()}`);
           sendNotif(title, _mcMsgText(data, mcDmContacts[data.from_id] || ''), `mc-msg-${data.radio_id}-${data.id || data.ts || Date.now()}`, 'message');
         }
       }
@@ -11843,6 +11843,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const hide = `document.getElementById('mc-contact-popup').style.display='none'`;
     const btns = [];
     if (c && actionId) {
+      if (c.id) btns.push(`<button class="map-popup-btn" onclick="showMcNodeInList('${jsSafe(c.id)}');${hide}">List</button>`);
       btns.push(`<button class="map-popup-btn" onclick="doMcDm('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}">DM</button>`);
       if (c.type !== 2) btns.push(`<button class="map-popup-btn" onclick="doMcPing('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}">Ping</button>`);
     }
@@ -12633,7 +12634,6 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
   function decodeMcEventPath(evt, endpointLat, endpointLon, radioLat, radioLon, radioId = null) {
     const pathHex = evt?.path || '';
     const hopCount = evt?.path_len;
-    const hashSize = _mcPathHashSize(evt?.path_hash_size, evt?.path_hash_mode);
     if (endpointLat == null || endpointLon == null) return null;
     if (hopCount == null || hopCount < 0 || hopCount === 255) return null;  // 255 = direct-mode/no embedded hop list in message events
     if (hopCount === 0) {
@@ -12642,14 +12642,11 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     }
     // hopCount > 0 but no path hashes — relay identities unavailable, let caller fall back to decodeMcPath
     if (!pathHex) return null;
-    const hashChars = hashSize * 2;
-    const hashList = [];
-    for (let i = 0; i < hopCount; i++) {
-      const hashHex = pathHex.slice(i * hashChars, (i + 1) * hashChars);
-      if (!hashHex || hashHex.replace(/0/g, '') === '') break;
-      hashList.push(hashHex);
-    }
-    const build = (hashes, orderLabel) => {
+    const explicitSize = _mcExplicitPathHashSize(evt);
+    const candidateSizes = explicitSize
+      ? [explicitSize]
+      : [1, 2, 3].filter(size => pathHex.length >= hopCount * size * 2 );
+    const build = (hashes, orderLabel, hashSize) => {
       const points = [];
       const hops = [];
       let partial = false;
@@ -12666,15 +12663,29 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         if (hopResolution?.ambiguous) partial = true;
       });
       points.push([endpointLat, endpointLon]);
-      return points.length >= 2 ? { points, partial, hops, rawPathOrder: orderLabel } : null;
+      return points.length >= 2 ? { points, partial, hops, rawPathOrder: orderLabel, inferredPathHashSize: hashSize } : null;
     };
-    const forward = build(hashList, 'as-received');
-    const reverse = hashList.length > 1 ? build([...hashList].reverse(), 'reversed') : null;
-    if (!forward) return reverse;
-    if (!reverse) return forward;
-    const forwardScore = _mcDecodedPathScore(forward, hopCount);
-    const reverseScore = _mcDecodedPathScore(reverse, hopCount);
-    return reverseScore + 25 < forwardScore ? reverse : forward;
+    let best = null;
+    candidateSizes.forEach(hashSize => {
+      const hashChars = hashSize * 2;
+      const hashList = [];
+      for (let i = 0; i < hopCount; i++) {
+        const hashHex = pathHex.slice(i * hashChars, (i + 1) * hashChars);
+        if (!hashHex || hashHex.replace(/0/g, '') === '') break;
+        hashList.push(hashHex);
+      }
+      const forward = build(hashList, 'as-received', hashSize);
+      const reverse = hashList.length > 1 ? build([...hashList].reverse(), 'reversed', hashSize) : null;
+      const chosen = (!forward)
+        ? reverse
+        : (!reverse)
+          ? forward
+          : ((_mcDecodedPathScore(reverse, hopCount) + 25 < _mcDecodedPathScore(forward, hopCount)) ? reverse : forward);
+      if (!chosen) return;
+      const score = _mcDecodedPathScore(chosen, hopCount);
+      if (!best || score < best.score) best = { score, result: chosen };
+    });
+    return best?.result || null;
   }
 
   function decodeMcRelayPath(evt, radioLat, radioLon, radioId = null) {
@@ -12683,7 +12694,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     if (!pathHex) return null;
     const rawHopCount = evt?.path_len;
     const explicitSize = _mcExplicitPathHashSize(evt);
-    const candidates = explicitSize ? [explicitSize] : [1, 2, 3].filter(size => pathHex.length >= size * 2 && pathHex.length % (size * 2) === 0);
+    const candidates = explicitSize ? [explicitSize] : [1, 2, 3].filter(size => pathHex.length >= size * 2 );
     let best = null;
     candidates.forEach(hashSize => {
       const hashChars = hashSize * 2;

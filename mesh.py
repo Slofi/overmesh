@@ -214,10 +214,12 @@ def on_text_receive(packet, interface):
                 r_id    = _radio_id_for_iface(interface)
                 if wp_id:
                     if wp_exp == 1:
-                        with waypoints_lock:
-                            waypoints_cache.pop(wp_id, None)
+                        # DB delete first: if we crash between the two operations,
+                        # restarting from DB is correct (cache rebuilds from DB).
                         with get_prefs_db() as conn:
                             conn.cursor().execute("DELETE FROM waypoints WHERE id=?", (wp_id,))
+                        with waypoints_lock:
+                            waypoints_cache.pop(wp_id, None)
                         push_to_sse(json.dumps({"type": "waypoint_deleted", "id": wp_id}))
                     elif wp_lat != 0 or wp_lon != 0:
                         wp_entry = {
@@ -492,10 +494,27 @@ def health_check_loop():
                 for nid, state in connections.items()
                 if state.get("status") == "connected" and state.get("iface")
             ]
+        reconnect_needed = False
         for node_id, iface in to_check:
             if not iface or _is_iface_alive(iface):
                 continue
             log.warning(f"[{node_id}] Health check: silent disconnect detected, forcing reconnect.")
+            # Atomically claim ownership before touching the iface so no other
+            # thread can use or double-close it.
+            node_name = node_id
+            with connections_lock:
+                if connections.get(node_id, {}).get("iface") is not iface:
+                    continue  # another thread already handled this iface
+                connections[node_id]["status"] = "disconnected"
+                connections[node_id]["iface"] = None
+                node_name = connections[node_id].get("config", {}).get("name", node_id)
+            reconnect_needed = True
+            push_to_sse(json.dumps({
+                "type": "node_status",
+                "radio_id": node_id,
+                "status": "disconnected",
+                "name": node_name,
+            }))
             try:
                 iface.close()
             except Exception:
@@ -506,10 +525,8 @@ def health_check_loop():
                     stream.close()
             except Exception:
                 pass
-            with connections_lock:
-                if connections.get(node_id, {}).get("iface") is iface:
-                    connections[node_id]["status"] = "disconnected"
-                    connections[node_id]["iface"] = None
+        if reconnect_needed:
+            _reconnect_disconnected()
 
 
 def reconnect_loop():

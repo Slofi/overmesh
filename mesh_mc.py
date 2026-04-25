@@ -6,6 +6,7 @@ Bridge pattern: run a dedicated asyncio event loop in a background daemon
 thread; submit coroutines to it from Flask routes via run_mc().
 """
 import asyncio
+import atexit
 import concurrent.futures
 import datetime
 import logging
@@ -22,6 +23,59 @@ from helpers import push_to_sse
 from state import mc_connections, mc_connections_lock
 
 log = logging.getLogger(__name__)
+
+
+def _mc_bg_task(coro, label=""):
+    """Schedule a background asyncio task and log any unhandled exception."""
+    task = asyncio.ensure_future(coro)
+    def _cb(t):
+        if not t.cancelled():
+            try:
+                exc = t.exception()
+                if exc:
+                    log.warning(f"[MC] Background task '{label}' raised: {exc}")
+            except Exception:
+                pass
+    task.add_done_callback(_cb)
+    return task
+
+
+def _mc_disable_debug_logging_locked(meshcore_log):
+    global _mc_debug_raw_handler, _mc_debug_atexit_registered
+    handler = _mc_debug_raw_handler
+    if handler is None:
+        return
+    try:
+        meshcore_log.removeHandler(handler)
+    except Exception:
+        pass
+    if _mc_debug_atexit_registered:
+        try:
+            atexit.unregister(handler.close)
+        except Exception:
+            pass
+        _mc_debug_atexit_registered = False
+    try:
+        handler.close()
+    except Exception:
+        pass
+    _mc_debug_raw_handler = None
+    meshcore_log.setLevel(logging.INFO)
+    meshcore_log.propagate = True
+
+
+def _mc_ensure_debug_logging_locked(meshcore_log):
+    global _mc_debug_raw_handler, _mc_debug_atexit_registered
+    meshcore_log.setLevel(logging.DEBUG)
+    meshcore_log.propagate = False  # stop propagation so root INFO filter doesn't swallow DEBUG
+    if _mc_debug_raw_handler is None:
+        handler = logging.FileHandler("/tmp/overmesh-mc-raw.log")
+        handler.setLevel(logging.DEBUG)
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        meshcore_log.addHandler(handler)
+        _mc_debug_raw_handler = handler
+        atexit.register(handler.close)
+        _mc_debug_atexit_registered = True
 
 
 def _push_mc_node(data):
@@ -51,6 +105,10 @@ _mc_recent_rx_logs: dict[str, list[dict]] = {}  # radio id -> recent RX_LOG_DATA
 _mc_drain_active: set[str] = set()
 _mc_drain_pending: set[str] = set()   # fired MESSAGES_WAITING while drain was active — re-drain on finish
 _mc_path_refresh_active: set[str] = set()  # rate-limit concurrent get_contacts() from PATH_UPDATE
+_mc_debug_lock = threading.Lock()
+_mc_debug_until: dict[str, float] = {}
+_mc_debug_raw_handler = None
+_mc_debug_atexit_registered = False
 
 MC_MAX_DM_MSG_BYTES = 160
 MC_CHANNEL_NAME_OVERHEAD_BYTES = 2
@@ -215,14 +273,15 @@ def _mc_path_hash_size_from_msg(msg, rx=None):
                     return size
             except (TypeError, ValueError):
                 pass
-    mode = (msg or {}).get("path_hash_mode")
-    if mode is not None:
-        try:
-            mode = int(mode)
-            if mode >= 0:
-                return mode + 1
-        except (TypeError, ValueError):
-            pass
+    for source in (rx or {}, msg or {}):
+        mode = source.get("path_hash_mode")
+        if mode is not None:
+            try:
+                mode = int(mode)
+                if mode >= 0:
+                    return mode + 1
+            except (TypeError, ValueError):
+                pass
     return None
 
 
@@ -412,7 +471,7 @@ async def _drain_mc_queue(mc, config_id, name, reason="event", timeout=5, max_me
         # waiting up to 8s for the next periodic poll.
         if config_id in _mc_drain_pending:
             _mc_drain_pending.discard(config_id)
-            asyncio.ensure_future(_drain_mc_queue(mc, config_id, name, reason=f"{reason}_requeue"))
+            _mc_bg_task(_drain_mc_queue(mc, config_id, name, reason=f"{reason}_requeue"), "drain_requeue")
 
 
 # ---------------------------------------------------------------------------
@@ -600,7 +659,7 @@ async def _connect_mc_node_async(node_cfg):
 
     # Drain any messages queued while OM was offline, and keep polling lightly in
     # case the device queues messages without raising MESSAGES_WAITING.
-    asyncio.ensure_future(_drain_mc_queue(mc, config_id, name, reason="startup", timeout=5))
+    _mc_bg_task(_drain_mc_queue(mc, config_id, name, reason="startup", timeout=5), "drain_startup")
 
     async def _periodic_drain():
         await asyncio.sleep(8)
@@ -619,7 +678,7 @@ async def _connect_mc_node_async(node_cfg):
                 return
             await _drain_mc_queue(mc, config_id, name, reason="poll")
             await asyncio.sleep(8)
-    asyncio.ensure_future(_periodic_drain())
+    _mc_bg_task(_periodic_drain(), "periodic_drain")
 
     # Startup flood advert — announces our identity to the whole mesh.
     # Essential after a reflash or first connection so that remote nodes (repeaters, etc.)
@@ -632,12 +691,12 @@ async def _connect_mc_node_async(node_cfg):
             return
         await _send_advert_async(config_id, flood=True)
         log.info(f"[MC:{name}] Startup flood advert sent — remote nodes will learn our identity")
-    asyncio.ensure_future(_startup_advert())
+    _mc_bg_task(_startup_advert(), "startup_advert")
 
     # Retry if initial fetch looks incomplete (empty or fewer than previously stored).
     # TTLP (and similar devices) can take 15–30s to load flash storage after USB reconnect.
     if len(contacts) < len(old_contacts) or not contacts:
-        asyncio.ensure_future(_retry_contacts_async(mc, config_id, name))
+        _mc_bg_task(_retry_contacts_async(mc, config_id, name), "retry_contacts")
 
 
 async def _retry_contacts_async(mc, config_id, name):
@@ -682,7 +741,7 @@ async def _retry_contacts_async(mc, config_id, name):
                 "last_heard_ts":      c.get("last_advert", now),
                 "out_path_len":       c.get("out_path_len", -1),
                 "out_path":           c.get("out_path", ""),
-                "out_path_hash_mode": c.get("out_path_hash_mode", 0),
+                "out_path_hash_mode": c.get("out_path_hash_mode"),
                 "out_path_hash_size": c.get("out_path_hash_size"),
                 "contact_type": c.get("type", 0),
                 "network":     "mc",
@@ -765,7 +824,7 @@ def _subscribe_mc_events(mc, config_id, name):
                 "last_heard_ts":     int(time.time()),
                 "out_path_len":      existing.get("out_path_len", -1),
                 "out_path":          existing.get("out_path", ""),
-                "out_path_hash_mode": existing.get("out_path_hash_mode", 0),
+                "out_path_hash_mode": existing.get("out_path_hash_mode"),
                 "out_path_hash_size": existing.get("out_path_hash_size"),
                 "contact_type":      existing.get("type", 0),
                 "network":           "mc",
@@ -874,7 +933,7 @@ def _subscribe_mc_events(mc, config_id, name):
                 "last_heard_ts":     int(time.time()),
                 "out_path_len":      c.get("out_path_len", -1),
                 "out_path":          c.get("out_path", ""),
-                "out_path_hash_mode": c.get("out_path_hash_mode", 0),
+                "out_path_hash_mode": c.get("out_path_hash_mode"),
                 "out_path_hash_size": c.get("out_path_hash_size"),
                 "contact_type":      c.get("type", 0),
                 "network":           "mc",
@@ -966,7 +1025,7 @@ def _subscribe_mc_events(mc, config_id, name):
                     "last_heard_ts":     int(time.time()),
                     "out_path_len":      c.get("out_path_len", -1),
                     "out_path":          c.get("out_path", ""),
-                    "out_path_hash_mode": c.get("out_path_hash_mode", 0),
+                    "out_path_hash_mode": c.get("out_path_hash_mode"),
                     "out_path_hash_size": c.get("out_path_hash_size"),
                     "network":           "mc",
                 })
@@ -976,14 +1035,14 @@ def _subscribe_mc_events(mc, config_id, name):
             finally:
                 _mc_path_refresh_active.discard(config_id)
 
-        asyncio.ensure_future(_refresh_and_push())
+        _mc_bg_task(_refresh_and_push(), "path_refresh")
 
     def on_messages_waiting(event):
         """Firmware has queued messages — drain with repeated get_msg calls.
         The library dispatches CONTACT_MSG_RECV / CHANNEL_MSG_RECV for each
         message retrieved, so on_dm / on_chan_msg fire automatically."""
         log.info(f"[MC:{name}] MESSAGES_WAITING — draining queue")
-        asyncio.ensure_future(_drain_mc_queue(mc, config_id, name, reason="event", timeout=5))
+        _mc_bg_task(_drain_mc_queue(mc, config_id, name, reason="event", timeout=5), "drain_event")
 
     def on_trace_data(event):
         try:
@@ -1062,7 +1121,7 @@ def reconnect_mc_loop():
         time.sleep(15)
         with mc_connections_lock:
             items = [(cid, v["config"]) for cid, v in mc_connections.items()
-                     if v.get("status") == "disconnected"
+                     if v.get("status") not in ("connected", "connecting")
                      and v.get("config", {}).get("enabled", True)]
         for config_id, node_cfg in items:
             log.info(f"[MC:{node_cfg.get('name', config_id)}] Reconnecting...")
@@ -1271,7 +1330,7 @@ async def _send_advert_async(config_id, flood=False):
         finally:
             _advert_tasks.pop(config_id, None)
 
-    task = asyncio.ensure_future(_do_advert())
+    task = _mc_bg_task(_do_advert(), f"advert:{config_id}")
     _advert_tasks[config_id] = task
 
 
@@ -1299,24 +1358,32 @@ def enable_mc_debug(config_id, duration=60):
     in the regular app log — use to diagnose missing STATUS_RESPONSE / ping issues.
     Also writes raw library-level debug bytes (serial framing, packet parsing) to
     /tmp/overmesh-mc-raw.log so we can see if packets arrive at all."""
-    _mc_debug_flags.add(config_id)
     meshcore_log = logging.getLogger("meshcore")
-    meshcore_log.setLevel(logging.DEBUG)
-    # Add a dedicated handler so library debug output bypasses the root logger's INFO filter
-    raw_handler = logging.FileHandler("/tmp/overmesh-mc-raw.log")
-    raw_handler.setLevel(logging.DEBUG)
-    raw_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-    meshcore_log.addHandler(raw_handler)
-    meshcore_log.propagate = False  # stop propagation so root INFO filter doesn't swallow DEBUG
+    deadline = time.time() + max(1, int(duration))
+    with _mc_debug_lock:
+        _mc_debug_flags.add(config_id)
+        _mc_debug_until[config_id] = max(deadline, _mc_debug_until.get(config_id, 0))
+        _mc_ensure_debug_logging_locked(meshcore_log)
     log.info(f"[MC:{config_id}] Debug event logging ON for {duration}s — raw bytes → /tmp/overmesh-mc-raw.log")
+
     def _stop():
         time.sleep(duration)
-        _mc_debug_flags.discard(config_id)
-        meshcore_log.removeHandler(raw_handler)
-        raw_handler.close()
-        meshcore_log.setLevel(logging.INFO)
-        meshcore_log.propagate = True
-        log.info(f"[MC:{config_id}] Debug event logging OFF.")
+        still_enabled = False
+        with _mc_debug_lock:
+            expires_at = _mc_debug_until.get(config_id, 0)
+            if expires_at and time.time() < expires_at:
+                still_enabled = True
+            else:
+                _mc_debug_until.pop(config_id, None)
+                _mc_debug_flags.discard(config_id)
+                if not _mc_debug_until:
+                    _mc_disable_debug_logging_locked(meshcore_log)
+        if still_enabled:
+            remaining = max(1, int(round(expires_at - time.time())))
+            log.info(f"[MC:{config_id}] Debug event logging extended — {remaining}s remaining.")
+        else:
+            log.info(f"[MC:{config_id}] Debug event logging OFF.")
+
     threading.Thread(target=_stop, daemon=True).start()
 
 
@@ -1420,7 +1487,7 @@ async def _send_statusreq_async(config_id, pubkey_prefix):
         finally:
             _statusreq_tasks.pop(task_key, None)
 
-    task = asyncio.ensure_future(_do_statusreq())
+    task = _mc_bg_task(_do_statusreq(), f"statusreq:{task_key}")
     _statusreq_tasks[task_key] = task
 
 

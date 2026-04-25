@@ -563,6 +563,40 @@ def build_mc_motd_text(cfg, config_id):
     )
 
 
+def _build_mc_rf_info(msg):
+    parts = []
+    snr = msg.get("snr")
+    rssi = msg.get("rssi")
+    path_len = msg.get("path_len")
+    path_hash_mode = msg.get("path_hash_mode")
+
+    if snr is not None:
+        try:
+            parts.append(f"SNR:{float(snr):.1f} dB")
+        except (TypeError, ValueError):
+            pass
+    if rssi is not None:
+        try:
+            parts.append(f"RSSI:{int(rssi)} dBm")
+        except (TypeError, ValueError):
+            pass
+    try:
+        hop_len = int(path_len)
+    except (TypeError, ValueError):
+        hop_len = None
+    if hop_len is not None and hop_len >= 0:
+        hop_label = "direct" if hop_len == 0 else f"{hop_len} hop{'s' if hop_len != 1 else ''}"
+        try:
+            hash_mode = int(path_hash_mode)
+            if hash_mode >= 0:
+                hop_label += f" · {hash_mode + 1}B/hop"
+        except (TypeError, ValueError):
+            pass
+        parts.append(hop_label)
+
+    return f" [RF] {' | '.join(parts)}" if parts else ""
+
+
 def send_mc_bot_response(config_id, text, chan_idx, dest_pre=None):
     """Send bot reply via MC. Runs in a background thread — blocks until sent or timeout."""
     if CONFIG.get("silent_mode"):
@@ -687,12 +721,13 @@ def handle_mc_bot_command(msg, config_id, subtype):
             return
 
         cmd = cmd_key
+        rf_info = _build_mc_rf_info(msg)
         if cmd == "ping":
             response = f"🏓PONG | {random.choice(['Still here, unfortunately.', 'Not dead yet.', 'Present and accounted for.', 'You rang?', 'Did someone say ping?', 'Responding as trained.', 'Loud and proud.', 'Alive and well.', 'Mesh is alive!', 'Roger that, I exist.', 'Beep boop, I am a bot.', 'Oh, you noticed me!', 'Here!', 'Indeed.', 'Obviously.'])}"
         elif cmd == "ack":
             response = random.choice(["✋Ack to you!", "✋Copy that!", "✋Acknowledged", "✋Received!", "✋Loud and clear", "✋Message received, filing it away", "✋Got it, doing nothing about it", "✋Confirmed. Mostly.", "✋10-4, good buddy", "✋Wilco"])
         elif cmd == "test":
-            response = random.choice(["🎙Roger that!", "🎙Testing 1,2,3", "🎙Testing, testing", "🎙Read you loud and clear", "🎙Signal received", "🎙Loud and clear", "🎙You are coming through loud and hot", "🎙Heard you the first time", "🎙Five by five", "🎙Is this thing on? Yes, yes it is", "🎙Transmission received, sanity intact", "🎙Strength 5, readability 5", "🎙Clear as a bell", "🎙Your signal is better than my day", "🎙Mesh works, miracles do happen"])
+            response = random.choice(["🎙Roger that!", "🎙Testing 1,2,3", "🎙Testing, testing", "🎙Read you loud and clear", "🎙Signal received", "🎙Loud and clear", "🎙You are coming through loud and hot", "🎙Heard you the first time", "🎙Five by five", "🎙Is this thing on? Yes, yes it is", "🎙Transmission received, sanity intact", "🎙Strength 5, readability 5", "🎙Clear as a bell", "🎙Your signal is better than my day", "🎙Mesh works, miracles do happen"]) + rf_info
         elif cmd == "sitrep":
             response = build_mc_sitrep(config_id)
         elif cmd == "cmd":

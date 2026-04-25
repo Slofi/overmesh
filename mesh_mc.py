@@ -259,6 +259,34 @@ def _mc_message_path_fields(msg, rx=None):
     }
 
 
+def _merge_mc_contact_records(old_contact, new_contact):
+    merged = dict(old_contact or {})
+    for key, value in dict(new_contact or {}).items():
+        if value not in (None, "", [], {}):
+            merged[key] = value
+    return merged
+
+
+def _merge_mc_contacts(old_contacts, new_contacts):
+    """Merge refreshed MC contacts without dropping previously known nodes.
+
+    Some radios return partial contact sets during startup/path refresh. Those
+    sparse reads should not erase already-known repeaters, names, or GPS data.
+    Prefer fresh non-empty values from the device, but keep older records when
+    they still carry useful identity or routing metadata.
+    """
+    old_contacts = dict(old_contacts or {})
+    new_contacts = dict(new_contacts or {})
+    merged = {}
+    for pubkey, contact in new_contacts.items():
+        merged[pubkey] = _merge_mc_contact_records(old_contacts.get(pubkey), contact)
+    for pubkey, contact in old_contacts.items():
+        if pubkey in merged:
+            continue
+        merged[pubkey] = dict(contact or {})
+    return merged
+
+
 def _best_recent_rx_for_message(config_id, subtype, now_ts, sender_prefix=None, msg=None):
     """Best-effort correlation between a message event and a recent RX_LOG_DATA event.
 
@@ -549,7 +577,8 @@ async def _connect_mc_node_async(node_cfg):
     # keep old contacts until background retry confirms the authoritative count.
     with mc_connections_lock:
         old_contacts = mc_connections[config_id].get("contacts", {})
-        stored_contacts = contacts if len(contacts) >= len(old_contacts) else old_contacts
+        merged_contacts = _merge_mc_contacts(old_contacts, contacts)
+        stored_contacts = merged_contacts if len(contacts) >= len(old_contacts) else old_contacts
         mc_connections[config_id].update({
             "mc":        mc,
             "name":      name,
@@ -636,7 +665,8 @@ async def _retry_contacts_async(mc, config_id, name):
     if best_contacts:
         with mc_connections_lock:
             if config_id in mc_connections:
-                mc_connections[config_id]["contacts"] = best_contacts
+                old_contacts = mc_connections[config_id].get("contacts", {})
+                mc_connections[config_id]["contacts"] = _merge_mc_contacts(old_contacts, best_contacts)
         log.info(f"[MC:{name}] Contacts retry complete: {len(best_contacts)} contacts stored")
         now = int(time.time())
         for pubkey, c in best_contacts.items():
@@ -919,7 +949,7 @@ def _subscribe_mc_events(mc, config_id, name):
                             new_contacts = r.payload or {}
                             old_contacts = mc_connections[config_id].get("contacts", {})
                             if new_contacts or not old_contacts:
-                                mc_connections[config_id]["contacts"] = new_contacts
+                                mc_connections[config_id]["contacts"] = _merge_mc_contacts(old_contacts, new_contacts)
                 with mc_connections_lock:
                     c = mc_connections.get(config_id, {}).get("contacts", {}).get(pubkey, {})
                 if not c:
@@ -1405,7 +1435,7 @@ async def _get_contacts_async(config_id):
                 # Don't overwrite a non-empty cache with an empty response —
                 # firmware occasionally returns 0 contacts on a stale/in-progress read.
                 if new_contacts or not old_contacts:
-                    mc_connections[config_id]["contacts"] = new_contacts
+                    mc_connections[config_id]["contacts"] = _merge_mc_contacts(old_contacts, new_contacts)
     return r
 
 
@@ -1710,6 +1740,7 @@ async def _req_status_async(config_id, pubkey_prefix):
                 if config_id in mc_connections:
                     old_contacts = mc_connections[config_id].get("contacts", {})
                     if refreshed_contacts or not old_contacts:
+                        refreshed_contacts = _merge_mc_contacts(old_contacts, refreshed_contacts)
                         mc_connections[config_id]["contacts"] = refreshed_contacts
                     else:
                         refreshed_contacts = old_contacts

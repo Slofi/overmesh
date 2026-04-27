@@ -27,7 +27,7 @@ app = Flask(__name__)
 from bot import motd_scheduler_loop
 from config import CONFIG, save_config, _valid_node_id
 from db import init_prefs_db, load_notes, load_waypoints
-from gps import _gps_start
+from gps import _gps_start, gps_port_conflict, gps_watchdog_loop
 import sense as _sense_mod
 from sense import (
     _active_auto_event, _active_auto_loop, _active_auto_running_lock, _sense_state,
@@ -137,7 +137,14 @@ def startup():
     load_notes()
     gps_cfg = CONFIG.get("gps", {})
     if gps_cfg.get("enabled") and gps_cfg.get("port"):
-        _gps_start(gps_cfg["port"])
+        gps_conflict = gps_port_conflict(gps_cfg["port"])
+        if gps_conflict:
+            log.warning(
+                f"GPS start skipped: port {gps_cfg['port']} conflicts with enabled "
+                f"{gps_conflict['network']} radio {gps_conflict['name']}"
+            )
+        else:
+            _gps_start(gps_cfg["port"])
     # per-radio message DBs are initialized in connect_node() as each radio connects
     pub.subscribe(on_text_receive, "meshtastic.receive")
     try:
@@ -149,6 +156,7 @@ def startup():
             threading.Thread(target=connect_node, args=(node_cfg,), daemon=True).start()
     threading.Thread(target=reconnect_loop,      daemon=True).start()
     threading.Thread(target=health_check_loop,   daemon=True).start()
+    threading.Thread(target=gps_watchdog_loop,   daemon=True).start()
     threading.Thread(target=motd_scheduler_loop, daemon=True).start()
     # MeshCore
     start_mc_loop()

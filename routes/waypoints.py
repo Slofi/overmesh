@@ -6,7 +6,7 @@ from flask import Blueprint, jsonify, request
 
 from config import CONFIG, _valid_node_id
 from db import get_prefs_db, save_message
-from helpers import _next_msg_id, get_node_name, push_to_sse
+from helpers import _next_msg_id, get_node_name, mt_node_id_from_num, push_to_sse
 from mesh import get_any_iface_with_id, get_iface_by_radio
 from state import (
     chat_lock, chat_messages,
@@ -129,7 +129,7 @@ def api_send_waypoint():
             local_info = getattr(iface, "myInfo", None)
             local_num  = getattr(local_info, "my_node_num", None)
             my_name    = "?"
-            local_key  = ("!" + hex(local_num)[2:]) if local_num else None
+            local_key  = mt_node_id_from_num(local_num)
             if local_key and iface.nodes:
                 local_node = iface.nodes.get(local_key)
                 if local_node:
@@ -202,7 +202,13 @@ def api_edit_waypoint(wp_id):
         # Accept destination_ids list or fall back to stored value
         dest_ids_raw = data.get("destination_ids")
         if dest_ids_raw is not None:
-            dest_ids = [d for d in dest_ids_raw if d and _valid_node_id(d)] if isinstance(dest_ids_raw, list) else None
+            if not isinstance(dest_ids_raw, list):
+                return jsonify({"error": "destination_ids must be a list"}), 400
+            if len(dest_ids_raw) == 0:
+                return jsonify({"error": "destination_ids must not be empty"}), 400
+            dest_ids = [d for d in dest_ids_raw if d and _valid_node_id(d)]
+            if not dest_ids:
+                return jsonify({"error": "No valid destination IDs in destination_ids"}), 400
         else:
             dest_ids = wp_data.get("destination_ids")
         dest = dest_ids[0] if dest_ids else None

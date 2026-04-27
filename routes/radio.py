@@ -4,7 +4,7 @@ from flask import Blueprint, jsonify, request
 
 from config import CONFIG, CONFIG_LOCK, save_config
 from db import delete_channel_messages
-from helpers import push_to_sse
+from helpers import mt_node_id_from_num, push_to_sse
 from mesh import DEVICE_ROLES, LORA_REGIONS, MODEM_PRESETS, get_iface_by_radio
 from state import chat_lock, chat_messages, connections, connections_lock
 import logging
@@ -61,7 +61,7 @@ def api_radio_config_get(radio_id):
         hop_limit = _int(lc, "lora", "hop_limit") or 3
 
         # position — get live position data for local node (used for coords + precisionBits)
-        node_hex = "!" + hex(local_num)[2:] if local_num else None
+        node_hex = mt_node_id_from_num(local_num)
         pos_data = {}
         if node_hex and iface.nodes:
             pos_data = iface.nodes.get(node_hex, {}).get("position", {})
@@ -193,7 +193,7 @@ def api_radio_announce(radio_id):
         return jsonify({"error": "Radio not connected"}), 503
     try:
         local_num = getattr(iface.myInfo, "my_node_num", None)
-        node_hex = "!" + hex(local_num)[2:] if local_num else None
+        node_hex = mt_node_id_from_num(local_num)
         u = (iface.nodes or {}).get(node_hex, {}).get("user", {}) if node_hex else {}
         long_name  = u.get("longName",  "")
         short_name = u.get("shortName", "")

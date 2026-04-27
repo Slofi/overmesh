@@ -30,6 +30,14 @@ _UPDATE_STATE = {
 }
 
 
+def _app_settings_payload():
+    app_cfg = dict(CONFIG.get("app") or {})
+    app_cfg.setdefault("font_size", "medium")
+    app_cfg.setdefault("om_manual_lat", None)
+    app_cfg.setdefault("om_manual_lon", None)
+    return app_cfg
+
+
 def _has_any_mc_nodes():
     return bool(CONFIG.get("mc_nodes", []))
 
@@ -450,7 +458,7 @@ def api_settings_nodes_rename(node_id):
 
 @bp.route("/api/settings/app", methods=["GET"])
 def api_settings_app_get():
-    return jsonify(CONFIG.get("app", {"font_size": "medium"}))
+    return jsonify(_app_settings_payload())
 
 
 @bp.route("/api/settings/app", methods=["POST"])
@@ -479,6 +487,26 @@ def api_settings_app_set():
         for key in ("inapp_notify_messages", "inapp_notify_nodes", "inapp_notify_returned"):
             if key in data:
                 CONFIG["app"][key] = bool(data[key])
+        if "om_manual_lat" in data or "om_manual_lon" in data:
+            raw_lat = data.get("om_manual_lat", CONFIG["app"].get("om_manual_lat"))
+            raw_lon = data.get("om_manual_lon", CONFIG["app"].get("om_manual_lon"))
+            lat_blank = raw_lat in (None, "")
+            lon_blank = raw_lon in (None, "")
+            if lat_blank and lon_blank:
+                CONFIG["app"].pop("om_manual_lat", None)
+                CONFIG["app"].pop("om_manual_lon", None)
+            elif lat_blank or lon_blank:
+                return jsonify({"error": "Both OM latitude and longitude are required."}), 400
+            else:
+                try:
+                    lat = float(raw_lat)
+                    lon = float(raw_lon)
+                except (TypeError, ValueError):
+                    return jsonify({"error": "Invalid OM coordinates."}), 400
+                if lat < -90 or lat > 90 or lon < -180 or lon > 180:
+                    return jsonify({"error": "OM coordinates are out of range."}), 400
+                CONFIG["app"]["om_manual_lat"] = round(lat, 6)
+                CONFIG["app"]["om_manual_lon"] = round(lon, 6)
         save_config()
     return jsonify({"ok": True})
 

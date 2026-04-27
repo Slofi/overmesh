@@ -8,7 +8,7 @@ from flask import Blueprint, Response, jsonify, request
 from config import CONFIG
 from cross import maybe_forward_mt_message
 from db import save_message
-from helpers import _next_msg_id, get_node_name, push_to_sse
+from helpers import _next_msg_id, get_node_name, mt_node_id_from_num, push_to_sse
 from mesh import get_any_iface, get_any_iface_with_id, get_iface_by_radio
 from state import (
     chat_lock, chat_messages,
@@ -121,8 +121,9 @@ def api_chat_send():
         local_node_id = None
         local_info = getattr(iface, "myInfo", None)
         local_num  = getattr(local_info, "my_node_num", None)
-        if local_num and iface.nodes:
-            local_node = iface.nodes.get("!" + hex(local_num)[2:])
+        local_node_key = mt_node_id_from_num(local_num)
+        if local_node_key and iface.nodes:
+            local_node = iface.nodes.get(local_node_key)
             if local_node:
                 u = local_node.get("user", {})
                 my_name = u.get("longName") or u.get("shortName") or "You"

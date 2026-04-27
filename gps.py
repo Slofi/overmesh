@@ -26,6 +26,12 @@ _gps_stop_event         = threading.Event()
 _gps_thread             = None
 _gps_last_push_ts       = 0.0      # epoch seconds — rate-limits auto-push to nodes
 _GPS_AUTO_PUSH_INTERVAL = 30       # seconds between auto-pushes
+_gps_runtime = {
+    "port": "",
+    "running": False,
+    "port_present": False,
+    "error": "",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +98,50 @@ def _parse_gpgga(line):
         log.debug(f"GPS parse error: {e}")
 
 
+def gps_port_present(port):
+    port = str(port or "").strip()
+    if not port:
+        return False
+    try:
+        import serial.tools.list_ports
+        return any(p.device == port for p in serial.tools.list_ports.comports())
+    except Exception:
+        return False
+
+
+def gps_port_conflict(port):
+    """Return conflict info if the GPS port overlaps an enabled MT or MC radio."""
+    port = str(port or "").strip()
+    if not port:
+        return None
+    port_by_serial = {}
+    try:
+        import serial.tools.list_ports
+        port_by_serial = {str(p.serial_number or ""): p.device for p in serial.tools.list_ports.comports()}
+    except Exception:
+        port_by_serial = {}
+
+    def current_port(node):
+        usb_serial = str(node.get("usb_serial") or "").strip()
+        if usb_serial:
+            return str(port_by_serial.get(usb_serial) or node.get("port") or "").strip()
+        return str(node.get("port") or "").strip()
+
+    for node in CONFIG.get("nodes", []):
+        if not node.get("enabled", True):
+            continue
+        if current_port(node) == port:
+            return {"network": "MT", "name": node.get("name") or node.get("id") or "MT radio"}
+
+    for node in CONFIG.get("mc_nodes", []):
+        if not node.get("enabled", True):
+            continue
+        if current_port(node) == port:
+            return {"network": "MC", "name": node.get("name") or node.get("id") or "MC radio"}
+
+    return None
+
+
 def _gps_push_to_nodes(lat, lon, alt, precision_bits):
     """Push GPS position to all connected nodes. Called from background thread."""
     from meshtastic.protobuf import mesh_pb2, admin_pb2
@@ -148,12 +198,18 @@ def _gps_push_to_nodes(lat, lon, alt, precision_bits):
 def _gps_reader(port, stop_event):
     import serial as _serial
     log.info(f"GPS: opening {port}")
+    with gps_lock:
+        _gps_runtime.update({"port": port, "running": False, "port_present": gps_port_present(port), "error": ""})
     try:
         ser = _serial.Serial(port, baudrate=9600, timeout=1)
     except Exception as e:
         log.error(f"GPS: cannot open {port}: {e}")
+        with gps_lock:
+            _gps_runtime.update({"port": port, "running": False, "port_present": gps_port_present(port), "error": str(e)})
         push_to_sse(json.dumps({"type": "gps_error", "message": str(e)}))
         return
+    with gps_lock:
+        _gps_runtime.update({"port": port, "running": True, "port_present": True, "error": ""})
     while not stop_event.is_set():
         try:
             raw  = ser.readline()
@@ -164,17 +220,34 @@ def _gps_reader(port, stop_event):
             log.warning(f"GPS read: {e}")
             if "device disconnected" in str(e) or "device reports readiness" in str(e):
                 log.warning("GPS: device disconnected, stopping reader thread")
+                with gps_lock:
+                    _gps_runtime.update({"port": port, "running": False, "port_present": gps_port_present(port), "error": str(e)})
+                push_to_sse(json.dumps({"type": "gps_error", "message": str(e)}))
                 break
             time.sleep(1)
     try:
         ser.close()
     except Exception:
         pass
+    with gps_lock:
+        _gps_runtime.update({"port": port, "running": False, "port_present": gps_port_present(port), "error": _gps_runtime.get("error", "")})
     log.info("GPS: thread stopped")
 
 
 def _gps_start(port):
     global _gps_thread, _gps_stop_event
+    port = str(port or "").strip()
+    if not port:
+        return
+    if not gps_port_present(port):
+        with gps_lock:
+            _gps_runtime.update({
+                "port": port,
+                "running": False,
+                "port_present": False,
+                "error": "Selected GPS port is not currently connected.",
+            })
+        return
     _gps_stop_event.set()
     time.sleep(0.2)
     _gps_stop_event = threading.Event()
@@ -188,4 +261,42 @@ def _gps_stop():
     _gps_stop_event.set()
     with gps_lock:
         gps_state.update({"lat": None, "lon": None, "alt": None, "sats": 0, "fix": False})
+        _gps_runtime.update({"port": "", "running": False, "port_present": False, "error": ""})
     _gps_thread = None
+
+
+def gps_watchdog_loop():
+    global _gps_thread
+    while True:
+        time.sleep(5)
+        cfg = CONFIG.get("gps", {}) or {}
+        enabled = bool(cfg.get("enabled"))
+        port = str(cfg.get("port") or "").strip()
+        if not enabled:
+            continue
+        if not port:
+            with gps_lock:
+                _gps_runtime.update({"port": "", "running": False, "port_present": False, "error": "No GPS port selected."})
+            continue
+        conflict = gps_port_conflict(port)
+        if conflict:
+            with gps_lock:
+                _gps_runtime.update({
+                    "port": port,
+                    "running": False,
+                    "port_present": gps_port_present(port),
+                    "error": f"GPS port {port} conflicts with enabled {conflict['network']} radio {conflict['name']}.",
+                })
+            continue
+        if not gps_port_present(port):
+            with gps_lock:
+                _gps_runtime.update({
+                    "port": port,
+                    "running": False,
+                    "port_present": False,
+                    "error": "Selected GPS port is not currently connected.",
+                })
+            continue
+        if _gps_thread and _gps_thread.is_alive():
+            continue
+        _gps_start(port)

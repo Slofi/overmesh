@@ -62,6 +62,13 @@ def _radio_id_for_iface(interface):
     return None
 
 
+def mt_node_id_from_num(node_num):
+    try:
+        return f"!{int(node_num):08x}"
+    except (TypeError, ValueError):
+        return None
+
+
 def get_node_name(from_id):
     with connections_lock:
         for state in connections.values():

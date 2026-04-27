@@ -1,7 +1,10 @@
 from flask import Blueprint, jsonify, request
 
 from config import CONFIG, CONFIG_LOCK, save_config
-from gps import _gps_push_to_nodes, _gps_start, _gps_stop, gps_lock, gps_state
+from gps import (
+    _gps_push_to_nodes, _gps_start, _gps_stop,
+    gps_lock, gps_port_conflict, gps_port_present, gps_state, _gps_runtime,
+)
 
 bp = Blueprint('gps_routes', __name__)
 
@@ -11,7 +14,12 @@ def api_settings_gps_get():
     cfg = CONFIG.get("gps", {"enabled": False, "port": ""})
     with gps_lock:
         pos = {k: gps_state[k] for k in ("lat", "lon", "alt", "sats", "fix", "speed")}
-    return jsonify({**cfg, **pos})
+        runtime = dict(_gps_runtime)
+    port = str(cfg.get("port") or "").strip()
+    if port and runtime.get("port") != port:
+        runtime["port"] = port
+        runtime["port_present"] = gps_port_present(port)
+    return jsonify({**cfg, **pos, **runtime})
 
 
 @bp.route("/api/settings/gps", methods=["POST"])
@@ -19,6 +27,10 @@ def api_settings_gps_set():
     data = request.get_json(silent=True) or {}
     enabled = bool(data.get("enabled", False))
     port    = str(data.get("port", "")).strip()
+    if enabled and port:
+        conflict = gps_port_conflict(port)
+        if conflict:
+            return jsonify({"error": f"GPS port {port} conflicts with enabled {conflict['network']} radio {conflict['name']}."}), 400
     with CONFIG_LOCK:
         cfg  = CONFIG.setdefault("gps", {"enabled": False, "port": ""})
         was_enabled = cfg.get("enabled", False)
@@ -37,11 +49,16 @@ def api_settings_gps_set():
             except (TypeError, ValueError):
                 pass
         save_config()
+    warning = None
     if enabled and port:
-        _gps_start(port)
+        if gps_port_present(port):
+            _gps_start(port)
+        else:
+            _gps_stop()
+            warning = f"GPS enabled, but port {port} is not currently connected."
     elif was_enabled and not enabled:
         _gps_stop()
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "warning": warning})
 
 
 @bp.route("/api/gps/push", methods=["POST"])

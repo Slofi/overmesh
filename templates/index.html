@@ -2709,6 +2709,33 @@
       </div>
     </div>
 
+    <!-- OM Position -->
+    <div class="settings-section">
+      <h2 class="settings-title">OM Position</h2>
+      <p style="color:var(--muted);font-size:12px;margin:0 0 12px 0">App-only local position for OverMesh. Not sent to radios. Used as the map origin and for range circles when there is no live GPS fix.</p>
+      <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+        <div style="min-width:140px">
+          <label class="settings-label" style="margin-bottom:4px">Latitude</label>
+          <input id="om-pos-lat" type="number" step="0.000001" min="-90" max="90"
+                 style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:13px"
+                 placeholder="46.056947">
+        </div>
+        <div style="min-width:140px">
+          <label class="settings-label" style="margin-bottom:4px">Longitude</label>
+          <input id="om-pos-lon" type="number" step="0.000001" min="-180" max="180"
+                 style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:13px"
+                 placeholder="14.505751">
+        </div>
+        <button class="btn btn-sm" onclick="startOmMapPick()">Select on map</button>
+        <button class="btn btn-sm" onclick="saveOmManualPosition()">Save</button>
+        <button class="btn btn-sm" style="color:var(--red);border-color:var(--red)"
+                onmouseenter="this.style.background='rgba(248,81,73,0.12)'"
+                onmouseleave="this.style.background=''"
+                onclick="clearOmManualPosition()">Clear</button>
+      </div>
+      <div id="om-pos-status" style="font-size:12px;min-height:16px;margin-top:8px;color:var(--muted)"></div>
+    </div>
+
     <!-- Offline maps -->
     <div class="settings-section">
       <h2 class="settings-title">Offline Maps</h2>
@@ -3234,6 +3261,10 @@
     return chatMsgs.filter(m => !m.radio_id || selectedRadioIds.has(m.radio_id));
   }
 
+  function saveSelectedRadioIds() {
+    localStorage.setItem('selectedRadioIds', JSON.stringify([...selectedRadioIds]));
+  }
+
   function hasConnectedMtRadios() {
     return Object.values(lastStatus).some(s => s && s.enabled !== false && s.status === 'connected');
   }
@@ -3256,6 +3287,14 @@
     return normalizeChatNetwork(preferred);
   }
 
+  function setHeaderNodeCountDivider(show) {
+    const el = document.getElementById('header-node-count');
+    if (!el) return;
+    el.style.marginLeft = show ? '8px' : '4px';
+    el.style.paddingLeft = show ? '8px' : '';
+    el.style.borderLeft = show ? '1px solid var(--border)' : '';
+  }
+
   function updateRadioSelector(status) {
     if (status) lastStatus = status;
     const entries = Object.entries(lastStatus).filter(([, s]) => s.enabled !== false && s.status === 'connected');
@@ -3266,11 +3305,16 @@
       if (hasConnectedMcRadios()) {
         sel.innerHTML = '';
         sel.style.display = 'none';
+        setHeaderNodeCountDivider(false);
         if (mtCount) mtCount.style.display = 'none';
       } else {
-        sel.innerHTML = '<span style="font-size:12px;color:var(--muted)">No radios</span>';
+        sel.innerHTML = '<span style="font-size:12px;color:var(--muted)">No radios connected</span>';
         sel.style.display = '';
-        if (mtCount) mtCount.style.display = '';
+        if (mtCount) {
+          setHeaderNodeCountDivider(true);
+          mtCount.style.display = '';
+          mtCount.textContent = 'No radios connected';
+        }
       }
       if (chatNetwork === 'mt' && hasConnectedMcRadios()) setChatNetwork('mc');
       if (botNetwork === 'mt' && hasConnectedMcRadios()) setBotNetwork('mc');
@@ -3278,6 +3322,7 @@
       return;
     }
     sel.style.display = '';
+    setHeaderNodeCountDivider(false);
     if (mtCount) mtCount.style.display = '';
     // Auto-set activeRadioId if not set or no longer visible
     if (!activeRadioId || !entries.find(([id]) => id === activeRadioId)) {
@@ -3286,13 +3331,18 @@
     }
     // Remove stale MT radio IDs from selectedRadioIds (MC IDs are managed separately)
     const mtIds = new Set(entries.map(([id]) => id));
+    let mtSelectionChanged = false;
     [...selectedRadioIds].filter(id => !id.startsWith('mc_')).forEach(id => {
-      if (!mtIds.has(id)) selectedRadioIds.delete(id);
+      if (!mtIds.has(id)) {
+        selectedRadioIds.delete(id);
+        mtSelectionChanged = true;
+      }
     });
+    if (mtSelectionChanged) saveSelectedRadioIds();
     // Auto-select all radios only if nothing is selected yet (fresh start)
     if (selectedRadioIds.size === 0) {
       entries.forEach(([id]) => selectedRadioIds.add(id));
-      localStorage.setItem('selectedRadioIds', JSON.stringify([...selectedRadioIds]));
+      saveSelectedRadioIds();
     }
     sel.innerHTML = entries.map(([id, s]) => {
       const cls     = s.status === 'connected' ? 'dot-connected' : s.status === 'connecting' ? 'dot-connecting' : 'dot-disconnected';
@@ -3353,7 +3403,7 @@
       }
       selectedRadioIds.add(id);
     }
-    localStorage.setItem('selectedRadioIds', JSON.stringify([...selectedRadioIds]));
+    saveSelectedRadioIds();
     updateRadioSelector();
     updateMcPills();
     updateUnreadDots();
@@ -3428,6 +3478,10 @@
         _gpsUpdatePosition(data);
         return;
       }
+      if (data.type === 'gps_error') {
+        _gpsUpdatePosition({enabled: _gpsEnabled, lat: null, lon: null, sats: 0, fix: false, running: false, error: data.message});
+        return;
+      }
       if (data.type === 'local_node_position') {
         // GPS push fired — immediately update allNodes so the marker moves without waiting for loadLive()
         const n = allNodes.find(x => x.radio_id === data.radio_id && x.is_local);
@@ -3446,6 +3500,7 @@
         }
         if (data.status === 'connected') selectedRadioIds.add(data.radio_id);
         else selectedRadioIds.delete(data.radio_id);
+        saveSelectedRadioIds();
         updateRadioSelector();
         updateMcPills();
         if (currentTab === 'chat') initChat();
@@ -3459,6 +3514,8 @@
         chatMsgs = chatMsgs.filter(m => m.radio_id !== data.radio_id);
         delete radioUnreadChannels[data.radio_id];
         inactiveRadioUnread.delete(data.radio_id);
+        selectedRadioIds.delete(data.radio_id);
+        saveSelectedRadioIds();
         if (mapDmContactId) closeMapDM();  // close map DM window — its messages may be gone
         // Discard sense state for removed radio
         delete _senseStateByRadio[data.radio_id];
@@ -4882,10 +4939,11 @@ if (targetEl) {
     const senseWrap = document.getElementById('sense-net-filter');
     const mtSense = document.getElementById('sense-net-mt');
     const mcSense = document.getElementById('sense-net-mc');
+    const senseOpen = document.getElementById('sense-panel')?.style.display !== 'none';
     if (mtSense) mtSense.style.display = mtConnected ? '' : 'none';
     if (mcSense) mcSense.style.display = mcConnected ? '' : 'none';
-    if (mapWrap) mapWrap.style.display = mtConnected && mcConnected ? '' : 'none';
-    if (senseWrap) senseWrap.style.display = (document.getElementById('sense-panel')?.style.display !== 'none' && mtConnected && mcConnected) ? '' : 'none';
+    if (mapWrap) mapWrap.style.display = (!senseOpen && mtConnected && mcConnected) ? '' : 'none';
+    if (senseWrap) senseWrap.style.display = (senseOpen && mtConnected && mcConnected) ? '' : 'none';
     if (_senseNet === 'mt' && !mtConnected && mcConnected) _senseNet = 'mc';
     if (_senseNet === 'mc' && !mcConnected && mtConnected) _senseNet = 'mt';
   }
@@ -5056,9 +5114,17 @@ if (targetEl) {
     const el = document.getElementById('header-node-count');
     if (!el) return;
     if (!hasConnectedMtRadios() && hasConnectedMcRadios()) {
+      setHeaderNodeCountDivider(false);
       el.style.display = 'none';
       return;
     }
+    if (!hasConnectedMtRadios()) {
+      setHeaderNodeCountDivider(true);
+      el.style.display = '';
+      el.textContent = 'No radios connected';
+      return;
+    }
+    setHeaderNodeCountDivider(false);
     const real   = nodes.filter(n => n.id);
     const now    = Date.now() / 1000;
     const onlineIds = new Set(real.filter(n => n.last_heard_ts && (now - n.last_heard_ts) < 900).map(n => n.id));
@@ -5140,6 +5206,7 @@ if (targetEl) {
     }).catch(e => console.error('loadLive failed', e));
     fetch('/api/status').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(status => {
       updateRadioSelector(status);
+      updateHeaderNodeCount(allNodes);
       updateMcPills();  // re-evaluate chat-net-toggle + node/map pills now that MT status is fresh
       if (currentTab === 'settings') settingsRefresh();
     }).catch(e => console.error('status poll failed', e));
@@ -5515,6 +5582,7 @@ if (targetEl) {
   let _gpsMarker      = null;
   let _gpsEnabled     = false;
   let _localGpsPos    = null;  // {lat, lon} when GPS has fix — set from gps_position SSE
+  let _omManualPos    = null;  // {lat, lon} app-only manual origin when GPS is unavailable
   let _traceMapLines  = [];
   let _showTrMap      = (() => { try { const v = localStorage.getItem('mapShowTrSnr'); return v === null ? true : v === '1'; } catch(e) { return true; } })();
   let _lastTraceData  = null;   // most recent traceroute result object
@@ -5557,14 +5625,37 @@ if (targetEl) {
     return `${Math.round(km)} km`;
   }
 
+  function _normalizeCoordPair(lat, lon) {
+    const latNum = Number(lat);
+    const lonNum = Number(lon);
+    if (!Number.isFinite(latNum) || !Number.isFinite(lonNum)) return null;
+    if (latNum < -90 || latNum > 90 || lonNum < -180 || lonNum > 180) return null;
+    return {lat: latNum, lon: lonNum};
+  }
+
+  function _setOmManualPos(lat, lon) {
+    _omManualPos = _normalizeCoordPair(lat, lon);
+    if (_showPolarGrid) _drawPolarGrid();
+    if (mapLocked && leafletMap) centerOnLocal();
+  }
+
+  function _omLocalOrigin() {
+    if (_localGpsPos) return {lat: _localGpsPos.lat, lon: _localGpsPos.lon};
+    if (_omManualPos) return {lat: _omManualPos.lat, lon: _omManualPos.lon};
+    return null;
+  }
+
   function _mtLocalPosition(radioId = '') {
-    if (_localGpsPos && (!radioId || radioId === activeRadioId)) return {lat: _localGpsPos.lat, lon: _localGpsPos.lon};
+    const origin = _omLocalOrigin();
+    if (origin) return origin;
     const local = allNodes.find(n => n.is_local && n.latitude != null && n.longitude != null && (!radioId || n.radio_id === radioId))
       || allNodes.find(n => n.is_local && n.latitude != null && n.longitude != null);
     return local ? {lat: Number(local.latitude), lon: Number(local.longitude)} : null;
   }
 
   function _mcLocalPosition(radioId = '') {
+    const origin = _omLocalOrigin();
+    if (origin) return origin;
     const st = (radioId && mcLastStatus[radioId]) || (activeMcRadioId && mcLastStatus[activeMcRadioId]) || null;
     if (st && st.lat != null && st.lon != null) return {lat: Number(st.lat), lon: Number(st.lon)};
     const any = Object.values(mcLastStatus).find(s => s?.status === 'connected' && s.lat != null && s.lon != null);
@@ -5654,12 +5745,9 @@ if (targetEl) {
   function _drawPolarGrid() {
     _clearPolarGrid();
     if (!_showPolarGrid || !leafletMap) return;
-    let cLat, cLon;
-    if (_localGpsPos) { cLat = _localGpsPos.lat; cLon = _localGpsPos.lon; }
-    else {
-      const local = allNodes.find(n => n.is_local && n.latitude != null);
-      if (local) { cLat = local.latitude; cLon = local.longitude; }
-    }
+    const center = _mtLocalPosition();
+    const cLat = center?.lat;
+    const cLon = center?.lon;
     if (cLat == null) return;
     _polarGridLayer = L.layerGroup().addTo(leafletMap);
     const h       = _polarGridHardness;
@@ -5778,9 +5866,8 @@ if (targetEl) {
   function _nodeLatLon(nodeId) {
     if (!nodeId) return null;
     if (nodeId === 'local') {
-      if (_localGpsPos) return [_localGpsPos.lat, _localGpsPos.lon];
-      const local = allNodes.find(n => n.is_local && n.latitude != null);
-      return local ? [local.latitude, local.longitude] : null;
+      const origin = _mtLocalPosition();
+      return origin ? [origin.lat, origin.lon] : null;
     }
     const n = allNodes.find(n => n.id === nodeId && n.latitude != null);
     return n ? [n.latitude, n.longitude] : null;
@@ -7594,6 +7681,13 @@ if (targetEl) {
         cancelMapPick();
         switchTab('settings');
         switchSettingsTab('mc');
+      } else if (_mapPickMode === 'om') {
+        document.getElementById('om-pos-lat').value = lat.toFixed(6);
+        document.getElementById('om-pos-lon').value = lon.toFixed(6);
+        cancelMapPick();
+        switchTab('settings');
+        switchSettingsTab('app');
+        omManualPosStatus(`Position set to ${lat.toFixed(5)}, ${lon.toFixed(5)}. Save to use it as OM origin.`, true);
       } else {
         document.getElementById('node-cfg-fixed-lat').value = lat.toFixed(6);
         document.getElementById('node-cfg-fixed-lon').value = lon.toFixed(6);
@@ -7827,6 +7921,11 @@ if (targetEl) {
   }
 
   function centerOnLocal() {
+    const origin = _omLocalOrigin();
+    if (origin) {
+      leafletMap.setView([origin.lat, origin.lon], leafletMap.getZoom());
+      return;
+    }
     // Try MT local node first
     const local = allNodes.find(n => n.is_local && n.latitude != null);
     if (local) { leafletMap.setView([local.latitude, local.longitude], leafletMap.getZoom()); return; }
@@ -8996,15 +9095,18 @@ if (targetEl) {
   // ── Center MT node on map (Nodes tab "Map" button) ──────────────────────
   function centerNodeOnMap(nodeId) {
     const node = allNodes.find(n => n.id === nodeId);
-    if (!node || node.latitude == null || node.longitude == null) return;
+    if (!node) return;
     let lat = node.latitude, lon = node.longitude;
-    // If this is our own local node and GPS dongle has a live fix, use that position.
-    // allNodes.lat/lon may still be stale (node hasn't broadcast back yet).
-    if (node.is_local && _localGpsPos) {
-      lat = _localGpsPos.lat;
-      lon = _localGpsPos.lon;
-      if (mapMarkers[nodeId]) mapMarkers[nodeId].setLatLng([lat, lon]);
+    // If this is our own local node and OM has a local origin, center there even if
+    // the radio's last broadcast position is stale.
+    if (node.is_local) {
+      const origin = _mtLocalPosition(node.radio_id || '');
+      if (origin) {
+        lat = origin.lat;
+        lon = origin.lon;
+      }
     }
+    if (lat == null || lon == null) return;
     switchTab('map');
     setTimeout(() => {
       if (!leafletMap) return;
@@ -10071,6 +10173,73 @@ if (targetEl) {
     });
   }
 
+  function omManualPosStatus(text, ok = null) {
+    const el = document.getElementById('om-pos-status');
+    if (!el) return;
+    el.textContent = text || '';
+    el.style.color = ok == null ? 'var(--muted)' : ok ? 'var(--accent)' : 'var(--red)';
+  }
+
+  function _applyOmManualInputs() {
+    const latEl = document.getElementById('om-pos-lat');
+    const lonEl = document.getElementById('om-pos-lon');
+    if (!latEl || !lonEl) return;
+    latEl.value = _omManualPos ? _omManualPos.lat.toFixed(6) : '';
+    lonEl.value = _omManualPos ? _omManualPos.lon.toFixed(6) : '';
+  }
+
+  function applyAppSettings(cfg = {}) {
+    loadInAppNotifPrefs(cfg);
+    settingsApplyZoom(cfg.zoom || 100);
+    const cd = cfg.sense_cooldown || 180;
+    document.getElementById('settings-sense-cooldown').value = cd;
+    document.getElementById('settings-sense-cooldown-display').textContent = senseCooldownSettingLabel(cd);
+    applyAccentColor(cfg.accent_color || '#4ade80');
+    _setOmManualPos(cfg.om_manual_lat, cfg.om_manual_lon);
+    _applyOmManualInputs();
+  }
+
+  function saveOmManualPosition() {
+    const latRaw = document.getElementById('om-pos-lat')?.value.trim() || '';
+    const lonRaw = document.getElementById('om-pos-lon')?.value.trim() || '';
+    if (!latRaw && !lonRaw) {
+      clearOmManualPosition();
+      return;
+    }
+    const coords = _normalizeCoordPair(latRaw, lonRaw);
+    if (!coords) {
+      omManualPosStatus('Invalid coordinates. Use the map picker or valid lat/lon values.', false);
+      return;
+    }
+    omManualPosStatus('Saving…');
+    fetch('/api/settings/app', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({om_manual_lat: coords.lat, om_manual_lon: coords.lon})
+    }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || `HTTP ${r.status}`); }))
+      .then(() => {
+        _setOmManualPos(coords.lat, coords.lon);
+        _applyOmManualInputs();
+        omManualPosStatus('Saved. OM will use this position when GPS has no live fix.', true);
+      })
+      .catch(e => omManualPosStatus(String(e.message || e), false));
+  }
+
+  function clearOmManualPosition() {
+    omManualPosStatus('Clearing…');
+    fetch('/api/settings/app', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({om_manual_lat: null, om_manual_lon: null})
+    }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || `HTTP ${r.status}`); }))
+      .then(() => {
+        _setOmManualPos(null, null);
+        _applyOmManualInputs();
+        omManualPosStatus('Cleared. OM will fall back to GPS or radio positions.', true);
+      })
+      .catch(e => omManualPosStatus(String(e.message || e), false));
+  }
+
   function initSettings() {
     switchSettingsTab(localStorage.getItem('settingsTab') || 'mt');
     settingsLoadNodes();
@@ -10091,13 +10260,7 @@ if (targetEl) {
       settingsScanPorts();
       settingsLoadUpdateStatus(false);
       fetch('/api/settings/app').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(cfg => {
-        loadInAppNotifPrefs(cfg);
-        settingsApplyZoom(cfg.zoom || 100);
-        const cd = cfg.sense_cooldown || 180;
-        document.getElementById('settings-sense-cooldown').value = cd;
-        document.getElementById('settings-sense-cooldown-display').textContent = senseCooldownSettingLabel(cd);
-        const ac = cfg.accent_color || '#4ade80';
-        applyAccentColor(ac);
+        applyAppSettings(cfg);
       }).catch(e => console.error('settings/app fetch failed:', e));
     }
   }
@@ -10164,6 +10327,8 @@ if (targetEl) {
     if (!fixEl) return;
 
     if (!_gpsEnabled) {
+      _localGpsPos = null;
+      if (_showPolarGrid) _drawPolarGrid();
       fixEl.style.color = 'var(--muted)';
       fixEl.textContent = '● Disabled';
       if (satsEl) satsEl.textContent = '—';
@@ -10175,7 +10340,37 @@ if (targetEl) {
       _gpsRemoveMarker();
       return;
     }
+    if (pos.port && pos.port_present === false) {
+      _localGpsPos = null;
+      if (_showPolarGrid) _drawPolarGrid();
+      fixEl.style.color = 'var(--yellow, #facc15)';
+      fixEl.textContent = '● Dongle missing';
+      if (satsEl) satsEl.textContent = '0';
+      if (latEl)  latEl.textContent  = '—';
+      if (lonEl)  lonEl.textContent  = '—';
+      if (altEl)  altEl.textContent  = '—';
+      if (speedEl) speedEl.textContent = '—';
+      if (gpsBtn) gpsBtn.disabled = true;
+      _gpsRemoveMarker();
+      return;
+    }
+    if (pos.error && !pos.fix && pos.lat == null) {
+      _localGpsPos = null;
+      if (_showPolarGrid) _drawPolarGrid();
+      fixEl.style.color = 'var(--yellow, #facc15)';
+      fixEl.textContent = '● Error';
+      if (satsEl) satsEl.textContent = '0';
+      if (latEl)  latEl.textContent  = '—';
+      if (lonEl)  lonEl.textContent  = '—';
+      if (altEl)  altEl.textContent  = '—';
+      if (speedEl) speedEl.textContent = '—';
+      if (gpsBtn) gpsBtn.disabled = true;
+      _gpsRemoveMarker();
+      return;
+    }
     if (pos.lat == null && !(pos.sats > 0)) {
+      _localGpsPos = null;
+      if (_showPolarGrid) _drawPolarGrid();
       fixEl.style.color = 'var(--muted)';
       fixEl.textContent = '● Searching…';
       if (satsEl) satsEl.textContent = '0';
@@ -10236,10 +10431,11 @@ if (targetEl) {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({enabled, port, auto_push, precision, precision_meters: precMeters}),
-    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(() => {
-        statusEl.textContent = enabled ? '✓ GPS enabled' : '✓ Saved';
+    }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || `HTTP ${r.status}`); }))
+      .then((d) => {
+        statusEl.textContent = d.warning || (enabled ? '✓ GPS enabled' : '✓ Saved');
         setTimeout(() => { statusEl.textContent = ''; }, 2000);
+        loadGpsSettings();
       })
       .catch(e => { statusEl.textContent = `✗ ${escHtml(String(e))}`; });
   }
@@ -10666,6 +10862,15 @@ if (targetEl) {
     if (!sel) return;
     const allEntries       = Object.entries(mcLastStatus);
     const connectedEntries = allEntries.filter(([, s]) => s.status === 'connected');
+    const mcIds = new Set(connectedEntries.map(([id]) => id));
+    let mcSelectionChanged = false;
+    [...selectedRadioIds].filter(id => id.startsWith('mc_')).forEach(id => {
+      if (!mcIds.has(id)) {
+        selectedRadioIds.delete(id);
+        mcSelectionChanged = true;
+      }
+    });
+    if (mcSelectionChanged) saveSelectedRadioIds();
     if (!allEntries.length) {
       // No MC radios configured at all — hide the selector entirely
       activeMcRadioId = null;
@@ -10679,16 +10884,16 @@ if (targetEl) {
       _updateNetworkPillVisibility();
       return;
     }
-    // MC radios exist but none connected — show "No radios" like MT does
+    // MC radios exist but none connected — hide the MC selector instead of stacking another empty-state label
     if (!connectedEntries.length) {
       activeMcRadioId = null;
       localStorage.removeItem('activeMcRadioId');
       const hasMt = hasConnectedMtRadios();
-      sel.style.display = hasMt ? 'none' : 'flex';
+      sel.style.display = 'none';
       if (sep) sep.style.display = hasConnectedMtRadios() ? '' : 'none';
       if (netToggle) netToggle.style.display = 'none';
       if (chatNetwork === 'mc' && hasMt) setChatNetwork('mt');
-      sel.innerHTML = hasMt ? '' : '<span style="font-size:12px;color:var(--muted)">No radios</span>';
+      sel.innerHTML = '';
       applyMcVisibility();
       _updateNetworkPillVisibility();
       return;
@@ -10707,7 +10912,7 @@ if (targetEl) {
     // Auto-select MC radios only if nothing is selected yet (fresh start)
     if (selectedRadioIds.size === 0) {
       connectedEntries.forEach(([id]) => selectedRadioIds.add(id));
-      localStorage.setItem('selectedRadioIds', JSON.stringify([...selectedRadioIds]));
+      saveSelectedRadioIds();
     }
     sel.innerHTML = connectedEntries.map(([id, s]) => {
       const cls    = s.status === 'connected' ? 'dot-connected' : s.status === 'connecting' ? 'dot-connecting' : 'dot-disconnected';
@@ -10828,6 +11033,9 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         name: data.name, status: data.status, radio_id: data.radio_id,
       });
       if (data.status === 'disconnected') delete mcLastStatus[data.radio_id].node_id;
+      if (data.status === 'connected') selectedRadioIds.add(data.radio_id);
+      else selectedRadioIds.delete(data.radio_id);
+      saveSelectedRadioIds();
       if (data.status === 'connected') {
         // Re-fetch full status to get radio params (freq/bw/sf/cr/tx_power)
         // that are only available after a successful send_appstart() on connect
@@ -10867,8 +11075,13 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
             renderMcChatTabs();
           }).catch(() => {});
       } else {
+        const pruned = _pruneMcDmState();
         updateMcPills();
         loadMcSettingsNodes();
+        if (pruned && currentTab === 'chat' && chatNetwork === 'mc') {
+          renderMcMessages();
+          _updateMcInput();
+        }
       }
       return;
     }
@@ -11080,10 +11293,13 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       delete mcLastStatus[data.radio_id];
       delete mcContacts[data.radio_id];
       mcMessages = mcMessages.filter(m => m.radio_id !== data.radio_id);
+      selectedRadioIds.delete(data.radio_id);
+      saveSelectedRadioIds();
       if (activeMcRadioId === data.radio_id) {
         activeMcRadioId = null;
         localStorage.removeItem('activeMcRadioId');
       }
+      _pruneMcDmState();
       updateMcPills();
       renderMcMessages();
       renderMcMapMarkers();
@@ -11797,6 +12013,32 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       }
     });
     if (changed) renderMcChatTabs();
+  }
+
+  function _mcDmTabHasBackingData(pre) {
+    if (mcMessages.some(m => m.subtype === 'dm' && (m.from_id === pre || m.to_id === pre))) return true;
+    return Object.values(mcContacts).some(dict => !!(dict || {})[pre]);
+  }
+
+  function _pruneMcDmState() {
+    let tabsChanged = false;
+    let unreadChanged = false;
+    let closedChanged = false;
+    Object.keys(mcDmContacts).forEach(pre => {
+      if (_mcDmTabHasBackingData(pre)) return;
+      delete mcDmContacts[pre];
+      if (mcUnreadTabs.delete(`dm:${pre}`)) unreadChanged = true;
+      if (closedMcDmTabs.delete(pre)) closedChanged = true;
+      tabsChanged = true;
+      if (mcChatTab === `dm:${pre}`) mcChatTab = 'chan:0';
+    });
+    if (closedChanged) saveMcClosedDmTabs();
+    if (tabsChanged) {
+      localStorage.setItem('mcChatTab', mcChatTab);
+      renderMcChatTabs();
+    }
+    if (unreadChanged) updateUnreadDots();
+    return tabsChanged || unreadChanged || closedChanged;
   }
 
   function showMcContactPopup(evt, fromId, radioId, overrideName) {
@@ -16083,6 +16325,17 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     document.addEventListener('keydown', _mapPickEscHandler);
   }
 
+  function startOmMapPick() {
+    _mapPickMode = 'om';
+    switchTab('map');
+    document.getElementById('map-pick-banner').textContent = 'Click on the map to set OM position';
+    document.getElementById('map-pick-banner').style.display = 'block';
+    document.getElementById('map-pick-cancel').style.display = 'block';
+    document.body.classList.add('map-pick-mode');
+    _mapPickEscHandler = e => { if (e.key === 'Escape') cancelMapPick(); };
+    document.addEventListener('keydown', _mapPickEscHandler);
+  }
+
   function cancelMapPick() {
     _mapPickMode = false;
     document.getElementById('map-pick-banner').style.display = 'none';
@@ -16297,16 +16550,14 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   function pipLocateMe() {
     if (!pipMap) return;
-    const local = allNodes.find(n => n.is_local && n.latitude != null);
-    if (local) pipMap.setView([local.latitude, local.longitude], pipMap.getZoom());
+    const local = _mtLocalPosition();
+    if (local) pipMap.setView([local.lat, local.lon], pipMap.getZoom());
   }
 
   // ── Init ───────────────────────────────────────────────────────────────────
   // Apply saved font size immediately
   fetch('/api/settings/app').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(cfg => {
-    loadInAppNotifPrefs(cfg);
-    if (cfg.zoom) settingsApplyZoom(cfg.zoom);
-    if (cfg.accent_color) applyAccentColor(cfg.accent_color);
+    applyAppSettings(cfg);
   }).catch(() => {});
 
   updateLiveSortArrows();

@@ -68,6 +68,22 @@ class AppSettingsOmPositionTests(unittest.TestCase):
         self.assertEqual(resp.get_json()["error"], "OM coordinates are out of range.")
         self.save_mock.assert_not_called()
 
+    def test_saves_sound_notification_preferences(self):
+        resp = self.client.post(
+            "/api/settings/app",
+            json={
+                "sound_notify_messages": False,
+                "sound_notify_radio_connected": True,
+                "sound_notify_nodes": False,
+            },
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(settings_routes.CONFIG["app"]["sound_notify_messages"])
+        self.assertTrue(settings_routes.CONFIG["app"]["sound_notify_radio_connected"])
+        self.assertFalse(settings_routes.CONFIG["app"]["sound_notify_nodes"])
+        self.save_mock.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

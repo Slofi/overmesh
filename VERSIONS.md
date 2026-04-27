@@ -10,6 +10,19 @@ OverMesh uses date-based release versions:
 
 The version in `VERSION` must be updated every time an OverMesh update is pushed to GitHub. The Settings updater also shows the Git commit hash for exact build identification.
 
+## 2026.04.27.1
+
+- Added browser-tab unread message badge handling:
+  - the OM tab title now shows unread message count for live visible MT/MC chat unread state
+  - the tab badge clears when the matching in-app unread indicator clears
+- Added app-local notification sounds for both MT and MC:
+  - new messages
+  - radios connecting to OM
+  - new nodes/contacts discovered
+- Added Settings -> App notification sound toggles for those sound types.
+- Tuned browser audio unlock/recovery handling so notification sounds recover more reliably after reloads and tab/browser suspension.
+- Adjusted the message notification tone to cut through more clearly.
+
 ## 2026.04.23.1
 
 - Updated the Meshtastic Device Role setting in Settings -> Meshtastic -> Node:

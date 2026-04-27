@@ -2635,6 +2635,28 @@
           </label>
           <span style="font-size:13px">Node comes online</span>
         </div>
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-top:4px">Sound</div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <label class="bot-toggle">
+            <input type="checkbox" id="sound-notif-messages" onchange="saveSoundPrefs()">
+            <span class="bot-toggle-slider"></span>
+          </label>
+          <span style="font-size:13px">New messages</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <label class="bot-toggle">
+            <input type="checkbox" id="sound-notif-radios" onchange="saveSoundPrefs()">
+            <span class="bot-toggle-slider"></span>
+          </label>
+          <span style="font-size:13px">Radio connected to OM</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <label class="bot-toggle">
+            <input type="checkbox" id="sound-notif-nodes" onchange="saveSoundPrefs()">
+            <span class="bot-toggle-slider"></span>
+          </label>
+          <span style="font-size:13px">New node or contact discovered</span>
+        </div>
       </div>
 
       <div style="border-top:1px solid var(--border);margin:14px 0 10px 0"></div>
@@ -3054,6 +3076,13 @@
   const INAPP_NODE_RECENT_WINDOW_S = 120;
   const _inAppToastSeen = new Map();
   let _prevMtNodeSeen = new Map();
+  const _baseDocumentTitle = document.title || 'OverMesh';
+  const _notifSoundGainMultiplier = 4.0;
+  let _notifAudioCtx = null;
+  let _notifAudioArmed = false;
+  let _notifAudioArmInstalled = false;
+  let _mtStatusSoundPrimed = false;
+  let _mcStatusSoundPrimed = false;
 
   function _appPrefBool(key, fallback = true) {
     if (_appSettings && typeof _appSettings[key] === 'boolean') return _appSettings[key];
@@ -3196,6 +3225,151 @@
     if (nodeEl) nodeEl.checked = localStorage.getItem('notif_nodes')    !== 'false';
   }
 
+  function saveSoundPrefs() {
+    const payload = {
+      sound_notify_messages: document.getElementById('sound-notif-messages')?.checked ?? true,
+      sound_notify_radio_connected: document.getElementById('sound-notif-radios')?.checked ?? true,
+      sound_notify_nodes: document.getElementById('sound-notif-nodes')?.checked ?? true,
+    };
+    Object.assign(_appSettings, payload);
+    fetch('/api/settings/app', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    }).catch(e => console.error('saveSoundPrefs failed:', e));
+  }
+
+  function loadSoundPrefs(cfg = null) {
+    const appCfg = cfg || _appSettings || {};
+    _appSettings = Object.assign({}, _appSettings || {}, appCfg);
+    const msgEl = document.getElementById('sound-notif-messages');
+    const radioEl = document.getElementById('sound-notif-radios');
+    const nodeEl = document.getElementById('sound-notif-nodes');
+    if (msgEl) msgEl.checked = _appPrefBool('sound_notify_messages', true);
+    if (radioEl) radioEl.checked = _appPrefBool('sound_notify_radio_connected', true);
+    if (nodeEl) nodeEl.checked = _appPrefBool('sound_notify_nodes', true);
+  }
+
+  function _notificationSoundEnabled(kind) {
+    if (kind === 'message') return _appPrefBool('sound_notify_messages', true);
+    if (kind === 'radio') return _appPrefBool('sound_notify_radio_connected', true);
+    if (kind === 'node') return _appPrefBool('sound_notify_nodes', true);
+    return true;
+  }
+
+  function _primeNotificationAudioContext(ctx) {
+    if (!ctx || ctx.state !== 'running') return;
+    try {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const at = ctx.currentTime + 0.001;
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, at);
+      gain.gain.setValueAtTime(0.00001, at);
+      gain.gain.exponentialRampToValueAtTime(0.00001, at + 0.02);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(at);
+      osc.stop(at + 0.02);
+    } catch (e) {}
+  }
+
+  function _notificationSoundArmListener() {
+    const Ctor = window.AudioContext || window.webkitAudioContext;
+    if (!_notifAudioCtx && Ctor) {
+      try { _notifAudioCtx = new Ctor(); } catch (e) { _notifAudioCtx = null; }
+    }
+    const ctx = _notifAudioCtx;
+    if (!ctx) {
+      _notifAudioArmed = false;
+      return;
+    }
+    const finishReady = () => {
+      _notifAudioArmed = ctx.state === 'running';
+      if (!_notifAudioArmed) return;
+      _primeNotificationAudioContext(ctx);
+    };
+    if (ctx.state === 'running') {
+      finishReady();
+      return;
+    }
+    ctx.resume().then(finishReady).catch(() => {
+      _notifAudioArmed = false;
+    });
+  }
+
+  function installNotificationSoundArm() {
+    if (_notifAudioArmInstalled) return;
+    _notifAudioArmInstalled = true;
+    window.addEventListener('pointerdown', _notificationSoundArmListener);
+    window.addEventListener('mousedown', _notificationSoundArmListener);
+    window.addEventListener('click', _notificationSoundArmListener);
+    window.addEventListener('keydown', _notificationSoundArmListener);
+    window.addEventListener('touchstart', _notificationSoundArmListener);
+  }
+
+  function _playNotificationToneSequence(tones) {
+    if (!_notifAudioCtx) {
+      const Ctor = window.AudioContext || window.webkitAudioContext;
+      if (Ctor) {
+        try { _notifAudioCtx = new Ctor(); } catch (e) { _notifAudioCtx = null; }
+      }
+    }
+    if (_notifAudioCtx && _notifAudioCtx.state === 'running') _notifAudioArmed = true;
+    if (!_notifAudioCtx || _notifAudioCtx.state !== 'running') {
+      _notifAudioArmed = false;
+      installNotificationSoundArm();
+      return;
+    }
+    if (!_notifAudioArmed) {
+      installNotificationSoundArm();
+      return;
+    }
+    const ctx = _notifAudioCtx;
+    let at = ctx.currentTime + 0.01;
+    tones.forEach(tone => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const dur = Math.max(0.04, Number(tone.dur) || 0.12);
+      const basePeak = Math.max(0.0001, Number(tone.gain) || 0.045);
+      const peak = Math.min(0.32, basePeak * _notifSoundGainMultiplier);
+      osc.type = tone.type || 'sine';
+      osc.frequency.setValueAtTime(Number(tone.freq) || 880, at);
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(peak, at + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(at);
+      osc.stop(at + dur + 0.03);
+      at += dur + Math.max(0.01, Number(tone.gap) || 0.03);
+    });
+  }
+
+  function playNotificationSound(kind) {
+    if (!_notificationSoundEnabled(kind)) return;
+    if (kind === 'message') {
+      _playNotificationToneSequence([
+        {freq: 1318, dur: 0.09, gain: 0.032, type: 'square', gap: 0.02},
+        {freq: 1760, dur: 0.26, gain: 0.07, type: 'square', gap: 0.03},
+      ]);
+      return;
+    }
+    if (kind === 'radio') {
+      _playNotificationToneSequence([
+        {freq: 440, dur: 0.10, gain: 0.04, type: 'triangle', gap: 0.02},
+        {freq: 660, dur: 0.16, gain: 0.05, type: 'triangle', gap: 0.03},
+      ]);
+      return;
+    }
+    if (kind === 'node') {
+      _playNotificationToneSequence([
+        {freq: 880, dur: 0.08, gain: 0.026, type: 'triangle', gap: 0.02},
+        {freq: 1174, dur: 0.12, gain: 0.036, type: 'triangle', gap: 0.02},
+      ]);
+    }
+  }
+
   function saveExtMapPref(val) {
     localStorage.setItem('extMapProvider', val);
   }
@@ -3231,25 +3405,101 @@
   let _nodeInfoTimer               = null;
   const inactiveRadioUnread = new Set();       // radio_ids with any unread (drives radio btn dot)
   const radioUnreadChannels = {};              // radio_id → Set of channels with unread (drives Chat tab + sub-tab dots)
+  const unreadChannelCounts = Object.create(null);
+  const radioUnreadCounts = {};
+
+  function _safeUnreadCount(value) {
+    const count = parseInt(value, 10);
+    return Number.isFinite(count) && count > 0 ? count : 0;
+  }
+
+  function _clearUnreadCount(store, key) {
+    delete store[String(key)];
+  }
+
+  function _clearUnreadCountStore(store) {
+    Object.keys(store).forEach(key => delete store[key]);
+  }
+
+  function _incrementUnreadCount(store, key, amount = 1) {
+    const count = _safeUnreadCount(amount) || 1;
+    const k = String(key);
+    store[k] = _safeUnreadCount(store[k]) + count;
+  }
+
+  function _copyUnreadCountStore(store) {
+    const copy = {};
+    Object.entries(store || {}).forEach(([key, value]) => {
+      const count = _safeUnreadCount(value);
+      if (count > 0) copy[key] = count;
+    });
+    return copy;
+  }
+
+  function _sumUnreadEntries(entries, counts) {
+    let total = 0;
+    if (entries && typeof entries.forEach === 'function') {
+      entries.forEach(entry => {
+        const key = String(entry);
+        total += _safeUnreadCount((counts || {})[key] ?? 1);
+      });
+    }
+    return total;
+  }
+
+  function _updateDocumentUnreadBadge() {
+    let total = _sumUnreadEntries(unreadChannels, unreadChannelCounts);
+    total += _sumUnreadEntries(mcUnreadTabs, mcUnreadCounts);
+    document.title = total > 0 ? `(${total}) ${_baseDocumentTitle}` : _baseDocumentTitle;
+    try {
+      if (navigator.setAppBadge) {
+        if (total > 0) navigator.setAppBadge(total);
+        else if (navigator.clearAppBadge) navigator.clearAppBadge();
+      }
+    } catch (e) {}
+  }
 
   function saveUnreadState() {
     try {
       const data = {};
-      if (activeRadioId) data[activeRadioId] = [...unreadChannels];
-      Object.entries(radioUnreadChannels).forEach(([rid, chs]) => { data[rid] = [...chs]; });
+      if (activeRadioId && unreadChannels.size > 0) {
+        data[activeRadioId] = {
+          channels: [...unreadChannels],
+          counts: _copyUnreadCountStore(unreadChannelCounts),
+        };
+      }
+      Object.entries(radioUnreadChannels).forEach(([rid, chs]) => {
+        if (!chs || chs.size === 0) return;
+        data[rid] = {
+          channels: [...chs],
+          counts: _copyUnreadCountStore(radioUnreadCounts[rid]),
+        };
+      });
       localStorage.setItem('unreadState', JSON.stringify(data));
     } catch(e) {}
   }
   function loadUnreadState() {
     try {
       const data = JSON.parse(localStorage.getItem('unreadState') || '{}');
-      Object.entries(data).forEach(([rid, chs]) => {
-        if (!chs.length) return;
+      Object.entries(data).forEach(([rid, entry]) => {
+        const channels = Array.isArray(entry)
+          ? entry
+          : Array.isArray(entry?.channels) ? entry.channels : [];
+        if (!channels.length) return;
         // Don't restore unread for the active radio on page load — history replay
         // already shows those messages when chat is opened, so restoring stale
         // unread state here only causes phantom dots on every refresh.
         if (rid === activeRadioId) return;
-        radioUnreadChannels[rid] = new Set(chs);
+        radioUnreadChannels[rid] = new Set(channels);
+        const counts = entry && !Array.isArray(entry) && entry.counts && typeof entry.counts === 'object'
+          ? entry.counts
+          : {};
+        const restoredCounts = {};
+        channels.forEach(ch => {
+          const key = String(ch);
+          restoredCounts[key] = _safeUnreadCount(counts[key] ?? 1) || 1;
+        });
+        if (Object.keys(restoredCounts).length) radioUnreadCounts[rid] = restoredCounts;
         inactiveRadioUnread.add(rid);
       });
     } catch(e) {}
@@ -3335,6 +3585,9 @@
     [...selectedRadioIds].filter(id => !id.startsWith('mc_')).forEach(id => {
       if (!mtIds.has(id)) {
         selectedRadioIds.delete(id);
+        delete radioUnreadChannels[id];
+        delete radioUnreadCounts[id];
+        inactiveRadioUnread.delete(id);
         mtSelectionChanged = true;
       }
     });
@@ -3383,16 +3636,25 @@
         if (activeRadioId) {
           const saved = new Set(unreadChannels);
           radioUnreadChannels[activeRadioId] = saved;
+          const savedCounts = _copyUnreadCountStore(unreadChannelCounts);
+          if (Object.keys(savedCounts).length) radioUnreadCounts[activeRadioId] = savedCounts;
+          else delete radioUnreadCounts[activeRadioId];
           if (saved.size > 0) inactiveRadioUnread.add(activeRadioId);
+          else inactiveRadioUnread.delete(activeRadioId);
         }
         activeRadioId = id;
         localStorage.setItem('activeRadioId', id);
         inactiveRadioUnread.delete(id);
         unreadChannels.clear();
+        _clearUnreadCountStore(unreadChannelCounts);
         if (radioUnreadChannels[id]) {
           radioUnreadChannels[id].forEach(ch => unreadChannels.add(ch));
           delete radioUnreadChannels[id];
         }
+        Object.entries(radioUnreadCounts[id] || {}).forEach(([key, value]) => {
+          unreadChannelCounts[key] = _safeUnreadCount(value);
+        });
+        delete radioUnreadCounts[id];
         chatChannel = 0;
         botInitDone = false;
         _senseRunId = 0;
@@ -3456,6 +3718,7 @@
         // Clear unread dot for the channel that's now visible
         if (currentTab === 'chat') {
           unreadChannels.delete(chatChannel);
+          _clearUnreadCount(unreadChannelCounts, chatChannel);
           updateUnreadDots();
           renderChannelTabs();
           renderMessages();  // always sync message area with active channel/tab
@@ -3493,10 +3756,14 @@
         return;
       }
       if (data.type === 'node_status') {
+        const prevStatus = lastStatus[data.radio_id]?.status;
         if (lastStatus[data.radio_id]) {
           lastStatus[data.radio_id].status = data.status;
         } else if (data.status === 'connected') {
           lastStatus[data.radio_id] = {status: 'connected', name: data.name, enabled: true};
+        }
+        if (_mtStatusSoundPrimed && data.status === 'connected' && prevStatus !== 'connected') {
+          playNotificationSound('radio');
         }
         if (data.status === 'connected') selectedRadioIds.add(data.radio_id);
         else selectedRadioIds.delete(data.radio_id);
@@ -3513,6 +3780,7 @@
       if (data.type === 'radio_removed') {
         chatMsgs = chatMsgs.filter(m => m.radio_id !== data.radio_id);
         delete radioUnreadChannels[data.radio_id];
+        delete radioUnreadCounts[data.radio_id];
         inactiveRadioUnread.delete(data.radio_id);
         selectedRadioIds.delete(data.radio_id);
         saveSelectedRadioIds();
@@ -3636,6 +3904,7 @@
         const channel = parseInt(data.channel ?? 0);
         chatMsgs = chatMsgs.filter(m => !(m.radio_id === data.radio_id && !m.is_dm && (m.channel ?? 0) === channel));
         unreadChannels.delete(channel);
+        _clearUnreadCount(unreadChannelCounts, channel);
         if (data.radio_id === activeRadioId) {
           renderMessages();
           renderChannelTabs();
@@ -3659,14 +3928,18 @@
               inactiveRadioUnread.add(data.radio_id);
               if (!radioUnreadChannels[data.radio_id]) radioUnreadChannels[data.radio_id] = new Set();
               radioUnreadChannels[data.radio_id].add(msgCh);
-              saveUnreadState();
+              if (!radioUnreadCounts[data.radio_id]) radioUnreadCounts[data.radio_id] = {};
+              _incrementUnreadCount(radioUnreadCounts[data.radio_id], msgCh);
               updateRadioSelector();
+              updateUnreadDots();
             } else {
               if (currentTab !== 'chat' || chatChannel !== msgCh) {
                 unreadChannels.add(msgCh);
+                _incrementUnreadCount(unreadChannelCounts, msgCh);
                 updateUnreadDots();
               }
             }
+            playNotificationSound('message');
             // Browser notification
             if (document.hidden || currentTab !== 'chat' || chatChannel !== msgCh) {
               const title = data.is_dm ? `DM from ${data.from_name}` : `${data.from_name} on CH${data.channel}`;
@@ -3729,6 +4002,7 @@
   function switchChatChannel(idx) {
     chatChannel = idx;
     unreadChannels.delete(idx);
+    _clearUnreadCount(unreadChannelCounts, idx);
     updateUnreadDots();
     renderChannelTabs();
     renderMessages();
@@ -4325,9 +4599,12 @@
     showConfirm(`Close DM tab with ${name}?`, () => {
       closedDmTabs.add(id);
       saveClosedDmTabs();
+      unreadChannels.delete('dm:' + id);
+      _clearUnreadCount(unreadChannelCounts, 'dm:' + id);
       if (chatChannel === 'dm:' + id) {
         chatChannel = chatChannels[0]?.index ?? 0;
       }
+      updateUnreadDots();
       renderChannelTabs();
       renderMessages();
     });
@@ -4506,6 +4783,7 @@ if (targetEl) {
 
   function updateUnreadDots() {
     saveUnreadState();
+    _updateDocumentUnreadBadge();
     // Chat is the 2nd main tab (index 1)
     const chatTabEl = document.querySelectorAll('.tab')[1];
     if (chatTabEl) {
@@ -5195,6 +5473,7 @@ if (targetEl) {
             const label = `${n.long_name} (${n.short_name})`;
             maybeShowInAppNodeSeen('MT node seen', `<b>${escHtml(label)}</b>`, `toast-node-mt-${id}`);
             sendNotif('Node online', `${label} appeared on mesh`, `node-${id}`, 'node');
+            playNotificationSound('node');
           } else if (prevSeen && curSeen > prevSeen && (curSeen - prevSeen) >= _returnedGapThresholdSeconds() && (nowTs - curSeen) <= INAPP_NODE_RECENT_WINDOW_S) {
             maybeShowInAppNodeReturned('MT node seen again', `<b>${escHtml(n.long_name)}</b> returned after a long gap`, `toast-node-return-mt-${id}`);
           }
@@ -5206,6 +5485,7 @@ if (targetEl) {
     }).catch(e => console.error('loadLive failed', e));
     fetch('/api/status').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(status => {
       updateRadioSelector(status);
+      _mtStatusSoundPrimed = true;
       updateHeaderNodeCount(allNodes);
       updateMcPills();  // re-evaluate chat-net-toggle + node/map pills now that MT status is fresh
       if (currentTab === 'settings') settingsRefresh();
@@ -10190,6 +10470,7 @@ if (targetEl) {
 
   function applyAppSettings(cfg = {}) {
     loadInAppNotifPrefs(cfg);
+    loadSoundPrefs(cfg);
     settingsApplyZoom(cfg.zoom || 100);
     const cd = cfg.sense_cooldown || 180;
     document.getElementById('settings-sense-cooldown').value = cd;
@@ -10246,6 +10527,7 @@ if (targetEl) {
     loadMcSettingsNodes();
     loadNotifPrefs();
     loadInAppNotifPrefs();
+    loadSoundPrefs();
     loadExtMapPref();
     loadNodeCfgRadios();
     loadMapLayers({silent: true});
@@ -10828,6 +11110,7 @@ if (targetEl) {
   let activeMcRadioId = localStorage.getItem('activeMcRadioId') || null;  // currently viewed MC radio
   let mcChatTab       = localStorage.getItem('mcChatTab') || 'chan:0';
   const mcUnreadTabs      = new Set();
+  const mcUnreadCounts    = Object.create(null);
   const mcKnownChannels   = {0: 'Public'};  // idx → display name
   const mcDmContacts      = {};             // pubkey_pre → display name
   let closedMcDmTabs = (() => { try { return new Set(JSON.parse(localStorage.getItem('closedMcDmTabs') || '[]')); } catch(e) { return new Set(); } })();
@@ -11028,11 +11311,15 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
   // -- SSE events from backend (mc_status, mc_node, mc_message) --
   function handleMcSseEvent(data) {
     if (data.type === 'mc_status') {
+      const prevStatus = mcLastStatus[data.radio_id]?.status;
       if (!mcLastStatus[data.radio_id]) mcLastStatus[data.radio_id] = {};
       Object.assign(mcLastStatus[data.radio_id], {
         name: data.name, status: data.status, radio_id: data.radio_id,
       });
       if (data.status === 'disconnected') delete mcLastStatus[data.radio_id].node_id;
+      if (_mcStatusSoundPrimed && data.status === 'connected' && prevStatus !== 'connected') {
+        playNotificationSound('radio');
+      }
       if (data.status === 'connected') selectedRadioIds.add(data.radio_id);
       else selectedRadioIds.delete(data.radio_id);
       saveSelectedRadioIds();
@@ -11111,6 +11398,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       if (notifReady) {
         if (isNew) {
           maybeShowInAppNodeSeen('MC contact seen', `<b>${escHtml(contactLabel)}</b>`, `toast-node-mc-${data.radio_id}-${data.id}`);
+          playNotificationSound('node');
         } else if (prevSeenTs && curSeenTs > prevSeenTs && (curSeenTs - prevSeenTs) >= _returnedGapThresholdSeconds() && (nowTs - curSeenTs) <= INAPP_NODE_RECENT_WINDOW_S) {
           maybeShowInAppNodeReturned('MC contact seen again', `<b>${escHtml(contactLabel)}</b> returned after a long gap`, `toast-node-return-mc-${data.radio_id}-${data.id}`);
         }
@@ -11258,9 +11546,11 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       // Mark unread if not on this tab or not in chat/MC view
       if (msgTab && !data.sent && (currentTab !== 'chat' || chatNetwork !== 'mc' || mcChatTab !== msgTab)) {
         mcUnreadTabs.add(msgTab);
+        _incrementUnreadCount(mcUnreadCounts, msgTab);
         updateUnreadDots();
       }
       if (!data.sent) {
+        playNotificationSound('message');
         const currentMcTab = (currentTab === 'chat' && chatNetwork === 'mc') ? mcChatTab : null;
         if (document.hidden || currentMcTab !== msgTab) {
           const title = data.subtype === 'dm'
@@ -11855,6 +12145,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     mcChatTab = tab;
     localStorage.setItem('mcChatTab', tab);
     mcUnreadTabs.delete(tab);
+    _clearUnreadCount(mcUnreadCounts, tab);
     updateUnreadDots();
     renderMcChatTabs();
     renderMcMessages();
@@ -11886,8 +12177,12 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       saveMcClosedDmTabs();
       delete mcDmContacts[pre];
       mcUnreadTabs.delete(`dm:${pre}`);
+      _clearUnreadCount(mcUnreadCounts, `dm:${pre}`);
       if (mcChatTab === `dm:${pre}`) switchMcTab('chan:0');
-      else renderMcChatTabs();
+      else {
+        updateUnreadDots();
+        renderMcChatTabs();
+      }
     });
   }
 
@@ -12028,6 +12323,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       if (_mcDmTabHasBackingData(pre)) return;
       delete mcDmContacts[pre];
       if (mcUnreadTabs.delete(`dm:${pre}`)) unreadChanged = true;
+      _clearUnreadCount(mcUnreadCounts, `dm:${pre}`);
       if (closedMcDmTabs.delete(pre)) closedChanged = true;
       tabsChanged = true;
       if (mcChatTab === `dm:${pre}`) mcChatTab = 'chan:0';
@@ -13891,6 +14187,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
           }
         });
         updateMcPills();
+        _mcStatusSoundPrimed = true;
       }).catch(() => {});
   }
 
@@ -15062,6 +15359,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       const removed = before - mcMessages.length;
       _saveMcMessages();
       mcUnreadTabs.delete(`chan:${idx}`);
+      _clearUnreadCount(mcUnreadCounts, `chan:${idx}`);
       if (activeMcRadioId === radioId) renderMcMessages();
       updateUnreadDots();
       if (statusEl) statusEl.innerHTML = `<span style="color:var(--accent)">Deleted ${removed} saved message${removed === 1 ? '' : 's'}.</span>`;
@@ -16273,6 +16571,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         if (!r.ok || d.error) throw new Error(d.error || r.status);
         chatMsgs = chatMsgs.filter(m => !(m.radio_id === radioId && !m.is_dm && (m.channel ?? 0) === index));
         unreadChannels.delete(index);
+        _clearUnreadCount(unreadChannelCounts, index);
         renderMessages();
         renderChannelTabs();
         updateUnreadDots();
@@ -16564,6 +16863,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   initNodesFilterPills();
   initMapFilterPills();
   requestNotifPermission();
+  installNotificationSoundArm();
   loadLive();
   showOmIntroIfNeeded();
   setInterval(loadLive, 15000);

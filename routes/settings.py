@@ -35,6 +35,9 @@ def _app_settings_payload():
     app_cfg.setdefault("font_size", "medium")
     app_cfg.setdefault("om_manual_lat", None)
     app_cfg.setdefault("om_manual_lon", None)
+    app_cfg.setdefault("sound_notify_messages", True)
+    app_cfg.setdefault("sound_notify_radio_connected", True)
+    app_cfg.setdefault("sound_notify_nodes", True)
     return app_cfg
 
 
@@ -484,7 +487,14 @@ def api_settings_app_set():
             unit = str(data["inapp_notify_returned_gap_unit"]).lower()
             if unit in ("hours", "days"):
                 CONFIG["app"]["inapp_notify_returned_gap_unit"] = unit
-        for key in ("inapp_notify_messages", "inapp_notify_nodes", "inapp_notify_returned"):
+        for key in (
+            "inapp_notify_messages",
+            "inapp_notify_nodes",
+            "inapp_notify_returned",
+            "sound_notify_messages",
+            "sound_notify_radio_connected",
+            "sound_notify_nodes",
+        ):
             if key in data:
                 CONFIG["app"][key] = bool(data[key])
         if "om_manual_lat" in data or "om_manual_lon" in data:

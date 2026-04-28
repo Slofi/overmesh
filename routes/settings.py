@@ -33,11 +33,13 @@ _UPDATE_STATE = {
 def _app_settings_payload():
     app_cfg = dict(CONFIG.get("app") or {})
     app_cfg.setdefault("font_size", "medium")
+    app_cfg.setdefault("accent_color", "#4ade80")
     app_cfg.setdefault("om_manual_lat", None)
     app_cfg.setdefault("om_manual_lon", None)
     app_cfg.setdefault("sound_notify_messages", True)
     app_cfg.setdefault("sound_notify_radio_connected", True)
     app_cfg.setdefault("sound_notify_nodes", True)
+    app_cfg.setdefault("distance_unit", "km")
     return app_cfg
 
 
@@ -230,6 +232,10 @@ def api_settings_ports():
         {n.get("usb_serial") for n in CONFIG.get("nodes", []) if n.get("usb_serial")} |
         {n.get("usb_serial") for n in CONFIG.get("mc_nodes", []) if n.get("usb_serial")}
     )
+    known_ports = (
+        {n.get("port") for n in CONFIG.get("nodes", []) if n.get("port") and not n.get("usb_serial")} |
+        {n.get("port") for n in CONFIG.get("mc_nodes", []) if n.get("port") and not n.get("usb_serial") and (n.get("type") or "serial") == "serial"}
+    )
     ports = []
     for p in serial.tools.list_ports.comports():
         ports.append({
@@ -238,7 +244,7 @@ def api_settings_ports():
             "usb_serial":  p.serial_number or "",
             "vid":         p.vid,
             "pid":         p.pid,
-            "in_use":      p.serial_number in known_serials if p.serial_number else False,
+            "in_use":      (p.serial_number in known_serials) if p.serial_number else (p.device in known_ports),
         })
     ports.sort(key=lambda x: x["device"])
     return jsonify({"ports": ports})
@@ -321,6 +327,8 @@ def api_settings_nodes_add():
     else:
         usb_serial = (data.get("usb_serial") or "").strip()
         port       = (data.get("port") or "").strip()
+        if usb_serial and usb_serial == port:
+            usb_serial = ""
         if not usb_serial and not port:
             return jsonify({"error": "Select a device"}), 400
         if usb_serial and any(n.get("usb_serial") == usb_serial for n in CONFIG["nodes"]):
@@ -487,6 +495,11 @@ def api_settings_app_set():
             unit = str(data["inapp_notify_returned_gap_unit"]).lower()
             if unit in ("hours", "days"):
                 CONFIG["app"]["inapp_notify_returned_gap_unit"] = unit
+        if "distance_unit" in data:
+            unit = str(data["distance_unit"]).lower()
+            if unit not in ("km", "mi"):
+                return jsonify({"error": "distance_unit must be 'km' or 'mi'"}), 400
+            CONFIG["app"]["distance_unit"] = unit
         for key in (
             "inapp_notify_messages",
             "inapp_notify_nodes",
@@ -574,7 +587,12 @@ def api_settings_mc_nodes():
         {
             "id":         n["id"],
             "name":       n["name"],
+            "type":       n.get("type", "serial"),
             "port":       n.get("port", ""),
+            "host":       n.get("host", ""),
+            "tcp_port":   n.get("tcp_port", 4403),
+            "bt_address": n.get("bt_address", ""),
+            "bt_pin":     n.get("bt_pin", ""),
             "usb_serial": n.get("usb_serial", ""),
             "enabled":    n.get("enabled", True),
             "status":     statuses.get(n["id"], "disconnected"),
@@ -590,29 +608,63 @@ def api_settings_mc_nodes_add():
     from mesh_mc import connect_mc_node
     data       = request.get_json(silent=True) or {}
     name       = (data.get("name") or "").strip()
-    usb_serial = (data.get("usb_serial") or "").strip()
-    port       = (data.get("port") or "").strip()
+    node_type  = (data.get("type") or "serial").strip().lower()
+    if node_type in ("bt", "bluetooth"):
+        node_type = "ble"
+    if node_type not in ("serial", "tcp", "ble"):
+        return jsonify({"error": "type must be 'serial', 'tcp', or 'ble'"}), 400
     if not name:
         return jsonify({"error": "Name is required"}), 400
-    if not usb_serial and not port:
-        return jsonify({"error": "Select a device"}), 400
     mc_nodes = CONFIG.setdefault("mc_nodes", [])
-    if usb_serial and any(n.get("usb_serial") == usb_serial for n in mc_nodes):
-        return jsonify({"error": "This device is already configured as an MC node"}), 400
-    # Also check MT nodes
-    if usb_serial and any(n.get("usb_serial") == usb_serial for n in CONFIG.get("nodes", [])):
-        return jsonify({"error": "This device is already configured as an MT node"}), 400
-    if not usb_serial and any(n.get("port") == port and not n.get("usb_serial") for n in mc_nodes):
-        return jsonify({"error": f"Port {port} is already configured as an MC node"}), 400
-    if not usb_serial and any(n.get("port") == port and not n.get("usb_serial") for n in CONFIG.get("nodes", [])):
-        return jsonify({"error": f"Port {port} is already configured as an MT node"}), 400
     node_id  = f"mc_node_{uuid.uuid4().hex[:12]}"
-    new_node = {"id": node_id, "name": name, "enabled": True, "path_hash_mode": 2}
-    if usb_serial:
-        new_node["usb_serial"] = usb_serial
-        new_node["port"]       = port
+    new_node = {"id": node_id, "name": name, "enabled": True, "path_hash_mode": 2, "type": node_type}
+    if node_type == "tcp":
+        host = (data.get("host") or "").strip()
+        try:
+            tcp_port = int(data.get("tcp_port") or 4403)
+        except (TypeError, ValueError):
+            return jsonify({"error": "tcp_port must be a number"}), 400
+        if not host:
+            return jsonify({"error": "Enter an IP address or hostname"}), 400
+        if any(n.get("host") == host and n.get("type") == "tcp" and int(n.get("tcp_port") or 4403) == tcp_port for n in mc_nodes):
+            return jsonify({"error": f"{host}:{tcp_port} is already configured as an MC node"}), 400
+        if any(n.get("host") == host and n.get("type") == "tcp" and int(n.get("tcp_port") or 4403) == tcp_port for n in CONFIG.get("nodes", [])):
+            return jsonify({"error": f"{host}:{tcp_port} is already configured as an MT node"}), 400
+        new_node["host"] = host
+        new_node["tcp_port"] = tcp_port
+        new_node["port"] = f"{host}:{tcp_port}"
+    elif node_type == "ble":
+        bt_address = (data.get("bt_address") or data.get("address") or "").strip()
+        bt_pin = (data.get("bt_pin") or data.get("pin") or "").strip()
+        if not bt_address:
+            return jsonify({"error": "Enter a Bluetooth address"}), 400
+        if any(n.get("bt_address") == bt_address and n.get("type") == "ble" for n in mc_nodes):
+            return jsonify({"error": f"{bt_address} is already configured as an MC node"}), 400
+        new_node["bt_address"] = bt_address
+        if bt_pin:
+            new_node["bt_pin"] = bt_pin
+        new_node["port"] = bt_address
     else:
-        new_node["port"] = port
+        usb_serial = (data.get("usb_serial") or "").strip()
+        port       = (data.get("port") or "").strip()
+        if usb_serial and usb_serial == port:
+            usb_serial = ""
+        if not usb_serial and not port:
+            return jsonify({"error": "Select a device"}), 400
+        if usb_serial and any(n.get("usb_serial") == usb_serial for n in mc_nodes):
+            return jsonify({"error": "This device is already configured as an MC node"}), 400
+        # Also check MT nodes
+        if usb_serial and any(n.get("usb_serial") == usb_serial for n in CONFIG.get("nodes", [])):
+            return jsonify({"error": "This device is already configured as an MT node"}), 400
+        if not usb_serial and any(n.get("port") == port and not n.get("usb_serial") for n in mc_nodes):
+            return jsonify({"error": f"Port {port} is already configured as an MC node"}), 400
+        if not usb_serial and any(n.get("port") == port and not n.get("usb_serial") for n in CONFIG.get("nodes", [])):
+            return jsonify({"error": f"Port {port} is already configured as an MT node"}), 400
+        if usb_serial:
+            new_node["usb_serial"] = usb_serial
+            new_node["port"]       = port
+        else:
+            new_node["port"] = port
     with CONFIG_LOCK:
         mc_nodes.append(new_node)
         save_config()

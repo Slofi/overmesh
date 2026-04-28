@@ -16,6 +16,7 @@ from mesh_mc import (send_chan_msg, send_dm, send_advert, refresh_contacts,
                      reboot_device_dtr, get_channels, set_channel,
                      req_node_status, get_stats, remove_mc_contact,
                      send_trace_broadcast, import_mc_contact, enable_mc_debug,
+                     get_mc_contact_archive,
                      set_contact_path)
 from db import get_mc_ignored, set_mc_ignored
 from state import mc_connections, mc_connections_lock
@@ -34,7 +35,17 @@ def _mc_contact_last_seen_ts(contact):
     return int(contact.get("last_seen_ts") or contact.get("last_advert") or 0)
 
 
-def _serialize_mc_contact(pubkey, contact, now=None):
+def _mc_contact_source_state(pubkey, live_contacts, archive_contacts):
+    in_live = pubkey in (live_contacts or {})
+    in_archive = pubkey in (archive_contacts or {})
+    if in_live and in_archive:
+        return "both"
+    if in_live:
+        return "live"
+    return "archive"
+
+
+def _serialize_mc_contact(pubkey, contact, now=None, source_state=None):
     now = int(time.time()) if now is None else int(now)
     raw_last_seen_ts = _mc_contact_last_seen_ts(contact)
     last_seen_ts = min(raw_last_seen_ts, now) if raw_last_seen_ts else 0
@@ -52,7 +63,7 @@ def _serialize_mc_contact(pubkey, contact, now=None):
     else:
         last_seen = None
 
-    return {
+    out = {
         "id": pubkey[:12],
         "full_key": pubkey,
         "long_name": contact.get("adv_name", pubkey[:8]),
@@ -69,6 +80,10 @@ def _serialize_mc_contact(pubkey, contact, now=None):
         "type": contact.get("type", 0),
         "network": "mc",
     }
+    if source_state:
+        out["source_state"] = source_state
+        out["archived_only"] = source_state == "archive"
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -78,29 +93,55 @@ def _serialize_mc_contact(pubkey, contact, now=None):
 @bp.route("/api/mc/status")
 def api_mc_status():
     """All MC radio connections and their status."""
+    with CONFIG_LOCK:
+        configured = {
+            str(node.get("id")): dict(node)
+            for node in CONFIG.get("mc_nodes", [])
+            if node.get("id")
+        }
     with mc_connections_lock:
-        result = []
-        for cid, v in mc_connections.items():
-            info = v.get("node_info", {})
-            result.append({
-                "id":         cid,
-                "name":       v.get("config", {}).get("name", cid),
-                "status":     v.get("status", "disconnected"),
-                "node_id":    v.get("node_id", ""),
-                "node_name":  info.get("name", ""),
-                "freq":       info.get("radio_freq"),
-                "sf":         info.get("radio_sf"),
-                "bw":         info.get("radio_bw"),
-                "cr":         info.get("radio_cr"),
-                "tx_power":   info.get("tx_power"),
-                "max_tx_power": info.get("max_tx_power"),
-                "max_channels": info.get("max_channels"),
-                "lat":        info.get("adv_lat"),
-                "lon":        info.get("adv_lon"),
-                "contacts":   len(v.get("contacts", {})),
-                "enabled":    v.get("config", {}).get("enabled", True),
-                "path_hash_mode": v.get("config", {}).get("path_hash_mode", info.get("path_hash_mode")),
-            })
+        state_map = {str(cid): dict(v) for cid, v in mc_connections.items()}
+    result = []
+    runtime_ids = [
+        cid for cid, state in state_map.items()
+        if cid in configured or state.get("status") in ("connected", "connecting")
+    ]
+    all_ids = list(dict.fromkeys([
+        *configured.keys(),
+        *runtime_ids,
+    ]))
+    for cid in all_ids:
+        v = state_map.get(cid, {})
+        cfg = dict(v.get("config", {}) or configured.get(cid, {}) or {})
+        archive_contacts = get_mc_contact_archive(cid)
+        info = v.get("node_info", {})
+        live_contacts = v.get("live_contacts", {}) or {}
+        merged_contacts = v.get("contacts", {}) or {}
+        if not merged_contacts and archive_contacts:
+            merged_contacts = archive_contacts
+        archived_only_count = len(set(archive_contacts.keys()) - set(live_contacts.keys()))
+        result.append({
+            "id":         cid,
+            "name":       cfg.get("name", cid),
+            "status":     v.get("status", "disconnected"),
+            "node_id":    v.get("node_id", ""),
+            "node_name":  info.get("name", ""),
+            "freq":       info.get("radio_freq"),
+            "sf":         info.get("radio_sf"),
+            "bw":         info.get("radio_bw"),
+            "cr":         info.get("radio_cr"),
+            "tx_power":   info.get("tx_power"),
+            "max_tx_power": info.get("max_tx_power"),
+            "max_channels": info.get("max_channels"),
+            "lat":        info.get("adv_lat"),
+            "lon":        info.get("adv_lon"),
+            "contacts":   len(live_contacts),
+            "stored_contacts": len(merged_contacts),
+            "live_contacts": len(live_contacts),
+            "archived_contacts": archived_only_count,
+            "enabled":    cfg.get("enabled", True),
+            "path_hash_mode": cfg.get("path_hash_mode", info.get("path_hash_mode")),
+        })
     return jsonify({"mc_nodes": result})
 
 
@@ -119,12 +160,22 @@ def api_mc_contacts(radio_id):
     with mc_connections_lock:
         state = mc_connections.get(radio_id)
         contacts_raw = dict(state.get("contacts", {})) if state else None
+        live_contacts = dict(state.get("live_contacts", {})) if state else None
+    archive_contacts = get_mc_contact_archive(radio_id)
     if contacts_raw is None:
-        return jsonify({"error": "MC radio not found"}), 404
+        if not archive_contacts:
+            return jsonify({"error": "MC radio not found"}), 404
+        contacts_raw = dict(archive_contacts)
+        live_contacts = {}
+    elif not contacts_raw and live_contacts:
+        contacts_raw = dict(live_contacts)
+    elif not contacts_raw and archive_contacts and not live_contacts:
+        contacts_raw = dict(archive_contacts)
     contacts = []
     now = int(time.time())
     for pubkey, c in contacts_raw.items():
-        contacts.append(_serialize_mc_contact(pubkey, c, now=now))
+        source_state = _mc_contact_source_state(pubkey, live_contacts, archive_contacts)
+        contacts.append(_serialize_mc_contact(pubkey, c, now=now, source_state=source_state))
 
     contacts.sort(key=lambda x: x["last_seen_ts"], reverse=True)
     return jsonify({"contacts": contacts, "radio_id": radio_id})
@@ -174,10 +225,15 @@ def api_mc_set_contact_route(radio_id, contact_id):
             path_hash_mode=path_hash_mode,
         )
         full_key = updated_contact.get("public_key", contact_id)
+        with mc_connections_lock:
+            state = mc_connections.get(radio_id) or {}
+            live_contacts = dict(state.get("live_contacts", {}) or {})
+        archive_contacts = get_mc_contact_archive(radio_id)
+        source_state = _mc_contact_source_state(full_key, live_contacts, archive_contacts)
         return jsonify({
             "ok": True,
             "radio_id": radio_id,
-            "contact": _serialize_mc_contact(full_key, updated_contact),
+            "contact": _serialize_mc_contact(full_key, updated_contact, source_state=source_state),
         })
     except ValueError as e:
         return jsonify({"error": str(e)}), 400

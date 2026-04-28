@@ -23,4 +23,11 @@ const decodeRelay = decodeRelayMatch[0];
 assert(/\[1, 2, 3\]\.filter\(size => pathHex\.length >= size \* 2\s*\)/.test(decodeRelay), 'decodeMcRelayPath() fallback candidate sizes regressed');
 assert(!/pathHex\.length % \(size \* 2\) === 0/.test(decodeRelay), 'decodeMcRelayPath() reverted to strict divisibility fallback');
 
+const haversineMatch = src.match(/function _haversineMeters\([\s\S]*?return 2 \* R \* Math\.atan2\(Math\.sqrt\(clamped\), Math\.sqrt\(1 - clamped\)\);\n  }/);
+assert(haversineMatch, '_haversineMeters() no longer clamps haversine input');
+const distanceLabelMatch = src.match(/function _distanceLabel\(km\) \{[\s\S]*?return `\$\{Math\.round\(value\)\} \$\{unit\}`;\n  }/);
+assert(distanceLabelMatch, '_distanceLabel() no longer uses app distance units');
+assert(/id="settings-distance-unit"/.test(src), 'App settings distance unit selector missing');
+assert(/distance_unit/.test(src), 'distance_unit preference handling missing from template');
+
 console.log('MC path template checks passed');

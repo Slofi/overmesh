@@ -4,7 +4,7 @@ import queue as _queue
 import threading
 import time
 
-from db import get_favorites, get_ignored, upsert_node
+from db import get_db_node, get_favorites, get_ignored, upsert_node
 from hw_models import hw_model_name
 from state import connections, connections_lock, sse_clients, sse_lock, _sse_queue_last_ok
 
@@ -84,6 +84,9 @@ def get_node_name(from_id):
                             or (sn if sn and sn != "null" else None)
                             or from_id
                         )
+    row = get_db_node(from_id)
+    if row:
+        return row.get("long_name") or row.get("short_name") or from_id
     return from_id
 
 
@@ -96,6 +99,9 @@ def get_node_short_name(from_id):
                     if node.get("user", {}).get("id") == from_id:
                         sn = node["user"].get("shortName")
                         return sn if sn and sn != "null" else from_id
+    row = get_db_node(from_id)
+    if row:
+        return row.get("short_name") or row.get("long_name") or from_id
     return from_id
 
 

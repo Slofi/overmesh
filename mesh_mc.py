@@ -7,16 +7,20 @@ thread; submit coroutines to it from Flask routes via run_mc().
 """
 import asyncio
 import atexit
+import copy
 import concurrent.futures
 import datetime
+import json
 import logging
+import os
+import tempfile
 import threading
 import time
 
 from meshcore import MeshCore, EventType
 from meshcore.packets import BinaryReqType
 
-from config import CONFIG, CONFIG_LOCK, save_config
+from config import CONFIG, CONFIG_LOCK, DATA_DIR, save_config
 from cross import maybe_forward_mc_message
 from db import log_position
 from helpers import push_to_sse
@@ -115,6 +119,141 @@ MC_CHANNEL_NAME_OVERHEAD_BYTES = 2
 MC_CHANNEL_SCOPE_HEADROOM_BYTES = 10
 MC_MAX_AUTO_SPLIT_PARTS = 6
 MC_SPLIT_SEND_DELAY_SEC = 1.8
+MC_CONTACT_ARCHIVE_PATH = os.path.join(DATA_DIR, "mc_contacts_archive.json")
+_mc_contact_archive_lock = threading.RLock()
+_mc_contact_archive_cache = None
+
+
+def _mc_copy_contact(contact):
+    return copy.deepcopy(contact or {})
+
+
+def _mc_json_safe(value):
+    if isinstance(value, dict):
+        return {str(k): _mc_json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_mc_json_safe(v) for v in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, (bytes, bytearray)):
+        return value.hex()
+    return str(value)
+
+
+def _mc_archive_load_locked():
+    global _mc_contact_archive_cache
+    if _mc_contact_archive_cache is not None:
+        return _mc_contact_archive_cache
+    try:
+        with open(MC_CONTACT_ARCHIVE_PATH, encoding="utf-8") as f:
+            raw = json.load(f)
+        if not isinstance(raw, dict):
+            raw = {}
+    except FileNotFoundError:
+        raw = {}
+    except Exception as e:
+        log.warning(f"[MC] contact archive load failed: {e}")
+        raw = {}
+    archive = {}
+    for radio_id, contacts in raw.items():
+        if not isinstance(contacts, dict):
+            continue
+        archive[str(radio_id)] = {
+            str(pubkey): _mc_copy_contact(contact)
+            for pubkey, contact in contacts.items()
+            if isinstance(contact, dict)
+        }
+    _mc_contact_archive_cache = archive
+    return _mc_contact_archive_cache
+
+
+def _mc_archive_save_locked():
+    archive = _mc_archive_load_locked()
+    tmp = None
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with tempfile.NamedTemporaryFile("w", dir=DATA_DIR, delete=False, suffix=".tmp", encoding="utf-8") as tf:
+            json.dump(_mc_json_safe(archive), tf, indent=2, sort_keys=True)
+            tmp = tf.name
+        os.replace(tmp, MC_CONTACT_ARCHIVE_PATH)
+    except Exception as e:
+        log.warning(f"[MC] contact archive save failed: {e}")
+        if tmp and os.path.exists(tmp):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+def get_mc_contact_archive(radio_id):
+    with _mc_contact_archive_lock:
+        archive = _mc_archive_load_locked()
+        return {
+            str(pubkey): _mc_copy_contact(contact)
+            for pubkey, contact in (archive.get(str(radio_id), {}) or {}).items()
+        }
+
+
+def _merge_mc_contacts_with_archive(radio_id, *contact_sets):
+    merged = get_mc_contact_archive(radio_id)
+    for contacts in contact_sets:
+        merged = _merge_mc_contacts(merged, contacts or {})
+    return merged
+
+
+def _mc_archive_merge_contacts(radio_id, contacts):
+    if not contacts:
+        return
+    with _mc_contact_archive_lock:
+        archive = _mc_archive_load_locked()
+        radio_key = str(radio_id)
+        existing = {
+            str(pubkey): _mc_copy_contact(contact)
+            for pubkey, contact in (archive.get(radio_key, {}) or {}).items()
+        }
+        merged = _merge_mc_contacts(existing, contacts or {})
+        if merged == existing:
+            return
+        archive[radio_key] = {str(pubkey): _mc_copy_contact(contact) for pubkey, contact in merged.items()}
+        _mc_archive_save_locked()
+
+
+def _mc_archive_remove_contact(radio_id, pubkey):
+    with _mc_contact_archive_lock:
+        archive = _mc_archive_load_locked()
+        radio_key = str(radio_id)
+        contacts = dict(archive.get(radio_key, {}) or {})
+        if pubkey not in contacts:
+            return
+        contacts.pop(pubkey, None)
+        if contacts:
+            archive[radio_key] = contacts
+        else:
+            archive.pop(radio_key, None)
+        _mc_archive_save_locked()
+
+
+def _mc_remove_local_contact(config_id, full_key):
+    with mc_connections_lock:
+        state = mc_connections.get(config_id, {})
+        state.get("contacts", {}).pop(full_key, None)
+        state.get("live_contacts", {}).pop(full_key, None)
+    _mc_archive_remove_contact(config_id, full_key)
+
+
+def _mark_mc_disconnected(config_id):
+    with mc_connections_lock:
+        state = mc_connections.get(config_id)
+        if not state:
+            return
+        state["status"] = "disconnected"
+        state["status_ts"] = time.time()
+        state["mc"] = None
+        state["live_contacts"] = {}
+        state["contacts"] = _merge_mc_contacts_with_archive(
+            config_id,
+            state.get("contacts", {}) or {},
+        )
 
 
 def _valid_path_hash_mode(value):
@@ -319,10 +458,10 @@ def _mc_message_path_fields(msg, rx=None):
 
 
 def _merge_mc_contact_records(old_contact, new_contact):
-    merged = dict(old_contact or {})
+    merged = _mc_copy_contact(old_contact)
     for key, value in dict(new_contact or {}).items():
         if value not in (None, "", [], {}):
-            merged[key] = value
+            merged[key] = copy.deepcopy(value)
     return merged
 
 
@@ -342,7 +481,7 @@ def _merge_mc_contacts(old_contacts, new_contacts):
     for pubkey, contact in old_contacts.items():
         if pubkey in merged:
             continue
-        merged[pubkey] = dict(contact or {})
+        merged[pubkey] = _mc_copy_contact(contact)
     return merged
 
 
@@ -497,48 +636,88 @@ async def _connect_mc_node_async(node_cfg):
     config_id = node_cfg["id"]
     name      = node_cfg.get("name", config_id)
     port      = node_cfg.get("port", "")
+    node_type = (node_cfg.get("type") or "serial").lower()
+    if node_type in ("bt", "bluetooth"):
+        node_type = "ble"
 
-    # Always resolve port by USB serial if available (port in config is display-only)
-    usb_serial = node_cfg.get("usb_serial", "")
-    if usb_serial:
-        import serial.tools.list_ports
-        resolved = next(
-            (p.device for p in serial.tools.list_ports.comports() if p.serial_number == usb_serial),
-            None,
-        )
-        if resolved:
-            port = resolved
-        else:
-            log.warning(f"[MC:{name}] USB serial {usb_serial} not found on any port")
+    if node_type == "tcp":
+        host = (node_cfg.get("host") or "").strip()
+        try:
+            tcp_port = int(node_cfg.get("tcp_port") or 4403)
+        except (TypeError, ValueError):
+            log.warning(f"[MC:{name}] Invalid TCP port: {node_cfg.get('tcp_port')!r}")
             port = None
-    if not port:
-        log.warning(f"[MC:{name}] No port found, skipping connect")
+        if not host or port is None:
+            log.warning(f"[MC:{name}] Missing TCP host/port, skipping connect")
+            return
+        connect_label = f"{host}:{tcp_port}"
+    elif node_type == "ble":
+        bt_address = (node_cfg.get("bt_address") or node_cfg.get("address") or "").strip()
+        if not bt_address:
+            log.warning(f"[MC:{name}] Missing Bluetooth address, skipping connect")
+            return
+        connect_label = bt_address
+    else:
+        node_type = "serial"
+        # Always resolve port by USB serial if available (port in config is display-only)
+        usb_serial = node_cfg.get("usb_serial", "")
+        if usb_serial:
+            import serial.tools.list_ports
+            resolved = next(
+                (p.device for p in serial.tools.list_ports.comports() if p.serial_number == usb_serial),
+                None,
+            )
+            if resolved:
+                port = resolved
+            else:
+                log.warning(f"[MC:{name}] USB serial {usb_serial} not found on any port")
+                port = None
+        if not port:
+            log.warning(f"[MC:{name}] No port found, skipping connect")
+            return
+        connect_label = port
+
+    if node_type not in ("serial", "tcp", "ble"):
+        log.warning(f"[MC:{name}] Unsupported connection type {node_type!r}, skipping connect")
         return
 
-    log.info(f"[MC:{name}] Connecting on {port}")
+    log.info(f"[MC:{name}] Connecting via {node_type} on {connect_label}")
     with mc_connections_lock:
         if config_id not in mc_connections:
             log.warning(f"[MC:{name}] Node removed before connect started, aborting")
             return
         mc_connections[config_id]["status"] = "connecting"
+        mc_connections[config_id]["status_ts"] = time.time()
+        mc_connections[config_id]["port"] = connect_label
 
     try:
         # default_timeout=75: send_appstart will wait 75s for a response.
         # TTLP (and similar devices) need ~60s to load flash after USB connect.
         # Holding the port open avoids the HUPCL reset that repeated open/close causes.
-        mc = await asyncio.wait_for(MeshCore.create_serial(port, 115200, default_timeout=75.0), timeout=80)
+        if node_type == "tcp":
+            mc = await asyncio.wait_for(
+                MeshCore.create_tcp(host, tcp_port, default_timeout=75.0),
+                timeout=80,
+            )
+        elif node_type == "ble":
+            mc = await asyncio.wait_for(
+                MeshCore.create_ble(
+                    address=bt_address,
+                    pin=(node_cfg.get("bt_pin") or node_cfg.get("pin") or None),
+                    default_timeout=75.0,
+                ),
+                timeout=80,
+            )
+        else:
+            mc = await asyncio.wait_for(MeshCore.create_serial(port, 115200, default_timeout=75.0), timeout=80)
     except Exception as e:
         log.warning(f"[MC:{name}] Connect failed: {e}")
-        with mc_connections_lock:
-            if config_id in mc_connections:
-                mc_connections[config_id]["status"] = "disconnected"
+        _mark_mc_disconnected(config_id)
         return
 
     if mc is None:
-        log.warning(f"[MC:{name}] No response to send_appstart on {port} — replug USB to recover")
-        with mc_connections_lock:
-            if config_id in mc_connections:
-                mc_connections[config_id]["status"] = "disconnected"
+        log.warning(f"[MC:{name}] No response to send_appstart on {connect_label}")
+        _mark_mc_disconnected(config_id)
         return
 
     # Sync clock (freshly flashed devices default to epoch 0)
@@ -636,17 +815,21 @@ async def _connect_mc_node_async(node_cfg):
     # keep old contacts until background retry confirms the authoritative count.
     with mc_connections_lock:
         old_contacts = mc_connections[config_id].get("contacts", {})
-        merged_contacts = _merge_mc_contacts(old_contacts, contacts)
-        stored_contacts = merged_contacts if len(contacts) >= len(old_contacts) else old_contacts
+        old_live_contacts = mc_connections[config_id].get("live_contacts", {})
+        live_contacts = dict(contacts or {}) if contacts else dict(old_live_contacts or {})
+        stored_contacts = _merge_mc_contacts_with_archive(config_id, old_contacts, live_contacts)
         mc_connections[config_id].update({
             "mc":        mc,
             "name":      name,
             "status":    "connected",
-            "port":      port,
+            "status_ts":  time.time(),
+            "port":      connect_label,
             "node_id":   node_id,
             "node_info": node_info,
+            "live_contacts": live_contacts,
             "contacts":  stored_contacts,
         })
+    _mc_archive_merge_contacts(config_id, stored_contacts)
 
     log.info(f"[MC:{name}] Connected — node_id={node_id} freq={node_info.get('radio_freq')} "
              f"contacts={len(contacts)} (stored={len(stored_contacts)})")
@@ -695,7 +878,7 @@ async def _connect_mc_node_async(node_cfg):
 
     # Retry if initial fetch looks incomplete (empty or fewer than previously stored).
     # TTLP (and similar devices) can take 15–30s to load flash storage after USB reconnect.
-    if len(contacts) < len(old_contacts) or not contacts:
+    if len(contacts) < len(old_live_contacts) or not contacts:
         _mc_bg_task(_retry_contacts_async(mc, config_id, name), "retry_contacts")
 
 
@@ -725,7 +908,14 @@ async def _retry_contacts_async(mc, config_id, name):
         with mc_connections_lock:
             if config_id in mc_connections:
                 old_contacts = mc_connections[config_id].get("contacts", {})
-                mc_connections[config_id]["contacts"] = _merge_mc_contacts(old_contacts, best_contacts)
+                old_live_contacts = mc_connections[config_id].get("live_contacts", {})
+                live_contacts = dict(best_contacts or {}) if best_contacts else dict(old_live_contacts or {})
+                mc_connections[config_id]["live_contacts"] = live_contacts
+                mc_connections[config_id]["contacts"] = _merge_mc_contacts_with_archive(config_id, old_contacts, live_contacts)
+                stored_contacts = dict(mc_connections[config_id]["contacts"])
+            else:
+                stored_contacts = {}
+        _mc_archive_merge_contacts(config_id, stored_contacts)
         log.info(f"[MC:{name}] Contacts retry complete: {len(best_contacts)} contacts stored")
         now = int(time.time())
         for pubkey, c in best_contacts.items():
@@ -781,6 +971,7 @@ def _subscribe_mc_events(mc, config_id, name):
                 return None
 
             contacts = state.setdefault("contacts", {})
+            live_contacts = state.setdefault("live_contacts", {})
             matched_key = None
             for pubkey in contacts.keys():
                 if pubkey == pubkey_or_prefix or pubkey.startswith(pubkey_or_prefix) or pubkey_or_prefix.startswith(pubkey):
@@ -792,8 +983,12 @@ def _subscribe_mc_events(mc, config_id, name):
                 contacts[matched_key] = {"public_key": matched_key}
 
             existing = contacts.get(matched_key, {"public_key": matched_key})
+            was_live = matched_key in live_contacts
+            existing["public_key"] = matched_key
             existing["last_seen_ts"] = ts
             contacts[matched_key] = existing
+            if was_live:
+                live_contacts[matched_key] = dict(existing)
             return existing
         finally:
             mc_connections_lock.release()
@@ -809,9 +1004,13 @@ def _subscribe_mc_events(mc, config_id, name):
             if existing is None:
                 existing = {"public_key": pubkey}
             existing["last_advert"] = int(time.time())
+            archive_merge = None
             with mc_connections_lock:
                 if config_id in mc_connections:
                     mc_connections[config_id]["contacts"][pubkey] = existing
+                    archive_merge = {pubkey: dict(existing)}
+            if archive_merge:
+                _mc_archive_merge_contacts(config_id, archive_merge)
             _push_mc_node({
                 "type":              "mc_node",
                 "radio_id":          config_id,
@@ -836,7 +1035,9 @@ def _subscribe_mc_events(mc, config_id, name):
         try:
             msg = event.payload
             now = int(time.time())
-            _touch_contact_seen(msg.get("pubkey_pre"), now)
+            touched = _touch_contact_seen(msg.get("pubkey_pre"), now)
+            if touched and touched.get("public_key"):
+                _mc_archive_merge_contacts(config_id, {touched["public_key"]: dict(touched)})
             rx = _best_recent_rx_for_message(
                 config_id, "channel", time.time(), sender_prefix=msg.get("pubkey_pre"), msg=msg
             )
@@ -878,7 +1079,9 @@ def _subscribe_mc_events(mc, config_id, name):
         try:
             msg = event.payload
             now = int(time.time())
-            _touch_contact_seen(msg.get("pubkey_prefix"), now)
+            touched = _touch_contact_seen(msg.get("pubkey_prefix"), now)
+            if touched and touched.get("public_key"):
+                _mc_archive_merge_contacts(config_id, {touched["public_key"]: dict(touched)})
             rx = _best_recent_rx_for_message(
                 config_id, "dm", time.time(), sender_prefix=msg.get("pubkey_prefix"), msg=msg
             )
@@ -919,7 +1122,9 @@ def _subscribe_mc_events(mc, config_id, name):
             c["last_seen_ts"] = int(time.time())
             with mc_connections_lock:
                 if config_id in mc_connections:
+                    mc_connections[config_id].setdefault("live_contacts", {})[pubkey] = dict(c)
                     mc_connections[config_id]["contacts"][pubkey] = c
+            _mc_archive_merge_contacts(config_id, {pubkey: dict(c)})
             # Emit as mc_node so the frontend renders it the same way as an advertisement
             _push_mc_node({
                 "type":              "mc_node",
@@ -944,10 +1149,7 @@ def _subscribe_mc_events(mc, config_id, name):
     def on_disconnected(event):
         try:
             log.warning(f"[MC:{name}] Disconnected event received")
-            with mc_connections_lock:
-                if config_id in mc_connections:
-                    mc_connections[config_id]["status"] = "disconnected"
-                    mc_connections[config_id]["mc"]     = None
+            _mark_mc_disconnected(config_id)
             push_to_sse({"type": "mc_status", "radio_id": config_id,
                          "status": "disconnected", "name": name})
         except Exception as e:
@@ -956,7 +1158,9 @@ def _subscribe_mc_events(mc, config_id, name):
     def on_status_response(event):
         try:
             p = event.payload
-            _touch_contact_seen(p.get("pubkey_pre"), int(time.time()))
+            touched = _touch_contact_seen(p.get("pubkey_pre"), int(time.time()))
+            if touched and touched.get("public_key"):
+                _mc_archive_merge_contacts(config_id, {touched["public_key"]: dict(touched)})
             log.info(f"[MC:{name}] STATUS_RESPONSE from {p.get('pubkey_pre', '?')}")
             push_to_sse({
                 "type":         "mc_status_response",
@@ -1003,12 +1207,19 @@ def _subscribe_mc_events(mc, config_id, name):
             try:
                 r = await mc.commands.get_contacts()
                 if r.type == EventType.CONTACTS:
+                    stored_contacts = {}
                     with mc_connections_lock:
                         if config_id in mc_connections:
                             new_contacts = r.payload or {}
                             old_contacts = mc_connections[config_id].get("contacts", {})
-                            if new_contacts or not old_contacts:
-                                mc_connections[config_id]["contacts"] = _merge_mc_contacts(old_contacts, new_contacts)
+                            old_live_contacts = mc_connections[config_id].get("live_contacts", {})
+                            if new_contacts or not old_live_contacts:
+                                live_contacts = dict(new_contacts or {}) if new_contacts else {}
+                                mc_connections[config_id]["live_contacts"] = live_contacts
+                                mc_connections[config_id]["contacts"] = _merge_mc_contacts_with_archive(config_id, old_contacts, live_contacts)
+                                stored_contacts = dict(mc_connections[config_id]["contacts"])
+                    if stored_contacts:
+                        _mc_archive_merge_contacts(config_id, stored_contacts)
                 with mc_connections_lock:
                     c = mc_connections.get(config_id, {}).get("contacts", {}).get(pubkey, {})
                 if not c:
@@ -1097,32 +1308,55 @@ def _subscribe_mc_events(mc, config_id, name):
 def connect_mc_node(node_cfg):
     """Sync wrapper — submit connect coroutine to the MC loop."""
     config_id = node_cfg["id"]
+    archived_contacts = get_mc_contact_archive(config_id)
     with mc_connections_lock:
         mc_connections.setdefault(config_id, {
             "mc": None, "status": "disconnected",
+            "status_ts": time.time(),
             "config": node_cfg, "node_id": "",
-            "node_info": {}, "contacts": {},
+            "node_info": {}, "contacts": dict(archived_contacts), "live_contacts": {},
         })
+        mc_connections[config_id]["config"] = node_cfg
+        if not mc_connections[config_id].get("contacts"):
+            mc_connections[config_id]["contacts"] = dict(archived_contacts)
     try:
         run_mc(_connect_mc_node_async(node_cfg), timeout=90)
     except Exception as e:
         log.warning(f"[MC:{node_cfg.get('name', config_id)}] connect_mc_node failed: {e}")
-        with mc_connections_lock:
-            mc_connections[config_id]["status"] = "disconnected"
+        _mark_mc_disconnected(config_id)
 
 
 # ---------------------------------------------------------------------------
 # Reconnect loop
 # ---------------------------------------------------------------------------
 
+def _mc_reconnect_items(now=None, stale_connect_secs=120):
+    """Return enabled MC nodes that should reconnect, clearing stale connecting states."""
+    now = time.time() if now is None else now
+    with mc_connections_lock:
+        items = []
+        for cid, v in mc_connections.items():
+            if not v.get("config", {}).get("enabled", True):
+                continue
+            status = v.get("status")
+            if status == "connected":
+                continue
+            if status == "connecting":
+                age = now - float(v.get("status_ts") or now)
+                if age < stale_connect_secs:
+                    continue
+                log.warning(f"[MC:{v.get('config', {}).get('name', cid)}] Connect stuck for {int(age)}s; retrying")
+                v["status"] = "disconnected"
+                v["mc"] = None
+            items.append((cid, v["config"]))
+        return items
+
+
 def reconnect_mc_loop():
     """Background thread — retries disconnected MC nodes every 15 seconds."""
     while True:
         time.sleep(15)
-        with mc_connections_lock:
-            items = [(cid, v["config"]) for cid, v in mc_connections.items()
-                     if v.get("status") not in ("connected", "connecting")
-                     and v.get("config", {}).get("enabled", True)]
+        items = _mc_reconnect_items()
         for config_id, node_cfg in items:
             log.info(f"[MC:{node_cfg.get('name', config_id)}] Reconnecting...")
             threading.Thread(target=connect_mc_node, args=(node_cfg,), daemon=True).start()
@@ -1147,6 +1381,7 @@ def mc_watchdog_loop():
                 (cid, v.get("port"), v.get("config", {}), v.get("config", {}).get("name", cid))
                 for cid, v in mc_connections.items()
                 if v.get("status") == "connected"
+                and (v.get("config", {}).get("type") or "serial") == "serial"
             ]
 
         for config_id, port, config, name in items:
@@ -1161,10 +1396,7 @@ def mc_watchdog_loop():
 
             if gone:
                 log.warning(f"[MC:{name}] USB device gone — marking disconnected")
-                with mc_connections_lock:
-                    if mc_connections.get(config_id, {}).get("status") == "connected":
-                        mc_connections[config_id]["status"] = "disconnected"
-                        mc_connections[config_id]["mc"]     = None
+                _mark_mc_disconnected(config_id)
                 push_to_sse({"type": "mc_status", "radio_id": config_id,
                              "status": "disconnected", "name": name})
 
@@ -1223,10 +1455,8 @@ async def _send_dm_async(config_id, pubkey_prefix, text):
     mc, _ = _get_mc(config_id)
     with mc_connections_lock:
         contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
-    full_key = next((k for k in contacts if k.startswith(pubkey_prefix)), None)
-    if full_key is None:
-        raise ValueError(f"Contact {pubkey_prefix} not found")
-    return await mc.commands.send_msg(contacts[full_key], text)
+    full_key, contact = _resolve_mc_contact(contacts, pubkey_prefix)
+    return await mc.commands.send_msg(contact, text)
 
 
 def _resolve_mc_contact(contacts, pubkey_prefix):
@@ -1338,17 +1568,29 @@ async def _remove_contact_async(config_id, pubkey_prefix):
     mc, _ = _get_mc(config_id)
     with mc_connections_lock:
         contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
-    full_key = next((k for k in contacts if k.startswith(pubkey_prefix)), None)
-    if full_key is None:
-        raise ValueError(f"Contact {pubkey_prefix} not found")
+        live_contacts = dict(mc_connections.get(config_id, {}).get("live_contacts", {}))
+    full_key, _contact = _resolve_mc_contact(contacts, pubkey_prefix)
+    if full_key not in live_contacts:
+        _mc_remove_local_contact(config_id, full_key)
+        return None
     result = await mc.commands.remove_contact(full_key)
     if result and result.type.name == "OK":
-        with mc_connections_lock:
-            mc_connections[config_id]["contacts"].pop(full_key, None)
+        _mc_remove_local_contact(config_id, full_key)
     return result
 
 
 def remove_mc_contact(config_id, pubkey_prefix, timeout=10):
+    with mc_connections_lock:
+        state = mc_connections.get(config_id, {})
+        contacts = dict(state.get("contacts", {}) or {})
+        live_contacts = dict(state.get("live_contacts", {}) or {})
+        mc = state.get("mc")
+    archive_contacts = get_mc_contact_archive(config_id)
+    lookup_contacts = _merge_mc_contacts(archive_contacts, contacts)
+    full_key, _contact = _resolve_mc_contact(lookup_contacts, pubkey_prefix)
+    if mc is None or full_key not in live_contacts:
+        _mc_remove_local_contact(config_id, full_key)
+        return None
     return run_mc(_remove_contact_async(config_id, pubkey_prefix), timeout=timeout)
 
 
@@ -1439,13 +1681,7 @@ async def _send_statusreq_async(config_id, pubkey_prefix):
     mc, _ = _get_mc(config_id)
     with mc_connections_lock:
         contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
-    full_key = next((k for k in contacts if k.startswith(pubkey_prefix)), None)
-    if full_key is None:
-        raise ValueError(f"Contact {pubkey_prefix} not found")
-
-    # Build a safe copy of the contact with public_key guaranteed
-    contact = dict(contacts[full_key])
-    contact["public_key"] = full_key
+    full_key, contact = _resolve_mc_contact(contacts, pubkey_prefix)
 
     task_key = f"{config_id}:{pubkey_prefix[:12]}"
     existing = _statusreq_tasks.get(task_key)
@@ -1495,14 +1731,23 @@ async def _get_contacts_async(config_id):
     mc, _ = _get_mc(config_id)
     r = await mc.commands.get_contacts()
     if r.type == EventType.CONTACTS:
+        stored_contacts = {}
         with mc_connections_lock:
             if config_id in mc_connections:
                 new_contacts = r.payload or {}
                 old_contacts = mc_connections[config_id].get("contacts", {})
+                old_live_contacts = mc_connections[config_id].get("live_contacts", {})
                 # Don't overwrite a non-empty cache with an empty response —
                 # firmware occasionally returns 0 contacts on a stale/in-progress read.
-                if new_contacts or not old_contacts:
-                    mc_connections[config_id]["contacts"] = _merge_mc_contacts(old_contacts, new_contacts)
+                if new_contacts or not old_live_contacts:
+                    live_contacts = dict(new_contacts or {}) if new_contacts else {}
+                    mc_connections[config_id]["live_contacts"] = live_contacts
+                    mc_connections[config_id]["contacts"] = _merge_mc_contacts_with_archive(config_id, old_contacts, live_contacts)
+                    stored_contacts = dict(mc_connections[config_id]["contacts"])
+                else:
+                    stored_contacts = {}
+        if stored_contacts:
+            _mc_archive_merge_contacts(config_id, stored_contacts)
     return r
 
 
@@ -1714,11 +1959,7 @@ async def _req_status_async(config_id, pubkey_prefix):
     mc, _ = _get_mc(config_id)
     with mc_connections_lock:
         contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
-    full_key = next((k for k in contacts if k.startswith(pubkey_prefix)), None)
-    if full_key is None:
-        raise ValueError(f"Contact {pubkey_prefix} not found")
-    contact = dict(contacts[full_key])   # copy — don't mutate shared mc_connections state
-    contact["public_key"] = full_key
+    full_key, contact = _resolve_mc_contact(contacts, pubkey_prefix)
     log.info(
         f"[MC:{config_id}] req_status_sync starting for {pubkey_prefix[:12]} "
         f"(full_key={full_key[:16]}..., out_path_len={contact.get('out_path_len')}, "
@@ -1806,11 +2047,16 @@ async def _req_status_async(config_id, pubkey_prefix):
             with mc_connections_lock:
                 if config_id in mc_connections:
                     old_contacts = mc_connections[config_id].get("contacts", {})
-                    if refreshed_contacts or not old_contacts:
-                        refreshed_contacts = _merge_mc_contacts(old_contacts, refreshed_contacts)
+                    old_live_contacts = mc_connections[config_id].get("live_contacts", {})
+                    if refreshed_contacts or not old_live_contacts:
+                        live_contacts = dict(refreshed_contacts or {}) if refreshed_contacts else {}
+                        mc_connections[config_id]["live_contacts"] = live_contacts
+                        refreshed_contacts = _merge_mc_contacts_with_archive(config_id, old_contacts, live_contacts)
                         mc_connections[config_id]["contacts"] = refreshed_contacts
                     else:
                         refreshed_contacts = old_contacts
+            if refreshed_contacts:
+                _mc_archive_merge_contacts(config_id, refreshed_contacts)
             new_contact = dict(refreshed_contacts.get(full_key, contact))
             new_contact["public_key"] = full_key
             contact = new_contact
@@ -1905,13 +2151,18 @@ def get_stats(config_id, timeout=30):
 
 def reboot_device_dtr(config_id):
     """Hardware reset via RTS toggle (ESP32 EN pin). Disconnects MC first, reconnect loop picks it back up."""
-    import serial as _serial
     with mc_connections_lock:
         state   = mc_connections.get(config_id, {})
         port    = state.get("port") or state.get("config", {}).get("port")
         mc_obj  = state.get("mc")
+        node_type = (state.get("config", {}).get("type") or "serial").lower()
+    if node_type in ("bt", "bluetooth"):
+        node_type = "ble"
+    if node_type != "serial":
+        raise RuntimeError("DTR reset is only available for USB serial MC radios")
     if not port:
         raise RuntimeError("No port configured for this MC node")
+    import serial as _serial
     # Disconnect MC gracefully to free the serial port
     if mc_obj:
         try:

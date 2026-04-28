@@ -335,6 +335,18 @@ def upsert_node(n):
     log_position(n["id"], radio_id, n.get("latitude"), n.get("longitude"), ts)
 
 
+def get_db_node(node_id):
+    if not node_id:
+        return None
+    with get_prefs_db() as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM nodes WHERE id=? ORDER BY last_seen DESC LIMIT 1",
+            (node_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 _last_logged_pos = {}   # (node_id, radio_id) -> (lat, lon)
 _MIN_MOVE_M      = 15   # ignore movements smaller than this
 
@@ -374,7 +386,11 @@ def clear_position_history(node_id=None):
         else:
             conn.execute("DELETE FROM node_position_history")
             conn.execute("DELETE FROM sqlite_sequence WHERE name='node_position_history'")
-    _last_logged_pos.clear() if not node_id else _last_logged_pos.pop((node_id,), None)
+    if not node_id:
+        _last_logged_pos.clear()
+    else:
+        for key in [k for k in _last_logged_pos.keys() if k[0] == node_id]:
+            _last_logged_pos.pop(key, None)
 
 
 def get_position_history(node_id, hours=24):
@@ -485,7 +501,7 @@ def get_db_nodes(sort_by="last_seen", sort_dir="desc", fav_first=True, show_igno
 
     local_by_radio = {}
     for row in raw_rows:
-        if row["is_local"] and row["last_lat"] and row["last_lon"]:
+        if row["is_local"] and row["last_lat"] is not None and row["last_lon"] is not None:
             rid = row.get("radio_id") or ""
             existing = local_by_radio.get(rid)
             if not existing or (row.get("last_seen") or 0) > (existing.get("last_seen") or 0):
@@ -514,7 +530,7 @@ def get_db_nodes(sort_by="last_seen", sort_dir="desc", fav_first=True, show_igno
     rows = list(grouped.values())
     for row in rows:
         local = local_by_radio.get(row.get("radio_id") or "")
-        if local and row["last_lat"] and row["last_lon"] and not row["is_local"]:
+        if local and row["last_lat"] is not None and row["last_lon"] is not None and not row["is_local"]:
             row["distance"] = round(_haversine(
                 local["last_lat"], local["last_lon"],
                 row["last_lat"], row["last_lon"],

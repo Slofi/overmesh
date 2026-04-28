@@ -2359,12 +2359,42 @@
       <h2 class="settings-title">MC Radios <span style="font-size:12px;color:var(--mc-color);font-weight:normal">(MeshCore)</span></h2>
       <div id="settings-mc-nodes-list"><p style="color:var(--muted);font-size:12px;margin:0">No MC radios configured.</p></div>
       <h3 class="settings-subtitle" style="margin-top:14px">Add MC radio</h3>
-      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
-        <div>
-          <label class="settings-label">Port</label>
-          <select id="settings-mc-port-select" class="settings-select" style="min-width:160px"></select>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+        <label class="settings-label" style="margin:0">Type:</label>
+        <div class="view-toggle">
+          <div class="btn active" id="mc-add-type-serial" onclick="settingsMcSetAddType('serial')" title="Connect via USB serial port">Serial</div>
+          <div class="btn"        id="mc-add-type-tcp"    onclick="settingsMcSetAddType('tcp')"    title="Connect via TCP/IP or WiFi">TCP / WiFi</div>
+          <div class="btn"        id="mc-add-type-ble"    onclick="settingsMcSetAddType('ble')"    title="Connect via Bluetooth Low Energy">BT</div>
         </div>
-        <button class="btn" onclick="settingsMcScanPorts()" title="Rescan ports" style="margin-bottom:0">↻</button>
+      </div>
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+        <div id="mc-add-serial-fields" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+          <div>
+            <label class="settings-label">Port</label>
+            <select id="settings-mc-port-select" class="settings-select" style="min-width:160px"></select>
+          </div>
+          <button class="btn" onclick="settingsMcScanPorts()" title="Rescan ports" style="margin-bottom:0">↻</button>
+        </div>
+        <div id="mc-add-tcp-fields" style="display:none;gap:8px;align-items:flex-end;flex-wrap:wrap">
+          <div>
+            <label class="settings-label">IP / Hostname</label>
+            <input id="settings-mc-tcp-host" class="settings-input" placeholder="192.168.1.100" style="width:160px">
+          </div>
+          <div>
+            <label class="settings-label">Port</label>
+            <input id="settings-mc-tcp-port" class="settings-input" placeholder="4403" style="width:70px" value="4403">
+          </div>
+        </div>
+        <div id="mc-add-ble-fields" style="display:none;gap:8px;align-items:flex-end;flex-wrap:wrap">
+          <div>
+            <label class="settings-label">BT address</label>
+            <input id="settings-mc-bt-address" class="settings-input" placeholder="AA:BB:CC:DD:EE:FF" style="width:170px">
+          </div>
+          <div>
+            <label class="settings-label">PIN</label>
+            <input id="settings-mc-bt-pin" class="settings-input" placeholder="optional" style="width:90px">
+          </div>
+        </div>
         <div>
           <label class="settings-label">Name</label>
           <input id="settings-mc-node-name" class="settings-input" placeholder="e.g. TTGO" maxlength="30" style="width:140px">
@@ -2577,6 +2607,16 @@
         <span id="settings-sense-cooldown-display" style="font-size:12px;color:var(--muted)">(3 min)</span>
       </div>
       <div style="font-size:11px;color:var(--muted);margin-top:3px">Minimum time between Sense alerts for the same node.</div>
+
+      <div style="border-top:1px solid var(--border);margin:14px 0 10px 0"></div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span class="settings-label" style="margin:0;white-space:nowrap">Distance units</span>
+        <select id="settings-distance-unit" onchange="saveDistanceUnit(this.value)"
+                style="padding:4px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:13px">
+          <option value="km">Kilometres</option>
+          <option value="mi">Miles</option>
+        </select>
+      </div>
 
       <div style="border-top:1px solid var(--border);margin:14px 0 10px 0"></div>
       <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Notifications</div>
@@ -3248,6 +3288,17 @@
     if (msgEl) msgEl.checked = _appPrefBool('sound_notify_messages', true);
     if (radioEl) radioEl.checked = _appPrefBool('sound_notify_radio_connected', true);
     if (nodeEl) nodeEl.checked = _appPrefBool('sound_notify_nodes', true);
+  }
+
+  function saveDistanceUnit(unit) {
+    unit = unit === 'mi' ? 'mi' : 'km';
+    Object.assign(_appSettings, {distance_unit: unit});
+    _setDistanceUnit(unit);
+    fetch('/api/settings/app', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({distance_unit: unit})
+    }).catch(e => console.error('saveDistanceUnit failed:', e));
   }
 
   function _notificationSoundEnabled(kind) {
@@ -4905,7 +4956,7 @@ if (targetEl) {
 
   function deleteMcContact(id, name, radioId) {
     document.getElementById('confirm-ok').textContent = 'Delete';
-    showConfirm(`Remove "${name}" from the MC radio? This deletes the contact from device memory.`, () => {
+    showConfirm(`Remove "${name}" from OverMesh? If it is still on the MC radio, OM will remove it there too.`, () => {
       fetch(`/api/mc/${encodeURIComponent(radioId)}/contacts/${encodeURIComponent(id)}`, {method: 'DELETE'})
         .then(r => r.json()).then(d => {
           if (d.error) { showAlert(d.error); return; }
@@ -5132,7 +5183,8 @@ if (targetEl) {
       Object.values(contacts).forEach(c => allMcContacts.push({...c, _rid: rid}));
     });
     const mcFiltered = allMcContacts.filter(c => {
-      if (mcLastStatus[c._rid]?.status !== 'connected') return false;
+      const radioStatus = mcLastStatus[c._rid]?.status || 'disconnected';
+      if (radioStatus !== 'connected' && !c.archived_only) return false;
       if (mcIgnored.has(c.id)) return false;
       if (!query) return true;
       return (c.long_name || '').toLowerCase().includes(query) ||
@@ -5158,13 +5210,26 @@ if (targetEl) {
         const shortKey = (c.full_key || c.id || '').slice(0, 12);
         const connectedRadios = Object.values(mcLastStatus).filter(s => s?.status === 'connected').length;
         const metaRadio = connectedRadios > 1 ? (mcLastStatus[c._rid]?.name || mcLastStatus[c._rid]?.node_name || '') : '';
-        const meta   = escHtml([shortKey, metaRadio].filter(Boolean).join(' · '));
+        const archiveMeta = c.archived_only ? 'OM archive' : '';
+        const meta   = escHtml([shortKey, metaRadio, archiveMeta].filter(Boolean).join(' · '));
         const pk     = jsSafe(c.full_key || c.id || '');
         const rid    = jsSafe(c._rid);
         const lat    = c.latitude ?? c.lat;
         const lon    = c.longitude ?? c.lon;
         const hasCoords = lat != null && lon != null;
         const isIgnored = mcIgnored.has(cid);
+        const radioConnected = mcLastStatus[c._rid]?.status === 'connected';
+        const dmButton = c.type !== 2
+          ? (radioConnected
+            ? `<button class="act-btn" title="Direct message" onclick="doMcDm('${pk}','${rid}','${jsSafe(c.long_name||'')}')">DM</button>`
+            : `<button class="act-btn" title="MC radio disconnected" style="opacity:0.35;cursor:default" disabled>DM</button>`)
+          : '';
+        const routeButton = radioConnected
+          ? `<button class="act-btn" title="Edit stored route path" onclick="openMcRouteEditor('${jsSafe(cid)}','${rid}')">Route</button>`
+          : `<button class="act-btn" title="MC radio disconnected" style="opacity:0.35;cursor:default" disabled>Route</button>`;
+        const pingButton = radioConnected
+          ? `<button class="act-btn" title="Ping this node (request status)" onclick="doMcPing('${pk}','${rid}','${jsSafe(c.long_name||'')}')">Ping</button>`
+          : `<button class="act-btn" title="MC radio disconnected" style="opacity:0.35;cursor:default" disabled>Ping</button>`;
         return `<tr data-id="${jsSafe(cid)}" class="${isFav ? 'is-favorite' : ''}${isIgnored ? ' is-ignored' : ''}">
           <td><span class="star ${isFav ? 'starred' : ''}" onclick="toggleMcFav('${jsSafe(cid)}')" title="${isFav ? 'Remove from favourites' : 'Add to favourites'}">&#9733;</span></td>
           <td>
@@ -5179,19 +5244,19 @@ if (targetEl) {
           <td>${escHtml(_mcNodeDistanceLabel(c, c._rid))}</td>
           <td>${last}</td>
           <td class="node-actions">
-            ${c.type !== 2 ? `<button class="act-btn" title="Direct message" onclick="doMcDm('${pk}','${rid}','${jsSafe(c.long_name||'')}')">DM</button>` : ''}
-            <button class="act-btn" title="Edit stored route path" onclick="openMcRouteEditor('${jsSafe(cid)}','${rid}')">Route</button>
+            ${dmButton}
+            ${routeButton}
             ${hasCoords
               ? `<button class="act-btn" title="Show on map" onclick="centerMcOnMap(${lat},${lon})">Map</button>`
               : `<button class="act-btn" title="No coordinates available" style="opacity:0.35;cursor:default" disabled>Map</button>`}
-            <button class="act-btn" title="Ping this node (request status)" onclick="doMcPing('${pk}','${rid}','${jsSafe(c.long_name||'')}')">Ping</button>
+            ${pingButton}
           </td>
           <td>${escHtml(mcLastStatus[c._rid]?.name || mcLastStatus[c._rid]?.node_name || '')}</td>
           <td style="display:flex;gap:8px;align-items:center">
             ${isIgnored
               ? `<span class="unignore-btn" onclick="ignoreMcContact('${jsSafe(cid)}',true)" title="Unignore">&#128683;</span>`
               : `<span class="ignore-btn" onclick="ignoreMcContact('${jsSafe(cid)}',false)" title="Ignore">&#128683;</span>`}
-            <span class="delete-btn" onclick="deleteMcContact('${jsSafe(cid)}','${jsSafe(c.long_name||cid)}','${rid}')" title="Delete from device">&#10005;</span>
+            <span class="delete-btn" onclick="deleteMcContact('${jsSafe(cid)}','${jsSafe(c.long_name||cid)}','${rid}')" title="Remove from OverMesh">&#10005;</span>
           </td>
         </tr>`;
       }).join('');
@@ -5295,7 +5360,7 @@ if (targetEl) {
         <td class="${snrClass(n.last_snr)}">${n.last_snr != null ? n.last_snr + ' dB' : '—'}</td>
         <td class="${battClass(n.last_battery)}">${battDisplay(n.last_battery)}</td>
         <td>${n.hops_away != null ? n.hops_away : '—'}</td>
-        <td>${n.distance != null ? n.distance + ' km' : '—'}</td>
+        <td>${_distanceLabel(n.distance)}</td>
         <td class="notes-cell">
           ${n.notes
             ? `<span class="note-text" title="${escHtml(n.notes)}">${escHtml(n.notes)}</span>`
@@ -5863,6 +5928,7 @@ if (targetEl) {
   let _gpsEnabled     = false;
   let _localGpsPos    = null;  // {lat, lon} when GPS has fix — set from gps_position SSE
   let _omManualPos    = null;  // {lat, lon} app-only manual origin when GPS is unavailable
+  let _distanceUnit   = 'km';   // app-wide distance display unit: km or mi
   let _traceMapLines  = [];
   let _showTrMap      = (() => { try { const v = localStorage.getItem('mapShowTrSnr'); return v === null ? true : v === '1'; } catch(e) { return true; } })();
   let _lastTraceData  = null;   // most recent traceroute result object
@@ -5891,7 +5957,8 @@ if (targetEl) {
     const dLon = toRad(lon2 - lon1);
     const a = Math.sin(dLat / 2) ** 2
       + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-    return 2 * R * Math.asin(Math.sqrt(a));
+    const clamped = Math.max(0, Math.min(1, a));
+    return 2 * R * Math.atan2(Math.sqrt(clamped), Math.sqrt(1 - clamped));
   }
 
   function _distanceKm(lat1, lon1, lat2, lon2) {
@@ -5900,9 +5967,30 @@ if (targetEl) {
   }
 
   function _distanceLabel(km) {
-    if (km == null || !Number.isFinite(km)) return '—';
-    if (km < 10) return `${km.toFixed(1)} km`;
-    return `${Math.round(km)} km`;
+    const kmNum = Number(km);
+    if (km == null || !Number.isFinite(kmNum)) return '—';
+    const value = _distanceUnit === 'mi' ? kmNum * 0.621371 : kmNum;
+    const unit = _distanceUnit === 'mi' ? 'mi' : 'km';
+    if (value < 10) return `${value.toFixed(1)} ${unit}`;
+    return `${Math.round(value)} ${unit}`;
+  }
+
+  function _distanceStepsKm() {
+    const steps = [1, 2, 5, 10, 25, 50];
+    return _distanceUnit === 'mi'
+      ? steps.map(v => ({km: v / 0.621371, label: `${v}mi`}))
+      : steps.map(v => ({km: v, label: `${v}km`}));
+  }
+
+  function _setDistanceUnit(unit) {
+    _distanceUnit = unit === 'mi' ? 'mi' : 'km';
+    const sel = document.getElementById('settings-distance-unit');
+    if (sel) sel.value = _distanceUnit;
+    renderLive();
+    if (currentView === 'history') loadHistory();
+    renderMcMapMarkers();
+    renderMapMarkers();
+    if (_showPolarGrid) _drawPolarGrid();
   }
 
   function _normalizeCoordPair(lat, lon) {
@@ -6039,10 +6127,10 @@ if (targetEl) {
     const wRing   = 0.7  + h * 0.9;
     const wMajor  = 0.9  + h * 1.1;
     const wMinor  = 0.4  + h * 0.7;
-    [1, 2, 5, 10, 25, 50].forEach(km => {
+    _distanceStepsKm().forEach(({km, label}) => {
       L.circle([cLat, cLon], {radius: km * 1000, color: gc, weight: wRing, fillOpacity: 0, interactive: false}).addTo(_polarGridLayer);
       const lPt = _offsetByKm(cLat, cLon, km, 0);
-      L.marker(lPt, {icon: L.divIcon({html: `<div style="font-size:11px;color:${gcKmLabel};white-space:nowrap;font-weight:700;text-shadow:0 0 3px #000,0 0 6px #000,0 0 10px #000;letter-spacing:0.02em">${km}km</div>`, iconAnchor: [-2, 8], className: ''}), interactive: false}).addTo(_polarGridLayer);
+      L.marker(lPt, {icon: L.divIcon({html: `<div style="font-size:11px;color:${gcKmLabel};white-space:nowrap;font-weight:700;text-shadow:0 0 3px #000,0 0 6px #000,0 0 10px #000;letter-spacing:0.02em">${label}</div>`, iconAnchor: [-2, 8], className: ''}), interactive: false}).addTo(_polarGridLayer);
     });
     const cardinals = {0:'N', 90:'E', 180:'S', 270:'W'};
     for (let b = 0; b < 360; b += 30) {
@@ -10471,11 +10559,13 @@ if (targetEl) {
   function applyAppSettings(cfg = {}) {
     loadInAppNotifPrefs(cfg);
     loadSoundPrefs(cfg);
+    _setDistanceUnit(cfg.distance_unit || 'km');
     settingsApplyZoom(cfg.zoom || 100);
     const cd = cfg.sense_cooldown || 180;
     document.getElementById('settings-sense-cooldown').value = cd;
     document.getElementById('settings-sense-cooldown-display').textContent = senseCooldownSettingLabel(cd);
     applyAccentColor(cfg.accent_color || '#4ade80');
+    _syncAccentSwatch();
     _setOmManualPos(cfg.om_manual_lat, cfg.om_manual_lon);
     _applyOmManualInputs();
   }
@@ -11362,6 +11452,24 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
             renderMcChatTabs();
           }).catch(() => {});
       } else {
+        if (data.status === 'disconnected') {
+          if (mcContacts[data.radio_id]) {
+            Object.values(mcContacts[data.radio_id]).forEach(c => {
+              c.source_state = 'archive';
+              c.archived_only = true;
+            });
+          }
+          fetch(`/api/mc/${encodeURIComponent(data.radio_id)}/contacts`)
+            .then(r => r.ok ? r.json() : null)
+            .then(cd => {
+              if (!cd) return;
+              mcContacts[data.radio_id] = {};
+              (cd.contacts || []).forEach(c => { mcContacts[data.radio_id][c.id] = c; });
+              _mcRefreshDmContactNames(data.radio_id);
+              renderMcMapMarkers();
+              if (currentTab === 'nodes') renderLive();
+            }).catch(() => {});
+        }
         const pruned = _pruneMcDmState();
         updateMcPills();
         loadMcSettingsNodes();
@@ -12036,8 +12144,8 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
 
     const items = [];
     Object.entries(mcContacts).forEach(([rid, radioContacts]) => {
-      if (mcLastStatus[rid]?.status !== 'connected') return;
       Object.values(radioContacts).forEach(c => {
+        if (mcLastStatus[rid]?.status !== 'connected' && !c.archived_only) return;
         const lat = c.latitude ?? c.lat;
         const lon = c.longitude ?? c.lon;
         if (lat == null || lon == null) return;
@@ -12103,6 +12211,15 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       const safeRid = jsSafe(c._rid);
       const safeName = jsSafe(labelRaw);
       const hops = c.out_path_len ?? null;
+      const radioConnected = mcLastStatus[c._rid]?.status === 'connected';
+      const popupDmButton = c.type !== 2
+        ? (radioConnected
+          ? `<button class="map-popup-btn" title="Send direct message" onclick="leafletMap.closePopup();doMcDm('${safePk}','${safeRid}','${safeName}')">DM</button>`
+          : `<button class="map-popup-btn" title="MC radio disconnected" disabled style="opacity:0.35;cursor:default">DM</button>`)
+        : '';
+      const popupPingButton = radioConnected
+        ? `<button class="map-popup-btn" title="Ping (request status)" onclick="leafletMap.closePopup();doMcPing('${safePk}','${safeRid}','${safeName}')">Ping</button>`
+        : `<button class="map-popup-btn" title="MC radio disconnected" disabled style="opacity:0.35;cursor:default">Ping</button>`;
       const marker = L.marker([c.latitude, c.longitude], { icon: makeMcIcon() });
       const bat = c.battery ?? c.bat_pct ?? c.bat;
       const batStr = bat != null ? `${bat}%` : '—';
@@ -12121,8 +12238,8 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         + `<div style="font-size:11px;color:var(--muted)">${c.latitude.toFixed(5)}, ${c.longitude.toFixed(5)}</div>`
         + `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">`
         + `<button class="map-popup-btn" title="Show in Nodes list" onclick="leafletMap.closePopup();showMcNodeInList('${jsSafe(c.id || '')}')">List</button>`
-        + (c.type !== 2 ? `<button class="map-popup-btn" title="Send direct message" onclick="leafletMap.closePopup();doMcDm('${safePk}','${safeRid}','${safeName}')">DM</button>` : '')
-        + `<button class="map-popup-btn" title="Ping (request status)" onclick="leafletMap.closePopup();doMcPing('${safePk}','${safeRid}','${safeName}')">Ping</button>`
+        + popupDmButton
+        + popupPingButton
         + `<button class="map-popup-btn" title="Select in Sense panel" onclick="leafletMap.closePopup();switchTab('map');toggleSensePanel(true);switchSenseNet('mc');selectMcSenseContact('${jsSafe(c.id || '')}','${safeRid}')">Sense</button>`
         + `<button class="map-popup-btn" title="GPS movement trail" onclick="openGpsTrail('${jsSafe(c.id || '')}','${safeName}')">Trail</button>`
         + `</div>`,
@@ -14165,7 +14282,8 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       .then(data => {
         (data.mc_nodes || []).forEach(n => {
           mcLastStatus[n.id] = n;
-          if (n.status === 'connected') {
+          const shouldLoadContacts = n.status === 'connected' || (n.stored_contacts || n.archived_contacts || 0) > 0;
+          if (shouldLoadContacts) {
             fetch(`/api/mc/${encodeURIComponent(n.id)}/contacts`)
               .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
               .then(cd => {
@@ -14176,6 +14294,8 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
                 renderMcSensePanel();
                 if (currentTab === 'nodes') renderLive();
               }).catch(() => {});
+          }
+          if (n.status === 'connected') {
             // Fetch channel names for this radio
             fetch(`/api/mc/${encodeURIComponent(n.id)}/channels`)
               .then(r => r.ok ? r.json() : null)
@@ -14206,10 +14326,17 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       }
       list.innerHTML = data.mc_nodes.map(n => {
         const dot = n.status === 'connected' ? 'dot-connected' : n.status === 'connecting' ? 'dot-connecting' : 'dot-disconnected';
+        const transport = (n.type || 'serial').toUpperCase();
+        const endpoint = n.type === 'tcp'
+          ? `${n.host || ''}:${n.tcp_port || 4403}`
+          : n.type === 'ble'
+            ? (n.bt_address || n.port || '')
+            : (n.usb_serial ? `${n.port} ⬡` : n.port);
         return `<div class="radio-row">
           <span class="status-dot ${dot}"></span>
           <span class="radio-row-name"><span class="mc-badge">MC</span>${escHtml(n.name)}</span>
-          <span class="radio-row-port" title="${escHtml(n.usb_serial || n.port)}">${escHtml(n.port)}</span>
+          <span class="radio-row-port" title="${escHtml(endpoint)}">${escHtml(endpoint)}</span>
+          <span class="radio-row-status">${escHtml(transport)}</span>
           <span class="radio-row-status" title="Preferred MC path hash size">${escHtml(_mcPathHashModeLabel(n.path_hash_mode ?? 2))}</span>
           <span class="radio-row-status" style="${!n.enabled ? 'color:var(--muted)' : ''}">${n.enabled ? n.status : 'disabled'}</span>
           <button class="btn-secondary" style="font-size:11px;padding:3px 8px;${n.enabled ? '' : 'color:var(--accent);border-color:var(--accent)'}"
@@ -14237,24 +14364,58 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     }).catch(e => { sel.innerHTML = '<option value="">Scan failed</option>'; console.error('MC port scan failed:', e); });
   }
 
+  let _addMcNodeType = 'serial';
+
+  function settingsMcSetAddType(type) {
+    _addMcNodeType = type;
+    document.getElementById('mc-add-type-serial').classList.toggle('active', type === 'serial');
+    document.getElementById('mc-add-type-tcp').classList.toggle('active', type === 'tcp');
+    document.getElementById('mc-add-type-ble').classList.toggle('active', type === 'ble');
+    document.getElementById('mc-add-serial-fields').style.display = type === 'serial' ? 'flex' : 'none';
+    document.getElementById('mc-add-tcp-fields').style.display    = type === 'tcp'    ? 'flex' : 'none';
+    document.getElementById('mc-add-ble-fields').style.display    = type === 'ble'    ? 'flex' : 'none';
+  }
+
   function settingsMcAddNode() {
-    const sel  = document.getElementById('settings-mc-port-select');
     const name = document.getElementById('settings-mc-node-name').value.trim();
     const err  = document.getElementById('settings-mc-add-error');
     err.textContent = '';
     if (!name) { err.textContent = 'Name is required.'; return; }
-    const selectedOpt = sel.options[sel.selectedIndex];
-    const usb_serial  = sel.value;
-    const port        = selectedOpt?.dataset?.port || sel.value;
-    if (!usb_serial && !port) { err.textContent = 'Select a device.'; return; }
+    const body = {name, type: _addMcNodeType};
+    if (_addMcNodeType === 'tcp') {
+      const host = document.getElementById('settings-mc-tcp-host').value.trim();
+      const tcp_port = parseInt(document.getElementById('settings-mc-tcp-port').value.trim()) || 4403;
+      if (!host) { err.textContent = 'Enter an IP address or hostname.'; return; }
+      body.host = host;
+      body.tcp_port = tcp_port;
+    } else if (_addMcNodeType === 'ble') {
+      const bt_address = document.getElementById('settings-mc-bt-address').value.trim();
+      const bt_pin = document.getElementById('settings-mc-bt-pin').value.trim();
+      if (!bt_address) { err.textContent = 'Enter a Bluetooth address.'; return; }
+      body.bt_address = bt_address;
+      if (bt_pin) body.bt_pin = bt_pin;
+    } else {
+      const sel  = document.getElementById('settings-mc-port-select');
+      const selectedOpt = sel.options[sel.selectedIndex];
+      const val = sel.value;
+      const port        = selectedOpt?.dataset?.port || sel.value;
+      if (!val && !port) { err.textContent = 'Select a device.'; return; }
+      body.usb_serial = val && val !== port ? val : '';
+      body.port = port;
+    }
     err.textContent = 'Adding…';
     fetch('/api/settings/mc_nodes/add', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({name, usb_serial, port}),
+      body: JSON.stringify(body),
     }).then(r => r.json().then(data => { if (!r.ok || data.error) throw new Error(data.error || `HTTP ${r.status}`); return data; }))
     .then(() => {
       err.textContent = '';
       document.getElementById('settings-mc-node-name').value = '';
+      if (_addMcNodeType === 'tcp') document.getElementById('settings-mc-tcp-host').value = '';
+      if (_addMcNodeType === 'ble') {
+        document.getElementById('settings-mc-bt-address').value = '';
+        document.getElementById('settings-mc-bt-pin').value = '';
+      }
       loadMcSettingsNodes();
       settingsMcScanPorts();
     }).catch(e => { err.textContent = e.message || 'Request failed.'; });
@@ -16123,6 +16284,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   function settingsSetAccentColor(hex) {
     applyAccentColor(hex);
+    _syncAccentSwatch();
     fetch('/api/settings/app', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -16132,9 +16294,15 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   function settingsResetAccentColor() {
     const def = '#4ade80';
-    const el = document.getElementById('settings-accent-color');
-    if (el) el.value = def;
     settingsSetAccentColor(def);
+  }
+
+  function _syncAccentSwatch() {
+    const swatch = document.getElementById('settings-accent-swatch');
+    if (swatch) {
+      swatch.style.background = _accentColor;
+      swatch.title = `Choose colour (${_accentColor})`;
+    }
   }
 
   function settingsSetZoom(val) {
@@ -17005,7 +17173,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     } else {
       applyAccentColor(hex);
       settingsSetAccentColor(hex);
-      document.getElementById('settings-accent-swatch').style.background = hex;
+      _syncAccentSwatch();
       closeCPicker();
     }
   }

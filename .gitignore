@@ -7,6 +7,9 @@ bot_config*.json
 # Databases (message history, prefs, waypoints)
 *.db
 
+# Runtime MC contact archive
+mc_contacts_archive.json
+
 # Python
 __pycache__/
 *.py[cod]

@@ -5989,7 +5989,7 @@ if (targetEl) {
     renderLive();
     if (currentView === 'history') loadHistory();
     renderMcMapMarkers();
-    renderMapMarkers();
+    updateMapMarkers(allNodes);
     if (_showPolarGrid) _drawPolarGrid();
   }
 

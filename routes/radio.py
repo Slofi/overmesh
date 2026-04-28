@@ -1,12 +1,16 @@
+import base64
+import json
 import os
 
 from flask import Blueprint, jsonify, request
+from meshtastic.protobuf import apponly_pb2
 
 from config import CONFIG, CONFIG_LOCK, save_config
 from db import delete_channel_messages
 from helpers import mt_node_id_from_num, push_to_sse
 from mesh import DEVICE_ROLES, LORA_REGIONS, MODEM_PRESETS, get_iface_by_radio
 from state import chat_lock, chat_messages, connections, connections_lock
+from routes.mc import _qr_svg
 import logging
 log = logging.getLogger(__name__)
 
@@ -279,6 +283,63 @@ def api_radio_channels_get(radio_id):
                 "psk_set": len(psk) > 0,
             })
         return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+def _mt_channel_role_label(role):
+    return {0: "Disabled", 1: "Primary", 2: "Secondary"}.get(int(role or 0), str(role))
+
+
+def _mt_channel_url(iface, ch):
+    channel_set = apponly_pb2.ChannelSet()
+    channel_set.settings.add().CopyFrom(ch.settings)
+    lora = getattr(getattr(iface.localNode, "localConfig", None), "lora", None)
+    if lora is not None:
+        channel_set.lora_config.CopyFrom(lora)
+    encoded = base64.urlsafe_b64encode(channel_set.SerializeToString()).decode("ascii")
+    encoded = encoded.replace("=", "").replace("+", "-").replace("/", "_")
+    return f"https://meshtastic.org/e/#{encoded}"
+
+
+@bp.route("/api/radio/<radio_id>/channels/<int:ch_index>/share")
+def api_radio_channel_share(radio_id, ch_index):
+    if ch_index < 0 or ch_index > 7:
+        return jsonify({"error": "Channel index must be 0–7"}), 400
+    iface = get_iface_by_radio(radio_id)
+    if not iface:
+        return jsonify({"error": "Radio not connected"}), 503
+    try:
+        channels = list(iface.localNode.channels)
+        if ch_index >= len(channels):
+            return jsonify({"error": "Channel not found"}), 404
+        ch = channels[ch_index]
+        role = int(getattr(ch, "role", 0))
+        if role == 0:
+            return jsonify({"error": "Disabled channels cannot be shared"}), 400
+        settings = getattr(ch, "settings", None)
+        name = (getattr(settings, "name", "") or "") if settings else ""
+        psk = bytes(getattr(settings, "psk", b"")) if settings else b""
+        with connections_lock:
+            radio_name = connections.get(radio_id, {}).get("config", {}).get("name", radio_id)
+        details = {
+            "network": "Meshtastic",
+            "index": ch_index,
+            "name": name,
+            "role": role,
+            "role_label": _mt_channel_role_label(role),
+            "psk_set": bool(psk),
+            "radio_id": radio_id,
+            "radio_name": radio_name,
+        }
+        uri = _mt_channel_url(iface, ch)
+        return jsonify({
+            "ok": True,
+            "uri": uri,
+            "qr_svg": _qr_svg(uri),
+            "details": details,
+            "json": json.dumps(details, separators=(",", ":"), sort_keys=True),
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

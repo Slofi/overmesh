@@ -3,7 +3,10 @@ import os
 import sys
 import tempfile
 import unittest
+import asyncio
+from types import SimpleNamespace
 from pathlib import Path
+from unittest import mock
 
 from flask import Flask
 
@@ -405,6 +408,127 @@ class MeshMcPathHelperTests(unittest.TestCase):
         self.assertEqual(items, [])
         with mc_connections_lock:
             self.assertEqual(mc_connections[radio_id]["status"], "connecting")
+
+    def test_config_tool_route_sets_repeater_radio_params_without_runtime_registration(self):
+        app = Flask(__name__)
+        app.register_blueprint(mc_routes.bp)
+        client = app.test_client()
+
+        with mock.patch.object(mc_routes, "mc_config_tool", return_value={"ok": True}) as tool:
+            res = client.post(
+                "/api/mc/config_tool",
+                json={
+                    "action": "set_radio",
+                    "type": "serial",
+                    "port": "/dev/ttyUSB9",
+                    "freq": 869.525,
+                    "bw": 62.5,
+                    "sf": 8,
+                    "cr": 8,
+                    "repeat": 1,
+                },
+            )
+
+        self.assertEqual(res.status_code, 200)
+        tool.assert_called_once()
+        endpoint, action = tool.call_args.args[:2]
+        self.assertEqual(endpoint["type"], "serial")
+        self.assertEqual(endpoint["port"], "/dev/ttyUSB9")
+        self.assertEqual(action, "set_radio")
+        self.assertEqual(tool.call_args.kwargs["params"]["repeat"], 1)
+
+    def test_config_tool_route_rejects_missing_ble_address(self):
+        app = Flask(__name__)
+        app.register_blueprint(mc_routes.bp)
+        client = app.test_client()
+
+        res = client.post("/api/mc/config_tool", json={"action": "query", "type": "ble"})
+
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(res.get_json()["error"], "Enter a Bluetooth address")
+
+    def test_send_dm_forces_flood_when_radio_option_enabled(self):
+        radio_id = "mc_flood"
+        pubkey = "aabbccddeeff" + "00" * 26
+
+        class FakeCommands:
+            def __init__(self):
+                self.reset_keys = []
+                self.sent_contacts = []
+
+            async def reset_path(self, key):
+                self.reset_keys.append(key)
+                return SimpleNamespace(type=SimpleNamespace(name="OK"))
+
+            async def send_msg(self, contact, text):
+                self.sent_contacts.append(dict(contact))
+                return SimpleNamespace(type=SimpleNamespace(name="MSG_SENT"))
+
+        fake_mc = SimpleNamespace(commands=FakeCommands())
+        CONFIG["mc_nodes"] = [{"id": radio_id, "name": "Flood", "force_flood": True}]
+        with mc_connections_lock:
+            mc_connections[radio_id] = {
+                "mc": fake_mc,
+                "status": "connected",
+                "contacts": {
+                    pubkey: {"public_key": pubkey, "out_path_len": 2, "out_path": "aabb"}
+                },
+                "live_contacts": {
+                    pubkey: {"public_key": pubkey, "out_path_len": 2, "out_path": "aabb"}
+                },
+            }
+
+        asyncio.run(mesh_mc._send_dm_async(radio_id, pubkey[:12], "hello"))
+
+        self.assertEqual(fake_mc.commands.reset_keys, [pubkey])
+        self.assertEqual(fake_mc.commands.sent_contacts[0]["out_path_len"], -1)
+        self.assertEqual(fake_mc.commands.sent_contacts[0]["out_path"], "")
+        with mc_connections_lock:
+            self.assertEqual(mc_connections[radio_id]["contacts"][pubkey]["out_path_len"], -1)
+            self.assertEqual(mc_connections[radio_id]["live_contacts"][pubkey]["out_path"], "")
+
+    def test_share_contact_exports_uri_and_qr_for_live_contact(self):
+        radio_id = "mc_test"
+        pubkey = "deadbeefcafefeed" + "00" * 24
+        with mc_connections_lock:
+            mc_connections[radio_id] = {
+                "status": "connected",
+                "contacts": {pubkey: {"adv_name": "Remote", "type": 1, "last_seen_ts": 123}},
+                "live_contacts": {pubkey: {"adv_name": "Remote", "type": 1, "last_seen_ts": 123}},
+            }
+        app = Flask(__name__)
+        app.register_blueprint(mc_routes.bp)
+        client = app.test_client()
+
+        with mock.patch.object(mc_routes, "export_mc_contact_uri", return_value="meshcore://aabbcc"):
+            res = client.get(f"/api/mc/{radio_id}/contacts/{pubkey[:12]}/share")
+
+        self.assertEqual(res.status_code, 200)
+        payload = res.get_json()
+        self.assertEqual(payload["uri"], "meshcore://aabbcc")
+        self.assertIn("<svg", payload["qr_svg"])
+        self.assertEqual(payload["details"]["full_key"], pubkey)
+
+    def test_share_contact_rejects_archive_only_contact_qr(self):
+        radio_id = "mc_test"
+        pubkey = "deadbeefcafefeed" + "00" * 24
+        mesh_mc._mc_archive_merge_contacts(radio_id, {
+            pubkey: {"adv_name": "ArchiveOnly", "type": 1, "last_seen_ts": 123}
+        })
+        with mc_connections_lock:
+            mc_connections[radio_id] = {
+                "status": "disconnected",
+                "contacts": {pubkey: {"adv_name": "ArchiveOnly", "type": 1, "last_seen_ts": 123}},
+                "live_contacts": {},
+            }
+        app = Flask(__name__)
+        app.register_blueprint(mc_routes.bp)
+        client = app.test_client()
+
+        res = client.get(f"/api/mc/{radio_id}/contacts/{pubkey[:12]}/share")
+
+        self.assertEqual(res.status_code, 503)
+        self.assertIn("must be connected", res.get_json()["error"])
 
 
 if __name__ == "__main__":

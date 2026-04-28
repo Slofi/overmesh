@@ -128,6 +128,45 @@ class AppSettingsOmPositionTests(unittest.TestCase):
         self.assertTrue(ports["/dev/ttyACM1"]["in_use"])
         self.assertFalse(ports["/dev/ttyACM2"]["in_use"])
 
+    def test_ports_ignore_disabled_saved_radios(self):
+        settings_routes.CONFIG["nodes"] = [
+            {"id": "node_a", "name": "Disabled MT", "enabled": False, "type": "serial", "port": "/dev/ttyACM0", "usb_serial": "ABC"}
+        ]
+        fake_ports = [
+            mock.Mock(device="/dev/ttyACM0", description="Free", serial_number="ABC", vid=1, pid=2),
+        ]
+        with mock.patch("serial.tools.list_ports.comports", return_value=fake_ports):
+            resp = self.client.get("/api/settings/ports")
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.get_json()["ports"][0]["in_use"])
+
+    def test_adds_mc_serial_when_disabled_mt_has_same_usb_serial(self):
+        settings_routes.CONFIG["nodes"] = [
+            {"id": "node_a", "name": "Disabled MT", "enabled": False, "type": "serial", "port": "/dev/ttyACM2", "usb_serial": "ABC"}
+        ]
+
+        resp = self.client.post(
+            "/api/settings/mc_nodes/add",
+            json={"name": "RPTR", "type": "serial", "port": "/dev/ttyACM2", "usb_serial": "ABC"},
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(settings_routes.CONFIG["mc_nodes"][0]["usb_serial"], "ABC")
+
+    def test_rejects_enabling_mt_radio_when_mc_uses_same_usb_serial(self):
+        settings_routes.CONFIG["nodes"] = [
+            {"id": "node_a", "name": "MT", "enabled": False, "type": "serial", "port": "/dev/ttyACM2", "usb_serial": "ABC"}
+        ]
+        settings_routes.CONFIG["mc_nodes"] = [
+            {"id": "mc_a", "name": "MC", "enabled": True, "type": "serial", "port": "/dev/ttyACM2", "usb_serial": "ABC"}
+        ]
+
+        resp = self.client.post("/api/settings/nodes/node_a/set_enabled", json={"enabled": True})
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.get_json()["error"], "This device is already configured as an MC node")
+
     def test_adds_mc_tcp_radio(self):
         resp = self.client.post(
             "/api/settings/mc_nodes/add",
@@ -181,6 +220,24 @@ class AppSettingsOmPositionTests(unittest.TestCase):
         self.assertEqual(node["type"], "serial")
         self.assertNotIn("usb_serial", node)
         self.assertEqual(node["port"], "/dev/ttyACM9")
+
+    def test_sets_mc_force_flood_option(self):
+        settings_routes.CONFIG["mc_nodes"] = [{"id": "mc1", "name": "MC One", "force_flood": False}]
+
+        resp = self.client.post("/api/settings/mc_nodes/mc1/force_flood", json={"force_flood": True})
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.get_json()["force_flood"])
+        self.assertTrue(settings_routes.CONFIG["mc_nodes"][0]["force_flood"])
+        self.save_mock.assert_called_once()
+
+    def test_settings_mc_nodes_returns_force_flood(self):
+        settings_routes.CONFIG["mc_nodes"] = [{"id": "mc1", "name": "MC One", "force_flood": True}]
+
+        resp = self.client.get("/api/settings/mc_nodes")
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.get_json()["mc_nodes"][0]["force_flood"])
 
     def test_rejects_mc_tcp_without_host(self):
         resp = self.client.post(

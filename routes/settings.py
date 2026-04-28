@@ -47,6 +47,14 @@ def _has_any_mc_nodes():
     return bool(CONFIG.get("mc_nodes", []))
 
 
+def _node_enabled(node):
+    return node.get("enabled", True) is not False
+
+
+def _active_nodes(nodes):
+    return [n for n in nodes if _node_enabled(n)]
+
+
 def _can_remove_mt_node():
     """Allow removing the last MT radio only if the app still has MC radios configured."""
     return len(CONFIG["nodes"]) > 1 or _has_any_mc_nodes()
@@ -229,12 +237,12 @@ def _run_update_job():
 def api_settings_ports():
     import serial.tools.list_ports
     known_serials = (
-        {n.get("usb_serial") for n in CONFIG.get("nodes", []) if n.get("usb_serial")} |
-        {n.get("usb_serial") for n in CONFIG.get("mc_nodes", []) if n.get("usb_serial")}
+        {n.get("usb_serial") for n in _active_nodes(CONFIG.get("nodes", [])) if n.get("usb_serial")} |
+        {n.get("usb_serial") for n in _active_nodes(CONFIG.get("mc_nodes", [])) if n.get("usb_serial")}
     )
     known_ports = (
-        {n.get("port") for n in CONFIG.get("nodes", []) if n.get("port") and not n.get("usb_serial")} |
-        {n.get("port") for n in CONFIG.get("mc_nodes", []) if n.get("port") and not n.get("usb_serial") and (n.get("type") or "serial") == "serial"}
+        {n.get("port") for n in _active_nodes(CONFIG.get("nodes", [])) if n.get("port") and not n.get("usb_serial")} |
+        {n.get("port") for n in _active_nodes(CONFIG.get("mc_nodes", [])) if n.get("port") and not n.get("usb_serial") and (n.get("type") or "serial") == "serial"}
     )
     ports = []
     for p in serial.tools.list_ports.comports():
@@ -331,13 +339,15 @@ def api_settings_nodes_add():
             usb_serial = ""
         if not usb_serial and not port:
             return jsonify({"error": "Select a device"}), 400
-        if usb_serial and any(n.get("usb_serial") == usb_serial for n in CONFIG["nodes"]):
+        active_mt = _active_nodes(CONFIG.get("nodes", []))
+        active_mc = _active_nodes(CONFIG.get("mc_nodes", []))
+        if usb_serial and any(n.get("usb_serial") == usb_serial for n in active_mt):
             return jsonify({"error": "This device is already configured"}), 400
-        if usb_serial and any(n.get("usb_serial") == usb_serial for n in CONFIG.get("mc_nodes", [])):
+        if usb_serial and any(n.get("usb_serial") == usb_serial for n in active_mc):
             return jsonify({"error": "This device is already configured as an MC node"}), 400
-        if not usb_serial and any(n.get("port") == port and not n.get("usb_serial") for n in CONFIG["nodes"]):
+        if not usb_serial and any(n.get("port") == port and not n.get("usb_serial") for n in active_mt):
             return jsonify({"error": f"Port {port} is already in use"}), 400
-        if not usb_serial and any(n.get("port") == port and not n.get("usb_serial") for n in CONFIG.get("mc_nodes", [])):
+        if not usb_serial and any(n.get("port") == port and not n.get("usb_serial") for n in active_mc):
             return jsonify({"error": f"Port {port} is already configured as an MC node"}), 400
         if usb_serial:
             new_node["usb_serial"] = usb_serial
@@ -426,6 +436,21 @@ def api_settings_nodes_set_enabled(node_id):
     node = next((n for n in CONFIG["nodes"] if n["id"] == node_id), None)
     if not node:
         return jsonify({"error": "Node not found"}), 404
+    if enabled:
+        usb_serial = (node.get("usb_serial") or "").strip()
+        port = (node.get("port") or "").strip()
+        active_mt = [n for n in _active_nodes(CONFIG.get("nodes", [])) if n.get("id") != node_id]
+        active_mc = _active_nodes(CONFIG.get("mc_nodes", []))
+        if usb_serial:
+            if any(n.get("usb_serial") == usb_serial for n in active_mt):
+                return jsonify({"error": "This device is already configured"}), 400
+            if any(n.get("usb_serial") == usb_serial for n in active_mc):
+                return jsonify({"error": "This device is already configured as an MC node"}), 400
+        elif port:
+            if any(n.get("port") == port and not n.get("usb_serial") for n in active_mt):
+                return jsonify({"error": f"Port {port} is already in use"}), 400
+            if any(n.get("port") == port and not n.get("usb_serial") for n in active_mc):
+                return jsonify({"error": f"Port {port} is already configured as an MC node"}), 400
     with CONFIG_LOCK:
         node["enabled"] = enabled
         save_config()
@@ -597,6 +622,7 @@ def api_settings_mc_nodes():
             "enabled":    n.get("enabled", True),
             "status":     statuses.get(n["id"], "disconnected"),
             "path_hash_mode": n.get("path_hash_mode", 2),
+            "force_flood": bool(n.get("force_flood", False)),
         }
         for n in CONFIG.get("mc_nodes", [])
     ]
@@ -617,7 +643,7 @@ def api_settings_mc_nodes_add():
         return jsonify({"error": "Name is required"}), 400
     mc_nodes = CONFIG.setdefault("mc_nodes", [])
     node_id  = f"mc_node_{uuid.uuid4().hex[:12]}"
-    new_node = {"id": node_id, "name": name, "enabled": True, "path_hash_mode": 2, "type": node_type}
+    new_node = {"id": node_id, "name": name, "enabled": True, "path_hash_mode": 2, "force_flood": False, "type": node_type}
     if node_type == "tcp":
         host = (data.get("host") or "").strip()
         try:
@@ -651,14 +677,16 @@ def api_settings_mc_nodes_add():
             usb_serial = ""
         if not usb_serial and not port:
             return jsonify({"error": "Select a device"}), 400
-        if usb_serial and any(n.get("usb_serial") == usb_serial for n in mc_nodes):
+        active_mc = _active_nodes(mc_nodes)
+        active_mt = _active_nodes(CONFIG.get("nodes", []))
+        if usb_serial and any(n.get("usb_serial") == usb_serial for n in active_mc):
             return jsonify({"error": "This device is already configured as an MC node"}), 400
         # Also check MT nodes
-        if usb_serial and any(n.get("usb_serial") == usb_serial for n in CONFIG.get("nodes", [])):
+        if usb_serial and any(n.get("usb_serial") == usb_serial for n in active_mt):
             return jsonify({"error": "This device is already configured as an MT node"}), 400
-        if not usb_serial and any(n.get("port") == port and not n.get("usb_serial") for n in mc_nodes):
+        if not usb_serial and any(n.get("port") == port and not n.get("usb_serial") for n in active_mc):
             return jsonify({"error": f"Port {port} is already configured as an MC node"}), 400
-        if not usb_serial and any(n.get("port") == port and not n.get("usb_serial") for n in CONFIG.get("nodes", [])):
+        if not usb_serial and any(n.get("port") == port and not n.get("usb_serial") for n in active_mt):
             return jsonify({"error": f"Port {port} is already configured as an MT node"}), 400
         if usb_serial:
             new_node["usb_serial"] = usb_serial
@@ -702,6 +730,21 @@ def api_settings_mc_nodes_set_enabled(node_id):
     node = next((n for n in mc_nodes if n["id"] == node_id), None)
     if not node:
         return jsonify({"error": "MC node not found"}), 404
+    if enabled and (node.get("type") or "serial") == "serial":
+        usb_serial = (node.get("usb_serial") or "").strip()
+        port = (node.get("port") or "").strip()
+        active_mc = [n for n in _active_nodes(mc_nodes) if n.get("id") != node_id]
+        active_mt = _active_nodes(CONFIG.get("nodes", []))
+        if usb_serial:
+            if any(n.get("usb_serial") == usb_serial for n in active_mc):
+                return jsonify({"error": "This device is already configured as an MC node"}), 400
+            if any(n.get("usb_serial") == usb_serial for n in active_mt):
+                return jsonify({"error": "This device is already configured as an MT node"}), 400
+        elif port:
+            if any(n.get("port") == port and not n.get("usb_serial") for n in active_mc):
+                return jsonify({"error": f"Port {port} is already configured as an MC node"}), 400
+            if any(n.get("port") == port and not n.get("usb_serial") for n in active_mt):
+                return jsonify({"error": f"Port {port} is already configured as an MT node"}), 400
     with CONFIG_LOCK:
         node["enabled"] = enabled
         save_config()
@@ -785,3 +828,20 @@ def api_settings_mc_nodes_path_hash_mode(node_id):
         "connected": connected,
         "warning": warning,
     })
+
+
+@bp.route("/api/settings/mc_nodes/<node_id>/force_flood", methods=["POST"])
+def api_settings_mc_nodes_force_flood(node_id):
+    data = request.get_json(silent=True) or {}
+    enabled = bool(data.get("force_flood", False))
+    with CONFIG_LOCK:
+        mc_nodes = CONFIG.get("mc_nodes", [])
+        node = next((n for n in mc_nodes if n["id"] == node_id), None)
+        if not node:
+            return jsonify({"error": "MC node not found"}), 404
+        node["force_flood"] = enabled
+        save_config()
+    with mc_connections_lock:
+        if node_id in mc_connections:
+            mc_connections[node_id].setdefault("config", {})["force_flood"] = enabled
+    return jsonify({"ok": True, "force_flood": enabled})

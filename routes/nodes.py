@@ -1,6 +1,8 @@
+import base64
 import json
 import threading
 import time
+from urllib.parse import urlencode
 
 from flask import Blueprint, jsonify, request
 from pubsub import pub
@@ -23,6 +25,7 @@ from state import (
     traceroute_lock,
     _tr_pending, _tr_pending_lock,
 )
+from routes.mc import _qr_svg
 import logging
 log = logging.getLogger(__name__)
 
@@ -130,6 +133,113 @@ def api_nodes():
     if radio_id:
         nodes = [n for n in nodes if n.get("radio_id") == radio_id]
     return jsonify(nodes)
+
+
+def _node_user_pubkey_hex(user):
+    pubkey = (user or {}).get("publicKey")
+    if isinstance(pubkey, (bytes, bytearray)):
+        return bytes(pubkey).hex()
+    if isinstance(pubkey, str):
+        raw = pubkey.removeprefix("base64:")
+        compact = raw.replace(":", "").replace(" ", "")
+        if compact and len(compact) % 2 == 0 and all(c in "0123456789abcdefABCDEF" for c in compact):
+            return compact.lower()
+        try:
+            padded = raw + ("=" * (-len(raw) % 4))
+            return base64.b64decode(padded, validate=True).hex()
+        except Exception:
+            return pubkey
+    return ""
+
+
+def _find_live_mt_node(node_id, radio_id=None):
+    """Return a live node snapshot and its radio metadata."""
+    with connections_lock:
+        items = list(connections.items())
+    for rid, state in items:
+        if radio_id and rid != radio_id:
+            continue
+        iface = state.get("iface")
+        nodes = dict(getattr(iface, "nodes", None) or {}) if iface else {}
+        for key, node in nodes.items():
+            user = (node or {}).get("user", {}) or {}
+            candidates = {str(key), str(user.get("id") or "")}
+            node_num = (node or {}).get("num")
+            if node_num is not None:
+                try:
+                    candidates.add(f"!{int(node_num):08x}")
+                except (TypeError, ValueError):
+                    candidates.add(str(node_num))
+            if node_id in candidates:
+                return rid, state, dict(node or {})
+    return None, None, None
+
+
+def _mt_node_share_details(node_id, radio_id, state, node):
+    user = (node or {}).get("user", {}) or {}
+    pos = (node or {}).get("position", {}) or {}
+    metrics = (node or {}).get("deviceMetrics", {}) or {}
+    node_num = (node or {}).get("num")
+    resolved_id = user.get("id") or node_id
+    return {
+        "network": "Meshtastic",
+        "name": user.get("longName") or "",
+        "short_name": user.get("shortName") or "",
+        "node_id": resolved_id,
+        "node_num": node_num,
+        "public_key_hex": _node_user_pubkey_hex(user),
+        "hardware": hw_model_name(user.get("hwModel")),
+        "role": user.get("role"),
+        "radio_id": radio_id,
+        "radio_name": (state or {}).get("config", {}).get("name", radio_id),
+        "snr": (node or {}).get("snr"),
+        "rssi": (node or {}).get("rssi"),
+        "hops_away": (node or {}).get("hopsAway"),
+        "battery": metrics.get("batteryLevel"),
+        "voltage": metrics.get("voltage"),
+        "channel_util": metrics.get("channelUtilization"),
+        "air_util_tx": metrics.get("airUtilTx"),
+        "latitude": pos.get("latitude"),
+        "longitude": pos.get("longitude"),
+        "altitude": pos.get("altitude"),
+        "last_heard_ts": _node_ts((node or {}).get("lastHeard")),
+    }
+
+
+def _mt_contact_share_uri(details):
+    params = {
+        "v": "1",
+        "id": details.get("node_id") or "",
+        "num": "" if details.get("node_num") is None else str(details.get("node_num")),
+        "pk": details.get("public_key_hex") or "",
+        "name": details.get("name") or "",
+        "short": details.get("short_name") or "",
+        "hw": details.get("hardware") or "",
+    }
+    return "overmesh://mt/contact?" + urlencode({k: v for k, v in params.items() if v})
+
+
+@bp.route("/api/nodes/<node_id>/share")
+def api_mt_node_share(node_id):
+    if not _valid_node_id(node_id):
+        return jsonify({"error": "Invalid node ID"}), 400
+    radio_id = request.args.get("radio_id") or None
+    rid, state, node = _find_live_mt_node(node_id, radio_id)
+    if not node:
+        return jsonify({"error": "Node not found in connected MT radios"}), 404
+    details = _mt_node_share_details(node_id, rid, state, node)
+    uri = _mt_contact_share_uri(details)
+    try:
+        qr_svg = _qr_svg(uri)
+    except Exception as e:
+        return jsonify({"error": f"QR generation failed: {e}", "details": details, "uri": uri}), 500
+    return jsonify({
+        "ok": True,
+        "uri": uri,
+        "qr_svg": qr_svg,
+        "details": details,
+        "json": json.dumps(details, separators=(",", ":"), sort_keys=True),
+    })
 
 
 @bp.route("/api/debug/patch_pubkey/<node_hex>", methods=["POST"])

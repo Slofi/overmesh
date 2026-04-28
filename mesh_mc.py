@@ -13,6 +13,7 @@ import datetime
 import json
 import logging
 import os
+import re
 import tempfile
 import threading
 import time
@@ -113,6 +114,7 @@ _mc_debug_lock = threading.Lock()
 _mc_debug_until: dict[str, float] = {}
 _mc_debug_raw_handler = None
 _mc_debug_atexit_registered = False
+_mc_config_tool_lock = threading.Lock()
 
 MC_MAX_DM_MSG_BYTES = 160
 MC_CHANNEL_NAME_OVERHEAD_BYTES = 2
@@ -285,6 +287,31 @@ def _configured_path_hash_mode(config_id):
         if node.get("id") == config_id:
             return _valid_path_hash_mode(node.get("path_hash_mode", 2))
     return None
+
+
+def _configured_force_flood(config_id):
+    return bool(next(
+        (node.get("force_flood") for node in CONFIG.get("mc_nodes", []) if node.get("id") == config_id),
+        False,
+    ))
+
+
+async def _force_contact_flood_if_configured(mc, config_id, full_key, contact, reason):
+    if not _configured_force_flood(config_id):
+        return False
+    result = await mc.commands.reset_path(full_key)
+    _raise_if_mc_error(result, f"force flood path for {reason}")
+    contact["out_path_len"] = -1
+    contact["out_path"] = ""
+    with mc_connections_lock:
+        state = mc_connections.get(config_id) or {}
+        for bucket in ("contacts", "live_contacts"):
+            existing = (state.get(bucket) or {}).get(full_key)
+            if existing is not None:
+                existing["out_path_len"] = -1
+                existing["out_path"] = ""
+    log.info(f"[MC:{config_id}] forced flood route for {reason} {full_key[:12]}")
+    return True
 
 
 def _ensure_mc_tx_allowed(action="MC transmission"):
@@ -1456,6 +1483,7 @@ async def _send_dm_async(config_id, pubkey_prefix, text):
     with mc_connections_lock:
         contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
     full_key, contact = _resolve_mc_contact(contacts, pubkey_prefix)
+    await _force_contact_flood_if_configured(mc, config_id, full_key, contact, "DM")
     return await mc.commands.send_msg(contact, text)
 
 
@@ -1646,6 +1674,20 @@ async def _import_contact_async(config_id, card_data):
     return result
 
 
+async def _export_contact_uri_async(config_id, pubkey_prefix):
+    mc, _ = _get_mc(config_id)
+    with mc_connections_lock:
+        contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}) or {})
+    full_key, _contact = _resolve_mc_contact(contacts, pubkey_prefix)
+    result = await mc.commands.export_contact(full_key)
+    if result is None or result.type != EventType.CONTACT_URI:
+        raise RuntimeError(f"export_contact returned: {result.type if result else 'None'} {getattr(result, 'payload', '')}")
+    uri = (result.payload or {}).get("uri")
+    if not uri:
+        raise RuntimeError("Device did not return a contact URI")
+    return uri
+
+
 def import_mc_contact(config_id, share_link_or_hex, timeout=15):
     """Parse a meshcore:// share link (or raw hex) and import it into the radio's contact list."""
     _ensure_mc_tx_allowed("MC contact import")
@@ -1659,6 +1701,11 @@ def import_mc_contact(config_id, share_link_or_hex, timeout=15):
     if len(card_data) < 33:
         raise ValueError("Share link payload too short to be a valid contact card")
     return run_mc(_import_contact_async(config_id, card_data), timeout=timeout)
+
+
+def export_mc_contact_uri(config_id, pubkey_prefix, timeout=15):
+    """Export a contact from a connected MC radio as an official meshcore:// URI."""
+    return run_mc(_export_contact_uri_async(config_id, pubkey_prefix), timeout=timeout)
 
 
 async def _send_statusreq_async(config_id, pubkey_prefix):
@@ -1926,6 +1973,361 @@ async def _set_channel_async(config_id, idx, name, key_hex=None):
     return r
 
 
+def _jsonable_mc_payload(value):
+    if isinstance(value, (bytes, bytearray)):
+        return value.hex()
+    if isinstance(value, dict):
+        return {str(k): _jsonable_mc_payload(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_jsonable_mc_payload(v) for v in value]
+    return value
+
+
+def _mc_config_endpoint_label(endpoint):
+    node_type = (endpoint.get("type") or "serial").strip().lower()
+    if node_type in ("bt", "bluetooth"):
+        node_type = "ble"
+    if node_type == "tcp":
+        return "tcp", f"{(endpoint.get('host') or '').strip()}:{int(endpoint.get('tcp_port') or 4403)}"
+    if node_type == "ble":
+        return "ble", (endpoint.get("bt_address") or endpoint.get("address") or "").strip()
+    return "serial", (endpoint.get("port") or "").strip()
+
+
+def _ensure_mc_config_endpoint_available(endpoint):
+    node_type, label = _mc_config_endpoint_label(endpoint)
+    with mc_connections_lock:
+        for cid, state in mc_connections.items():
+            if state.get("status") not in ("connected", "connecting"):
+                continue
+            cfg = state.get("config", {}) or {}
+            cfg_type = (cfg.get("type") or "serial").lower()
+            if cfg_type in ("bt", "bluetooth"):
+                cfg_type = "ble"
+            state_port = state.get("port") or cfg.get("port") or ""
+            if node_type == "serial" and cfg_type == "serial" and state_port == label:
+                raise RuntimeError(f"{label} is already used by active MC radio {cfg.get('name', cid)}")
+            if node_type == "tcp" and cfg_type == "tcp":
+                cfg_label = f"{(cfg.get('host') or '').strip()}:{int(cfg.get('tcp_port') or 4403)}"
+                if cfg_label == label:
+                    raise RuntimeError(f"{label} is already used by active MC radio {cfg.get('name', cid)}")
+            if node_type == "ble" and cfg_type == "ble":
+                cfg_label = (cfg.get("bt_address") or cfg.get("address") or state_port or "").strip()
+                if cfg_label and cfg_label == label:
+                    raise RuntimeError(f"{label} is already used by active MC radio {cfg.get('name', cid)}")
+
+
+def _mc_config_serial_port(endpoint):
+    port = (endpoint.get("port") or "").strip()
+    usb_serial = (endpoint.get("usb_serial") or "").strip()
+    if usb_serial:
+        import serial.tools.list_ports
+        port = next((p.device for p in serial.tools.list_ports.comports() if p.serial_number == usb_serial), port)
+    if not port:
+        raise ValueError("port is required")
+    return port
+
+
+async def _mc_config_connect(endpoint):
+    node_type, label = _mc_config_endpoint_label(endpoint)
+    if node_type == "tcp":
+        host = (endpoint.get("host") or "").strip()
+        tcp_port = int(endpoint.get("tcp_port") or 4403)
+        if not host:
+            raise ValueError("host is required")
+        mc = await asyncio.wait_for(
+            MeshCore.create_tcp(host, tcp_port, default_timeout=20.0),
+            timeout=30,
+        )
+    elif node_type == "ble":
+        bt_address = (endpoint.get("bt_address") or endpoint.get("address") or "").strip()
+        if not bt_address:
+            raise ValueError("bt_address is required")
+        mc = await asyncio.wait_for(
+            MeshCore.create_ble(
+                address=bt_address,
+                pin=(endpoint.get("bt_pin") or endpoint.get("pin") or None),
+                default_timeout=20.0,
+            ),
+            timeout=35,
+        )
+    else:
+        port = _mc_config_serial_port(endpoint)
+        mc = await asyncio.wait_for(
+            MeshCore.create_serial(port, 115200, default_timeout=75.0),
+            timeout=80,
+        )
+        label = port
+    if mc is None:
+        if node_type == "serial":
+            raise RuntimeError(
+                f"No MeshCore response from {label}. Use normal MeshCore app/companion mode, not DFU. "
+                "BT client firmware usually exposes MeshCore config over BLE only; its USB port is often power, debug, or DFU/flashing only."
+            )
+        if node_type == "ble":
+            raise RuntimeError(
+                f"No MeshCore response from {label}. Use normal MeshCore app mode, not DFU, and make sure no phone/app is already connected over BLE."
+            )
+        raise RuntimeError(f"No MeshCore response from {label}")
+    return mc, {"type": node_type, "endpoint": label}
+
+
+def _raise_if_mc_error(result, label):
+    if getattr(result, "type", None) == EventType.ERROR:
+        raise RuntimeError(f"Device rejected {label}: {getattr(result, 'payload', result)}")
+
+
+def _mc_cli_clean_reply(text):
+    lines = []
+    for line in (text or "").replace("\r", "").split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        changed = True
+        while changed:
+            changed = False
+            if line.startswith("->"):
+                line = line[2:].strip()
+                changed = True
+            if line.startswith(">"):
+                line = line[1:].strip()
+                changed = True
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _mc_cli_value(reply):
+    reply = _mc_cli_clean_reply(reply)
+    lines = [ln for ln in reply.splitlines() if ln]
+    return lines[-1] if lines else ""
+
+
+def _mc_cli_write_read(ser, command, wait=0.7):
+    ser.reset_input_buffer()
+    ser.write((command + "\r\n").encode("utf-8"))
+    ser.flush()
+    time.sleep(wait)
+    chunks = []
+    idle = 0
+    while idle < 3:
+        data = ser.read(512)
+        if data:
+            chunks.append(data)
+            idle = 0
+        else:
+            idle += 1
+    text = b"".join(chunks).decode("utf-8", "replace")
+    # Console echoes the command; strip it before returning the payload.
+    lines = text.replace("\r", "").split("\n")
+    if lines and lines[0].strip() == command:
+        text = "\n".join(lines[1:])
+    return text
+
+
+def _mc_cli_parse_radio(value):
+    nums = re.findall(r"[-+]?\d+(?:\.\d+)?", value or "")
+    if len(nums) < 4:
+        return {}
+    return {
+        "radio_freq": float(nums[0]),
+        "radio_bw": float(nums[1]),
+        "radio_sf": int(float(nums[2])),
+        "radio_cr": int(float(nums[3])),
+    }
+
+
+def _mc_config_cli_tool(endpoint, action, params):
+    import serial
+
+    port = _mc_config_serial_port(endpoint)
+    meta = {"type": "serial-cli", "endpoint": port, "protocol": "meshcore_cli"}
+    with serial.Serial(port, 115200, timeout=0.25, write_timeout=2, dsrdtr=False, rtscts=False) as ser:
+        # MeshCore repeater CLI on TinyUSB responds with DTR asserted and RTS low.
+        ser.dtr = True
+        ser.rts = False
+        time.sleep(1.8)
+
+        def cmd(command, wait=0.7):
+            try:
+                return _mc_cli_write_read(ser, command, wait=wait)
+            except (serial.SerialException, OSError) as e:
+                raise RuntimeError(
+                    f"No MeshCore serial CLI response from {port}. The USB CDC port is visible, but CLI writes/reads failed: {e}. "
+                    "For repeater/room/sensor config, flash firmware with the serial CLI enabled. BLE companion firmware usually cannot be configured over USB serial."
+                ) from e
+
+        ver = _mc_cli_value(cmd("version"))
+        if "Unknown command" in ver or not ver:
+            ver = _mc_cli_value(cmd("ver"))
+        if not ver:
+            raise RuntimeError(
+                f"No MeshCore serial CLI response from {port}. The USB CDC port is visible, but the device did not return any CLI text. "
+                "For repeater/room/sensor config, flash firmware with the serial CLI enabled. BLE companion firmware usually cannot be configured over USB serial."
+            )
+
+        if action == "query":
+            board = _mc_cli_value(cmd("board"))
+            radio = _mc_cli_parse_radio(_mc_cli_value(cmd("get radio")))
+            tx_raw = _mc_cli_value(cmd("get tx"))
+            name = _mc_cli_value(cmd("get name"))
+            lat = _mc_cli_value(cmd("get lat"))
+            lon = _mc_cli_value(cmd("get lon"))
+            repeat = _mc_cli_value(cmd("get repeat"))
+            try:
+                tx = int(float(re.findall(r"[-+]?\d+(?:\.\d+)?", tx_raw or "0")[0]))
+            except Exception:
+                tx = None
+            try:
+                lat_v = float(re.findall(r"[-+]?\d+(?:\.\d+)?", lat or "0")[0])
+            except Exception:
+                lat_v = None
+            try:
+                lon_v = float(re.findall(r"[-+]?\d+(?:\.\d+)?", lon or "0")[0])
+            except Exception:
+                lon_v = None
+            return _jsonable_mc_payload({
+                "ok": True,
+                **meta,
+                "self": {
+                    "name": "" if "Unknown command" in name else name,
+                    **radio,
+                    "tx_power": tx,
+                    "adv_lat": lat_v,
+                    "adv_lon": lon_v,
+                },
+                "device": {
+                    "fw ver": ver,
+                    "board": "" if "Unknown command" in board else board,
+                    "repeat": str(repeat).lower() in ("1", "on", "true", "yes"),
+                },
+                "battery": {},
+                "raw": {
+                    "tx": tx_raw,
+                    "repeat": repeat,
+                },
+            })
+        if action == "set_radio":
+            reply = cmd(f"set radio {float(params['freq'])},{float(params['bw'])},{int(params['sf'])},{int(params['cr'])}", wait=1.0)
+            if params.get("repeat") is not None:
+                cmd(f"set repeat {'on' if int(params['repeat']) else 'off'}", wait=0.7)
+            return {"ok": True, **meta, "result": _mc_cli_clean_reply(reply)}
+        if action == "set_tx_power":
+            reply = cmd(f"set tx {int(params['tx_power'])}", wait=0.7)
+            return {"ok": True, **meta, "result": _mc_cli_clean_reply(reply)}
+        if action == "set_name":
+            reply = cmd(f"set name {str(params['name'])}", wait=0.7)
+            return {"ok": True, **meta, "result": _mc_cli_clean_reply(reply)}
+        if action == "set_coords":
+            lat_r = cmd(f"set lat {float(params['lat'])}", wait=0.7)
+            lon_r = cmd(f"set lon {float(params['lon'])}", wait=0.7)
+            return {"ok": True, **meta, "result": _mc_cli_clean_reply(lat_r + lon_r)}
+        if action == "reboot":
+            reply = cmd("reboot", wait=0.3)
+            return {"ok": True, **meta, "result": _mc_cli_clean_reply(reply) or "sent"}
+        if action == "set_channel":
+            raise RuntimeError("MeshCore repeater serial CLI does not support channel slots")
+        raise ValueError(f"Unsupported config action: {action}")
+
+
+async def _mc_config_tool_async(endpoint, action, params):
+    mc = None
+    try:
+        mc, meta = await _mc_config_connect(endpoint)
+        if action == "query":
+            self_r = await asyncio.wait_for(mc.commands.send_appstart(), timeout=8)
+            dev_r = await asyncio.wait_for(mc.commands.send_device_query(), timeout=10)
+            try:
+                bat_r = await asyncio.wait_for(mc.commands.get_bat(), timeout=8)
+            except Exception:
+                bat_r = None
+            return _jsonable_mc_payload({
+                "ok": True,
+                **meta,
+                "self": self_r.payload if self_r and self_r.type == EventType.SELF_INFO else {},
+                "device": dev_r.payload if dev_r and dev_r.type == EventType.DEVICE_INFO else {},
+                "battery": bat_r.payload if bat_r and bat_r.type == EventType.BATTERY else {},
+            })
+        if action == "set_radio":
+            repeat = params.get("repeat")
+            if repeat is not None:
+                repeat = int(repeat)
+            result = await mc.commands.set_radio(
+                float(params["freq"]),
+                float(params["bw"]),
+                int(params["sf"]),
+                int(params["cr"]),
+                repeat=repeat,
+            )
+            _raise_if_mc_error(result, "radio params")
+            return {"ok": True, **meta}
+        if action == "set_tx_power":
+            result = await mc.commands.set_tx_power(int(params["tx_power"]))
+            _raise_if_mc_error(result, "TX power")
+            return {"ok": True, **meta}
+        if action == "set_name":
+            result = await mc.commands.set_name(str(params["name"]))
+            _raise_if_mc_error(result, "name")
+            return {"ok": True, **meta}
+        if action == "set_coords":
+            result = await mc.commands.set_coords(float(params["lat"]), float(params["lon"]))
+            _raise_if_mc_error(result, "coords")
+            return {"ok": True, **meta}
+        if action == "set_channel":
+            secret = None
+            key_hex = (params.get("key") or "").strip().lower()
+            if key_hex:
+                secret = bytes.fromhex(key_hex)
+            result = await mc.commands.set_channel(int(params["idx"]), str(params["name"]), secret)
+            _raise_if_mc_error(result, "channel")
+            return {"ok": True, **meta}
+        if action == "reboot":
+            result = await mc.commands.reboot()
+            return {"ok": True, **meta, "result": getattr(getattr(result, "type", None), "name", "sent")}
+        raise ValueError(f"Unsupported config action: {action}")
+    finally:
+        if mc is not None:
+            try:
+                await asyncio.wait_for(mc.disconnect(), timeout=5)
+            except Exception as e:
+                log.warning(f"[MC config] temporary disconnect failed: {e}")
+
+
+def mc_config_tool(endpoint, action, params=None, timeout=60):
+    """Run a one-shot MeshCore config action without registering the device in OM."""
+    params = params or {}
+    if not _mc_config_tool_lock.acquire(blocking=False):
+        raise RuntimeError("Another MC config-only operation is already running")
+    try:
+        _ensure_mc_config_endpoint_available(endpoint)
+        node_type, _label = _mc_config_endpoint_label(endpoint)
+        if node_type == "serial":
+            try:
+                return _mc_config_cli_tool(endpoint, action, params)
+            except RuntimeError as e:
+                msg = str(e)
+                if "No MeshCore serial CLI response" not in msg and "No MeshCore CLI response" not in msg:
+                    raise
+                log.info(f"[MC config] serial CLI unavailable; trying companion protocol: {msg}")
+            try:
+                return run_mc(_mc_config_tool_async(endpoint, action, params), timeout=timeout)
+            except RuntimeError as e:
+                msg = str(e)
+                if "No MeshCore response" not in msg:
+                    raise
+                log.info(f"[MC config] companion protocol unavailable; trying serial CLI fallback: {msg}")
+                try:
+                    return _mc_config_cli_tool(endpoint, action, params)
+                except RuntimeError as cli_err:
+                    raise RuntimeError(
+                        f"No MeshCore config interface responded on {_mc_config_serial_port(endpoint)}. "
+                        "The USB serial device is present, but neither the repeater/room serial CLI nor the USB companion protocol answered. "
+                        "If this is a BLE companion build, configure it over BLE or flash the USB serial companion / repeater CLI firmware."
+                    ) from cli_err
+        return run_mc(_mc_config_tool_async(endpoint, action, params), timeout=timeout)
+    finally:
+        _mc_config_tool_lock.release()
+
+
 def _build_reachability_fallback(config_id, pubkey_prefix, full_key, phase, rx_event):
     """Convert a nearby RX_LOG_DATA event into a pragmatic ping fallback."""
     if rx_event is None:
@@ -1960,10 +2362,11 @@ async def _req_status_async(config_id, pubkey_prefix):
     with mc_connections_lock:
         contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
     full_key, contact = _resolve_mc_contact(contacts, pubkey_prefix)
+    force_flood = await _force_contact_flood_if_configured(mc, config_id, full_key, contact, "status request")
     log.info(
         f"[MC:{config_id}] req_status_sync starting for {pubkey_prefix[:12]} "
         f"(full_key={full_key[:16]}..., out_path_len={contact.get('out_path_len')}, "
-        f"out_path={contact.get('out_path', '')!r}, type={contact.get('type')})"
+        f"out_path={contact.get('out_path', '')!r}, type={contact.get('type')}, force_flood={force_flood})"
     )
     # Flood-advertise our identity before pinging. The remote node needs our pubkey
     # in its NVS to encrypt and route STATUS_RESPONSE back. Without a recent advert,
@@ -2024,48 +2427,49 @@ async def _req_status_async(config_id, pubkey_prefix):
         log.warning(f"[MC:{config_id}] legacy statusreq failed for {pubkey_prefix[:12]}: {e}")
 
     log.info(f"[MC:{config_id}] falling back to binary req_status_sync for {pubkey_prefix[:12]}")
-    # Prime routing first for repeaters/contacts that only have a known RF path
-    # after a recent trace. This is the last app-side variable left: we can send
-    # STATUS requests over flood, but some USB companion setups appear to need a
-    # concrete contact path before the remote returns a usable status reply.
-    try:
-        trace_tag = int(time.time() * 1000) & 0xFFFFFFFF
-        trace_res = await mc.commands.send_trace(tag=trace_tag)
-        log.info(
-            f"[MC:{config_id}] req_status_sync priming trace for {pubkey_prefix[:12]} "
-            f"(tag={trace_tag}, result={trace_res.type.name})"
-        )
-    except Exception as e:
-        log.warning(f"[MC:{config_id}] req_status_sync trace prime failed for {pubkey_prefix[:12]}: {e}")
-
-    await asyncio.sleep(1.5)
-
-    try:
-        refreshed = await mc.commands.get_contacts()
-        if refreshed.type == EventType.CONTACTS:
-            refreshed_contacts = refreshed.payload or {}
-            with mc_connections_lock:
-                if config_id in mc_connections:
-                    old_contacts = mc_connections[config_id].get("contacts", {})
-                    old_live_contacts = mc_connections[config_id].get("live_contacts", {})
-                    if refreshed_contacts or not old_live_contacts:
-                        live_contacts = dict(refreshed_contacts or {}) if refreshed_contacts else {}
-                        mc_connections[config_id]["live_contacts"] = live_contacts
-                        refreshed_contacts = _merge_mc_contacts_with_archive(config_id, old_contacts, live_contacts)
-                        mc_connections[config_id]["contacts"] = refreshed_contacts
-                    else:
-                        refreshed_contacts = old_contacts
-            if refreshed_contacts:
-                _mc_archive_merge_contacts(config_id, refreshed_contacts)
-            new_contact = dict(refreshed_contacts.get(full_key, contact))
-            new_contact["public_key"] = full_key
-            contact = new_contact
+    if not force_flood:
+        # Prime routing first for repeaters/contacts that only have a known RF path
+        # after a recent trace. Skip this when the user explicitly forces flood.
+        try:
+            trace_tag = int(time.time() * 1000) & 0xFFFFFFFF
+            trace_res = await mc.commands.send_trace(tag=trace_tag)
             log.info(
-                f"[MC:{config_id}] req_status_sync after trace refresh for {pubkey_prefix[:12]} "
-                f"(out_path_len={contact.get('out_path_len')}, out_path={contact.get('out_path', '')!r})"
+                f"[MC:{config_id}] req_status_sync priming trace for {pubkey_prefix[:12]} "
+                f"(tag={trace_tag}, result={trace_res.type.name})"
             )
-    except Exception as e:
-        log.warning(f"[MC:{config_id}] req_status_sync contact refresh failed for {pubkey_prefix[:12]}: {e}")
+        except Exception as e:
+            log.warning(f"[MC:{config_id}] req_status_sync trace prime failed for {pubkey_prefix[:12]}: {e}")
+
+        await asyncio.sleep(1.5)
+
+        try:
+            refreshed = await mc.commands.get_contacts()
+            if refreshed.type == EventType.CONTACTS:
+                refreshed_contacts = refreshed.payload or {}
+                with mc_connections_lock:
+                    if config_id in mc_connections:
+                        old_contacts = mc_connections[config_id].get("contacts", {})
+                        old_live_contacts = mc_connections[config_id].get("live_contacts", {})
+                        if refreshed_contacts or not old_live_contacts:
+                            live_contacts = dict(refreshed_contacts or {}) if refreshed_contacts else {}
+                            mc_connections[config_id]["live_contacts"] = live_contacts
+                            refreshed_contacts = _merge_mc_contacts_with_archive(config_id, old_contacts, live_contacts)
+                            mc_connections[config_id]["contacts"] = refreshed_contacts
+                        else:
+                            refreshed_contacts = old_contacts
+                if refreshed_contacts:
+                    _mc_archive_merge_contacts(config_id, refreshed_contacts)
+                new_contact = dict(refreshed_contacts.get(full_key, contact))
+                new_contact["public_key"] = full_key
+                contact = new_contact
+                log.info(
+                    f"[MC:{config_id}] req_status_sync after trace refresh for {pubkey_prefix[:12]} "
+                    f"(out_path_len={contact.get('out_path_len')}, out_path={contact.get('out_path', '')!r})"
+                )
+        except Exception as e:
+            log.warning(f"[MC:{config_id}] req_status_sync contact refresh failed for {pubkey_prefix[:12]}: {e}")
+    else:
+        await _force_contact_flood_if_configured(mc, config_id, full_key, contact, "status request after legacy")
 
     rx_task = None
     if mc.commands.dispatcher is not None:

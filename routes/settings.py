@@ -201,14 +201,20 @@ def _run_update_job():
 
         if "requirements.txt" in changed_files:
             _update_append("requirements.txt changed; installing Python dependencies...")
-            pip = subprocess.run(
-                [sys.executable or "python3", "-m", "pip", "install", "-r", "requirements.txt", "--user"],
-                cwd=BASE_DIR,
-                capture_output=True,
-                text=True,
-                timeout=180,
-                check=False,
-            )
+            pip_cmd = [sys.executable or "python3", "-m", "pip", "install", "-r", "requirements.txt"]
+            if sys.prefix == getattr(sys, "base_prefix", sys.prefix):
+                pip_cmd.append("--user")
+            pip = subprocess.run(pip_cmd, cwd=BASE_DIR, capture_output=True, text=True, timeout=180, check=False)
+            if pip.returncode != 0 and "externally-managed-environment" in (pip.stderr or ""):
+                _update_append("System Python blocks user installs; retrying with --break-system-packages...")
+                pip = subprocess.run(
+                    pip_cmd + ["--break-system-packages"],
+                    cwd=BASE_DIR,
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                    check=False,
+                )
             if pip.returncode != 0:
                 raise RuntimeError((pip.stderr or pip.stdout or "pip install failed").strip())
             _update_append("Dependencies updated.")

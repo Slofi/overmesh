@@ -94,6 +94,24 @@ def _push_mc_node(data):
             log.debug(f"[MC] log_position failed: {e}")
 
 
+def _mc_contact_seen_ts(contact, now=None):
+    if not contact:
+        return 0
+    now = int(time.time()) if now is None else int(now)
+    max_future = now + 300
+    keys = ("last_heard_ts", "last_seen_ts", "last_advert", "lastmod")
+    for key in keys:
+        raw = contact.get(key)
+        if not raw:
+            continue
+        try:
+            ts = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if 0 < ts <= max_future:
+            return ts
+    return 0
+
 # ---------------------------------------------------------------------------
 # Asyncio event loop — lives in its own daemon thread
 # ---------------------------------------------------------------------------
@@ -942,7 +960,6 @@ async def _retry_contacts_async(mc, config_id, name):
                 stored_contacts = {}
         _mc_archive_merge_contacts(config_id, stored_contacts)
         log.info(f"[MC:{name}] Contacts retry complete: {len(best_contacts)} contacts stored")
-        now = int(time.time())
         for pubkey, c in best_contacts.items():
             _push_mc_node({
                 "type":        "mc_node",
@@ -953,7 +970,7 @@ async def _retry_contacts_async(mc, config_id, name):
                 "short_name":  c.get("adv_name", "?")[:4].upper(),
                 "latitude":    c.get("adv_lat") or None,
                 "longitude":   c.get("adv_lon") or None,
-                "last_heard_ts":      c.get("last_advert", now),
+                "last_heard_ts":      _mc_contact_seen_ts(c),
                 "out_path_len":       c.get("out_path_len", -1),
                 "out_path":           c.get("out_path", ""),
                 "out_path_hash_mode": c.get("out_path_hash_mode"),

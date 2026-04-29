@@ -6,7 +6,11 @@ import time
 
 from db import get_db_node, get_favorites, get_ignored, upsert_node
 from hw_models import hw_model_name
-from state import connections, connections_lock, sse_clients, sse_lock, _sse_queue_last_ok
+from state import (
+    connections, connections_lock,
+    mt_last_heard, mt_last_heard_lock,
+    sse_clients, sse_lock, _sse_queue_last_ok,
+)
 
 log = logging.getLogger(__name__)
 
@@ -180,8 +184,19 @@ def get_node_data():
                 node_id_str = user.get("id") or node_num  # fall back to iface.nodes key if user.id is empty
                 if is_local:
                     last_heard = host_now
+                else:
+                    with mt_last_heard_lock:
+                        observed_last_heard = mt_last_heard.get((node_id, node_id_str)) or 0
+                    if observed_last_heard:
+                        last_heard = observed_last_heard
+                        last_heard_now_for_node = host_now
+                    else:
+                        last_heard_now_for_node = last_heard_now
 
-                last_seen_str = _format_last_heard(last_heard, host_now if is_local else last_heard_now)
+                last_seen_str = _format_last_heard(
+                    last_heard,
+                    host_now if is_local else last_heard_now_for_node,
+                )
 
                 # For the local node with fixed position: use cached coords to prevent
                 # stale firmware broadcasts from overriding what the user set.

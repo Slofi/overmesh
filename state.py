@@ -12,6 +12,12 @@ import threading
 connections      = {}
 connections_lock = threading.Lock()
 
+# Real packet receive times observed by OverMesh, keyed by (radio_id, node_id).
+# Meshtastic's nodeDB lastHeard can be radio-clock based and may look fresh again
+# after a browser refresh; this cache keeps the UI on host-observed packet time.
+mt_last_heard      = {}
+mt_last_heard_lock = threading.Lock()
+
 # ---------------------------------------------------------------------------
 # MeshCore connections
 # mc_connections[config_id] = {

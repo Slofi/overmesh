@@ -85,8 +85,20 @@ def _validate_mc_radio_params(data, include_repeat=False):
     return params
 
 
-def _mc_contact_last_seen_ts(contact):
-    return int(contact.get("last_seen_ts") or contact.get("last_advert") or 0)
+def _mc_contact_last_seen_ts(contact, now=None):
+    now = int(time.time()) if now is None else int(now)
+    max_future = now + 300
+    for key in ("last_heard_ts", "last_seen_ts", "last_advert", "lastmod"):
+        raw = (contact or {}).get(key)
+        if not raw:
+            continue
+        try:
+            ts = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if 0 < ts <= max_future:
+            return ts
+    return 0
 
 
 def _mc_contact_source_state(pubkey, live_contacts, archive_contacts):
@@ -101,8 +113,7 @@ def _mc_contact_source_state(pubkey, live_contacts, archive_contacts):
 
 def _serialize_mc_contact(pubkey, contact, now=None, source_state=None):
     now = int(time.time()) if now is None else int(now)
-    raw_last_seen_ts = _mc_contact_last_seen_ts(contact)
-    last_seen_ts = min(raw_last_seen_ts, now) if raw_last_seen_ts else 0
+    last_seen_ts = _mc_contact_last_seen_ts(contact, now=now)
     last_advert = contact.get("last_advert", 0)
     delta = now - last_seen_ts if last_seen_ts else None
     if delta is not None:

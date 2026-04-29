@@ -21,6 +21,7 @@ from sense import _sense_lock, _sense_state
 from state import (
     chat_lock, chat_messages,
     connections, connections_lock,
+    mt_last_heard, mt_last_heard_lock,
     pending_acks, pending_acks_lock,
     waypoints_cache, waypoints_lock,
     _tr_pending, _tr_pending_lock,
@@ -83,6 +84,10 @@ def on_text_receive(packet, interface):
         _fid = packet.get("fromId")
         if _fid:
             _new_ts = _packet_rx_ts(packet)
+            _rid = _radio_id_for_iface(interface)
+            if _rid:
+                with mt_last_heard_lock:
+                    mt_last_heard[(_rid, _fid)] = _new_ts
             _nodes = interface.nodes or {}
             if _fid in _nodes:
                 _nodes[_fid]["lastHeard"] = _new_ts

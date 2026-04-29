@@ -19,12 +19,17 @@ sys.path.insert(0, "/home/slofi/overmesh")
 
 import helpers  # noqa: E402
 import db  # noqa: E402
+import state  # noqa: E402
 
 
 class MtNodeIdFormattingTests(unittest.TestCase):
     def setUp(self):
         db.init_prefs_db()
         db._last_logged_pos.clear()
+        with state.connections_lock:
+            state.connections.clear()
+        with state.mt_last_heard_lock:
+            state.mt_last_heard.clear()
         with db.get_prefs_db() as conn:
             conn.execute("DELETE FROM nodes")
             conn.execute("DELETE FROM node_position_history")
@@ -100,6 +105,39 @@ class MtNodeIdFormattingTests(unittest.TestCase):
 
         rows = {row["id"]: row for row in db.get_db_nodes()}
         self.assertAlmostEqual(rows["!remote"]["distance"], 111.19, places=1)
+
+    def test_get_node_data_prefers_observed_last_heard_over_future_nodedb(self):
+        now = int(time.time())
+
+        class FakeInfo:
+            my_node_num = 1
+
+        class FakeIface:
+            myInfo = FakeInfo()
+            nodes = {
+                "!remote": {
+                    "num": 2,
+                    "user": {"id": "!remote", "longName": "Remote", "shortName": "REM"},
+                    "lastHeard": now + 1000,
+                    "deviceMetrics": {},
+                    "position": {},
+                }
+            }
+
+        with state.connections_lock:
+            state.connections["mt_test"] = {
+                "iface": FakeIface(),
+                "status": "connected",
+                "config": {"name": "Test Radio"},
+            }
+        with state.mt_last_heard_lock:
+            state.mt_last_heard[("mt_test", "!remote")] = now - 123
+
+        rows = helpers.get_node_data()
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["last_heard_ts"], now - 123)
+        self.assertEqual(rows[0]["last_heard"], "2m ago")
 
 
 if __name__ == "__main__":

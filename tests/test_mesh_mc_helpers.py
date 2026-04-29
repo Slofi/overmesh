@@ -47,6 +47,30 @@ class MeshMcPathHelperTests(unittest.TestCase):
         size = mesh_mc._mc_path_hash_size_from_msg({}, {"path_hash_mode": 1})
         self.assertEqual(size, 2)
 
+    def test_mc_contact_seen_ts_does_not_default_to_now(self):
+        self.assertEqual(mesh_mc._mc_contact_seen_ts({"adv_name": "Remote"}), 0)
+
+    def test_mc_contact_seen_ts_prefers_real_seen_fields(self):
+        self.assertEqual(mesh_mc._mc_contact_seen_ts({"last_advert": 123}), 123)
+        self.assertEqual(mesh_mc._mc_contact_seen_ts({"last_seen_ts": 456, "last_advert": 123}), 456)
+        self.assertEqual(mesh_mc._mc_contact_seen_ts({"last_heard_ts": 789, "last_seen_ts": 456}), 789)
+
+    def test_mc_contact_seen_ts_ignores_future_advert_and_uses_lastmod(self):
+        self.assertEqual(
+            mesh_mc._mc_contact_seen_ts({"last_advert": 999999, "lastmod": 456}, now=1000),
+            456,
+        )
+
+    def test_mc_contact_api_serializer_does_not_clamp_future_seen_to_now(self):
+        row = mc_routes._serialize_mc_contact(
+            "abcdef1234567890",
+            {"adv_name": "Remote", "last_advert": 999999, "lastmod": 456},
+            now=1000,
+        )
+
+        self.assertEqual(row["last_seen_ts"], 456)
+        self.assertEqual(row["last_seen"], "9m ago")
+
     def test_rx_path_len_is_inferred_from_hex_when_unknown(self):
         fields = mesh_mc._mc_message_path_fields(
             {},

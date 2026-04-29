@@ -516,14 +516,25 @@ def _format_delta(delta_s):
     return f"{int(delta_s) // 86400}d ago"
 
 
-def _mc_contact_last_seen_ts(contact):
-    return int(contact.get("last_seen_ts") or contact.get("last_advert") or 0)
+def _mc_contact_last_seen_ts(contact, now=None):
+    now = int(time.time()) if now is None else int(now)
+    max_future = now + 300
+    for key in ("last_heard_ts", "last_seen_ts", "last_advert", "lastmod"):
+        raw = (contact or {}).get(key)
+        if not raw:
+            continue
+        try:
+            ts = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if 0 < ts <= max_future:
+            return ts
+    return 0
 
 
 def _mc_contact_seen_ts(contact, now=None):
-    ts = _mc_contact_last_seen_ts(contact)
     now = int(time.time()) if now is None else int(now)
-    return min(ts, now) if ts else 0
+    return _mc_contact_last_seen_ts(contact, now=now)
 
 
 def build_mc_sitrep(config_id):

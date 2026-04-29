@@ -21,6 +21,7 @@ from mesh import (
 from state import (
     chat_lock, chat_messages,
     connections, connections_lock,
+    mt_last_heard, mt_last_heard_lock,
     pending_acks, pending_acks_lock,
     traceroute_lock,
     _tr_pending, _tr_pending_lock,
@@ -665,7 +666,14 @@ def api_node_info(node_id):
                 metrics = node.get("deviceMetrics", {}) or {}
                 env     = node.get("environmentMetrics", {}) or {}
                 last_heard = _node_ts(node.get("lastHeard"))
-                last_heard_str = _format_last_heard(last_heard, last_heard_now)
+                with mt_last_heard_lock:
+                    observed_last_heard = mt_last_heard.get((_radio_id_for_iface(iface), node_id)) or 0
+                if observed_last_heard:
+                    last_heard = observed_last_heard
+                    last_heard_now_for_node = host_now
+                else:
+                    last_heard_now_for_node = last_heard_now
+                last_heard_str = _format_last_heard(last_heard, last_heard_now_for_node)
                 uptime = metrics.get("uptimeSeconds")
                 uptime_str = None
                 if uptime:

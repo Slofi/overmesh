@@ -3279,7 +3279,7 @@
         if (!mcContacts[radioId]) mcContacts[radioId] = {};
         (cd.contacts || []).forEach(c => {
           const prev = mcContacts[radioId][c.id] || {};
-          mcContacts[radioId][c.id] = Object.assign({}, prev, c);
+          mcContacts[radioId][c.id] = _mergeMcContactRecord(prev, c);
         });
         _mcRefreshDmContactNames(radioId);
         renderMcMapMarkers();
@@ -11896,7 +11896,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
             if (!mcContacts[rid]) mcContacts[rid] = {};
             (cd.contacts || []).forEach(c => {
               const prev = mcContacts[rid][c.id] || {};
-              mcContacts[rid][c.id] = Object.assign({}, prev, c);
+              mcContacts[rid][c.id] = _mergeMcContactRecord(prev, c);
             });
             renderMcMapMarkers();
           }).catch(() => {});
@@ -12713,6 +12713,13 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
   function _mcContactSeenTs(contact) {
     if (!contact) return 0;
     return contact.last_heard_ts || contact.last_seen_ts || contact.last_advert || 0;
+  }
+
+  function _mergeMcContactRecord(prev, incoming) {
+    const source = incoming || {};
+    const merged = Object.assign({}, prev || {}, source);
+    if (!Object.prototype.hasOwnProperty.call(source, 'last_heard_ts')) delete merged.last_heard_ts;
+    return merged;
   }
 
   function _mcContactSeenLabel(contact) {
@@ -14374,7 +14381,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       if (!mcContacts[entry.radioId]) mcContacts[entry.radioId] = {};
       (data.contacts || []).forEach(c => {
         const prev = mcContacts[entry.radioId][c.id] || {};
-        mcContacts[entry.radioId][c.id] = Object.assign({}, prev, c);
+        mcContacts[entry.radioId][c.id] = _mergeMcContactRecord(prev, c);
       });
       renderMcMapMarkers();
       if (_mcLogPinnedIdx === idx) {

@@ -706,8 +706,6 @@
     .contact-detail-grid { display:grid; grid-template-columns:max-content 1fr; gap:6px 12px; font-size:12px; align-items:start; }
     .contact-detail-grid .k { color:var(--muted); white-space:nowrap; }
     .contact-detail-grid .v { word-break:break-all; font-family:monospace; }
-    .mc-share-qr { background:#fff; border-radius:10px; padding:10px; width:210px; max-width:100%; margin:10px 0; }
-    .mc-share-qr svg { display:block; width:100%; height:auto; }
     .share-link-box {
       font-family:monospace; font-size:11px; word-break:break-all;
       background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:8px;
@@ -1346,7 +1344,6 @@
       #action-modal .modal-body { padding: 12px; }
       #action-modal .contact-detail-grid { grid-template-columns: 1fr; gap: 2px 0; }
       #action-modal .contact-detail-grid .k { margin-top: 6px; }
-      #action-modal .mc-share-qr { width: 190px; }
     }
 
     /* ── Custom colour picker ─────────────────────────────── */
@@ -2455,97 +2452,6 @@
         <button class="btn" onclick="settingsMcAddNode()" title="Add this MeshCore radio to OverMesh">Add</button>
       </div>
       <div id="settings-mc-add-error" class="settings-error"></div>
-
-      <h3 class="settings-subtitle" style="margin-top:18px">Config-only MC device</h3>
-      <div style="font-size:11px;color:var(--muted);max-width:620px;margin-bottom:8px">
-        Connect a MeshCore client or repeater only long enough to configure it. OM will not add it as a radio, track it, scan with it, or use it for chat/map.
-        USB/BT/TCP must be normal MeshCore app/companion mode; DFU/flasher mode cannot be configured here.
-        BT client nodes usually must be configured through the BT tab; their USB port is often power, debug, or DFU/flashing only.
-      </div>
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
-        <label class="settings-label" style="margin:0">Type:</label>
-        <div class="view-toggle">
-          <div class="btn active" id="mc-cfg-type-serial" onclick="settingsMcConfigSetType('serial')" title="Configure via USB serial port">Serial</div>
-          <div class="btn"        id="mc-cfg-type-tcp"    onclick="settingsMcConfigSetType('tcp')"    title="Configure via TCP/IP or WiFi">TCP / WiFi</div>
-          <div class="btn"        id="mc-cfg-type-ble"    onclick="settingsMcConfigSetType('ble')"    title="Configure via Bluetooth Low Energy">BT</div>
-        </div>
-      </div>
-      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:8px">
-        <div id="mc-cfg-serial-fields" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
-          <div>
-            <label class="settings-label">Port</label>
-            <select id="settings-mc-cfg-port-select" class="settings-select" style="min-width:170px"></select>
-          </div>
-          <button class="btn" onclick="settingsMcScanPorts()" title="Rescan ports" style="margin-bottom:0">↻</button>
-        </div>
-        <div id="mc-cfg-tcp-fields" style="display:none;gap:8px;align-items:flex-end;flex-wrap:wrap">
-          <div>
-            <label class="settings-label">IP / Hostname</label>
-            <input id="settings-mc-cfg-tcp-host" class="settings-input" placeholder="192.168.1.100" style="width:160px">
-          </div>
-          <div>
-            <label class="settings-label">Port</label>
-            <input id="settings-mc-cfg-tcp-port" class="settings-input" placeholder="4403" style="width:70px" value="4403">
-          </div>
-        </div>
-        <div id="mc-cfg-ble-fields" style="display:none;gap:8px;align-items:flex-end;flex-wrap:wrap">
-          <div>
-            <label class="settings-label">BT address</label>
-            <input id="settings-mc-cfg-bt-address" class="settings-input" placeholder="AA:BB:CC:DD:EE:FF" style="width:170px">
-          </div>
-          <div>
-            <label class="settings-label">PIN</label>
-            <input id="settings-mc-cfg-bt-pin" class="settings-input" placeholder="optional" style="width:90px">
-          </div>
-        </div>
-        <button class="btn btn-net-mc" onclick="mcConfigQuery()" title="Connect, read settings, then disconnect">Read Device</button>
-      </div>
-      <div id="mc-config-tool-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-bottom:8px"></div>
-      <div id="mc-config-tool-panel" style="display:none;border:1px solid var(--border);border-radius:8px;padding:10px;background:rgba(56,189,248,0.05);margin-bottom:6px">
-        <div style="display:grid;grid-template-columns:auto auto;gap:8px 16px;align-items:center;margin-bottom:10px">
-          <span class="settings-label" style="margin:0">Name</span>
-          <div style="display:flex;gap:6px;align-items:center">
-            <input id="mc-cfg-name" class="settings-input" maxlength="32" style="width:170px" placeholder="Device name">
-            <button class="btn" onclick="mcConfigSetName()">Save</button>
-          </div>
-          <span class="settings-label" style="margin:0">Frequency / BW</span>
-          <div style="display:flex;gap:6px;align-items:center">
-            <input id="mc-cfg-freq" class="settings-input" type="number" step="0.001" min="400" max="950" style="width:95px">
-            <input id="mc-cfg-bw" class="settings-input" type="number" step="1" min="1" max="1000" style="width:80px">
-          </div>
-          <span class="settings-label" style="margin:0">SF / CR / Repeater</span>
-          <div style="display:flex;gap:6px;align-items:center">
-            <select id="mc-cfg-sf" class="settings-select"><option value="7">SF7</option><option value="8">SF8</option><option value="9">SF9</option><option value="10">SF10</option><option value="11">SF11</option><option value="12">SF12</option></select>
-            <select id="mc-cfg-cr" class="settings-select"><option value="5">CR5</option><option value="6">CR6</option><option value="7">CR7</option><option value="8">CR8</option></select>
-            <select id="mc-cfg-repeat" class="settings-select" title="Set MeshCore repeater mode on this device"><option value="0">Repeater off</option><option value="1">Repeater on</option></select>
-            <button class="btn" onclick="mcConfigSetRadio()">Save</button>
-          </div>
-          <span class="settings-label" style="margin:0">TX Power</span>
-          <div style="display:flex;gap:6px;align-items:center">
-            <input id="mc-cfg-tx" class="settings-input" type="number" min="1" max="30" style="width:70px">
-            <span id="mc-cfg-tx-max" style="color:var(--muted);font-size:11px"></span>
-            <button class="btn" onclick="mcConfigSetTx()">Save</button>
-          </div>
-          <span class="settings-label" style="margin:0">Coordinates</span>
-          <div style="display:flex;gap:6px;align-items:center">
-            <input id="mc-cfg-lat" class="settings-input" type="number" step="0.000001" placeholder="Lat" style="width:115px">
-            <input id="mc-cfg-lon" class="settings-input" type="number" step="0.000001" placeholder="Lon" style="width:115px">
-            <button class="btn" onclick="mcConfigSetCoords()">Save</button>
-          </div>
-          <span id="mc-cfg-channel-label" class="settings-label" style="margin:0">Channel</span>
-          <div id="mc-cfg-channel-row" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-            <input id="mc-cfg-ch-idx" class="settings-input" type="number" min="0" max="15" value="0" style="width:50px">
-            <input id="mc-cfg-ch-name" class="settings-input" maxlength="32" placeholder="#channel" style="width:150px">
-            <input id="mc-cfg-ch-key" class="settings-input" maxlength="32" placeholder="optional 32 hex key" style="width:170px">
-            <button class="btn" onclick="mcConfigSetChannel()">Save</button>
-          </div>
-        </div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <button class="btn" onclick="mcConfigQuery()">Refresh</button>
-          <button class="btn-secondary" onclick="mcConfigReboot()" style="color:var(--yellow);border-color:var(--yellow)">Reboot Device</button>
-          <span id="mc-config-tool-summary" style="font-size:12px;color:var(--muted)"></span>
-        </div>
-      </div>
     </div>
 
     <!-- MC Node Settings (shown when at least one MC radio is configured) -->
@@ -5387,7 +5293,7 @@ if (targetEl) {
           <button class="act-btn" title="Direct message" onclick="doDM('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">DM</button>
           <button class="act-btn" title="Request position" onclick="doReqPos('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Pos</button>
           <button class="act-btn" title="Exchange info" onclick="doNodeInfo('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Info</button>
-          <button class="act-btn" title="Details and share QR" onclick="openMtNodeDetails('${jsSafe(n.id)}')">Details</button>
+          <button class="act-btn" title="Contact details and share data" onclick="openMtNodeDetails('${jsSafe(n.id)}')">Info/Share</button>
           ${n.latitude != null && n.longitude != null
             ? `<button class="act-btn" title="Show on map" onclick="centerNodeOnMap('${jsSafe(n.id)}')">Map</button>`
             : `<button class="act-btn" title="No GPS position" style="opacity:0.35;cursor:default" disabled>Map</button>`}
@@ -5469,7 +5375,7 @@ if (targetEl) {
               ? `<button class="act-btn" title="Show on map" onclick="centerMcOnMap(${lat},${lon})">Map</button>`
               : `<button class="act-btn" title="No coordinates available" style="opacity:0.35;cursor:default" disabled>Map</button>`}
             ${pingButton}
-            <button class="act-btn" title="Details and share QR" onclick="openMcContactShare('${jsSafe(cid)}','${rid}')">Share</button>
+            <button class="act-btn" title="Contact details and share data" onclick="openMcContactShare('${jsSafe(cid)}','${rid}')">Info/Share</button>
           </td>
           <td>${escHtml(mcLastStatus[c._rid]?.name || mcLastStatus[c._rid]?.node_name || '')}</td>
           <td style="display:flex;gap:8px;align-items:center">
@@ -5873,7 +5779,7 @@ if (targetEl) {
     openModal('MT Node Details', `
       <div id="mt-detail-rows">${_detailRows(localRows)}</div>
       <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
-        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">OM Meshtastic contact QR</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Meshtastic share data</div>
         <div id="mt-share-qr-area" class="modal-loading" style="padding:10px 0;text-align:left">Preparing contact details…</div>
       </div>
     `);
@@ -5885,7 +5791,7 @@ if (targetEl) {
       .then(({ok, d}) => {
         if (!area) return;
         if (!ok || d.error) {
-          area.innerHTML = `<div class="modal-error" style="padding:0;text-align:left">${escHtml(d.error || 'QR unavailable.')}</div>`;
+          area.innerHTML = `<div class="modal-error" style="padding:0;text-align:left">${escHtml(d.error || 'Share data unavailable.')}</div>`;
           return;
         }
         const details = d.details || {};
@@ -5913,16 +5819,15 @@ if (targetEl) {
         if (detailBox) detailBox.innerHTML = _detailRows(rows);
         area.className = '';
         area.innerHTML = `
-          <div class="mc-share-qr">${d.qr_svg || ''}</div>
           <div id="mt-share-link" class="share-link-box">${escHtml(d.uri || '')}</div>
           <div id="mt-share-json" class="share-link-box" style="margin-top:8px">${escHtml(d.json || JSON.stringify(details))}</div>
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-            <button class="btn" onclick="copyTextById('mt-share-link')">Copy QR data</button>
+            <button class="btn" onclick="copyTextById('mt-share-link')">Copy share data</button>
             <button class="btn" onclick="copyTextById('mt-share-json')">Copy JSON</button>
           </div>`;
       })
       .catch(e => {
-        if (area) area.innerHTML = `<div class="modal-error" style="padding:0;text-align:left">QR export failed: ${escHtml(e.message)}</div>`;
+        if (area) area.innerHTML = `<div class="modal-error" style="padding:0;text-align:left">Share data export failed: ${escHtml(e.message)}</div>`;
       });
   }
 
@@ -5952,29 +5857,45 @@ if (targetEl) {
     openModal('MC Contact Details', `
       ${_detailRows(rows)}
       <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
-        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Official MeshCore contact QR</div>
-        <div id="mc-share-qr-area" class="modal-loading" style="padding:10px 0;text-align:left">Exporting contact from radio…</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">MeshCore share data</div>
+        <div id="mc-share-area" class="modal-loading" style="padding:10px 0;text-align:left">Preparing contact details…</div>
       </div>
     `);
-    const area = document.getElementById('mc-share-qr-area');
+    const area = document.getElementById('mc-share-area');
     fetch(`/api/mc/${encodeURIComponent(rid)}/contacts/${encodeURIComponent(fullKey)}/share`)
       .then(r => r.json().then(d => ({ok: r.ok, d})))
       .then(({ok, d}) => {
         if (!area) return;
         if (!ok || d.error) {
-          area.innerHTML = `<div class="modal-error" style="padding:0;text-align:left">${escHtml(d.error || 'QR unavailable.')}</div>`;
+          area.innerHTML = `<div class="modal-error" style="padding:0;text-align:left">${escHtml(d.error || 'Share data unavailable.')}</div>`;
           return;
         }
         area.className = '';
+        const det = d.details || {};
+        const name = escHtml(det.name || 'Unknown');
+        const keyFull = escHtml(det.full_key || '');
+        const keyShort = keyFull ? `&lt;${keyFull.slice(0,8)}…${keyFull.slice(-8)}&gt;` : '';
+        const qrHtml = d.qr_svg
+          ? `<div style="text-align:center;margin:8px 0 12px">
+               <div style="display:inline-block;background:#fff;padding:8px;border-radius:6px;line-height:0">
+                 <div style="width:180px;height:180px;overflow:hidden">${d.qr_svg}</div>
+               </div>
+               <div style="font-size:11px;color:var(--muted);margin-top:6px">Scan with MeshCore app → Menu → Add Contact → Scan QR Code</div>
+             </div>`
+          : '';
         area.innerHTML = `
-          <div class="mc-share-qr">${d.qr_svg || ''}</div>
+          <div style="text-align:center;margin-bottom:8px">
+            <div style="font-weight:600;font-size:15px">${name}</div>
+            <div style="font-size:11px;color:var(--muted);font-family:monospace">${keyShort}</div>
+          </div>
+          ${qrHtml}
           <div id="mc-share-link" class="share-link-box">${escHtml(d.uri || '')}</div>
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-            <button class="btn" onclick="copyTextById('mc-share-link')">Copy link</button>
+            <button class="btn" onclick="copyTextById('mc-share-link')">Copy share link</button>
           </div>`;
       })
       .catch(e => {
-        if (area) area.innerHTML = `<div class="modal-error" style="padding:0;text-align:left">QR export failed: ${escHtml(e.message)}</div>`;
+        if (area) area.innerHTML = `<div class="modal-error" style="padding:0;text-align:left">Share data export failed: ${escHtml(e.message)}</div>`;
       });
   }
 
@@ -14873,9 +14794,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
 
   function settingsMcScanPorts() {
     const sel = document.getElementById('settings-mc-port-select');
-    const cfgSel = document.getElementById('settings-mc-cfg-port-select');
     if (sel) sel.innerHTML = '<option value="">Scanning…</option>';
-    if (cfgSel) cfgSel.innerHTML = '<option value="">Scanning…</option>';
     fetch('/api/settings/ports').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
       // Show all ports not already in use by MT nodes
       const available = (data.ports || []).filter(p => !p.in_use);
@@ -14885,16 +14804,13 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       }).join('');
       const html = available.length ? options : '<option value="">No available devices found</option>';
       if (sel) sel.innerHTML = html;
-      if (cfgSel) cfgSel.innerHTML = html;
     }).catch(e => {
       if (sel) sel.innerHTML = '<option value="">Scan failed</option>';
-      if (cfgSel) cfgSel.innerHTML = '<option value="">Scan failed</option>';
       console.error('MC port scan failed:', e);
     });
   }
 
   let _addMcNodeType = 'serial';
-  let _mcConfigToolType = 'serial';
 
   function settingsMcSetAddType(type) {
     _addMcNodeType = type;
@@ -14904,153 +14820,6 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     document.getElementById('mc-add-serial-fields').style.display = type === 'serial' ? 'flex' : 'none';
     document.getElementById('mc-add-tcp-fields').style.display    = type === 'tcp'    ? 'flex' : 'none';
     document.getElementById('mc-add-ble-fields').style.display    = type === 'ble'    ? 'flex' : 'none';
-  }
-
-  function settingsMcConfigSetType(type) {
-    _mcConfigToolType = type;
-    document.getElementById('mc-cfg-type-serial').classList.toggle('active', type === 'serial');
-    document.getElementById('mc-cfg-type-tcp').classList.toggle('active', type === 'tcp');
-    document.getElementById('mc-cfg-type-ble').classList.toggle('active', type === 'ble');
-    document.getElementById('mc-cfg-serial-fields').style.display = type === 'serial' ? 'flex' : 'none';
-    document.getElementById('mc-cfg-tcp-fields').style.display    = type === 'tcp'    ? 'flex' : 'none';
-    document.getElementById('mc-cfg-ble-fields').style.display    = type === 'ble'    ? 'flex' : 'none';
-  }
-
-  function _mcConfigStatus(text, ok = null) {
-    const el = document.getElementById('mc-config-tool-status');
-    if (!el) return;
-    el.textContent = text || '';
-    el.style.color = ok == null ? 'var(--muted)' : ok ? 'var(--accent)' : 'var(--red)';
-  }
-
-  function _mcConfigEndpointBody(action) {
-    const body = {action, type: _mcConfigToolType};
-    if (_mcConfigToolType === 'tcp') {
-      body.host = document.getElementById('settings-mc-cfg-tcp-host').value.trim();
-      body.tcp_port = parseInt(document.getElementById('settings-mc-cfg-tcp-port').value.trim()) || 4403;
-      if (!body.host) throw new Error('Enter an IP address or hostname.');
-    } else if (_mcConfigToolType === 'ble') {
-      body.bt_address = document.getElementById('settings-mc-cfg-bt-address').value.trim();
-      body.bt_pin = document.getElementById('settings-mc-cfg-bt-pin').value.trim();
-      if (!body.bt_address) throw new Error('Enter a Bluetooth address.');
-    } else {
-      const sel = document.getElementById('settings-mc-cfg-port-select');
-      const opt = sel.options[sel.selectedIndex];
-      const val = sel.value;
-      const port = opt?.dataset?.port || val;
-      if (!val && !port) throw new Error('Select a serial device.');
-      body.usb_serial = val && val !== port ? val : '';
-      body.port = port;
-    }
-    return body;
-  }
-
-  function _mcConfigPost(action, extra = {}) {
-    let body;
-    try {
-      body = Object.assign(_mcConfigEndpointBody(action), extra);
-    } catch(e) {
-      _mcConfigStatus(e.message, false);
-      return Promise.reject(e);
-    }
-    _mcConfigStatus(action === 'query' ? 'Connecting and reading…' : 'Connecting and saving…');
-    return fetch('/api/mc/config_tool', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(body),
-    }).then(r => r.json().then(d => {
-      if (!r.ok || d.error) throw new Error(d.error || `HTTP ${r.status}`);
-      return d;
-    }));
-  }
-
-  function _mcConfigFill(d) {
-    const self = d.self || {};
-    const dev = d.device || {};
-    const bat = d.battery || {};
-    document.getElementById('mc-config-tool-panel').style.display = '';
-    if (self.name != null) document.getElementById('mc-cfg-name').value = self.name;
-    if (self.radio_freq != null) document.getElementById('mc-cfg-freq').value = self.radio_freq;
-    if (self.radio_bw != null) document.getElementById('mc-cfg-bw').value = self.radio_bw;
-    if (self.radio_sf != null) document.getElementById('mc-cfg-sf').value = String(self.radio_sf);
-    if (self.radio_cr != null) document.getElementById('mc-cfg-cr').value = String(self.radio_cr);
-    const repeat = dev.repeat ?? self.repeat;
-    if (repeat != null) document.getElementById('mc-cfg-repeat').value = repeat ? '1' : '0';
-    if (self.tx_power != null) document.getElementById('mc-cfg-tx').value = self.tx_power;
-    if (dev.max_tx_power != null) {
-      document.getElementById('mc-cfg-tx').max = dev.max_tx_power;
-      document.getElementById('mc-cfg-tx-max').textContent = `max ${dev.max_tx_power} dBm`;
-    }
-    if (self.adv_lat != null && !(self.adv_lat === 0 && self.adv_lon === 0)) document.getElementById('mc-cfg-lat').value = self.adv_lat;
-    if (self.adv_lon != null && !(self.adv_lat === 0 && self.adv_lon === 0)) document.getElementById('mc-cfg-lon').value = self.adv_lon;
-    const isCli = d.protocol === 'meshcore_cli' || d.type === 'serial-cli';
-    const chLabel = document.getElementById('mc-cfg-channel-label');
-    const chRow = document.getElementById('mc-cfg-channel-row');
-    if (chLabel && chRow) {
-      chLabel.style.display = isCli ? 'none' : '';
-      chRow.style.display = isCli ? 'none' : 'flex';
-    }
-    const fw = dev["fw ver"] ?? dev.ver ?? 'unknown firmware';
-    const maxCh = dev.max_channels != null ? ` · ${dev.max_channels} channels` : '';
-    const batV = bat.level != null ? ` · ${(bat.level / 1000).toFixed(2)} V` : '';
-    document.getElementById('mc-config-tool-summary').textContent =
-      `${d.type || _mcConfigToolType} ${d.endpoint || ''} · ${String(fw)}${maxCh}${batV}`;
-  }
-
-  function mcConfigQuery() {
-    _mcConfigPost('query').then(d => {
-      _mcConfigFill(d);
-      _mcConfigStatus('Read complete. Temporary connection closed.', true);
-    }).catch(e => _mcConfigStatus(e.message || 'Read failed.', false));
-  }
-
-  function mcConfigSetRadio() {
-    const extra = {
-      freq: parseFloat(document.getElementById('mc-cfg-freq').value),
-      bw: parseFloat(document.getElementById('mc-cfg-bw').value),
-      sf: parseInt(document.getElementById('mc-cfg-sf').value),
-      cr: parseInt(document.getElementById('mc-cfg-cr').value),
-      repeat: parseInt(document.getElementById('mc-cfg-repeat').value),
-    };
-    _mcConfigPost('set_radio', extra).then(() => _mcConfigStatus('Radio params and repeater mode saved.', true))
-      .catch(e => _mcConfigStatus(e.message || 'Save failed.', false));
-  }
-
-  function mcConfigSetTx() {
-    _mcConfigPost('set_tx_power', {tx_power: parseInt(document.getElementById('mc-cfg-tx').value)})
-      .then(() => _mcConfigStatus('TX power saved.', true))
-      .catch(e => _mcConfigStatus(e.message || 'Save failed.', false));
-  }
-
-  function mcConfigSetName() {
-    _mcConfigPost('set_name', {name: document.getElementById('mc-cfg-name').value.trim()})
-      .then(() => _mcConfigStatus('Name saved.', true))
-      .catch(e => _mcConfigStatus(e.message || 'Save failed.', false));
-  }
-
-  function mcConfigSetCoords() {
-    _mcConfigPost('set_coords', {
-      lat: parseFloat(document.getElementById('mc-cfg-lat').value),
-      lon: parseFloat(document.getElementById('mc-cfg-lon').value),
-    }).then(() => _mcConfigStatus('Coordinates saved.', true))
-      .catch(e => _mcConfigStatus(e.message || 'Save failed.', false));
-  }
-
-  function mcConfigSetChannel() {
-    _mcConfigPost('set_channel', {
-      idx: parseInt(document.getElementById('mc-cfg-ch-idx').value),
-      name: document.getElementById('mc-cfg-ch-name').value.trim(),
-      key: document.getElementById('mc-cfg-ch-key').value.trim(),
-    }).then(() => _mcConfigStatus('Channel saved.', true))
-      .catch(e => _mcConfigStatus(e.message || 'Save failed.', false));
-  }
-
-  function mcConfigReboot() {
-    document.getElementById('confirm-ok').textContent = 'Reboot';
-    showConfirm('Reboot this config-only MC device? It will disconnect from OM after the command.', () => {
-      _mcConfigPost('reboot').then(() => _mcConfigStatus('Reboot command sent.', true))
-        .catch(e => _mcConfigStatus(e.message || 'Reboot failed.', false));
-    });
   }
 
   function settingsMcAddNode() {
@@ -15998,7 +15767,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
             <td style="padding:2px 12px 2px 0">${escHtml(String(ch.idx))}</td>
             <td style="padding:2px 12px 2px 0">${escHtml(ch.name || '(empty)')}</td>
             <td style="padding:2px 0 2px;color:var(--muted);font-family:monospace">${escHtml(ch.hash || '—')}</td>
-            <td style="padding:2px 0 2px;text-align:right"><button class="btn" style="padding:2px 8px;font-size:11px" onclick="event.stopPropagation();shareMcChannel('${jsSafe(radioId)}',${parseInt(ch.idx) || 0},'${jsSafe(ch.name || '')}','${jsSafe(ch.hash || '')}')">Share</button></td>
+            <td style="padding:2px 0 2px;text-align:right"><button class="btn" style="padding:2px 8px;font-size:11px" onclick="event.stopPropagation();shareMcChannel('${jsSafe(radioId)}',${parseInt(ch.idx) || 0},'${jsSafe(ch.name || '')}','${jsSafe(ch.hash || '')}')">Info/Share</button></td>
           </tr>`).join('')}
         </table>`;
       }).catch(e => { if (el) el.innerHTML = `<span style="color:var(--red)">Failed: ${escHtml(e.message)}</span>`; });
@@ -17379,8 +17148,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
             ${pskBadge}
             <span style="font-size:11px;color:${roleColor};width:68px;text-align:right;flex-shrink:0">${roleLabel}</span>
             ${ch.role !== 0
-              ? `<button class="btn" style="padding:2px 8px;font-size:11px;flex-shrink:0" onclick="shareMtChannel(${ch.index})" title="Share this Meshtastic channel as QR">Share</button>`
-              : `<button class="btn" style="padding:2px 8px;font-size:11px;flex-shrink:0;opacity:.45;cursor:default" disabled>Share</button>`}
+              ? `<button class="btn" style="padding:2px 8px;font-size:11px;flex-shrink:0" onclick="shareMtChannel(${ch.index})" title="Show channel share data">Info/Share</button>`
+              : `<button class="btn" style="padding:2px 8px;font-size:11px;flex-shrink:0;opacity:.45;cursor:default" disabled>Info/Share</button>`}
             <button class="btn" style="padding:2px 8px;font-size:11px;flex-shrink:0" onclick="openChEdit(${ch.index})" title="Edit channel settings">Edit</button>
           </div>`;
         }).join('');
@@ -17413,7 +17182,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     openModal(title, `
       ${_detailRows(detailsRows)}
       <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
-        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Channel QR</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Channel share data</div>
         <div id="channel-share-qr-area" class="modal-loading" style="padding:10px 0;text-align:left">Preparing channel share…</div>
       </div>
     `);
@@ -17423,21 +17192,20 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       .then(({ok, d}) => {
         if (!area) return;
         if (!ok || d.error) {
-          area.innerHTML = `<div class="modal-error" style="padding:0;text-align:left">${escHtml(d.error || 'QR unavailable.')}</div>`;
+          area.innerHTML = `<div class="modal-error" style="padding:0;text-align:left">${escHtml(d.error || 'Share data unavailable.')}</div>`;
           return;
         }
         area.className = '';
         area.innerHTML = `
-          <div class="mc-share-qr">${d.qr_svg || ''}</div>
           <div id="channel-share-link" class="share-link-box">${escHtml(d.uri || '')}</div>
           <div id="channel-share-json" class="share-link-box" style="margin-top:8px">${escHtml(d.json || JSON.stringify(d.details || {}))}</div>
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-            <button class="btn" onclick="copyTextById('channel-share-link')">Copy QR data</button>
+            <button class="btn" onclick="copyTextById('channel-share-link')">Copy share data</button>
             <button class="btn" onclick="copyTextById('channel-share-json')">Copy JSON</button>
           </div>`;
       })
       .catch(e => {
-        if (area) area.innerHTML = `<div class="modal-error" style="padding:0;text-align:left">QR export failed: ${escHtml(e.message)}</div>`;
+        if (area) area.innerHTML = `<div class="modal-error" style="padding:0;text-align:left">Share data export failed: ${escHtml(e.message)}</div>`;
       });
   }
 

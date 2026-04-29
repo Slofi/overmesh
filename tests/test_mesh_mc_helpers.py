@@ -409,44 +409,6 @@ class MeshMcPathHelperTests(unittest.TestCase):
         with mc_connections_lock:
             self.assertEqual(mc_connections[radio_id]["status"], "connecting")
 
-    def test_config_tool_route_sets_repeater_radio_params_without_runtime_registration(self):
-        app = Flask(__name__)
-        app.register_blueprint(mc_routes.bp)
-        client = app.test_client()
-
-        with mock.patch.object(mc_routes, "mc_config_tool", return_value={"ok": True}) as tool:
-            res = client.post(
-                "/api/mc/config_tool",
-                json={
-                    "action": "set_radio",
-                    "type": "serial",
-                    "port": "/dev/ttyUSB9",
-                    "freq": 869.525,
-                    "bw": 62.5,
-                    "sf": 8,
-                    "cr": 8,
-                    "repeat": 1,
-                },
-            )
-
-        self.assertEqual(res.status_code, 200)
-        tool.assert_called_once()
-        endpoint, action = tool.call_args.args[:2]
-        self.assertEqual(endpoint["type"], "serial")
-        self.assertEqual(endpoint["port"], "/dev/ttyUSB9")
-        self.assertEqual(action, "set_radio")
-        self.assertEqual(tool.call_args.kwargs["params"]["repeat"], 1)
-
-    def test_config_tool_route_rejects_missing_ble_address(self):
-        app = Flask(__name__)
-        app.register_blueprint(mc_routes.bp)
-        client = app.test_client()
-
-        res = client.post("/api/mc/config_tool", json={"action": "query", "type": "ble"})
-
-        self.assertEqual(res.status_code, 400)
-        self.assertEqual(res.get_json()["error"], "Enter a Bluetooth address")
-
     def test_send_dm_forces_flood_when_radio_option_enabled(self):
         radio_id = "mc_flood"
         pubkey = "aabbccddeeff" + "00" * 26
@@ -500,16 +462,18 @@ class MeshMcPathHelperTests(unittest.TestCase):
         app.register_blueprint(mc_routes.bp)
         client = app.test_client()
 
-        with mock.patch.object(mc_routes, "export_mc_contact_uri", return_value="meshcore://aabbcc"):
-            res = client.get(f"/api/mc/{radio_id}/contacts/{pubkey[:12]}/share")
+        res = client.get(f"/api/mc/{radio_id}/contacts/{pubkey[:12]}/share")
 
         self.assertEqual(res.status_code, 200)
         payload = res.get_json()
-        self.assertEqual(payload["uri"], "meshcore://aabbcc")
+        self.assertIn("meshcore://contact/add?", payload["uri"])
+        self.assertIn("public_key=deadbeef", payload["uri"])
+        self.assertIn("type=1", payload["uri"])
+        self.assertTrue(payload["official"])
         self.assertIn("<svg", payload["qr_svg"])
         self.assertEqual(payload["details"]["full_key"], pubkey)
 
-    def test_share_contact_rejects_archive_only_contact_qr(self):
+    def test_share_contact_builds_qr_for_archive_only_contact(self):
         radio_id = "mc_test"
         pubkey = "deadbeefcafefeed" + "00" * 24
         mesh_mc._mc_archive_merge_contacts(radio_id, {
@@ -527,8 +491,9 @@ class MeshMcPathHelperTests(unittest.TestCase):
 
         res = client.get(f"/api/mc/{radio_id}/contacts/{pubkey[:12]}/share")
 
-        self.assertEqual(res.status_code, 503)
-        self.assertIn("must be connected", res.get_json()["error"])
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("meshcore://contact/add?", res.get_json()["uri"])
+        self.assertTrue(res.get_json()["official"])
 
 
 if __name__ == "__main__":

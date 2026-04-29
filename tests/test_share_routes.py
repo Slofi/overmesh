@@ -110,7 +110,7 @@ class ShareRouteTests(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         data = res.get_json()
         self.assertEqual(data["details"]["secret_hex"], "10" * 16)
-        self.assertIn("overmesh://mc/channel?", data["uri"])
+        self.assertIn("meshcore://channel/add?", data["uri"])
         self.assertIn("secret=1010", data["uri"])
 
     def test_mc_channel_share_rejects_missing_secret(self):
@@ -134,6 +134,21 @@ class ShareRouteTests(unittest.TestCase):
 
         self.assertIn("<svg", svg)
         self.assertIn("viewBox", svg)
+
+    def test_qr_svg_is_inline_scalable_and_readable(self):
+        uri = (
+            "meshcore://contact/add?name=Bergamasco+%F0%9F%87%AE%F0%9F%87%B9"
+            "&public_key=f50246f1af134ffdd4ebe16bd9a4147c9421237f94d54406756732fcdd10f7d2"
+            "&type=2"
+        )
+
+        svg = mc_routes._qr_svg(uri)
+
+        self.assertTrue(svg.startswith("<svg"))
+        self.assertNotIn("<?xml", svg)
+        self.assertIn('width="100%" height="100%"', svg)
+        self.assertIn('fill="#fff"', svg)
+        self.assertIn("<path", svg)
 
 
 if __name__ == "__main__":

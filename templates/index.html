@@ -11592,8 +11592,9 @@ if (targetEl) {
       activeMcRadioId = connectedEntries[0][0];
       localStorage.setItem('activeMcRadioId', activeMcRadioId);
     }
-    // Auto-select MC radios only if nothing is selected yet (fresh start)
-    if (selectedRadioIds.size === 0) {
+    // Auto-select MC radios if none are currently selected (handles refresh/reconnect)
+    const hasMcSelected = [...selectedRadioIds].some(id => id.startsWith('mc_'));
+    if (!hasMcSelected) {
       connectedEntries.forEach(([id]) => selectedRadioIds.add(id));
       saveSelectedRadioIds();
     }

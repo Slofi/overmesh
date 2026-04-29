@@ -4270,7 +4270,8 @@
       tags: 'nodes contacts table favorites ignored map dm traceroute route path mc mt ping trace info position',
       body: [
         'Nodes lists known Meshtastic nodes and MeshCore contacts. Use it when you need identity, last-heard time, battery, signal, position, and route state.',
-        'The table is shared, but MT and MC route information means different things because the protocols expose different metadata.'
+        'The table is shared, but MT and MC route information means different things because the protocols expose different metadata.',
+        'Info/Share opens full contact details. MT shows identity and public-key data. MC shows name, type, full public key, source state, path data, distance, and a MeshCore contact share link/QR when available.'
       ],
       split: [
         {
@@ -4285,6 +4286,7 @@
             ['TR', 'Send an MT traceroute and draw route-to-node / route-back if the node responds.'],
             ['Pos', 'Request an MT position broadcast.'],
             ['Info', 'Request MT node info and telemetry.'],
+            ['Info/Share', 'Open MT contact details, public-key data, and copyable share data.'],
             ['DM', 'Open an MT direct message.'],
             ['Ignore', 'Hide a noisy MT node from normal views.'],
             ['Unignore', 'Restore an ignored MT node from History.']
@@ -4303,6 +4305,7 @@
             ['Ping', 'Check MC reachability and draw observed path metadata when available.'],
             ['Trace', 'Send an MC broadcast trace and draw known hops.'],
             ['Route', 'Edit a stored MC contact route using repeater hash prefixes.'],
+            ['Info/Share', 'Open MC contact details, public key, type, source, distance, MeshCore share link, and contact QR.'],
             ['★', 'Favorite an MC contact so it sorts higher.'],
             ['Ignore', 'Hide a noisy MC contact from normal views.'],
             ['Unignore', 'Restore an ignored MC contact from History.']
@@ -4378,7 +4381,8 @@
       body: [
         'Map is the main geographic view. It shows MT nodes, MC contacts, local radios, marks, self notes, overlays, and paths drawn by tools.',
         'Click markers for quick actions. MT and MC filters let you reduce clutter when both networks are active.',
-        'Marks are mesh waypoints. Self Notes are local-only notes. Overlays are local shapes and imported GeoJSON.'
+        'Marks are mesh waypoints. Self Notes are local-only notes. Overlays are local shapes and imported GeoJSON.',
+        'Distance labels use the OM origin when available: live GPS first, then the manual OM position, then a connected/local radio position fallback. If OM has no origin and the node has only its own coordinates, distance is shown as unknown.'
       ],
       split: [
         {
@@ -4461,6 +4465,7 @@
             'MC Sense logs adverts, messages, pings, traces, scans, and bot replies. It is the main place to inspect MC paths.',
             'Route source badges explain where OM got the path: live means this packet/RX-log metadata; cached means stored contact route; inferred means a fallback line; refreshed means newer contact/path data changed the entry.',
             'Flood mode is a route/delivery mode, not a byte size. 1B/hop, 2B/hop, or 3B/hop are hop-hash widths; larger widths reduce repeater ID collisions.',
+            'Observed path hops are shown as clickable hop IDs when OM can resolve them. Click a hop/repeater ID to focus the map on that hop.',
             'When MC SNR is available, path segments use the same quality colors as MT traceroutes. Hover a colored segment to see its SNR value.',
             'Confidence labels: likely, estimated, and ambiguous mean OM resolved a short hash but it is not guaranteed exact. Partial paths show only known relays.',
             'MC hop badges say 1 hop / 2 hops to avoid confusing h with hours.'
@@ -4475,6 +4480,7 @@
             ['flood mode', 'Open/unknown routing mode for the message. It can still have 1B/2B/3B hop metadata.'],
             ['1B/2B/3B per hop', 'Hop-hash size used in path metadata. 2B/hop is more precise than 1B/hop, but still separate from route mode.'],
             ['1 hop / 2 hops', 'Known MC repeater count for this entry.'],
+            ['Hop ID', 'Clickable MC path hop/repeater hash; centers the map when OM knows a matching contact position.'],
             ['likely', 'Best candidate was selected, but another match existed.'],
             ['estimated', 'Short/ambiguous hash; use as likely route, not proof.'],
             ['ambiguous', 'Candidates were too close to call confidently.'],
@@ -4539,15 +4545,21 @@
     },
     {
       title: 'Settings - MeshCore',
-      tags: 'settings meshcore mc radios channels tx power coords advert scan reboot import contacts radio params route',
+      tags: 'settings meshcore mc radios serial tcp wifi bluetooth bt channels tx power coords advert scan reboot import contacts radio params route flood qr share',
       body: [
         'Settings -> MeshCore manages MC radios, channels, device identity, coordinates, TX power, radio parameters, and default MC path hash size.',
+        'Add MC radios by USB serial, TCP/WiFi host and port, or Bluetooth Low Energy address plus optional PIN. BT address means the AA:BB:CC:DD:EE:FF device address exposed by the OS/phone Bluetooth tools.',
         'MC capabilities vary by firmware. If a function returns unavailable, it usually means the radio or current connection state cannot do it right now.',
         'Path Hash Mode chooses the preferred 1B/2B/3B per-hop hash for MC stored routes and the radio default when firmware supports it. OM tries the selected mode first and falls back to the highest mode the radio accepts.',
-        'Import Contact accepts meshcore:// share links and writes the contact to the selected radio.'
+        'Always use flood routing clears the selected MC contact path before DMs and status pings so firmware uses flood/automatic routing instead of stored or learned paths.',
+        'Import Contact accepts meshcore:// share links and writes the contact to the selected radio. Contact Info/Share exports official meshcore://contact/add links and QR codes; MC channel Info/Share exports meshcore://channel/add data when the channel secret is readable.',
+        'The temporary config-only repeater tool was removed. Configure only radios that OM can use as normal MC nodes.'
       ],
       buttons: [
-        ['Add', 'Add the selected MeshCore USB radio to OM.'],
+        ['Serial', 'Add a MeshCore radio by USB serial device.'],
+        ['TCP / WiFi', 'Add a MeshCore radio by host/IP and TCP port.'],
+        ['BT', 'Add a MeshCore BLE radio by Bluetooth address and optional PIN.'],
+        ['Add', 'Add the selected/configured MeshCore radio to OM.'],
         ['Enable', 'Allow OM to connect this MC radio.'],
         ['Disable', 'Keep the MC radio configured but disconnected.'],
         ['Remove', 'Remove the MC radio from OM settings.'],
@@ -4557,6 +4569,7 @@
         ['Save Radio Params', 'Write frequency, bandwidth, spreading factor, and coding rate.'],
         ['Save TX Power', 'Write MC transmit power.'],
         ['Save Path Mode', 'Write the preferred MC path hash size.'],
+        ['Always use flood routing', 'Force MC DMs and status pings through flood/automatic routing for this radio.'],
         ['Rename', 'Write MC device name.'],
         ['Select on map', 'Pick MC device coordinates from the map.'],
         ['Set Coords', 'Write MC device coordinates.'],
@@ -4572,12 +4585,16 @@
       body: [
         'Settings -> App controls UI zoom, accent color, notifications, GPS receiver, offline map tiles, map regions, updates, and help.',
         'The updater is conservative: trusted local/private access only, no dirty worktree, fast-forward only, explicit restart afterward.',
+        'If requirements changed on a Linux system with externally managed Python, the updater retries dependency installation with --break-system-packages after Python reports the PEP 668 block.',
+        'Distance units switch all app distance displays between kilometres and miles.',
+        'Manual OM position is an app-only fallback origin for distances and map context when there is no live GPS fix. It does not write coordinates to a radio by itself.',
         'Offline maps are stored in browser IndexedDB; they are per browser/profile.'
       ],
       buttons: [
         ['−', 'Decrease UI zoom.'],
         ['+', 'Increase UI zoom.'],
         ['Reset', 'Reset accent color to the default.'],
+        ['Distance units', 'Choose kilometres or miles for app distance labels and polar-grid range labels.'],
         ['Check', 'Fetch/check GitHub origin and show whether an update is available.'],
         ['Update', 'Pull the latest GitHub main branch if the local checkout is clean and fast-forwardable.'],
         ['Restart', 'Restart OM after a successful update.'],
@@ -4589,6 +4606,8 @@
         ['Save current map view', 'Download map tiles for the current map viewport.'],
         ['Search', 'Find a map region/place for offline tile download.'],
         ['GPS receiver', 'Select/configure the local GPS source used for OM and node position updates.'],
+        ['Manual OM position', 'Set or clear the app fallback origin used when GPS has no live fix.'],
+        ['Set from map', 'Pick the manual OM position from the map.'],
         ['Send to nodes now', 'Push the current GPS receiver fix to connected nodes.']
       ]
     },
@@ -4618,7 +4637,8 @@
       body: [
         'OM versions use YYYY.MM.DD.N. The Settings updater also shows the exact Git build hash.',
         'Every GitHub push should bump VERSION and add a VERSIONS.md entry.',
-        'If Update is disabled, the local install is probably dirty, ahead of GitHub, not a Git checkout, or already current.'
+        'If Update is disabled, the local install is probably dirty, ahead of GitHub, not a Git checkout, or already current.',
+        'When requirements.txt changes, the updater installs dependencies after pulling. On PEP 668 externally-managed Python installs, OM retries with --break-system-packages and logs that step in the update output.'
       ],
       buttons: [
         ['Check', 'Refresh version/build status from origin/GitHub.'],

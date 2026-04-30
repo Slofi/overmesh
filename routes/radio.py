@@ -7,7 +7,13 @@ from meshtastic.protobuf import apponly_pb2
 
 from config import CONFIG, CONFIG_LOCK, save_config
 from db import delete_channel_messages
-from helpers import mt_node_id_from_num, push_to_sse
+from helpers import (
+    forget_fixed_node_position,
+    get_fixed_node_position,
+    mt_node_id_from_num,
+    push_to_sse,
+    remember_fixed_node_position,
+)
 from mesh import DEVICE_ROLES, LORA_REGIONS, MODEM_PRESETS, get_iface_by_radio
 from state import chat_lock, chat_messages, connections, connections_lock
 from routes.mc import _qr_svg
@@ -96,6 +102,12 @@ def api_radio_config_get(radio_id):
                 fixed_lat = node_cfg_entry.get("fixed_lat")
                 fixed_lon = node_cfg_entry.get("fixed_lon")
                 fixed_alt = node_cfg_entry.get("fixed_alt", 0)
+            if fixed_lat is None:
+                remembered = get_fixed_node_position(node_hex)
+                if remembered:
+                    fixed_lat = remembered["lat"]
+                    fixed_lon = remembered["lon"]
+                    fixed_alt = remembered.get("alt", 0)
 
         # power
         power_saving        = _bool(lc, "power", "is_power_saving")
@@ -427,6 +439,10 @@ def api_radio_config_position(radio_id):
                         node_cfg_entry["precision_bits"] = precision
                     save_config()
 
+            node_hex = mt_node_id_from_num(local_num)
+            if node_hex:
+                remember_fixed_node_position(node_hex, lat, lon, alt, precision)
+
         elif fixed is False:
             try:    iface.localNode.removeFixedPosition()
             except Exception: pass
@@ -440,6 +456,9 @@ def api_radio_config_position(radio_id):
                     for k in ("fixed_lat", "fixed_lon", "fixed_alt", "precision_bits"):
                         node_cfg_entry.pop(k, None)
                     save_config()
+            node_hex = mt_node_id_from_num(local_num)
+            if node_hex:
+                forget_fixed_node_position(node_hex)
 
         elif fixed is None and precision is not None:
             # Precision-only change (fixed_position not being toggled, no coord update)

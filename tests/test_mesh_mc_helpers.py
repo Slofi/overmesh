@@ -473,6 +473,42 @@ class MeshMcPathHelperTests(unittest.TestCase):
             self.assertEqual(mc_connections[radio_id]["contacts"][pubkey]["out_path_len"], -1)
             self.assertEqual(mc_connections[radio_id]["live_contacts"][pubkey]["out_path"], "")
 
+    def test_remote_admin_command_allowlist_normalizes_safe_commands(self):
+        self.assertEqual(mesh_mc._validate_remote_admin_command("  get   name  "), "get name")
+        self.assertEqual(mesh_mc._validate_remote_admin_command("set repeat on"), "set repeat on")
+
+    def test_remote_admin_command_allowlist_rejects_unknown_commands(self):
+        with self.assertRaises(ValueError):
+            mesh_mc._validate_remote_admin_command("erase everything")
+
+    def test_api_mc_remote_read_calls_backend_helper(self):
+        app = Flask(__name__)
+        app.register_blueprint(mc_routes.bp)
+        client = app.test_client()
+
+        with mock.patch.object(mc_routes, "remote_repeater_read", return_value={"ok": True, "target": "abcdef"}) as read_mock:
+            res = client.post("/api/mc/mc1/remote/abcdef123456/read", json={
+                "login": True,
+                "password": "secret",
+            })
+
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.get_json()["target"], "abcdef")
+        read_mock.assert_called_once_with("mc1", "abcdef123456", password="secret", login=True)
+
+    def test_api_mc_remote_command_maps_validation_errors_to_400(self):
+        app = Flask(__name__)
+        app.register_blueprint(mc_routes.bp)
+        client = app.test_client()
+
+        with mock.patch.object(mc_routes, "remote_repeater_command", side_effect=ValueError("Command is not in the safe remote-admin allowlist")):
+            res = client.post("/api/mc/mc1/remote/abcdef123456/command", json={
+                "command": "erase everything",
+            })
+
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("allowlist", res.get_json()["error"])
+
     def test_share_contact_exports_uri_and_qr_for_live_contact(self):
         radio_id = "mc_test"
         pubkey = "deadbeefcafefeed" + "00" * 24

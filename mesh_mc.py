@@ -2025,6 +2025,204 @@ def _build_reachability_fallback(config_id, pubkey_prefix, full_key, phase, rx_e
     }
 
 
+def _mc_event_type_name(event):
+    typ = getattr(event, "type", None)
+    return getattr(typ, "name", str(typ))
+
+
+def _mc_event_payload(event):
+    return dict(getattr(event, "payload", {}) or {})
+
+
+async def _remote_login_async(mc, full_key, password, timeout=12):
+    dispatcher = getattr(mc.commands, "dispatcher", None)
+    if dispatcher is None:
+        raise RuntimeError("MeshCore dispatcher not available")
+
+    pubkey_prefix = full_key[:12]
+    success_task = asyncio.create_task(
+        dispatcher.wait_for_event(
+            EventType.LOGIN_SUCCESS,
+            attribute_filters={"pubkey_prefix": pubkey_prefix},
+            timeout=timeout,
+        )
+    )
+    failed_task = asyncio.create_task(
+        dispatcher.wait_for_event(
+            EventType.LOGIN_FAILED,
+            attribute_filters={"pubkey_prefix": pubkey_prefix},
+            timeout=timeout,
+        )
+    )
+    try:
+        sent = await mc.commands.send_login(full_key, password or "")
+        _raise_if_mc_error(sent, "remote login")
+        done, pending = await asyncio.wait(
+            [success_task, failed_task],
+            timeout=timeout,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+        for task in done:
+            event = task.result()
+            if event is None:
+                continue
+            if event.type == EventType.LOGIN_SUCCESS:
+                payload = _mc_event_payload(event)
+                return {
+                    "ok": True,
+                    "permissions": payload.get("permissions", 0),
+                    "is_admin": bool(payload.get("is_admin")),
+                    "pubkey_prefix": payload.get("pubkey_prefix", pubkey_prefix),
+                }
+            if event.type == EventType.LOGIN_FAILED:
+                return {
+                    "ok": False,
+                    "error": "Login failed",
+                    "pubkey_prefix": pubkey_prefix,
+                }
+        return {"ok": False, "error": "Login timed out", "pubkey_prefix": pubkey_prefix}
+    finally:
+        for task in (success_task, failed_task):
+            if not task.done():
+                task.cancel()
+
+
+async def _remote_best_effort(label, func):
+    try:
+        data = await func()
+        if data is None:
+            return {"ok": False, "error": "No response"}
+        return {"ok": True, "data": data}
+    except Exception as e:
+        log.info(f"[MC] remote {label} failed: {e}")
+        return {"ok": False, "error": str(e)}
+
+
+async def _remote_read_async(config_id, pubkey_prefix, password=None, do_login=False):
+    mc, _ = _get_mc(config_id)
+    with mc_connections_lock:
+        contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
+    full_key, contact = _resolve_mc_contact(contacts, pubkey_prefix)
+    result = {
+        "target": full_key[:12],
+        "full_key": full_key,
+        "name": contact.get("adv_name", full_key[:8]),
+        "type": contact.get("type", 0),
+    }
+    if do_login:
+        login = await _remote_login_async(mc, full_key, password or "")
+        result["login"] = login
+        if not login.get("ok"):
+            return result
+
+    result["basic"] = await _remote_best_effort(
+        "basic",
+        lambda: mc.commands.req_basic_sync(contact, min_timeout=6),
+    )
+    result["owner"] = await _remote_best_effort(
+        "owner",
+        lambda: mc.commands.req_owner_sync(contact, min_timeout=8),
+    )
+    result["regions"] = await _remote_best_effort(
+        "regions",
+        lambda: mc.commands.req_regions_sync(contact, min_timeout=8),
+    )
+    result["status"] = await _remote_best_effort(
+        "status",
+        lambda: mc.commands.req_status_sync(contact, min_timeout=8),
+    )
+    result["telemetry"] = await _remote_best_effort(
+        "telemetry",
+        lambda: mc.commands.req_telemetry_sync(contact, min_timeout=8),
+    )
+    result["neighbours"] = await _remote_best_effort(
+        "neighbours",
+        lambda: mc.commands.fetch_all_neighbours(contact, min_timeout=10),
+    )
+    result["acl"] = await _remote_best_effort(
+        "acl",
+        lambda: mc.commands.req_acl_sync(contact, min_timeout=8),
+    )
+    return result
+
+
+def _validate_remote_admin_command(command):
+    cmd = " ".join(str(command or "").strip().split())
+    if not cmd:
+        raise ValueError("Command is required")
+    lower = cmd.lower()
+    exact = {
+        "clock",
+        "advert",
+        "advert.zerohop",
+        "neighbors",
+        "get name",
+        "get radio",
+        "get tx",
+        "get repeat",
+        "get path.hash.mode",
+        "get owner.info",
+        "get lat",
+        "get lon",
+        "get role",
+        "get public.key",
+        "powersaving",
+    }
+    prefixes = (
+        "set name ",
+        "set lat ",
+        "set lon ",
+        "set tx ",
+        "set repeat ",
+        "set owner.info ",
+        "powersaving ",
+    )
+    if lower in exact or any(lower.startswith(prefix) for prefix in prefixes):
+        return cmd
+    raise ValueError("Command is not in the safe remote-admin allowlist")
+
+
+async def _remote_command_async(config_id, pubkey_prefix, command):
+    mc, _ = _get_mc(config_id)
+    with mc_connections_lock:
+        contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
+    full_key, _contact = _resolve_mc_contact(contacts, pubkey_prefix)
+    cmd = _validate_remote_admin_command(command)
+    dispatcher = getattr(mc.commands, "dispatcher", None)
+    reply_task = None
+    if dispatcher is not None:
+        reply_task = asyncio.create_task(
+            dispatcher.wait_for_event(
+                EventType.CONTACT_MSG_RECV,
+                attribute_filters={"pubkey_prefix": full_key[:12]},
+                timeout=15,
+            )
+        )
+    try:
+        sent = await mc.commands.send_cmd(full_key, cmd)
+        _raise_if_mc_error(sent, f"remote command {cmd}")
+        reply = None
+        if reply_task is not None:
+            try:
+                reply_event = await reply_task
+                if reply_event is not None:
+                    reply = _mc_event_payload(reply_event)
+            except Exception:
+                reply = None
+        return {
+            "ok": True,
+            "command": cmd,
+            "sent": _mc_event_type_name(sent),
+            "reply": reply,
+            "note": None if reply else "Command sent. No immediate text reply was received.",
+        }
+    finally:
+        if reply_task is not None and not reply_task.done():
+            reply_task.cancel()
+
+
 async def _req_status_async(config_id, pubkey_prefix):
     mc, _ = _get_mc(config_id)
     with mc_connections_lock:
@@ -2215,6 +2413,19 @@ def reboot_device(config_id, timeout=10):
 def req_node_status(config_id, pubkey_prefix, timeout=30):
     _ensure_mc_tx_allowed("MC status request")
     return run_mc(_req_status_async(config_id, pubkey_prefix), timeout=timeout)
+
+
+def remote_repeater_read(config_id, pubkey_prefix, password=None, login=False, timeout=75):
+    _ensure_mc_tx_allowed("MC remote repeater read")
+    return run_mc(
+        _remote_read_async(config_id, pubkey_prefix, password=password, do_login=login),
+        timeout=timeout,
+    )
+
+
+def remote_repeater_command(config_id, pubkey_prefix, command, timeout=25):
+    _ensure_mc_tx_allowed("MC remote repeater command")
+    return run_mc(_remote_command_async(config_id, pubkey_prefix, command), timeout=timeout)
 
 
 def get_stats(config_id, timeout=30):

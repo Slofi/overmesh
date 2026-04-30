@@ -6,6 +6,7 @@ import time
 
 from db import get_db_node, get_favorites, get_ignored, upsert_node
 from hw_models import hw_model_name
+from config import CONFIG, CONFIG_LOCK, save_config
 from state import (
     connections, connections_lock,
     mt_last_heard, mt_last_heard_lock,
@@ -71,6 +72,64 @@ def mt_node_id_from_num(node_num):
         return f"!{int(node_num):08x}"
     except (TypeError, ValueError):
         return None
+
+
+def get_fixed_node_position(node_id):
+    if not node_id:
+        return None
+    with CONFIG_LOCK:
+        pos = (CONFIG.get("fixed_node_positions") or {}).get(str(node_id))
+        if not isinstance(pos, dict):
+            return None
+        try:
+            lat = float(pos["lat"])
+            lon = float(pos["lon"])
+            alt = int(pos.get("alt", 0) or 0)
+        except (KeyError, TypeError, ValueError):
+            return None
+    if lat < -90 or lat > 90 or lon < -180 or lon > 180:
+        return None
+    return {"lat": lat, "lon": lon, "alt": alt}
+
+
+def remember_fixed_node_position(node_id, lat, lon, alt=0, precision_bits=None):
+    if not node_id or lat is None or lon is None:
+        return
+    try:
+        lat = float(lat)
+        lon = float(lon)
+        alt = int(alt or 0)
+    except (TypeError, ValueError):
+        return
+    if lat < -90 or lat > 90 or lon < -180 or lon > 180:
+        return
+    changed = False
+    with CONFIG_LOCK:
+        positions = CONFIG.setdefault("fixed_node_positions", {})
+        entry = {"lat": lat, "lon": lon, "alt": alt}
+        if precision_bits is not None:
+            try:
+                entry["precision_bits"] = int(precision_bits)
+            except (TypeError, ValueError):
+                pass
+        if positions.get(str(node_id)) != entry:
+            positions[str(node_id)] = entry
+            changed = True
+    if changed:
+        save_config()
+
+
+def forget_fixed_node_position(node_id):
+    if not node_id:
+        return
+    changed = False
+    with CONFIG_LOCK:
+        positions = CONFIG.get("fixed_node_positions") or {}
+        if str(node_id) in positions:
+            positions.pop(str(node_id), None)
+            changed = True
+    if changed:
+        save_config()
 
 
 def get_node_name(from_id):
@@ -215,6 +274,17 @@ def get_node_data():
                                         connections[node_id]["fixed_lon"] = lon
                         except Exception:
                             pass
+
+                fixed_override = get_fixed_node_position(node_id_str)
+                if fixed_override:
+                    lat = fixed_override["lat"]
+                    lon = fixed_override["lon"]
+                elif is_local:
+                    try:
+                        if iface.localNode.localConfig.position.fixed_position and lat is not None and lon is not None:
+                            remember_fixed_node_position(node_id_str, lat, lon, pos.get("altitude", 0), pos.get("precisionBits"))
+                    except Exception:
+                        pass
 
                 node_entry = {
                     "radio_id":     node_id,    "radio_name":   node_name,

@@ -23,7 +23,8 @@ from mesh_mc import (send_chan_msg, send_dm, send_advert, refresh_contacts,
                      req_node_status, get_stats, remove_mc_contact,
                      send_trace_broadcast, import_mc_contact, enable_mc_debug,
                      get_mc_contact_archive,
-                     set_contact_path)
+                     set_contact_path, remote_repeater_read,
+                     remote_repeater_command)
 from db import get_mc_ignored, set_mc_ignored
 from state import mc_connections, mc_connections_lock
 
@@ -527,6 +528,38 @@ def api_mc_statusreq(radio_id, node_id):
         return jsonify({"error": str(e)}), 503
     except Exception as e:
         log.warning(f"[MC] statusreq failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/api/mc/<radio_id>/remote/<node_id>/read", methods=["POST"])
+def api_mc_remote_read(radio_id, node_id):
+    """Login/read remote repeater or room-server data via the selected MC radio."""
+    data = request.get_json(silent=True) or {}
+    password = data.get("password")
+    login = bool(data.get("login"))
+    try:
+        return jsonify(remote_repeater_read(radio_id, node_id, password=password, login=login))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 503
+    except Exception as e:
+        log.warning(f"[MC] remote read failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/api/mc/<radio_id>/remote/<node_id>/command", methods=["POST"])
+def api_mc_remote_command(radio_id, node_id):
+    """Send a whitelisted remote admin command to a repeater or room server."""
+    data = request.get_json(silent=True) or {}
+    try:
+        return jsonify(remote_repeater_command(radio_id, node_id, data.get("command", "")))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 503
+    except Exception as e:
+        log.warning(f"[MC] remote command failed: {e}")
         return jsonify({"error": str(e)}), 500
 
 

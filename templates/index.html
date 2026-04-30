@@ -1058,6 +1058,8 @@
     #map-search-wrap input:not(:placeholder-shown) + .search-clear { display: block; }
     .map-popup-btn { margin-top: 8px; padding: 4px 10px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; color: var(--accent); font-size: 11px; cursor: pointer; }
     .map-popup-btn:hover { background: var(--accent-dim); }
+    .map-popup-btn.danger { color: var(--red); border-color: rgba(239, 68, 68, 0.45); }
+    .map-popup-btn.danger:hover { background: rgba(239, 68, 68, 0.15); }
     #map-pick-banner { display:none; position:absolute; top:10px; left:50%; transform:translateX(-50%); z-index:2000;
       background:var(--accent); color:#0a0f1e; padding:8px 18px; border-radius:8px; font-weight:700; font-size:13px;
       pointer-events:none; white-space:nowrap; box-shadow:0 2px 10px rgba(0,0,0,0.5); }
@@ -5189,7 +5191,13 @@ if (targetEl) {
       fetch(`/api/mc/${encodeURIComponent(radioId)}/contacts/${encodeURIComponent(id)}`, {method: 'DELETE'})
         .then(r => r.json()).then(d => {
           if (d.error) { showAlert(d.error); return; }
-          if (mcContacts[radioId]) delete mcContacts[radioId][id];
+          if (leafletMap) { try { leafletMap.closePopup(); } catch(e) {} }
+          if (mcContacts[radioId]) {
+            delete mcContacts[radioId][id];
+            Object.entries(mcContacts[radioId]).forEach(([key, c]) => {
+              if (c?.id === id || c?.full_key === id) delete mcContacts[radioId][key];
+            });
+          }
           mcIgnored.delete(id);
           renderLive();
           if (currentView === 'history') loadHistory();
@@ -5460,6 +5468,11 @@ if (targetEl) {
         const pingButton = radioConnected
           ? `<button class="act-btn" title="Ping this node (request status)" onclick="doMcPing('${pk}','${rid}','${jsSafe(c.long_name||'')}')">Ping</button>`
           : `<button class="act-btn" title="MC radio disconnected" style="opacity:0.35;cursor:default" disabled>Ping</button>`;
+        const manageButton = mcCanRemoteManage(c)
+          ? (radioConnected
+            ? `<button class="act-btn" title="Remote repeater/room management" onclick="openMcRemoteManage('${pk}','${rid}','${jsSafe(c.long_name||c.name||cid||'')}')">Manage</button>`
+            : `<button class="act-btn" title="MC radio disconnected" style="opacity:0.35;cursor:default" disabled>Manage</button>`)
+          : '';
         return `<tr data-id="${jsSafe(cid)}" class="${isFav ? 'is-favorite' : ''}${isIgnored ? ' is-ignored' : ''}">
           <td><span class="star ${isFav ? 'starred' : ''}" onclick="toggleMcFav('${jsSafe(cid)}')" title="${isFav ? 'Remove from favourites' : 'Add to favourites'}">&#9733;</span></td>
           <td>
@@ -5480,6 +5493,7 @@ if (targetEl) {
               ? `<button class="act-btn" title="Show on map" onclick="centerMcOnMap(${lat},${lon})">Map</button>`
               : `<button class="act-btn" title="No coordinates available" style="opacity:0.35;cursor:default" disabled>Map</button>`}
             ${pingButton}
+            ${manageButton}
             <button class="act-btn" title="Contact details and share data" onclick="openMcContactShare('${jsSafe(cid)}','${rid}')">Info/Share</button>
           </td>
           <td>${escHtml(mcLastStatus[c._rid]?.name || mcLastStatus[c._rid]?.node_name || '')}</td>
@@ -5647,9 +5661,16 @@ if (targetEl) {
   function deleteNode(nodeId, name) {
     document.getElementById('confirm-ok').textContent = 'Delete';
     showConfirm(`Delete "${name}" from the device and OverMesh history?`, () => {
-      fetch(`/api/db/node/${nodeId}`, { method: 'DELETE' })
+      fetch(`/api/db/node/${encodeURIComponent(nodeId)}`, { method: 'DELETE' })
         .then(r => {
           if (!r.ok) return;
+          if (leafletMap) {
+            try { leafletMap.closePopup(); } catch(e) {}
+            if (senseMarkers[nodeId]) {
+              try { leafletMap.removeLayer(senseMarkers[nodeId]); } catch(e) {}
+              delete senseMarkers[nodeId];
+            }
+          }
           allNodes = allNodes.filter(n => n.id !== nodeId);
           renderLive();
           updateMapMarkers(allNodes);
@@ -9964,6 +9985,7 @@ if (targetEl) {
         ${!n.is_local ? `<button class="map-popup-btn" title="Set position" onclick="openMapPos('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Pos</button>` : ''}
         ${!n.is_local ? `<button class="map-popup-btn" title="Node info &amp; settings" onclick="openMapInfo('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Info</button>` : ''}
         <button class="map-popup-btn" title="GPS movement trail" onclick="openGpsTrail('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Trail</button>
+        ${!n.is_local ? `<button class="map-popup-btn danger" title="Delete from device" onclick="deleteNode('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Delete</button>` : ''}
       </div>`;
   }
 
@@ -10050,6 +10072,7 @@ if (targetEl) {
                   ${!x.is_local ? `<button class="map-popup-btn" title="Traceroute to this node" onclick="openMapTR('${jsSafe(x.id)}','${jsSafe(x.long_name)}','${jsSafe(x.radio_id || '')}')">TR</button>` : ''}
                   ${!x.is_local ? `<button class="map-popup-btn" title="Node info &amp; settings" onclick="openMapInfo('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">Info</button>` : ''}
                   <button class="map-popup-btn" title="GPS movement trail" onclick="openGpsTrail('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">Trail</button>
+                  ${!x.is_local ? `<button class="map-popup-btn danger" title="Delete from device" onclick="deleteNode('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">Delete</button>` : ''}
                 </div>
               </div>`).join('')}`;
           clusterMarkers[k].setIcon(updatedIcon).setPopupContent(updatedPopup);
@@ -10081,6 +10104,7 @@ if (targetEl) {
                 ${!x.is_local ? `<button class="map-popup-btn" title="Send direct message" onclick="openMapDM('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">DM</button>` : ''}
                 ${!x.is_local ? `<button class="map-popup-btn" title="Traceroute to this node" onclick="openMapTR('${jsSafe(x.id)}','${jsSafe(x.long_name)}','${jsSafe(x.radio_id || '')}')">TR</button>` : ''}
                 ${!x.is_local ? `<button class="map-popup-btn" title="Node info &amp; settings" onclick="openMapInfo('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">Info</button>` : ''}
+                ${!x.is_local ? `<button class="map-popup-btn danger" title="Delete from device" onclick="deleteNode('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">Delete</button>` : ''}
               </div>
             </div>`).join('')}`;
         const marker = L.marker([group[0].latitude, group[0].longitude], {icon: clusterIcon})
@@ -12132,6 +12156,11 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     return radioName ? `${typeLabel} via ${radioName}` : typeLabel;
   }
 
+  function mcCanRemoteManage(contact) {
+    const type = Number(contact?.type ?? contact?.contact_type ?? 0);
+    return type === 2 || type === 3;
+  }
+
   function mcContactHashPrefix(contact, radioId = null) {
     const key = String(contact?.full_key || contact?.id || '').toLowerCase();
     if (!key) return '';
@@ -12494,8 +12523,10 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
           <button class="map-popup-btn" title="Show in Nodes list" onclick="leafletMap.closePopup();showMcNodeInList('${jsSafe(item.id || '')}')">List</button>
           ${item.type !== 2 ? `<button class="map-popup-btn" title="Send direct message" onclick="leafletMap.closePopup();doMcDm('${safePk}','${safeRid}','${safeName}')">DM</button>` : ''}
           <button class="map-popup-btn" title="Ping (request status)" onclick="leafletMap.closePopup();doMcPing('${safePk}','${safeRid}','${safeName}')">Ping</button>
+          ${mcCanRemoteManage(item) ? `<button class="map-popup-btn" title="Remote repeater/room management" onclick="leafletMap.closePopup();openMcRemoteManage('${safePk}','${safeRid}','${safeName}')">Manage</button>` : ''}
           <button class="map-popup-btn" title="Select in Sense panel" onclick="leafletMap.closePopup();switchTab('map');toggleSensePanel(true);switchSenseNet('mc');selectMcSenseContact('${jsSafe(item.id || '')}','${safeRid}')">Sense</button>
           ${item.latitude != null ? `<button class="map-popup-btn" title="GPS movement trail" onclick="openGpsTrail('${jsSafe(item.id || '')}','${safeName}')">Trail</button>` : ''}
+          <button class="map-popup-btn danger" title="Delete from device" onclick="deleteMcContact('${safePk}','${safeName}','${safeRid}')">Delete</button>
         </div>
       </div>`;
   }
@@ -12617,6 +12648,11 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       const popupPingButton = radioConnected
         ? `<button class="map-popup-btn" title="Ping (request status)" onclick="leafletMap.closePopup();doMcPing('${safePk}','${safeRid}','${safeName}')">Ping</button>`
         : `<button class="map-popup-btn" title="MC radio disconnected" disabled style="opacity:0.35;cursor:default">Ping</button>`;
+      const popupManageButton = mcCanRemoteManage(c)
+        ? (radioConnected
+          ? `<button class="map-popup-btn" title="Remote repeater/room management" onclick="leafletMap.closePopup();openMcRemoteManage('${safePk}','${safeRid}','${safeName}')">Manage</button>`
+          : `<button class="map-popup-btn" title="MC radio disconnected" disabled style="opacity:0.35;cursor:default">Manage</button>`)
+        : '';
       const marker = L.marker([c.latitude, c.longitude], { icon: makeMcIcon() });
       const bat = c.battery ?? c.bat_pct ?? c.bat;
       const batStr = bat != null ? `${bat}%` : '—';
@@ -12637,8 +12673,10 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         + `<button class="map-popup-btn" title="Show in Nodes list" onclick="leafletMap.closePopup();showMcNodeInList('${jsSafe(c.id || '')}')">List</button>`
         + popupDmButton
         + popupPingButton
+        + popupManageButton
         + `<button class="map-popup-btn" title="Select in Sense panel" onclick="leafletMap.closePopup();switchTab('map');toggleSensePanel(true);switchSenseNet('mc');selectMcSenseContact('${jsSafe(c.id || '')}','${safeRid}')">Sense</button>`
         + `<button class="map-popup-btn" title="GPS movement trail" onclick="openGpsTrail('${jsSafe(c.id || '')}','${safeName}')">Trail</button>`
+        + `<button class="map-popup-btn danger" title="Delete from device" onclick="deleteMcContact('${safePk}','${safeName}','${safeRid}')">Delete</button>`
         + `</div>`,
         { className: 'om-popup', maxWidth: 240 }
       );
@@ -12905,6 +12943,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       if (c.id) btns.push(`<button class="map-popup-btn" onclick="showMcNodeInList('${jsSafe(c.id)}');${hide}">List</button>`);
       btns.push(`<button class="map-popup-btn" onclick="doMcDm('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}">DM</button>`);
       if (c.type !== 2) btns.push(`<button class="map-popup-btn" onclick="doMcPing('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}">Ping</button>`);
+      if (mcCanRemoteManage(c)) btns.push(`<button class="map-popup-btn" onclick="openMcRemoteManage('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}">Manage</button>`);
     }
     const cLat = c?.latitude, cLon = c?.longitude;
     if (hasMarker) {
@@ -13252,6 +13291,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
           onclick="doMcDm('${safeId}','${safeRid}','${safeName}')">DM</button>
         <button class="btn-sm"
           onclick="doMcPing('${safeId}','${safeRid}','${safeName}')">Ping</button>
+        ${mcCanRemoteManage(c) ? `<button class="btn-sm" onclick="openMcRemoteManage('${safeId}','${safeRid}','${safeName}')">Manage</button>` : ''}
       </div>`;
     detail.style.display = 'block';
   }
@@ -15256,6 +15296,140 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     setTimeout(() => document.getElementById('mc-chat-input')?.focus(), 80);
   }
 
+  let _mcRemoteManage = null;
+
+  function _mcRemoteJson(value) {
+    if (value == null) return '—';
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return escHtml(String(value));
+    return `<pre style="white-space:pre-wrap;word-break:break-word;margin:0;font-size:11px;color:var(--text)">${escHtml(JSON.stringify(value, null, 2))}</pre>`;
+  }
+
+  function _mcRemoteSection(title, block) {
+    if (!block) return '';
+    if (!block.ok) {
+      return `<details style="border-top:1px solid var(--border);padding-top:7px;margin-top:7px">
+        <summary style="cursor:pointer;color:var(--muted)">${escHtml(title)} <span style="color:var(--red)">failed</span></summary>
+        <div style="margin-top:6px;color:var(--red);font-size:12px">${escHtml(block.error || 'Request failed')}</div>
+      </details>`;
+    }
+    return `<details open style="border-top:1px solid var(--border);padding-top:7px;margin-top:7px">
+      <summary style="cursor:pointer;color:var(--muted)">${escHtml(title)}</summary>
+      <div style="margin-top:6px">${_mcRemoteJson(block.data)}</div>
+    </details>`;
+  }
+
+  function _mcRemoteRenderResult(data) {
+    const el = document.getElementById('mc-remote-result');
+    if (!el) return;
+    if (!data || data.error) {
+      el.innerHTML = `<div class="modal-error">${escHtml(data?.error || 'Request failed')}</div>`;
+      return;
+    }
+    const login = data.login
+      ? `<div style="margin-bottom:8px;color:${data.login.ok ? 'var(--green)' : 'var(--red)'}">
+          Login ${data.login.ok ? 'accepted' : 'failed'}${data.login.ok ? (data.login.is_admin ? ' · admin' : ' · guest/read-only') : ''}
+        </div>`
+      : '';
+    el.innerHTML = `${login}
+      ${_mcRemoteSection('Basic', data.basic)}
+      ${_mcRemoteSection('Owner', data.owner)}
+      ${_mcRemoteSection('Status', data.status)}
+      ${_mcRemoteSection('Telemetry', data.telemetry)}
+      ${_mcRemoteSection('Neighbours', data.neighbours)}
+      ${_mcRemoteSection('Regions', data.regions)}
+      ${_mcRemoteSection('ACL', data.acl)}`;
+  }
+
+  function openMcRemoteManage(pubkeyPrefix, radioId, name) {
+    _mcRemoteManage = { pubkeyPrefix, radioId, name: name || pubkeyPrefix };
+    const title = document.getElementById('modal-title');
+    const body = document.getElementById('modal-body');
+    if (!title || !body) return;
+    title.textContent = `Manage ${name || pubkeyPrefix}`;
+    const radioName = mcLastStatus[radioId]?.name || mcLastStatus[radioId]?.node_name || radioId;
+    body.innerHTML = `
+      <div class="modal-node">${escHtml(pubkeyPrefix.slice(0, 12))} via ${escHtml(radioName || 'MC radio')}</div>
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px">
+        <div>
+          <label class="settings-label">Login mode</label>
+          <select id="mc-remote-mode" class="settings-select">
+            <option value="guest">Guest / read-only</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+        <div>
+          <label class="settings-label">Password</label>
+          <input id="mc-remote-password" class="settings-input" type="password" style="width:150px" autocomplete="new-password" placeholder="blank if allowed">
+        </div>
+        <button class="btn btn-net-mc" onclick="mcRemoteRead(true)">Login + Read</button>
+        <button class="btn" onclick="mcRemoteRead(false)">Read Only</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px">
+        Guest access is read-only when the repeater allows it. Admin unlocks remote CLI commands after the repeater accepts the password.
+      </div>
+      <div id="mc-remote-result" style="font-size:12px;color:var(--muted);margin-bottom:14px">Not connected.</div>
+      <div style="border-top:1px solid var(--border);padding-top:10px">
+        <h3 class="settings-subtitle" style="margin-top:0">Admin command</h3>
+        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+          <select id="mc-remote-command-preset" class="settings-select" onchange="document.getElementById('mc-remote-command').value=this.value">
+            <option value="get name">get name</option>
+            <option value="get radio">get radio</option>
+            <option value="get tx">get tx</option>
+            <option value="get repeat">get repeat</option>
+            <option value="get owner.info">get owner.info</option>
+            <option value="neighbors">neighbors</option>
+            <option value="clock">clock</option>
+            <option value="advert">advert</option>
+            <option value="set repeat on">set repeat on</option>
+            <option value="set repeat off">set repeat off</option>
+          </select>
+          <input id="mc-remote-command" class="settings-input" style="width:240px" value="get name">
+          <button class="btn" onclick="mcRemoteCommand()">Run</button>
+        </div>
+        <div id="mc-remote-command-result" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
+      </div>`;
+    document.getElementById('action-modal').classList.add('open');
+  }
+
+  async function mcRemoteRead(login) {
+    if (!_mcRemoteManage) return;
+    const out = document.getElementById('mc-remote-result');
+    if (out) out.textContent = login ? 'Logging in…' : 'Reading…';
+    const password = document.getElementById('mc-remote-password')?.value || '';
+    try {
+      const r = await fetch(`/api/mc/${encodeURIComponent(_mcRemoteManage.radioId)}/remote/${encodeURIComponent(_mcRemoteManage.pubkeyPrefix)}/read`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({login, password}),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || r.status);
+      _mcRemoteRenderResult(d);
+    } catch (e) {
+      if (out) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
+    }
+  }
+
+  async function mcRemoteCommand() {
+    if (!_mcRemoteManage) return;
+    const out = document.getElementById('mc-remote-command-result');
+    const command = document.getElementById('mc-remote-command')?.value || '';
+    if (out) out.textContent = 'Sending…';
+    try {
+      const r = await fetch(`/api/mc/${encodeURIComponent(_mcRemoteManage.radioId)}/remote/${encodeURIComponent(_mcRemoteManage.pubkeyPrefix)}/command`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({command}),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || r.status);
+      const reply = d.reply?.text ? `<div style="margin-top:6px;color:var(--text)">${escHtml(d.reply.text)}</div>` : '';
+      if (out) out.innerHTML = `<span style="color:var(--green)">Sent: ${escHtml(d.command || command)}</span>${reply}${d.note ? `<div style="margin-top:4px">${escHtml(d.note)}</div>` : ''}`;
+    } catch (e) {
+      if (out) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
+    }
+  }
+
   let _mcStatusReqPending = null;   // {pubkey_pre, timer, onResult?}
   let _mcPingPathActive   = false;  // true while ping-response path is drawn on map
 
@@ -16304,6 +16478,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
           <button class="map-popup-btn" title="Traceroute to this node" onclick="openMapTR('${jsSafe(n.from_id)}','${safeName}','${jsSafe(n.radio_id || activeRadioId || '')}')">TR</button>
           <button class="map-popup-btn" title="Set position" onclick="openMapPos('${jsSafe(n.from_id)}','${safeName}')">Pos</button>
           <button class="map-popup-btn" title="Node info &amp; settings" onclick="openMapInfo('${jsSafe(n.from_id)}','${safeName}')">Info</button>
+          <button class="map-popup-btn danger" title="Delete from device" onclick="deleteNode('${jsSafe(n.from_id)}','${safeName}')">Delete</button>
         </div>`,
       ].filter(Boolean).join('');
       return rows;

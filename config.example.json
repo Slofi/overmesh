@@ -11,5 +11,20 @@
   "mc_nodes": [],
   "cross": {
     "rules": []
+  },
+  "bridge": {
+    "webhooks": {
+      "enabled": false,
+      "urls": [],
+      "timeout": 3,
+      "secret": ""
+    },
+    "ingest": {
+      "enabled": false,
+      "token": ""
+    },
+    "mqtt": {
+      "enabled": false
+    }
   }
 }

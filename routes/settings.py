@@ -32,6 +32,14 @@ _UPDATE_STATE = {
 
 def _app_settings_payload():
     app_cfg = dict(CONFIG.get("app") or {})
+    bridge_cfg = CONFIG.get("bridge") or {}
+    webhook_cfg = bridge_cfg.get("webhooks") or {}
+    ingest_cfg = bridge_cfg.get("ingest") or {}
+    urls = webhook_cfg.get("urls") or []
+    if isinstance(urls, str):
+        urls_text = urls
+    else:
+        urls_text = "\n".join(str(u) for u in urls if u)
     app_cfg.setdefault("font_size", "medium")
     app_cfg.setdefault("accent_color", "#4ade80")
     app_cfg.setdefault("om_manual_lat", None)
@@ -40,6 +48,11 @@ def _app_settings_payload():
     app_cfg.setdefault("sound_notify_radio_connected", True)
     app_cfg.setdefault("sound_notify_nodes", True)
     app_cfg.setdefault("distance_unit", "km")
+    app_cfg.setdefault("bridge_webhooks_enabled", bool(webhook_cfg.get("enabled")))
+    app_cfg.setdefault("bridge_webhook_urls", urls_text)
+    app_cfg.setdefault("bridge_webhook_secret", webhook_cfg.get("secret") or "")
+    app_cfg.setdefault("bridge_ingest_enabled", bool(ingest_cfg.get("enabled")))
+    app_cfg.setdefault("bridge_ingest_token", ingest_cfg.get("token") or "")
     return app_cfg
 
 
@@ -541,6 +554,38 @@ def api_settings_app_set():
         ):
             if key in data:
                 CONFIG["app"][key] = bool(data[key])
+        bridge_keys = {
+            "bridge_webhooks_enabled",
+            "bridge_webhook_urls",
+            "bridge_webhook_secret",
+            "bridge_ingest_enabled",
+            "bridge_ingest_token",
+        }
+        if any(k in data for k in bridge_keys):
+            bridge_cfg = CONFIG.setdefault("bridge", {})
+            webhook_cfg = bridge_cfg.setdefault("webhooks", {})
+            ingest_cfg = bridge_cfg.setdefault("ingest", {})
+            if "bridge_webhooks_enabled" in data:
+                webhook_cfg["enabled"] = bool(data["bridge_webhooks_enabled"])
+            if "bridge_webhook_urls" in data:
+                raw_urls = data.get("bridge_webhook_urls") or ""
+                if isinstance(raw_urls, list):
+                    urls = [str(u).strip() for u in raw_urls]
+                else:
+                    urls = [u.strip() for u in re.split(r'[\n,]+', str(raw_urls))]
+                urls = [u for u in urls if u]
+                bad = [u for u in urls if not u.startswith(("http://", "https://"))]
+                if bad:
+                    return jsonify({"error": "Webhook URLs must start with http:// or https://"}), 400
+                webhook_cfg["urls"] = urls
+            if "bridge_webhook_secret" in data:
+                webhook_cfg["secret"] = str(data.get("bridge_webhook_secret") or "").strip()
+            if "bridge_ingest_enabled" in data:
+                ingest_cfg["enabled"] = bool(data["bridge_ingest_enabled"])
+            if "bridge_ingest_token" in data:
+                ingest_cfg["token"] = str(data.get("bridge_ingest_token") or "").strip()
+            if ingest_cfg.get("enabled") and not ingest_cfg.get("token"):
+                return jsonify({"error": "Bridge ingest requires a bearer token"}), 400
         if "om_manual_lat" in data or "om_manual_lon" in data:
             raw_lat = data.get("om_manual_lat", CONFIG["app"].get("om_manual_lat"))
             raw_lon = data.get("om_manual_lon", CONFIG["app"].get("om_manual_lon"))

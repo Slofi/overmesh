@@ -54,6 +54,7 @@ from routes.notes     import bp as notes_bp
 from routes.mc        import bp as mc_bp
 from routes.map_layers import bp as map_layers_bp
 from routes.silent     import bp as silent_bp
+from bridge            import bp as bridge_bp
 
 app.register_blueprint(nodes_bp)
 app.register_blueprint(chat_bp)
@@ -67,6 +68,7 @@ app.register_blueprint(notes_bp)
 app.register_blueprint(mc_bp)
 app.register_blueprint(map_layers_bp)
 app.register_blueprint(silent_bp)
+app.register_blueprint(bridge_bp)
 
 
 # ---------------------------------------------------------------------------

@@ -22,6 +22,7 @@ from meshcore.packets import BinaryReqType
 
 from config import CONFIG, CONFIG_LOCK, DATA_DIR, save_config
 from cross import maybe_forward_mc_message
+from bridge import publish_inbound_message
 from db import log_position
 from helpers import push_to_sse
 from state import mc_connections, mc_connections_lock
@@ -1104,6 +1105,7 @@ def _subscribe_mc_events(mc, config_id, name):
                 "rx_snr":     msg.get("snr", (rx or {}).get("snr")),
             }
             push_to_sse(sse_msg)
+            publish_inbound_message(sse_msg)
             log.info(f"[MC:{name}] Channel msg from {msg.get('pubkey_pre','?')}: {msg.get('text','')[:60]}")
             threading.Thread(
                 target=maybe_forward_mc_message, args=(dict(sse_msg),),
@@ -1147,6 +1149,7 @@ def _subscribe_mc_events(mc, config_id, name):
                 "rx_snr":     msg.get("snr", (rx or {}).get("snr")),
             }
             push_to_sse(sse_msg)
+            publish_inbound_message(sse_msg)
             log.info(f"[MC:{name}] DM from {msg.get('pubkey_prefix','?')}: {msg.get('text','')[:60]}"
                      f" | path={repr(sse_msg.get('path'))[:40]} path_len={sse_msg.get('path_len')} hash_size={sse_msg.get('path_hash_size')}")
             # Bot command handling (background thread to avoid blocking asyncio loop)

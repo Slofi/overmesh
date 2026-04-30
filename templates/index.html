@@ -2772,6 +2772,50 @@
 
     </div>
 
+    <!-- Automation Bridge -->
+    <div class="settings-section">
+      <h2 class="settings-title">Automation Bridge</h2>
+      <p style="color:var(--muted);font-size:12px;margin:0 0 12px 0">Local hooks for Home Assistant and other automations while OverMesh owns the radios.</p>
+      <div style="display:grid;grid-template-columns:minmax(0,1fr);gap:14px">
+        <div>
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+            <label class="bot-toggle">
+              <input type="checkbox" id="bridge-webhooks-enabled" onchange="saveBridgeSettings()">
+              <span class="bot-toggle-slider"></span>
+            </label>
+            <span style="font-size:13px;font-weight:600">Send incoming messages to HTTP webhooks</span>
+          </div>
+          <label class="settings-label">Webhook URLs</label>
+          <textarea id="bridge-webhook-urls" class="settings-input" rows="3"
+                    placeholder="http://homeassistant.local:8123/api/webhook/overmesh"
+                    style="width:100%;max-width:640px;resize:vertical;line-height:1.4"
+                    onchange="saveBridgeSettings()"></textarea>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px">One URL per line. OverMesh posts normalized inbound MT and MC messages as JSON.</div>
+          <div style="margin-top:8px;max-width:360px">
+            <label class="settings-label">Webhook secret header</label>
+            <input id="bridge-webhook-secret" class="settings-input" type="password" autocomplete="new-password"
+                   placeholder="optional X-OverMesh-Secret" style="width:100%" onchange="saveBridgeSettings()">
+          </div>
+        </div>
+        <div style="border-top:1px solid var(--border);padding-top:12px">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+            <label class="bot-toggle">
+              <input type="checkbox" id="bridge-ingest-enabled" onchange="saveBridgeSettings()">
+              <span class="bot-toggle-slider"></span>
+            </label>
+            <span style="font-size:13px;font-weight:600">Allow external systems to send mesh messages</span>
+          </div>
+          <div style="max-width:360px">
+            <label class="settings-label">Bearer token</label>
+            <input id="bridge-ingest-token" class="settings-input" type="password" autocomplete="new-password"
+                   placeholder="required when enabled" style="width:100%" onchange="saveBridgeSettings()">
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-top:6px">Endpoint: <code>/api/bridge/send</code>. Use <code>Authorization: Bearer TOKEN</code> or <code>X-OverMesh-Token</code>.</div>
+        </div>
+      </div>
+      <div id="bridge-settings-status" style="font-size:12px;min-height:16px;margin-top:8px;color:var(--muted)"></div>
+    </div>
+
     <!-- GPS Receiver -->
     <div class="settings-section">
       <h2 class="settings-title">GPS Receiver</h2>
@@ -3412,6 +3456,47 @@
     if (msgEl) msgEl.checked = _appPrefBool('sound_notify_messages', true);
     if (radioEl) radioEl.checked = _appPrefBool('sound_notify_radio_connected', true);
     if (nodeEl) nodeEl.checked = _appPrefBool('sound_notify_nodes', true);
+  }
+
+  function bridgeSettingsStatus(text, ok = null) {
+    const el = document.getElementById('bridge-settings-status');
+    if (!el) return;
+    el.textContent = text || '';
+    el.style.color = ok == null ? 'var(--muted)' : ok ? 'var(--accent)' : 'var(--red)';
+  }
+
+  function loadBridgeSettings(cfg = null) {
+    const appCfg = cfg || _appSettings || {};
+    _appSettings = Object.assign({}, _appSettings || {}, appCfg);
+    const whEnabled = document.getElementById('bridge-webhooks-enabled');
+    const whUrls = document.getElementById('bridge-webhook-urls');
+    const whSecret = document.getElementById('bridge-webhook-secret');
+    const ingestEnabled = document.getElementById('bridge-ingest-enabled');
+    const ingestToken = document.getElementById('bridge-ingest-token');
+    if (whEnabled) whEnabled.checked = _appPrefBool('bridge_webhooks_enabled', false);
+    if (whUrls) whUrls.value = _appSettings.bridge_webhook_urls || '';
+    if (whSecret) whSecret.value = _appSettings.bridge_webhook_secret || '';
+    if (ingestEnabled) ingestEnabled.checked = _appPrefBool('bridge_ingest_enabled', false);
+    if (ingestToken) ingestToken.value = _appSettings.bridge_ingest_token || '';
+  }
+
+  function saveBridgeSettings() {
+    const payload = {
+      bridge_webhooks_enabled: document.getElementById('bridge-webhooks-enabled')?.checked ?? false,
+      bridge_webhook_urls: document.getElementById('bridge-webhook-urls')?.value || '',
+      bridge_webhook_secret: document.getElementById('bridge-webhook-secret')?.value || '',
+      bridge_ingest_enabled: document.getElementById('bridge-ingest-enabled')?.checked ?? false,
+      bridge_ingest_token: document.getElementById('bridge-ingest-token')?.value || '',
+    };
+    Object.assign(_appSettings, payload);
+    bridgeSettingsStatus('Saving...');
+    fetch('/api/settings/app', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || `HTTP ${r.status}`); }))
+      .then(() => bridgeSettingsStatus('Saved.', true))
+      .catch(e => bridgeSettingsStatus(String(e.message || e), false));
   }
 
   function saveDistanceUnit(unit) {
@@ -10869,6 +10954,7 @@ if (targetEl) {
   function applyAppSettings(cfg = {}) {
     loadInAppNotifPrefs(cfg);
     loadSoundPrefs(cfg);
+    loadBridgeSettings(cfg);
     _setDistanceUnit(cfg.distance_unit || 'km');
     settingsApplyZoom(cfg.zoom || 100);
     const cd = cfg.sense_cooldown || 180;

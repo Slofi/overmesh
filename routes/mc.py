@@ -25,7 +25,7 @@ from mesh_mc import (send_chan_msg, send_dm, send_advert, refresh_contacts,
                      get_mc_contact_archive,
                      set_contact_path, remote_repeater_read,
                      remote_repeater_command)
-from db import get_mc_ignored, set_mc_ignored
+from db import get_mc_ignored, set_mc_ignored, delete_channel_messages
 from state import mc_connections, mc_connections_lock
 
 # Per-radio scan state: radio_id → timer thread
@@ -863,6 +863,21 @@ def api_mc_set_channel(radio_id, idx):
         return jsonify({"error": str(e)}), 503
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    return jsonify({"ok": True})
+
+
+@bp.route("/api/mc/<radio_id>/channels/<int:idx>", methods=["DELETE"])
+def api_mc_delete_channel(radio_id, idx):
+    """Clear a channel slot by overwriting it with an empty name, and delete its chat history."""
+    if not (0 <= idx <= 15):
+        return jsonify({"error": "channel index must be 0–15"}), 400
+    try:
+        set_channel(radio_id, idx, "")
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 503
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    delete_channel_messages(radio_id, idx)
     return jsonify({"ok": True})
 
 

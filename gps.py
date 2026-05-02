@@ -25,7 +25,7 @@ gps_lock                = threading.Lock()
 _gps_stop_event         = threading.Event()
 _gps_thread             = None
 _gps_last_push_ts       = 0.0      # epoch seconds — rate-limits auto-push to nodes
-_GPS_AUTO_PUSH_INTERVAL = 30       # seconds between auto-pushes
+_GPS_AUTO_PUSH_INTERVAL = 30       # default seconds between auto-pushes (overridden by config)
 _gps_runtime = {
     "port": "",
     "running": False,
@@ -86,7 +86,8 @@ def _parse_gpgga(line):
             gps_cfg = CONFIG.get("gps", {})
             if gps_cfg.get("auto_push"):
                 now = time.time()
-                if now - _gps_last_push_ts >= _GPS_AUTO_PUSH_INTERVAL:
+                interval = max(10, int(gps_cfg.get("push_interval", _GPS_AUTO_PUSH_INTERVAL)))
+                if now - _gps_last_push_ts >= interval:
                     _gps_last_push_ts = now
                     precision_bits = gps_cfg.get("precision", 32)
                     threading.Thread(

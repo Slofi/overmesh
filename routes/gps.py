@@ -38,6 +38,11 @@ def api_settings_gps_set():
         cfg["port"]    = port
         if "auto_push" in data:
             cfg["auto_push"] = bool(data["auto_push"])
+        if "push_interval" in data:
+            try:
+                cfg["push_interval"] = max(10, min(3600, int(data["push_interval"])))
+            except (TypeError, ValueError):
+                return jsonify({"error": "push_interval must be a number"}), 400
         if "precision" in data:
             try:
                 cfg["precision"] = max(1, min(32, int(data["precision"])))

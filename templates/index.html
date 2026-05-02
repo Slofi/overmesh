@@ -2854,7 +2854,19 @@
               <input type="checkbox" id="gps-auto-push-toggle" onchange="saveGpsSettings()">
               <span class="bot-toggle-slider"></span>
             </label>
-            <span style="font-size:13px">Auto-push to all nodes <span style="color:var(--muted);font-size:11px">(every 30 s when fix is available)</span></span>
+            <span style="font-size:13px">Auto-push to all nodes <span style="color:var(--muted);font-size:11px">(when fix is available)</span></span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+            <label style="font-size:12px;color:var(--muted)">Interval:</label>
+            <input type="number" id="gps-push-interval-val" min="1" max="3600" step="1" value="30"
+              style="width:60px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:var(--fg);font-size:12px"
+              onchange="saveGpsSettings()" title="Interval between auto-pushes">
+            <select id="gps-push-interval-unit" onchange="saveGpsSettings()"
+              style="background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:var(--fg);font-size:12px">
+              <option value="1">s</option>
+              <option value="60">min</option>
+              <option value="3600">h</option>
+            </select>
           </div>
           <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
             <button class="btn btn-sm" onclick="gpsPushToNode()" title="Send current GPS fix to all connected nodes as their fixed position">Send to nodes now</button>
@@ -11077,6 +11089,12 @@ if (targetEl) {
         _gpsEnabled = cfg.enabled || false;
         document.getElementById('gps-enabled-toggle').checked   = _gpsEnabled;
         document.getElementById('gps-auto-push-toggle').checked = cfg.auto_push || false;
+        const storedSecs = cfg.push_interval ?? 30;
+        const unitEl = document.getElementById('gps-push-interval-unit');
+        const valEl  = document.getElementById('gps-push-interval-val');
+        if (storedSecs % 3600 === 0) { unitEl.value = '3600'; valEl.value = storedSecs / 3600; }
+        else if (storedSecs % 60 === 0) { unitEl.value = '60'; valEl.value = storedSecs / 60; }
+        else { unitEl.value = '1'; valEl.value = storedSecs; }
         const precMeters = cfg.precision_meters ?? bitToSliderMeters(cfg.precision ?? 32);
         document.getElementById('gps-precision-slider').value = precMeters;
         document.getElementById('gps-precision-label').textContent = precMeterLabel(precMeters);
@@ -11217,12 +11235,14 @@ if (targetEl) {
     const auto_push  = document.getElementById('gps-auto-push-toggle').checked;
     const precMeters = parseInt(document.getElementById('gps-precision-slider').value);
     const precision  = metersToBit(precMeters);
+    const push_interval = Math.max(10, parseInt(document.getElementById('gps-push-interval-val').value || 30)
+                          * parseInt(document.getElementById('gps-push-interval-unit').value || 1));
     const statusEl   = document.getElementById('gps-status');
     statusEl.textContent = 'Saving…';
     fetch('/api/settings/gps', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({enabled, port, auto_push, precision, precision_meters: precMeters}),
+      body: JSON.stringify({enabled, port, auto_push, precision, precision_meters: precMeters, push_interval}),
     }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || `HTTP ${r.status}`); }))
       .then((d) => {
         statusEl.textContent = d.warning || (enabled ? '✓ GPS enabled' : '✓ Saved');
@@ -16055,10 +16075,32 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
             <td style="padding:2px 12px 2px 0">${escHtml(String(ch.idx))}</td>
             <td style="padding:2px 12px 2px 0">${escHtml(ch.name || '(empty)')}</td>
             <td style="padding:2px 0 2px;color:var(--muted);font-family:monospace">${escHtml(ch.hash || '—')}</td>
-            <td style="padding:2px 0 2px;text-align:right"><button class="btn" style="padding:2px 8px;font-size:11px" onclick="event.stopPropagation();shareMcChannel('${jsSafe(radioId)}',${parseInt(ch.idx) || 0},'${jsSafe(ch.name || '')}','${jsSafe(ch.hash || '')}')">Info/Share</button></td>
+            <td style="padding:2px 0 2px;text-align:right;white-space:nowrap">
+              <button class="btn" style="padding:2px 8px;font-size:11px" onclick="event.stopPropagation();shareMcChannel('${jsSafe(radioId)}',${parseInt(ch.idx) || 0},'${jsSafe(ch.name || '')}','${jsSafe(ch.hash || '')}')">Info/Share</button>
+              <button class="btn" style="padding:2px 8px;font-size:11px;margin-left:4px;background:var(--bg3);border:1px solid var(--border);color:var(--muted)" onclick="event.stopPropagation();deleteMcChannel('${jsSafe(radioId)}',${parseInt(ch.idx) || 0},'${jsSafe(ch.name || '')}')">Delete</button>
+            </td>
           </tr>`).join('')}
         </table>`;
       }).catch(e => { if (el) el.innerHTML = `<span style="color:var(--red)">Failed: ${escHtml(e.message)}</span>`; });
+  }
+
+  function deleteMcChannel(radioId, idx, name) {
+    const statusEl = document.getElementById('mc-channels-status');
+    document.getElementById('confirm-ok').textContent = 'Delete';
+    showConfirm(`Delete MC channel "${name || 'slot ' + idx}"? This clears the slot on the node and removes its chat history.`, () => {
+      if (statusEl) statusEl.textContent = 'Deleting…';
+      fetch(`/api/mc/${encodeURIComponent(radioId)}/channels/${idx}`, { method: 'DELETE' })
+        .then(r => r.json())
+        .then(d => {
+          if (d.ok) {
+            if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent)">Channel deleted.</span>';
+            loadMcChannelsList(radioId);
+            setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
+          } else {
+            if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Failed')}</span>`;
+          }
+        }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
+    });
   }
 
   function shareMcChannel(radioId, idx, name, hash) {

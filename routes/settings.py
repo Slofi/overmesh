@@ -196,8 +196,6 @@ def _run_update_job():
         info = _git_info(fetch=True)
         if not info.get("managed"):
             raise RuntimeError(info.get("error") or "Not a Git checkout.")
-        if info.get("dirty"):
-            raise RuntimeError("Local changes detected. Update aborted.")
         if info.get("ahead", 0) > 0:
             raise RuntimeError("Local commits are ahead of origin. Push or reconcile before updating.")
         if not info.get("update_available"):
@@ -209,8 +207,12 @@ def _run_update_job():
         rc, changed, _ = _git_cmd(["diff", "--name-only", "HEAD", "origin/main"], timeout=15)
         changed_files = set(changed.splitlines()) if rc == 0 and changed else set()
 
-        _update_append("Pulling latest code...")
-        _git_cmd(["pull", "--ff-only", "origin", "main"], timeout=60, check=True)
+        if info.get("dirty"):
+            _update_append("Local changes detected — stashing before update...")
+            _git_cmd(["stash", "--include-untracked"], timeout=15)
+
+        _update_append("Resetting to origin/main...")
+        _git_cmd(["reset", "--hard", "origin/main"], timeout=60, check=True)
 
         if "requirements.txt" in changed_files:
             _update_append("requirements.txt changed; installing Python dependencies...")

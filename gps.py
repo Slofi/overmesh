@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 
 gps_state = {
     "lat": None, "lon": None, "alt": None,
-    "sats": 0, "fix": False, "speed": None,
+    "sats": 0, "sats_view": 0, "fix": False, "speed": None,
 }
 gps_lock                = threading.Lock()
 _gps_stop_event         = threading.Event()
@@ -97,6 +97,21 @@ def _parse_gpgga(line):
                     ).start()
     except Exception as e:
         log.debug(f"GPS parse error: {e}")
+
+
+def _parse_gpgsv(line):
+    """Parse $GPGSV/$GNGSV — update sats_view (satellites in view, even without fix)."""
+    try:
+        if "*" in line:
+            line = line[:line.index("*")]
+        parts = line.split(",")
+        # Field 3 = total satellites in view
+        if len(parts) >= 4 and parts[3]:
+            sats_view = int(parts[3])
+            with gps_lock:
+                gps_state["sats_view"] = sats_view
+    except Exception as e:
+        log.debug(f"GPS GSV parse error: {e}")
 
 
 def gps_port_present(port):
@@ -196,19 +211,55 @@ def _gps_push_to_nodes(lat, lon, alt, precision_bits):
 # Reader thread
 # ---------------------------------------------------------------------------
 
+def _ubx_msg(cls, id_, payload=b''):
+    """Build a UBX binary message with checksum."""
+    msg = bytes([0xB5, 0x62, cls, id_, len(payload) & 0xFF, (len(payload) >> 8) & 0xFF]) + payload
+    ck_a, ck_b = 0, 0
+    for b in msg[2:]:
+        ck_a = (ck_a + b) & 0xFF
+        ck_b = (ck_b + ck_a) & 0xFF
+    return msg + bytes([ck_a, ck_b])
+
+
+def _gps_init(ser):
+    """Ensure NMEA output is active. Recovers from UBX-only mode left by gpsd."""
+    # Enable GGA, RMC, GSV on UART1 (F0 00/04/03)
+    for nmea_id in (0x00, 0x04, 0x03):
+        ser.write(_ubx_msg(0x06, 0x01, bytes([0xF0, nmea_id, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00])))
+        time.sleep(0.05)
+    # Disable UBX NAV-PVT spam gpsd turns on (06 01, class 01 id 07, all ports off)
+    ser.write(_ubx_msg(0x06, 0x01, bytes([0x01, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])))
+    time.sleep(0.05)
+    ser.reset_input_buffer()
+
+
 def _gps_reader(port, stop_event):
     import serial as _serial
     log.info(f"GPS: opening {port}")
     with gps_lock:
         _gps_runtime.update({"port": port, "running": False, "port_present": gps_port_present(port), "error": ""})
     try:
-        ser = _serial.Serial(port, baudrate=9600, timeout=1)
+        # Open without toggling DTR so u-blox doesn't cold-reset on OM restart
+        ser = _serial.Serial()
+        ser.port     = port
+        ser.baudrate = 9600
+        ser.timeout  = 1
+        ser.dtr      = False
+        ser.open()
     except Exception as e:
         log.error(f"GPS: cannot open {port}: {e}")
         with gps_lock:
             _gps_runtime.update({"port": port, "running": False, "port_present": gps_port_present(port), "error": str(e)})
         push_to_sse(json.dumps({"type": "gps_error", "message": str(e)}))
         return
+
+    # Restore NMEA sentences in case gpsd left the device in UBX-only mode
+    try:
+        _gps_init(ser)
+        log.info("GPS: NMEA sentences configured")
+    except Exception as e:
+        log.warning(f"GPS: init commands failed (continuing anyway): {e}")
+
     with gps_lock:
         _gps_runtime.update({"port": port, "running": True, "port_present": True, "error": ""})
     while not stop_event.is_set():
@@ -217,6 +268,8 @@ def _gps_reader(port, stop_event):
             line = raw.decode("ascii", errors="ignore").strip()
             if line.startswith(("$GPGGA", "$GNGGA")):
                 _parse_gpgga(line)
+            elif line.startswith(("$GPGSV", "$GNGSV")):
+                _parse_gpgsv(line)
         except Exception as e:
             log.warning(f"GPS read: {e}")
             if "device disconnected" in str(e) or "device reports readiness" in str(e):

@@ -13,7 +13,7 @@ bp = Blueprint('gps_routes', __name__)
 def api_settings_gps_get():
     cfg = CONFIG.get("gps", {"enabled": False, "port": ""})
     with gps_lock:
-        pos = {k: gps_state[k] for k in ("lat", "lon", "alt", "sats", "fix", "speed")}
+        pos = {k: gps_state[k] for k in ("lat", "lon", "alt", "sats", "sats_view", "fix", "speed")}
         runtime = dict(_gps_runtime)
     port = str(cfg.get("port") or "").strip()
     if port and runtime.get("port") != port:

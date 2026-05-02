@@ -223,11 +223,12 @@ def _ubx_msg(cls, id_, payload=b''):
 
 def _gps_init(ser):
     """Ensure NMEA output is active. Recovers from UBX-only mode left by gpsd."""
-    # Enable GGA, RMC, GSV on UART1 (F0 00/04/03)
+    # CFG-MSG payload: [msgClass, msgID, rate_DDC, rate_UART1, rate_UART2, rate_USB, rate_SPI, reserved]
+    # Enable GGA, RMC, GSV on USB (index 5) — VK-162 and similar dongles connect via USB CDC
     for nmea_id in (0x00, 0x04, 0x03):
-        ser.write(_ubx_msg(0x06, 0x01, bytes([0xF0, nmea_id, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00])))
+        ser.write(_ubx_msg(0x06, 0x01, bytes([0xF0, nmea_id, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00])))
         time.sleep(0.05)
-    # Disable UBX NAV-PVT spam gpsd turns on (06 01, class 01 id 07, all ports off)
+    # Disable UBX NAV-PVT spam gpsd turns on — all ports
     ser.write(_ubx_msg(0x06, 0x01, bytes([0x01, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])))
     time.sleep(0.05)
     ser.reset_input_buffer()

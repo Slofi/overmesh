@@ -2,6 +2,7 @@
 MeshCore API routes.
 """
 import io
+import os
 import threading
 import time
 import logging
@@ -844,21 +845,43 @@ def api_mc_channel_share(radio_id, idx):
 
 @bp.route("/api/mc/<radio_id>/channels/<int:idx>", methods=["POST"])
 def api_mc_set_channel(radio_id, idx):
-    """Set a channel by slot index. Optional key (32 hex chars = 16 bytes); if omitted, auto-derived from name."""
+    """Set a channel by slot index.
+    key_type: 'auto' (derive from name), 'keep' (reuse current), 'random', 'custom' (provide key hex).
+    """
     if not (0 <= idx <= 15):
         return jsonify({"error": "channel index must be 0–15"}), 400
     data = request.get_json(silent=True) or {}
-    name = (data.get("name") or "").strip()
-    key  = (data.get("key")  or "").strip().lower()
+    name     = (data.get("name")     or "").strip()
+    key_type = (data.get("key_type") or "auto").strip().lower()
+    key_hex  = (data.get("key")      or "").strip().lower()
     if not name:
         return jsonify({"error": "name is required"}), 400
     if len(name) > 32:
         return jsonify({"error": "name too long (max 32 chars)"}), 400
-    if key:
-        if len(key) != 32 or not all(c in "0123456789abcdef" for c in key):
+
+    if key_type == "random":
+        key_hex = os.urandom(16).hex()
+    elif key_type == "custom":
+        if not key_hex:
+            return jsonify({"error": "Custom key is empty"}), 400
+        if len(key_hex) != 32 or not all(c in "0123456789abcdef" for c in key_hex):
             return jsonify({"error": "key must be exactly 32 hex characters (16 bytes)"}), 400
+    elif key_type == "keep":
+        with mc_connections_lock:
+            state = mc_connections.get(radio_id, {})
+        max_ch = min(int(state.get("node_info", {}).get("max_channels") or 8), 16)
+        try:
+            channels = get_channels(radio_id, max_ch, timeout=max(30, max_ch * 7))
+        except Exception as e:
+            return jsonify({"error": f"Failed to read current channels: {e}"}), 500
+        ch = next((c for c in channels if int(c.get("channel_idx", -1)) == idx), None)
+        secret = _mc_bytes_hex(ch.get("channel_secret")) if ch else ""
+        key_hex = secret if len(secret) == 32 else ""
+    else:  # "auto"
+        key_hex = ""
+
     try:
-        set_channel(radio_id, idx, name, key_hex=key or None)
+        set_channel(radio_id, idx, name, key_hex=key_hex or None)
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 503
     except Exception as e:

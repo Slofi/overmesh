@@ -2564,26 +2564,39 @@
     <!-- MC Channel Management -->
     <div class="settings-section" id="mc-channels-section" style="display:none">
       <h2 class="settings-title">Channels</h2>
-      <div id="mc-channels-list" style="color:var(--muted);font-size:12px;margin-bottom:12px">—</div>
-      <h3 class="settings-subtitle">Set Channel</h3>
-      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
-        <div>
-          <label class="settings-label">Slot</label>
-          <input id="mc-ch-idx" class="settings-input" type="number" min="0" max="15" value="0" style="width:60px">
+      <div id="mc-channels-list" style="color:var(--muted);font-size:12px;margin-bottom:4px">—</div>
+      <div id="mc-channels-remove-status" style="font-size:12px;min-height:16px;margin-bottom:4px"></div>
+
+      <!-- Inline edit panel -->
+      <div id="mc-channel-edit" style="display:none;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:14px;margin-top:4px">
+        <div style="font-size:12px;font-weight:600;margin-bottom:12px" id="mc-ch-edit-title">Edit Channel 0</div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+          <div>
+            <label class="settings-label">Name <span style="font-weight:400">(max 32 chars)</span></label>
+            <input id="mc-ch-name" class="settings-input" maxlength="32" style="width:200px">
+          </div>
         </div>
-        <div>
-          <label class="settings-label">Name</label>
-          <input id="mc-ch-name" class="settings-input" maxlength="32" style="width:180px" placeholder="LongFast or #MyNet">
+        <div style="margin-top:10px">
+          <label class="settings-label">Encryption Key</label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <select id="mc-ch-key-type" class="settings-select" onchange="mcChKeyTypeChange()">
+              <option value="keep">Keep existing</option>
+              <option value="auto">Auto-derive from name</option>
+              <option value="random">Random (new secure key)</option>
+              <option value="custom">Custom (hex)</option>
+            </select>
+          </div>
+          <input id="mc-ch-key-hex" class="settings-input" placeholder="32 hex chars (16 bytes)"
+                 style="width:100%;margin-top:6px;display:none;font-family:monospace;font-size:11px" maxlength="32">
         </div>
-        <div>
-          <label class="settings-label">Key (hex, optional)</label>
-          <input id="mc-ch-key" class="settings-input" maxlength="32" style="width:240px;font-family:monospace" placeholder="32 hex chars — leave blank to auto-derive">
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button class="btn" onclick="saveMcChannel()" title="Save channel settings to device">Save</button>
+          <button class="btn" onclick="closeMcChEdit()" style="background:var(--bg3)" title="Discard changes">Cancel</button>
+          <button class="btn" onclick="clearMcChannelHistory()" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted)" title="Delete saved chat history for this MC channel">Delete History</button>
+          <button class="btn" onclick="removeMcChannel()" style="margin-left:auto;background:var(--bg3);border:1px solid var(--border);color:var(--muted)" title="Clear this channel slot on the device">Remove</button>
         </div>
-        <button class="btn" onclick="setMcChannel()" title="Set the active channel on this MC device">Set</button>
-        <button class="btn" onclick="clearMcChannelHistory()" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted)" title="Delete saved chat history for this MC channel">Delete History</button>
+        <div id="mc-channels-status" style="font-size:12px;min-height:16px;margin-top:6px"></div>
       </div>
-      <p class="network-section-note mc">Leave Key blank to auto-derive from name (SHA256). Provide a 32-char hex key to use a specific shared secret. Click a row above to edit that slot.</p>
-      <div id="mc-channels-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-top:6px"></div>
     </div><!-- /mc-channels-section -->
 
     <!-- Import Contact via Share Link -->
@@ -16063,45 +16076,28 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         if (data.error) { el.innerHTML = `<span style="color:var(--red)">${escHtml(data.error)}</span>`; return; }
         const chs = data.channels || [];
         if (!chs.length) { el.innerHTML = '<span style="color:var(--muted)">No channels found.</span>'; return; }
-        el.innerHTML = `<table style="border-collapse:collapse;font-size:12px;width:100%;max-width:520px">
+        el.innerHTML = `<table style="border-collapse:collapse;font-size:12px;width:100%;max-width:560px">
           <tr style="color:var(--muted)">
             <th style="text-align:left;padding:2px 12px 4px 0;font-weight:normal">Slot</th>
             <th style="text-align:left;padding:2px 12px 4px 0;font-weight:normal">Name</th>
             <th style="text-align:left;padding:2px 0 4px;font-weight:normal">Key hash</th>
             <th style="text-align:right;padding:2px 0 4px;font-weight:normal"></th>
           </tr>
-          ${chs.map(ch => `<tr style="cursor:pointer" title="Click to edit this slot"
-            onclick="document.getElementById('mc-ch-idx').value='${parseInt(ch.idx) || 0}';document.getElementById('mc-ch-name').value='${jsSafe(ch.name || '')}';document.getElementById('mc-ch-key').value=''">
-            <td style="padding:2px 12px 2px 0">${escHtml(String(ch.idx))}</td>
-            <td style="padding:2px 12px 2px 0">${escHtml(ch.name || '(empty)')}</td>
-            <td style="padding:2px 0 2px;color:var(--muted);font-family:monospace">${escHtml(ch.hash || '—')}</td>
-            <td style="padding:2px 0 2px;text-align:right;white-space:nowrap">
-              <button class="btn" style="padding:2px 8px;font-size:11px" onclick="event.stopPropagation();shareMcChannel('${jsSafe(radioId)}',${parseInt(ch.idx) || 0},'${jsSafe(ch.name || '')}','${jsSafe(ch.hash || '')}')">Info/Share</button>
-              <button class="btn" style="padding:2px 8px;font-size:11px;margin-left:4px;background:var(--bg3);border:1px solid var(--border);color:var(--muted)" onclick="event.stopPropagation();deleteMcChannel('${jsSafe(radioId)}',${parseInt(ch.idx) || 0},'${jsSafe(ch.name || '')}')">Delete</button>
+          ${chs.map((ch, i) => `<tr style="${i < chs.length-1 ? 'border-bottom:1px solid var(--border)' : ''}">
+            <td style="padding:4px 12px 4px 0;font-size:11px;color:var(--muted);width:14px;text-align:right">${escHtml(String(ch.idx))}</td>
+            <td style="padding:4px 12px 4px 0">${escHtml(ch.name || '(empty)')}</td>
+            <td style="padding:4px 0;color:var(--muted);font-family:monospace">${escHtml(ch.hash || '—')}</td>
+            <td style="padding:4px 0;text-align:right;white-space:nowrap">
+              ${ch.name
+                ? `<button class="btn" style="padding:2px 8px;font-size:11px" onclick="shareMcChannel('${jsSafe(radioId)}',${parseInt(ch.idx) || 0},'${jsSafe(ch.name || '')}','${jsSafe(ch.hash || '')}')">Info/Share</button>`
+                : `<button class="btn" style="padding:2px 8px;font-size:11px;opacity:.45;cursor:default" disabled>Info/Share</button>`}
+              <button class="btn" style="padding:2px 8px;font-size:11px;margin-left:4px" onclick="openMcChEdit('${jsSafe(radioId)}',${parseInt(ch.idx) || 0},'${jsSafe(ch.name || '')}','${jsSafe(ch.hash || '')}')">Edit</button>
             </td>
           </tr>`).join('')}
         </table>`;
       }).catch(e => { if (el) el.innerHTML = `<span style="color:var(--red)">Failed: ${escHtml(e.message)}</span>`; });
   }
 
-  function deleteMcChannel(radioId, idx, name) {
-    const statusEl = document.getElementById('mc-channels-status');
-    document.getElementById('confirm-ok').textContent = 'Delete';
-    showConfirm(`Delete MC channel "${name || 'slot ' + idx}"? This clears the slot on the node and removes its chat history.`, () => {
-      if (statusEl) statusEl.textContent = 'Deleting…';
-      fetch(`/api/mc/${encodeURIComponent(radioId)}/channels/${idx}`, { method: 'DELETE' })
-        .then(r => r.json())
-        .then(d => {
-          if (d.ok) {
-            if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent)">Channel deleted.</span>';
-            loadMcChannelsList(radioId);
-            setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
-          } else {
-            if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Failed')}</span>`;
-          }
-        }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
-    });
-  }
 
   function shareMcChannel(radioId, idx, name, hash) {
     openChannelShareModal('MC Channel Share', `/api/mc/${encodeURIComponent(radioId)}/channels/${encodeURIComponent(idx)}/share`, [
@@ -16298,58 +16294,95 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     });
   }
 
-  function setMcChannel() {
-    const radioId = mcSettingsRadioId || activeMcRadioId;
-    if (!radioId) return;
-    const idx  = parseInt(document.getElementById('mc-ch-idx').value);
-    const name = (document.getElementById('mc-ch-name').value || '').trim();
-    const key  = (document.getElementById('mc-ch-key').value  || '').trim().toLowerCase();
+  let _editingMcChIdx = null;
+  let _editingMcRadioId = null;
+
+  function openMcChEdit(radioId, idx, name, hash) {
+    _editingMcChIdx   = idx;
+    _editingMcRadioId = radioId;
+    document.getElementById('mc-ch-edit-title').textContent = `Edit Channel ${idx}`;
+    document.getElementById('mc-ch-name').value    = name || '';
+    document.getElementById('mc-ch-key-type').value = 'keep';
+    document.getElementById('mc-ch-key-hex').style.display = 'none';
+    document.getElementById('mc-ch-key-hex').value = '';
+    document.getElementById('mc-channels-status').textContent = '';
+    const panel = document.getElementById('mc-channel-edit');
+    panel.style.display = '';
+    panel.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  }
+
+  function closeMcChEdit() {
+    _editingMcChIdx   = null;
+    _editingMcRadioId = null;
+    document.getElementById('mc-channel-edit').style.display = 'none';
+  }
+
+  function mcChKeyTypeChange() {
+    const type = document.getElementById('mc-ch-key-type').value;
+    document.getElementById('mc-ch-key-hex').style.display = type === 'custom' ? '' : 'none';
+  }
+
+  function saveMcChannel() {
+    const radioId = _editingMcRadioId || mcSettingsRadioId || activeMcRadioId;
+    if (radioId === null || _editingMcChIdx === null) return;
+    const idx      = _editingMcChIdx;
+    const name     = (document.getElementById('mc-ch-name').value || '').trim();
+    const keyType  = document.getElementById('mc-ch-key-type').value;
+    const keyHex   = (document.getElementById('mc-ch-key-hex').value || '').trim().toLowerCase();
     const statusEl = document.getElementById('mc-channels-status');
-    if (isNaN(idx) || idx < 0) {
-      if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Invalid slot.</span>'; return;
-    }
     if (!name) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Channel name required.</span>'; return; }
-    if (key && (key.length !== 32 || !/^[0-9a-f]+$/.test(key))) {
+    if (keyType === 'custom' && (keyHex.length !== 32 || !/^[0-9a-f]+$/.test(keyHex))) {
       if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Key must be exactly 32 hex characters.</span>'; return;
     }
-    if (statusEl) statusEl.textContent = 'Setting…';
-    const body = {name};
-    if (key) body.key = key;
+    if (statusEl) statusEl.textContent = 'Saving…';
+    const body = {name, key_type: keyType};
+    if (keyType === 'custom') body.key = keyHex;
     fetch(`/api/mc/${encodeURIComponent(radioId)}/channels/${idx}`, {
-      method: 'POST', headers: {'Content-Type':'application/json'},
+      method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(body),
-    }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || 'HTTP ' + r.status); }))
-      .then(d => {
-        if (d.ok) {
-          if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent)">Channel set.</span>';
-          loadMcChannelsList(radioId);
-          setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
-        } else {
-          if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Failed')}</span>`;
-        }
-      }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
+    }).then(r => r.json().then(d => ({ok: r.ok, d}))).then(({ok, d}) => {
+      if (!ok || d.error) { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Save failed.')}</span>`; return; }
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent)">Saved.</span>';
+      loadMcChannelsList(radioId);
+      closeMcChEdit();
+    }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
+  }
+
+  function removeMcChannel() {
+    const radioId = _editingMcRadioId || mcSettingsRadioId || activeMcRadioId;
+    if (radioId === null || _editingMcChIdx === null) return;
+    const idx  = _editingMcChIdx;
+    const name = (document.getElementById('mc-ch-name').value || '').trim() || `CH${idx}`;
+    document.getElementById('confirm-ok').textContent = 'Remove';
+    showConfirm(`Remove channel "${name}"? This clears the slot on the device and removes its chat history.`, () => {
+      const statusEl = document.getElementById('mc-channels-remove-status');
+      if (statusEl) { statusEl.textContent = `Removing channel ${idx}…`; statusEl.style.color = 'var(--muted)'; }
+      fetch(`/api/mc/${encodeURIComponent(radioId)}/channels/${idx}`, {method: 'DELETE'})
+        .then(r => r.json())
+        .then(d => {
+          if (statusEl) {
+            statusEl.textContent = d.error ? `✗ ${escHtml(d.error)}` : `✓ Channel ${idx} removed.`;
+            statusEl.style.color = d.error ? 'var(--red)' : 'var(--accent)';
+            setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 4000);
+          }
+          if (!d.error) { closeMcChEdit(); loadMcChannelsList(radioId); }
+        }).catch(e => { if (statusEl) { statusEl.textContent = `✗ ${escHtml(String(e))}`; statusEl.style.color = 'var(--red)'; } });
+    });
   }
 
   function clearMcChannelHistory() {
-    const radioId = mcSettingsRadioId || activeMcRadioId;
-    if (!radioId) return;
-    const idx = parseInt(document.getElementById('mc-ch-idx').value);
+    const radioId = _editingMcRadioId || mcSettingsRadioId || activeMcRadioId;
+    if (!radioId || _editingMcChIdx === null) return;
+    const idx  = _editingMcChIdx;
     const name = (document.getElementById('mc-ch-name').value || '').trim() || `CH${idx}`;
     const statusEl = document.getElementById('mc-channels-status');
-    if (isNaN(idx) || idx < 0) {
-      if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Invalid slot.</span>';
-      return;
-    }
     document.getElementById('confirm-ok').textContent = 'Delete';
     showConfirm(`Delete saved MC chat history for "${name}"?`, () => {
       const before = mcMessages.length;
       mcMessages = mcMessages.filter(m => !(
         m.radio_id === radioId && (
           m.subtype === 'system' ||
-          (
-            parseInt(m.channel ?? 0) === idx &&
-            m.subtype !== 'dm'
-          )
+          (parseInt(m.channel ?? 0) === idx && m.subtype !== 'dm')
         )
       ));
       const removed = before - mcMessages.length;

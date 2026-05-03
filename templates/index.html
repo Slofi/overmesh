@@ -13031,6 +13031,8 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       if (mcCanRemoteManage(c)) btns.push(`<button class="map-popup-btn" onclick="openMcRemoteManage('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}">Manage</button>`);
     } else if (!c && actionId) {
       btns.push(`<button class="map-popup-btn" onclick="doMcPing('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}" title="Request status from this node — may trigger it to send an advert">Ping</button>`);
+    } else if (!c && !actionId) {
+      btns.push(`<button class="map-popup-btn" style="opacity:0.4;cursor:default" disabled title="No pubkey in message — cannot send targeted ping. Sender's firmware may not include pubkey in channel messages.">Ping</button>`);
     }
     const cLat = c?.latitude, cLon = c?.longitude;
     if (hasMarker) {

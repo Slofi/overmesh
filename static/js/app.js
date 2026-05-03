@@ -1,0 +1,15331 @@
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  function escHtml(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  // Safe for embedding in onclick="fn('VALUE')" — escapes \, ', " for JS string + HTML attribute
+  function jsSafe(s) {
+    return String(s == null ? '' : s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;');
+  }
+
+  // ── Silent Running ─────────────────────────────────────────────────────────
+  let _silentMode = false;
+
+  function _updateSilentUi(active) {
+    _silentMode = active;
+    document.body.classList.toggle('silent-active', active);
+    const btn = document.getElementById('silent-btn');
+    if (btn) {
+      btn.classList.toggle('active', active);
+      btn.title = active
+        ? 'Silent Running active — click to disable'
+        : 'Enable Silent Running — suppresses all radio transmissions';
+    }
+  }
+
+  async function toggleSilentMode() {
+    try {
+      const r = await fetch('/api/silent_mode', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enabled: !_silentMode})
+      });
+      const d = await r.json();
+      if (d.ok) _updateSilentUi(d.silent_mode);
+    } catch(e) { console.warn('[silent] toggle failed:', e); }
+  }
+
+  // Load silent mode state on page load
+  fetch('/api/silent_mode').then(r => r.json()).then(d => _updateSilentUi(d.silent_mode)).catch(() => {});
+
+  // ── State ──────────────────────────────────────────────────────────────────
+  let allNodes      = [];
+  let mapShowMt     = localStorage.getItem('mapShowMt') !== '0';
+  let mapShowMc     = localStorage.getItem('mapShowMc') !== '0';
+  let mcFavs        = (() => { try { return JSON.parse(localStorage.getItem('mcFavs') || '{}'); } catch(_) { return {}; } })();
+  let mcIgnored     = new Set();
+  let mcShowIgnored = false;
+  fetch('/api/mc/ignored').then(r => r.ok ? r.json() : null).then(d => { if (d) { mcIgnored = new Set(d.ignored); renderLive(); } }).catch(() => {});
+  let liveSort      = { col: 'last_heard_ts', dir: -1 };
+  let _historyNodes = [];
+  let dbSort        = { col: 'last_seen', dir: 'desc' };
+  let _appSettings  = {};
+  let favFirst      = true;
+  let dbFavFirst    = true;
+  let showIgnored   = false;
+  let currentView   = 'live';
+
+  // ── Notifications ──────────────────────────────────────────────────────────
+  let notifReady  = false;
+  let prevNodeIds = new Set();
+  const INAPP_RETURNED_THRESHOLD_S = 7 * 24 * 3600;
+  const INAPP_NODE_RECENT_WINDOW_S = 120;
+  const _inAppToastSeen = new Map();
+  let _prevMtNodeSeen = new Map();
+  const _baseDocumentTitle = document.title || 'OverMesh';
+  const _notifSoundGainMultiplier = 4.0;
+  let _notifAudioCtx = null;
+  let _notifAudioArmed = false;
+  let _notifAudioArmInstalled = false;
+  let _mtStatusSoundPrimed = false;
+  let _mcStatusSoundPrimed = false;
+  const _pendingMcNodeSeenToasts = new Map();
+  const _mcContactRefreshByRadio = new Map();
+
+  function _appPrefBool(key, fallback = true) {
+    if (_appSettings && typeof _appSettings[key] === 'boolean') return _appSettings[key];
+    return fallback;
+  }
+
+  function _appPrefInt(key, fallback) {
+    const raw = _appSettings ? _appSettings[key] : null;
+    const value = parseInt(raw, 10);
+    return Number.isFinite(value) ? value : fallback;
+  }
+
+  function _returnedGapUnit() {
+    const raw = String((_appSettings && _appSettings.inapp_notify_returned_gap_unit) || 'days').toLowerCase();
+    return raw === 'hours' ? 'hours' : 'days';
+  }
+
+  function _returnedGapValue() {
+    return Math.max(1, _appPrefInt('inapp_notify_returned_gap_value', 7));
+  }
+
+  function _returnedGapThresholdSeconds() {
+    const value = _returnedGapValue();
+    return value * (_returnedGapUnit() === 'hours' ? 3600 : 24 * 3600);
+  }
+
+  function showToast(title, body, type = 'message', tag = '', opts = {}) {
+    const stack = document.getElementById('toast-stack');
+    if (!stack) return;
+    const now = Date.now();
+    if (tag) {
+      const prev = _inAppToastSeen.get(tag) || 0;
+      if (now - prev < 15000) return;
+      _inAppToastSeen.set(tag, now);
+    }
+    const persistent = !!opts.persistent;
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    if (tag) toast.dataset.toastTag = tag;
+    toast.innerHTML = `
+      <div class="toast-head">
+        <div class="toast-title">${escHtml(title)}</div>
+        <button class="toast-close" type="button" title="Close notification" aria-label="Close notification">×</button>
+      </div>
+      <div class="toast-body">${body}</div>`;
+    const closeBtn = toast.querySelector('.toast-close');
+    const removeToast = () => {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translateY(-4px)';
+      toast.style.transition = 'opacity 0.15s ease, transform 0.15s ease';
+      setTimeout(() => toast.remove(), 180);
+    };
+    if (closeBtn) closeBtn.onclick = removeToast;
+    stack.appendChild(toast);
+    if (!persistent) setTimeout(removeToast, 8000);
+  }
+
+  function maybeShowInAppMessage(title, body, tag) {
+    if (!_appPrefBool('inapp_notify_messages', true)) return;
+    showToast(title, body, 'message', tag);
+  }
+
+  function maybeShowInAppNodeSeen(title, body, tag) {
+    if (!_appPrefBool('inapp_notify_nodes', true)) return;
+    showToast(title, body, 'node', tag);
+  }
+
+  function maybeShowInAppNodeReturned(title, body, tag) {
+    if (!_appPrefBool('inapp_notify_returned', true)) return;
+    showToast(title, body, 'node-return', tag);
+  }
+
+  function _isMcHexFallbackLabel(label) {
+    return !!String(label || '').trim().match(/^[0-9a-f]{6,}$/i);
+  }
+
+  function _mcNotificationContactLabel(radioId, contactId, fallbackLabel = '') {
+    const contact = radioId && contactId ? (mcContacts[radioId] || {})[contactId] : null;
+    const label = contact?.long_name || contact?.name || fallbackLabel || contactId || '?';
+    if (_isMcHexFallbackLabel(label)) return contactId ? contactId.slice(0, 4) + '...' : '?';
+    return label;
+  }
+
+  function _refreshMcContactsForNotification(radioId) {
+    if (!radioId) return Promise.resolve(null);
+    const existing = _mcContactRefreshByRadio.get(radioId);
+    if (existing) return existing;
+    const p = fetch(`/api/mc/${encodeURIComponent(radioId)}/contacts?refresh=1`)
+      .then(r => r.ok ? r.json() : null)
+      .then(cd => {
+        if (!cd) return null;
+        if (!mcContacts[radioId]) mcContacts[radioId] = {};
+        (cd.contacts || []).forEach(c => {
+          const prev = mcContacts[radioId][c.id] || {};
+          mcContacts[radioId][c.id] = _mergeMcContactRecord(prev, c);
+        });
+        _mcRefreshDmContactNames(radioId);
+        renderMcMapMarkers();
+        if (currentTab === 'nodes') renderLive();
+        return cd;
+      })
+      .catch(() => null)
+      .finally(() => setTimeout(() => _mcContactRefreshByRadio.delete(radioId), 1500));
+    _mcContactRefreshByRadio.set(radioId, p);
+    return p;
+  }
+
+  function _scheduleMcNodeSeenNotification(radioId, contactId, fallbackLabel) {
+    if (!notifReady || !radioId || !contactId) return;
+    const tag = `toast-node-mc-${radioId}-${contactId}`;
+    const key = `${radioId}:${contactId}`;
+    const fallbackIsHex = _isMcHexFallbackLabel(fallbackLabel) || fallbackLabel === contactId;
+
+    const show = () => {
+      _pendingMcNodeSeenToasts.delete(key);
+      const label = _mcNotificationContactLabel(radioId, contactId, fallbackLabel);
+      maybeShowInAppNodeSeen('MC contact seen', `<b>${escHtml(label)}</b>`, tag);
+      playNotificationSound('node');
+    };
+
+    if (!fallbackIsHex) {
+      show();
+      return;
+    }
+
+    if (_pendingMcNodeSeenToasts.has(key)) return;
+    _pendingMcNodeSeenToasts.set(key, true);
+
+    // Advert events can be public-key-only. Ask the companion for its contact DB
+    // before showing the toast, so named nodes/repeaters do not notify as raw IDs.
+    _refreshMcContactsForNotification(radioId)
+      .finally(() => setTimeout(show, 300));
+  }
+
+  function saveInAppNotifPrefs() {
+    const returnedGapValue = Math.max(1, parseInt(document.getElementById('inapp-notif-returned-gap-value')?.value || '7', 10) || 7);
+    const returnedGapUnit = (document.getElementById('inapp-notif-returned-gap-unit')?.value === 'hours') ? 'hours' : 'days';
+    const payload = {
+      inapp_notify_messages: document.getElementById('inapp-notif-messages')?.checked ?? true,
+      inapp_notify_nodes: document.getElementById('inapp-notif-nodes')?.checked ?? true,
+      inapp_notify_returned: document.getElementById('inapp-notif-returned')?.checked ?? true,
+      inapp_notify_returned_gap_value: returnedGapValue,
+      inapp_notify_returned_gap_unit: returnedGapUnit,
+    };
+    Object.assign(_appSettings, payload);
+    const gapValueEl = document.getElementById('inapp-notif-returned-gap-value');
+    const gapUnitEl = document.getElementById('inapp-notif-returned-gap-unit');
+    if (gapValueEl) gapValueEl.value = String(returnedGapValue);
+    if (gapUnitEl) gapUnitEl.value = returnedGapUnit;
+    fetch('/api/settings/app', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    }).catch(e => console.error('saveInAppNotifPrefs failed:', e));
+  }
+
+  function loadInAppNotifPrefs(cfg = null) {
+    const appCfg = cfg || _appSettings || {};
+    _appSettings = Object.assign({}, _appSettings || {}, appCfg);
+    const msgEl = document.getElementById('inapp-notif-messages');
+    const nodeEl = document.getElementById('inapp-notif-nodes');
+    const retEl = document.getElementById('inapp-notif-returned');
+    const gapValueEl = document.getElementById('inapp-notif-returned-gap-value');
+    const gapUnitEl = document.getElementById('inapp-notif-returned-gap-unit');
+    if (msgEl) msgEl.checked = _appPrefBool('inapp_notify_messages', true);
+    if (nodeEl) nodeEl.checked = _appPrefBool('inapp_notify_nodes', true);
+    if (retEl) retEl.checked = _appPrefBool('inapp_notify_returned', true);
+    if (gapValueEl) gapValueEl.value = String(_returnedGapValue());
+    if (gapUnitEl) gapUnitEl.value = _returnedGapUnit();
+  }
+
+  function sendNotif(title, body, tag, type, opts = {}) {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    const prefKey = type === 'node' ? 'notif_nodes' : 'notif_messages';
+    if (localStorage.getItem(prefKey) === 'false') return;
+    const notif = new Notification(title, { body, tag, silent: false, requireInteraction: !!opts.persistent });
+    notif.onclick = () => {
+      try { window.focus(); } catch(e) {}
+      try { notif.close(); } catch(e) {}
+    };
+  }
+
+  function requestNotifPermission() {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }
+
+  function saveNotifPrefs() {
+    const msgs  = document.getElementById('notif-messages')?.checked ?? true;
+    const nodes = document.getElementById('notif-nodes')?.checked ?? true;
+    localStorage.setItem('notif_messages', msgs);
+    localStorage.setItem('notif_nodes',    nodes);
+    if (msgs || nodes) requestNotifPermission();
+  }
+
+  function loadNotifPrefs() {
+    const msgEl  = document.getElementById('notif-messages');
+    const nodeEl = document.getElementById('notif-nodes');
+    // Default: enabled (null !== 'false' → true)
+    if (msgEl)  msgEl.checked  = localStorage.getItem('notif_messages') !== 'false';
+    if (nodeEl) nodeEl.checked = localStorage.getItem('notif_nodes')    !== 'false';
+  }
+
+  function saveSoundPrefs() {
+    const payload = {
+      sound_notify_messages: document.getElementById('sound-notif-messages')?.checked ?? true,
+      sound_notify_radio_connected: document.getElementById('sound-notif-radios')?.checked ?? true,
+      sound_notify_nodes: document.getElementById('sound-notif-nodes')?.checked ?? true,
+    };
+    Object.assign(_appSettings, payload);
+    fetch('/api/settings/app', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    }).catch(e => console.error('saveSoundPrefs failed:', e));
+  }
+
+  function loadSoundPrefs(cfg = null) {
+    const appCfg = cfg || _appSettings || {};
+    _appSettings = Object.assign({}, _appSettings || {}, appCfg);
+    const msgEl = document.getElementById('sound-notif-messages');
+    const radioEl = document.getElementById('sound-notif-radios');
+    const nodeEl = document.getElementById('sound-notif-nodes');
+    if (msgEl) msgEl.checked = _appPrefBool('sound_notify_messages', true);
+    if (radioEl) radioEl.checked = _appPrefBool('sound_notify_radio_connected', true);
+    if (nodeEl) nodeEl.checked = _appPrefBool('sound_notify_nodes', true);
+  }
+
+  function bridgeSettingsStatus(text, ok = null) {
+    const el = document.getElementById('bridge-settings-status');
+    if (!el) return;
+    el.textContent = text || '';
+    el.style.color = ok == null ? 'var(--muted)' : ok ? 'var(--accent)' : 'var(--red)';
+  }
+
+  function loadBridgeSettings(cfg = null) {
+    const appCfg = cfg || _appSettings || {};
+    _appSettings = Object.assign({}, _appSettings || {}, appCfg);
+    const whEnabled = document.getElementById('bridge-webhooks-enabled');
+    const whUrls = document.getElementById('bridge-webhook-urls');
+    const whSecret = document.getElementById('bridge-webhook-secret');
+    const ingestEnabled = document.getElementById('bridge-ingest-enabled');
+    const ingestToken = document.getElementById('bridge-ingest-token');
+    if (whEnabled) whEnabled.checked = _appPrefBool('bridge_webhooks_enabled', false);
+    if (whUrls) whUrls.value = _appSettings.bridge_webhook_urls || '';
+    if (whSecret) whSecret.value = _appSettings.bridge_webhook_secret || '';
+    if (ingestEnabled) ingestEnabled.checked = _appPrefBool('bridge_ingest_enabled', false);
+    if (ingestToken) ingestToken.value = _appSettings.bridge_ingest_token || '';
+  }
+
+  function saveBridgeSettings() {
+    const payload = {
+      bridge_webhooks_enabled: document.getElementById('bridge-webhooks-enabled')?.checked ?? false,
+      bridge_webhook_urls: document.getElementById('bridge-webhook-urls')?.value || '',
+      bridge_webhook_secret: document.getElementById('bridge-webhook-secret')?.value || '',
+      bridge_ingest_enabled: document.getElementById('bridge-ingest-enabled')?.checked ?? false,
+      bridge_ingest_token: document.getElementById('bridge-ingest-token')?.value || '',
+    };
+    Object.assign(_appSettings, payload);
+    bridgeSettingsStatus('Saving...');
+    fetch('/api/settings/app', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || `HTTP ${r.status}`); }))
+      .then(() => bridgeSettingsStatus('Saved.', true))
+      .catch(e => bridgeSettingsStatus(String(e.message || e), false));
+  }
+
+  function saveDistanceUnit(unit) {
+    unit = unit === 'mi' ? 'mi' : 'km';
+    Object.assign(_appSettings, {distance_unit: unit});
+    _setDistanceUnit(unit);
+    fetch('/api/settings/app', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({distance_unit: unit})
+    }).catch(e => console.error('saveDistanceUnit failed:', e));
+  }
+
+  function _notificationSoundEnabled(kind) {
+    if (kind === 'message') return _appPrefBool('sound_notify_messages', true);
+    if (kind === 'radio') return _appPrefBool('sound_notify_radio_connected', true);
+    if (kind === 'node') return _appPrefBool('sound_notify_nodes', true);
+    return true;
+  }
+
+  function _primeNotificationAudioContext(ctx) {
+    if (!ctx || ctx.state !== 'running') return;
+    try {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const at = ctx.currentTime + 0.001;
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, at);
+      gain.gain.setValueAtTime(0.00001, at);
+      gain.gain.exponentialRampToValueAtTime(0.00001, at + 0.02);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(at);
+      osc.stop(at + 0.02);
+    } catch (e) {}
+  }
+
+  function _notificationSoundArmListener() {
+    const Ctor = window.AudioContext || window.webkitAudioContext;
+    if (!_notifAudioCtx && Ctor) {
+      try { _notifAudioCtx = new Ctor(); } catch (e) { _notifAudioCtx = null; }
+    }
+    const ctx = _notifAudioCtx;
+    if (!ctx) {
+      _notifAudioArmed = false;
+      return;
+    }
+    const finishReady = () => {
+      _notifAudioArmed = ctx.state === 'running';
+      if (!_notifAudioArmed) return;
+      _primeNotificationAudioContext(ctx);
+    };
+    if (ctx.state === 'running') {
+      finishReady();
+      return;
+    }
+    ctx.resume().then(finishReady).catch(() => {
+      _notifAudioArmed = false;
+    });
+  }
+
+  function installNotificationSoundArm() {
+    if (_notifAudioArmInstalled) return;
+    _notifAudioArmInstalled = true;
+    window.addEventListener('pointerdown', _notificationSoundArmListener);
+    window.addEventListener('mousedown', _notificationSoundArmListener);
+    window.addEventListener('click', _notificationSoundArmListener);
+    window.addEventListener('keydown', _notificationSoundArmListener);
+    window.addEventListener('touchstart', _notificationSoundArmListener);
+  }
+
+  function _playNotificationToneSequence(tones) {
+    if (!_notifAudioCtx) {
+      const Ctor = window.AudioContext || window.webkitAudioContext;
+      if (Ctor) {
+        try { _notifAudioCtx = new Ctor(); } catch (e) { _notifAudioCtx = null; }
+      }
+    }
+    if (_notifAudioCtx && _notifAudioCtx.state === 'running') _notifAudioArmed = true;
+    if (!_notifAudioCtx || _notifAudioCtx.state !== 'running') {
+      _notifAudioArmed = false;
+      installNotificationSoundArm();
+      return;
+    }
+    if (!_notifAudioArmed) {
+      installNotificationSoundArm();
+      return;
+    }
+    const ctx = _notifAudioCtx;
+    let at = ctx.currentTime + 0.01;
+    tones.forEach(tone => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const dur = Math.max(0.04, Number(tone.dur) || 0.12);
+      const basePeak = Math.max(0.0001, Number(tone.gain) || 0.045);
+      const peak = Math.min(0.32, basePeak * _notifSoundGainMultiplier);
+      osc.type = tone.type || 'sine';
+      osc.frequency.setValueAtTime(Number(tone.freq) || 880, at);
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(peak, at + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(at);
+      osc.stop(at + dur + 0.03);
+      at += dur + Math.max(0.01, Number(tone.gap) || 0.03);
+    });
+  }
+
+  function playNotificationSound(kind) {
+    if (!_notificationSoundEnabled(kind)) return;
+    if (kind === 'message') {
+      _playNotificationToneSequence([
+        {freq: 1318, dur: 0.09, gain: 0.032, type: 'square', gap: 0.02},
+        {freq: 1760, dur: 0.26, gain: 0.07, type: 'square', gap: 0.03},
+      ]);
+      return;
+    }
+    if (kind === 'radio') {
+      _playNotificationToneSequence([
+        {freq: 440, dur: 0.10, gain: 0.04, type: 'triangle', gap: 0.02},
+        {freq: 660, dur: 0.16, gain: 0.05, type: 'triangle', gap: 0.03},
+      ]);
+      return;
+    }
+    if (kind === 'node') {
+      _playNotificationToneSequence([
+        {freq: 880, dur: 0.08, gain: 0.026, type: 'triangle', gap: 0.02},
+        {freq: 1174, dur: 0.12, gain: 0.036, type: 'triangle', gap: 0.02},
+      ]);
+    }
+  }
+
+  function saveExtMapPref(val) {
+    localStorage.setItem('extMapProvider', val);
+  }
+
+  function loadExtMapPref() {
+    const val = localStorage.getItem('extMapProvider') || 'osm';
+    const sel = document.getElementById('ext-map-select');
+    if (sel) sel.value = val;
+  }
+
+  // ── Chat ───────────────────────────────────────────────────────────────────
+  let chatChannel    = 0;
+  let chatChannels   = [];
+  let chatSSE        = null;
+  let chatMsgs       = [];
+  let closedDmTabs        = (() => { try { return new Set(JSON.parse(localStorage.getItem('closedDmTabs') || '[]')); } catch(e) { return new Set(); } })();
+  let unreadChannels      = new Set();
+  let currentTab          = 'nodes';
+  let chatNetwork         = localStorage.getItem('chatNetwork') || 'mt';
+  let activeRadioId                = localStorage.getItem('activeRadioId') || null;
+  let selectedRadioIds             = new Set(JSON.parse(localStorage.getItem('selectedRadioIds') || 'null') || (activeRadioId ? [activeRadioId] : []));
+  let lastStatus                   = {};
+  let _accentColor                 = '#4ade80';  // JS-side accent for canvas/dynamic color refs
+  let _accentFreshColor            = '#86efac';  // brighter accent for fresh (<30m) map markers
+  let _activeTracerouteController  = null;
+  let _activeTracerouteStartedAt   = 0;
+  let _activeTrPanel               = null;
+  let _activeMtRouteKey            = null;
+  let _activeMtRouteEntryKey       = null;
+  let _mtHoverRouteKey             = null;
+  let _mtHoverHadTraceLines        = false;
+  let _mtHoverPrevShowTrMap        = null;
+  let _nodeInfoTimer               = null;
+  const inactiveRadioUnread = new Set();       // radio_ids with any unread (drives radio btn dot)
+  const radioUnreadChannels = {};              // radio_id → Set of channels with unread (drives Chat tab + sub-tab dots)
+  const unreadChannelCounts = Object.create(null);
+  const radioUnreadCounts = {};
+
+  function _safeUnreadCount(value) {
+    const count = parseInt(value, 10);
+    return Number.isFinite(count) && count > 0 ? count : 0;
+  }
+
+  function _clearUnreadCount(store, key) {
+    delete store[String(key)];
+  }
+
+  function _clearUnreadCountStore(store) {
+    Object.keys(store).forEach(key => delete store[key]);
+  }
+
+  function _incrementUnreadCount(store, key, amount = 1) {
+    const count = _safeUnreadCount(amount) || 1;
+    const k = String(key);
+    store[k] = _safeUnreadCount(store[k]) + count;
+  }
+
+  function _copyUnreadCountStore(store) {
+    const copy = {};
+    Object.entries(store || {}).forEach(([key, value]) => {
+      const count = _safeUnreadCount(value);
+      if (count > 0) copy[key] = count;
+    });
+    return copy;
+  }
+
+  function _sumUnreadEntries(entries, counts) {
+    let total = 0;
+    if (entries && typeof entries.forEach === 'function') {
+      entries.forEach(entry => {
+        const key = String(entry);
+        total += _safeUnreadCount((counts || {})[key] ?? 1);
+      });
+    }
+    return total;
+  }
+
+  function _updateDocumentUnreadBadge() {
+    let total = _sumUnreadEntries(unreadChannels, unreadChannelCounts);
+    total += _sumUnreadEntries(mcUnreadTabs, mcUnreadCounts);
+    document.title = total > 0 ? `(${total}) ${_baseDocumentTitle}` : _baseDocumentTitle;
+    try {
+      if (navigator.setAppBadge) {
+        if (total > 0) navigator.setAppBadge(total);
+        else if (navigator.clearAppBadge) navigator.clearAppBadge();
+      }
+    } catch (e) {}
+  }
+
+  function saveUnreadState() {
+    try {
+      const data = {};
+      if (activeRadioId && unreadChannels.size > 0) {
+        data[activeRadioId] = {
+          channels: [...unreadChannels],
+          counts: _copyUnreadCountStore(unreadChannelCounts),
+        };
+      }
+      Object.entries(radioUnreadChannels).forEach(([rid, chs]) => {
+        if (!chs || chs.size === 0) return;
+        data[rid] = {
+          channels: [...chs],
+          counts: _copyUnreadCountStore(radioUnreadCounts[rid]),
+        };
+      });
+      localStorage.setItem('unreadState', JSON.stringify(data));
+    } catch(e) {}
+  }
+  function loadUnreadState() {
+    try {
+      const data = JSON.parse(localStorage.getItem('unreadState') || '{}');
+      Object.entries(data).forEach(([rid, entry]) => {
+        const channels = Array.isArray(entry)
+          ? entry
+          : Array.isArray(entry?.channels) ? entry.channels : [];
+        if (!channels.length) return;
+        // Don't restore unread for the active radio on page load — history replay
+        // already shows those messages when chat is opened, so restoring stale
+        // unread state here only causes phantom dots on every refresh.
+        if (rid === activeRadioId) return;
+        radioUnreadChannels[rid] = new Set(channels);
+        const counts = entry && !Array.isArray(entry) && entry.counts && typeof entry.counts === 'object'
+          ? entry.counts
+          : {};
+        const restoredCounts = {};
+        channels.forEach(ch => {
+          const key = String(ch);
+          restoredCounts[key] = _safeUnreadCount(counts[key] ?? 1) || 1;
+        });
+        if (Object.keys(restoredCounts).length) radioUnreadCounts[rid] = restoredCounts;
+        inactiveRadioUnread.add(rid);
+      });
+    } catch(e) {}
+  }
+  loadUnreadState();
+
+  function getActiveChatMsgs() {
+    if (!selectedRadioIds.size) return chatMsgs;
+    return chatMsgs.filter(m => !m.radio_id || selectedRadioIds.has(m.radio_id));
+  }
+
+  function saveSelectedRadioIds() {
+    localStorage.setItem('selectedRadioIds', JSON.stringify([...selectedRadioIds]));
+  }
+
+  function hasConnectedMtRadios() {
+    return Object.values(lastStatus).some(s => s && s.enabled !== false && s.status === 'connected');
+  }
+
+  function hasConnectedMcRadios() {
+    return Object.values(mcLastStatus).some(s => s && s.status === 'connected');
+  }
+
+  function normalizeChatNetwork(preferred) {
+    const wantMc = preferred === 'mc';
+    const hasMt = hasConnectedMtRadios();
+    const hasMc = hasConnectedMcRadios();
+    if (wantMc && hasMc) return 'mc';
+    if (!wantMc && hasMt) return 'mt';
+    if (hasMc) return 'mc';
+    return 'mt';
+  }
+
+  function normalizeBotNetwork(preferred) {
+    return normalizeChatNetwork(preferred);
+  }
+
+  function setHeaderNodeCountDivider(show) {
+    const el = document.getElementById('header-node-count');
+    if (!el) return;
+    el.style.marginLeft = show ? '8px' : '4px';
+    el.style.paddingLeft = show ? '8px' : '';
+    el.style.borderLeft = show ? '1px solid var(--border)' : '';
+  }
+
+  function updateRadioSelector(status) {
+    if (status) lastStatus = status;
+    const entries = Object.entries(lastStatus).filter(([, s]) => s.enabled !== false && s.status === 'connected');
+    const sel = document.getElementById('radio-selector');
+    const mtCount = document.getElementById('header-node-count');
+    if (!sel) return;
+    if (!entries.length) {
+      if (hasConnectedMcRadios()) {
+        sel.innerHTML = '';
+        sel.style.display = 'none';
+        setHeaderNodeCountDivider(false);
+        if (mtCount) mtCount.style.display = 'none';
+      } else {
+        sel.innerHTML = '<span style="font-size:12px;color:var(--muted)">No radios connected</span>';
+        sel.style.display = '';
+        if (mtCount) {
+          setHeaderNodeCountDivider(true);
+          mtCount.style.display = '';
+          mtCount.textContent = 'No radios connected';
+        }
+      }
+      if (chatNetwork === 'mt' && hasConnectedMcRadios()) setChatNetwork('mc');
+      if (botNetwork === 'mt' && hasConnectedMcRadios()) setBotNetwork('mc');
+      _updateNetworkPillVisibility();
+      return;
+    }
+    sel.style.display = '';
+    setHeaderNodeCountDivider(false);
+    if (mtCount) mtCount.style.display = '';
+    // Auto-set activeRadioId if not set or no longer visible
+    if (!activeRadioId || !entries.find(([id]) => id === activeRadioId)) {
+      activeRadioId = entries[0][0];
+      localStorage.setItem('activeRadioId', activeRadioId);
+    }
+    // Remove stale MT radio IDs from selectedRadioIds (MC IDs are managed separately)
+    const mtIds = new Set(entries.map(([id]) => id));
+    let mtSelectionChanged = false;
+    [...selectedRadioIds].filter(id => !id.startsWith('mc_')).forEach(id => {
+      if (!mtIds.has(id)) {
+        selectedRadioIds.delete(id);
+        delete radioUnreadChannels[id];
+        delete radioUnreadCounts[id];
+        inactiveRadioUnread.delete(id);
+        mtSelectionChanged = true;
+      }
+    });
+    if (mtSelectionChanged) saveSelectedRadioIds();
+    // Auto-select all radios only if nothing is selected yet (fresh start)
+    if (selectedRadioIds.size === 0) {
+      entries.forEach(([id]) => selectedRadioIds.add(id));
+      saveSelectedRadioIds();
+    }
+    sel.innerHTML = entries.map(([id, s]) => {
+      const cls     = s.status === 'connected' ? 'dot-connected' : s.status === 'connecting' ? 'dot-connecting' : 'dot-disconnected';
+      const active  = selectedRadioIds.has(id) ? ' active' : '';
+      const primary = id === activeRadioId ? ' primary' : '';
+      const unread  = inactiveRadioUnread.has(id) ? ' has-unread' : '';
+      const title   = s.status !== 'connected' ? ` title="Not connected — disable in Settings if not in use"` : '';
+      return `<button class="radio-btn${active}${primary}${unread}"${title} onclick="toggleRadioSelection('${jsSafe(id)}')">`
+           + `<span class="mt-badge">MT</span><span class="status-dot ${cls}"></span>${escHtml(s.name)}</button>`;
+    }).join('');
+    _updateNetworkPillVisibility();
+  }
+
+  function toggleRadioSelection(id) {
+    const isMc = id.startsWith('mc_');
+    if (selectedRadioIds.has(id)) {
+      // Only deselect if at least 1 other radio remains selected
+      if (selectedRadioIds.size > 1) {
+        selectedRadioIds.delete(id);
+        if (!isMc && activeRadioId === id) {
+          // Pick another selected MT radio as primary (or null if none)
+          const nextMt = [...selectedRadioIds].find(x => !x.startsWith('mc_'));
+          activeRadioId = nextMt || null;
+          if (activeRadioId) localStorage.setItem('activeRadioId', activeRadioId);
+        }
+        if (isMc && activeMcRadioId === id) {
+          const nextMc = [...selectedRadioIds].find(x => x.startsWith('mc_'));
+          activeMcRadioId = nextMc || null;
+          if (activeMcRadioId) localStorage.setItem('activeMcRadioId', activeMcRadioId);
+          else localStorage.removeItem('activeMcRadioId');
+        }
+      }
+      // If last one: do nothing (can't deselect everything)
+    } else {
+      // Select this radio
+      if (!isMc) {
+        _saveSenseState(activeRadioId);
+        if (activeRadioId) {
+          const saved = new Set(unreadChannels);
+          radioUnreadChannels[activeRadioId] = saved;
+          const savedCounts = _copyUnreadCountStore(unreadChannelCounts);
+          if (Object.keys(savedCounts).length) radioUnreadCounts[activeRadioId] = savedCounts;
+          else delete radioUnreadCounts[activeRadioId];
+          if (saved.size > 0) inactiveRadioUnread.add(activeRadioId);
+          else inactiveRadioUnread.delete(activeRadioId);
+        }
+        activeRadioId = id;
+        localStorage.setItem('activeRadioId', id);
+        inactiveRadioUnread.delete(id);
+        unreadChannels.clear();
+        _clearUnreadCountStore(unreadChannelCounts);
+        if (radioUnreadChannels[id]) {
+          radioUnreadChannels[id].forEach(ch => unreadChannels.add(ch));
+          delete radioUnreadChannels[id];
+        }
+        Object.entries(radioUnreadCounts[id] || {}).forEach(([key, value]) => {
+          unreadChannelCounts[key] = _safeUnreadCount(value);
+        });
+        delete radioUnreadCounts[id];
+        chatChannel = 0;
+        botInitDone = false;
+        _senseRunId = 0;
+        _restoreSenseState(id);
+      } else {
+        activeMcRadioId = id;
+        localStorage.setItem('activeMcRadioId', id);
+      }
+      selectedRadioIds.add(id);
+    }
+    saveSelectedRadioIds();
+    updateRadioSelector();
+    updateMcPills();
+    updateUnreadDots();
+    loadLive();
+    renderMcMapMarkers();
+    if (currentTab === 'chat') initChat();
+    if (currentTab === 'bot')  initBot();
+  }
+  // Legacy alias (kept in case any internal callers use the old name)
+  function switchRadio(id) { toggleRadioSelection(id); }
+
+  function setChatNetwork(net) {
+    net = normalizeChatNetwork(net);
+    chatNetwork = net;
+    localStorage.setItem('chatNetwork', net);
+    const isMt = net === 'mt';
+    const mtPane = document.getElementById('chat-mt-pane');
+    const mcPane = document.getElementById('chat-mc-pane');
+    const chCh   = document.getElementById('chat-channels');
+    const chRad  = document.getElementById('chat-radio');
+    if (mtPane) mtPane.style.display = isMt ? 'flex' : 'none';
+    if (mcPane) mcPane.style.display = isMt ? 'none' : 'flex';
+    const mcCh = document.getElementById('mc-chat-channels');
+    if (chCh)  chCh.style.display   = isMt ? '' : 'none';
+    if (mcCh)  mcCh.style.display   = isMt ? 'none' : 'flex';
+    if (chRad) chRad.style.display  = isMt ? '' : 'none';
+    const btnMt = document.getElementById('chat-net-mt');
+    const btnMc = document.getElementById('chat-net-mc');
+    if (btnMt) btnMt.classList.toggle('active', isMt);
+    if (btnMc) btnMc.classList.toggle('active', !isMt);
+    if (!isMt) { renderMcMessages(); _updateMcInput(); }
+  }
+
+  function initChat() {
+    setChatNetwork(chatNetwork);  // apply MT/MC toggle state
+    if (chatNetwork === 'mt') {
+      const chRadioParam = activeRadioId ? `?radio_id=${encodeURIComponent(activeRadioId)}` : '';
+      const tabAtFetchTime = currentTab;
+      const radioAtFetchTime = activeRadioId;
+      fetch(`/api/chat/channels${chRadioParam}`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(chs => {
+        // Discard if user switched away from chat tab or switched radio while fetch was in flight
+        if (currentTab !== tabAtFetchTime || activeRadioId !== radioAtFetchTime) return;
+        chatChannels = chs;
+        // Only set default channel on first load; preserve DM tabs and valid channel selections
+        const validChannel = typeof chatChannel === 'string'
+          ? chatChannel.startsWith('dm:')   // DM tabs are always kept
+          : chs.some(ch => ch.index === chatChannel);
+        if (!validChannel) chatChannel = chs[0]?.index ?? 0;
+        renderChannelTabs();
+        // Clear unread dot for the channel that's now visible
+        if (currentTab === 'chat') {
+          unreadChannels.delete(chatChannel);
+          _clearUnreadCount(unreadChannelCounts, chatChannel);
+          updateUnreadDots();
+          renderChannelTabs();
+          renderMessages();  // always sync message area with active channel/tab
+        }
+      }).catch(e => console.warn('Chat channel init failed:', e));
+      fetch('/api/status').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(s => {
+        const activeName = activeRadioId && s[activeRadioId] ? s[activeRadioId].name : Object.values(s).map(x => x.name).join(', ');
+        document.getElementById('chat-radio').textContent = '📡 ' + activeName;
+      }).catch(() => {});
+    } else {
+      _updateMcChatRadioLabel();
+      renderMcMessages();
+      _updateMcInput();
+    }
+    if (chatSSE) return;
+    chatSSE = new EventSource('/api/chat/stream');
+    chatSSE.onmessage = e => {
+      let data; try { data = JSON.parse(e.data); } catch(err) { return; }
+      if (data.type === 'gps_position') {
+        _gpsUpdatePosition(data);
+        return;
+      }
+      if (data.type === 'gps_error') {
+        _gpsUpdatePosition({enabled: _gpsEnabled, lat: null, lon: null, sats: 0, fix: false, running: false, error: data.message});
+        return;
+      }
+      if (data.type === 'local_node_position') {
+        // GPS push fired — immediately update allNodes so the marker moves without waiting for loadLive()
+        const n = allNodes.find(x => x.radio_id === data.radio_id && x.is_local);
+        if (n) {
+          n.latitude  = data.lat;
+          n.longitude = data.lon;
+          updateMapMarkers(allNodes);
+        }
+        return;
+      }
+      if (data.type === 'node_status') {
+        const prevStatus = lastStatus[data.radio_id]?.status;
+        if (lastStatus[data.radio_id]) {
+          lastStatus[data.radio_id].status = data.status;
+        } else if (data.status === 'connected') {
+          lastStatus[data.radio_id] = {status: 'connected', name: data.name, enabled: true};
+        }
+        if (_mtStatusSoundPrimed && data.status === 'connected' && prevStatus !== 'connected') {
+          playNotificationSound('radio');
+        }
+        if (data.status === 'connected') selectedRadioIds.add(data.radio_id);
+        else selectedRadioIds.delete(data.radio_id);
+        saveSelectedRadioIds();
+        updateRadioSelector();
+        updateMcPills();
+        if (currentTab === 'chat') initChat();
+        return;
+      }
+      if (data.type && data.type.startsWith('mc_')) {
+        handleMcSseEvent(data);
+        return;
+      }
+      if (data.type === 'radio_removed') {
+        chatMsgs = chatMsgs.filter(m => m.radio_id !== data.radio_id);
+        delete radioUnreadChannels[data.radio_id];
+        delete radioUnreadCounts[data.radio_id];
+        inactiveRadioUnread.delete(data.radio_id);
+        selectedRadioIds.delete(data.radio_id);
+        saveSelectedRadioIds();
+        if (mapDmContactId) closeMapDM();  // close map DM window — its messages may be gone
+        // Discard sense state for removed radio
+        delete _senseStateByRadio[data.radio_id];
+        if (activeRadioId === data.radio_id) {
+          _senseRunId = 0;
+          _senseResponses = {};
+          Object.values(senseMarkers).forEach(m => { try { leafletMap && leafletMap.removeLayer(m); } catch(e){} });
+          senseMarkers = {};
+          document.getElementById('sense-nodes')?.replaceChildren();
+          const senseLogEl = document.getElementById('sense-log');
+          if (senseLogEl) senseLogEl.innerHTML = '<span id="sense-log-empty" style="color:var(--muted)">No sense run yet.</span>';
+        }
+        if (activeRadioId === data.radio_id) {
+          activeRadioId = null;
+          const other = Object.entries(lastStatus).find(([id, s]) => id !== data.radio_id && s.status === 'connected');
+          if (other) { activeRadioId = other[0]; localStorage.setItem('activeRadioId', activeRadioId); }
+          else localStorage.removeItem('activeRadioId');
+        }
+        renderChannelTabs(); renderMessages(); loadLive();
+        return;
+      }
+      if (data.type === 'bot_activity') {
+        addBotActivityEntry(data.entry, true);
+        return;
+      }
+      if (data.type === 'sense_response') {
+        if (data.node && data.radio_id) data.node.radio_id = data.radio_id;
+        if (!data.radio_id || data.radio_id === activeRadioId) {
+          senseAddNode(data.node);
+          // Update map marker colour using the sense timestamp — reliable even after reconnect
+          if (data.node && data.node.from_id && data.node.ts) {
+            const node = allNodes.find(n => n.id === data.node.from_id);
+            if (node) {
+              node.last_heard_ts = data.node.ts;
+              updateMapMarkers(allNodes);
+              updateHeaderNodeCount(allNodes);
+            }
+          }
+        } else {
+          // Background radio: update stored state only, don't touch DOM
+          if (!_senseStateByRadio[data.radio_id]) _senseStateByRadio[data.radio_id] = {responses: {}};
+          const existing = _senseStateByRadio[data.radio_id].responses[data.node.from_id];
+          if (existing) Object.assign(existing, Object.fromEntries(Object.entries(data.node).filter(([,v]) => v != null)));
+          else _senseStateByRadio[data.radio_id].responses[data.node.from_id] = data.node;
+        }
+        return;
+      }
+      if (data.type === 'sense_started') {
+        document.getElementById('sense-btn').textContent = 'Sensing…';
+        return;
+      }
+      if (data.type === 'sense_done') {
+        document.getElementById('sense-btn').textContent = 'Sense Mesh';
+        // Remove nodes that didn't respond in this run
+        document.querySelectorAll('#sense-nodes .sense-node-card').forEach(c => {
+          if (parseInt(c.dataset.run) < _senseRunId) {
+            const id = c.id.replace('sense-node-', '');
+            if (senseMarkers[id]) { leafletMap && leafletMap.removeLayer(senseMarkers[id]); delete senseMarkers[id]; }
+            delete _senseResponses[id];
+            c.remove();
+          }
+        });
+        const remaining = Object.keys(_senseResponses).length;
+        const _senseTs = Math.floor(Date.now() / 1000);
+        document.getElementById('sense-status').innerHTML =
+          `Sense complete — ${data.count} node${data.count !== 1 ? 's' : ''} responded. <span id="sense-status-age" data-ts="${_senseTs}" style="color:var(--muted)">(just now)</span> <span onclick="document.getElementById('sense-status').innerHTML=''" style="cursor:pointer;color:var(--muted);margin-left:4px;font-size:13px" title="Dismiss">×</span>`;
+        senseSummaryUpdate();
+        return;
+      }
+      if (data.type === 'waypoint') {
+        if (data.waypoint) renderWaypointMarker(data.waypoint);
+        return;
+      }
+      if (data.type === 'waypoint_deleted') {
+        if (waypointMarkers[data.id]) { if (leafletMap) { leafletMap.closePopup(); leafletMap.removeLayer(waypointMarkers[data.id]); } delete waypointMarkers[data.id]; }
+        delete waypointsData[data.id];
+        renderMarksPanel();
+        return;
+      }
+      if (data.type === 'note') {
+        if (data.note) renderNoteMarker(data.note);
+        renderMarksPanel();
+        return;
+      }
+      if (data.type === 'note_deleted') {
+        if (noteMarkers[data.id]) { if (leafletMap) { leafletMap.closePopup(); leafletMap.removeLayer(noteMarkers[data.id]); } delete noteMarkers[data.id]; }
+        delete notesData[data.id];
+        renderMarksPanel();
+        return;
+      }
+      if (data.type === 'silent_mode') {
+        _updateSilentUi(!!data.active);
+        return;
+      }
+      if (data.type === 'node_last_heard') {
+        // Fast path: update allNodes directly for nodes with a known user.id
+        const node = allNodes.find(n => n.id === data.from_id);
+        if (node) {
+          node.last_heard_ts = nodeTs(data.ts);
+          node._last_heard_live = true;
+          node._last_heard_live_at = Math.floor(Date.now() / 1000);
+          node.last_heard = nodeLastHeardLabel(node);
+          renderLive();
+          updateMapMarkers(allNodes);
+          updateHeaderNodeCount(allNodes);
+        }
+        return;
+      }
+      if (data.type === 'ack') {
+        // Update status in array and DOM without full re-render
+        const m = chatMsgs.find(m => m.id === data.msg_id);
+        if (m) m.status = data.success ? 'delivered' : 'failed';
+        document.querySelectorAll(`[data-msgid="${data.msg_id}"]`).forEach(el => {
+          el.className = `msg-status ${data.success ? 'delivered' : 'failed'}`;
+          el.textContent = data.success ? '✓' : '✗';
+        });
+      } else if (data.type === 'mt_channel_history_cleared') {
+        const channel = parseInt(data.channel ?? 0);
+        chatMsgs = chatMsgs.filter(m => !(m.radio_id === data.radio_id && !m.is_dm && (m.channel ?? 0) === channel));
+        unreadChannels.delete(channel);
+        _clearUnreadCount(unreadChannelCounts, channel);
+        if (data.radio_id === activeRadioId) {
+          renderMessages();
+          renderChannelTabs();
+        }
+        updateUnreadDots();
+      } else {
+        if (!chatMsgs.find(m => m.id === data.id)) {
+          chatMsgs.push(data);
+          if (chatMsgs.length > 500) chatMsgs.splice(0, chatMsgs.length - 500);
+          // Reopen closed DM tab when a new message arrives from that contact (not history)
+          if (data.is_dm && !data.is_history) {
+            const contactId = dmContactId(data);
+            if (contactId) { closedDmTabs.delete(contactId); saveClosedDmTabs(); }
+          }
+          // Track unread for received messages not in the currently active channel
+          // Skip for history replay (messages sent before this SSE connection)
+          if (!data.sent && !data.is_history) {
+            const msgCh = data.is_dm ? ('dm:' + dmContactId(data)) : data.channel;
+            // If message is from an inactive radio, track unread on radio btn + per-channel
+            if (data.radio_id && data.radio_id !== activeRadioId) {
+              inactiveRadioUnread.add(data.radio_id);
+              if (!radioUnreadChannels[data.radio_id]) radioUnreadChannels[data.radio_id] = new Set();
+              radioUnreadChannels[data.radio_id].add(msgCh);
+              if (!radioUnreadCounts[data.radio_id]) radioUnreadCounts[data.radio_id] = {};
+              _incrementUnreadCount(radioUnreadCounts[data.radio_id], msgCh);
+              updateRadioSelector();
+              updateUnreadDots();
+            } else {
+              if (currentTab !== 'chat' || chatChannel !== msgCh) {
+                unreadChannels.add(msgCh);
+                _incrementUnreadCount(unreadChannelCounts, msgCh);
+                updateUnreadDots();
+              }
+            }
+            playNotificationSound('message');
+            // Browser notification
+            if (document.hidden || currentTab !== 'chat' || chatChannel !== msgCh) {
+              const title = data.is_dm ? `DM from ${data.from_name}` : `${data.from_name} on CH${data.channel}`;
+              maybeShowInAppMessage(title, escHtml(data.text), `toast-msg-${data.id}`);
+              sendNotif(title, data.text, `msg-${data.id}`, 'message');
+            }
+          }
+          if (!data.radio_id || data.radio_id === activeRadioId) renderChannelTabs();
+          // Append message directly if it belongs to the current visible channel and active radio
+          const isDmTab = typeof chatChannel === 'string' && chatChannel.startsWith('dm:');
+          const msgCh = data.is_dm ? ('dm:' + dmContactId(data)) : data.channel;
+          const isCurrentCh = isDmTab
+            ? msgCh === chatChannel
+            : data.channel === chatChannel && !data.is_dm;
+          if (isCurrentCh && (!data.radio_id || data.radio_id === activeRadioId)) appendMessage(data);
+          if (!data.sent && !data.is_history && (!data.radio_id || data.radio_id === activeRadioId)) addMtMessageSenseEntry(data);
+          // Also update map DM window if it's open and this message is for that contact
+          if (mapDmContactId && data.is_dm) {
+            if (dmContactId(data) === mapDmContactId) renderMapDM();
+          }
+        }
+      }
+    };
+  }
+
+  function saveClosedDmTabs() {
+    localStorage.setItem('closedDmTabs', JSON.stringify([...closedDmTabs]));
+  }
+
+  function dmContactId(m)   { return (m.sent || m.from_id === 'bot') ? m.to_id   : m.from_id; }
+  function dmContactName(m) { return (m.sent || m.from_id === 'bot') ? (m.to_name || m.to_id) : m.from_name; }
+  function mtRadioLabel(m) {
+    if (m.radio_name) return m.radio_name;
+    if (m.radio_id && lastStatus[m.radio_id]?.name) return lastStatus[m.radio_id].name;
+    return m.radio_id || '';
+  }
+
+  function renderChannelTabs() {
+    const chTabs = chatChannels.map(ch =>
+      `<button class="channel-tab ${ch.index === chatChannel ? 'active' : ''} ${unreadChannels.has(ch.index) ? 'has-unread' : ''}"
+               onclick="switchChatChannel(${ch.index})">${escHtml(ch.name)}</button>`
+    ).join('');
+
+    // One tab per unique DM contact (excluding closed tabs)
+    const contacts = {};
+    getActiveChatMsgs().filter(m => m.is_dm).forEach(m => {
+      const id = dmContactId(m);
+      if (id && id !== 'null' && !contacts[id] && !closedDmTabs.has(id)) contacts[id] = dmContactName(m);
+    });
+    const dmTabs = Object.entries(contacts).map(([id, name]) =>
+      `<button class="channel-tab ${chatChannel === 'dm:' + id ? 'active' : ''} ${unreadChannels.has('dm:' + id) ? 'has-unread' : ''}"
+               data-dm-id="${id}" data-dm-name="${escHtml(name)}"
+               onclick="switchChatChannel('dm:${jsSafe(id)}')">${escHtml(name)
+      }<span class="dm-tab-close" onclick="closeDmTab('${jsSafe(id)}',event)">✕</span></button>`
+    ).join('');
+
+    document.getElementById('chat-channels').innerHTML = chTabs + dmTabs;
+  }
+
+  function switchChatChannel(idx) {
+    chatChannel = idx;
+    unreadChannels.delete(idx);
+    _clearUnreadCount(unreadChannelCounts, idx);
+    updateUnreadDots();
+    renderChannelTabs();
+    renderMessages();
+  }
+
+  let _confirmCallback = null;
+  function showSilentConfirm(msg) {
+    document.getElementById('sr-confirm-msg').textContent = msg;
+    document.getElementById('sr-confirm-modal').classList.add('open');
+  }
+  function srConfirmCancel() {
+    document.getElementById('sr-confirm-modal').classList.remove('open');
+  }
+
+  function showConfirm(msg, onOk) {
+    document.getElementById('confirm-msg').textContent = msg;
+    document.getElementById('confirm-modal').classList.add('open');
+    _confirmCallback = onOk;
+  }
+  function confirmOk() {
+    document.getElementById('confirm-modal').classList.remove('open');
+    document.getElementById('confirm-ok').textContent = 'OK';
+    if (_confirmCallback) { _confirmCallback(); _confirmCallback = null; }
+  }
+  function confirmCancel() {
+    document.getElementById('confirm-modal').classList.remove('open');
+    document.getElementById('confirm-ok').textContent = 'OK';
+    _confirmCallback = null;
+  }
+  function showAlert(msg) {
+    document.getElementById('alert-msg').textContent = msg;
+    document.getElementById('alert-modal').classList.add('open');
+  }
+  function alertClose() {
+    document.getElementById('alert-modal').classList.remove('open');
+  }
+
+  const OM_INTRO_KEY = 'overmeshIntroSeen:v1';
+  function showOmIntro(force = false) {
+    if (!force && localStorage.getItem(OM_INTRO_KEY) === '1') return;
+    document.getElementById('intro-modal')?.classList.add('open');
+  }
+  function closeOmIntro(markSeen = true) {
+    if (markSeen) localStorage.setItem(OM_INTRO_KEY, '1');
+    document.getElementById('intro-modal')?.classList.remove('open');
+  }
+  function showOmIntroIfNeeded() {
+    setTimeout(() => showOmIntro(false), 500);
+  }
+
+  const OM_MANUAL_SECTIONS = [
+    {
+      title: 'Start Here',
+      tags: 'overview first launch setup radios update local dashboard',
+      body: [
+        'OverMesh is a local dashboard for Meshtastic and MeshCore radios. It runs in your browser and talks to radios connected to this machine.',
+        'Normal flow: add radios in Settings, watch activity in Sense/Map, inspect nodes in Nodes, send traffic in Chat, and use Map for positions, overlays, routes, and field context.',
+        'MT and MC can be used together or separately. Cross-system bridge controls are intentionally hidden for now.'
+      ],
+      buttons: [
+        ['Settings', 'Open radio setup, app preferences, GPS, offline maps, updates, and help.'],
+        ['Show Intro', 'Open the short first-launch overview again.'],
+        ['Manual', 'Open this searchable reference. Search by tab name, button name, or feature.'],
+        ['Restart', 'Restart the OverMesh server after updates or when the app needs a clean reload.']
+      ]
+    },
+    {
+      title: 'Top Bar and Global Controls',
+      tags: 'header top bar status pills radio selector silent running power restart shutdown refresh',
+      body: [
+        'The top bar is for global state: active radios, current tab, Silent Running, refresh, and server power actions.',
+        'Radio pills show connected MT and MC radios. They give quick confidence that OM is actually attached to the hardware.',
+        'Silent Running is enforced by the backend. It blocks OM-initiated transmissions even if a browser tries to bypass the UI.'
+      ],
+      buttons: [
+        ['Nodes', 'Open the node/contact table.'],
+        ['Chat', 'Open MT or MC text messaging.'],
+        ['Map', 'Open the main map, markers, marks, notes, and overlays.'],
+        ['Sense/Map', 'Open live RF activity and path visualization.'],
+        ['Bot', 'Configure and monitor automatic bot replies.'],
+        ['Settings', 'Open app, radio, update, GPS, offline-map, and help controls.'],
+        ['Refresh', 'Reload visible app data from the backend.'],
+        ['Silent Running', 'Toggle monitor-only mode for OM transmit paths.'],
+        ['Restart', 'Restart the OverMesh service/process.'],
+        ['Shut down', 'Stop the OverMesh server.']
+      ]
+    },
+    {
+      title: 'Nodes',
+      tags: 'nodes contacts table favorites ignored map dm traceroute route path mc mt ping trace info position',
+      body: [
+        'Nodes lists known Meshtastic nodes and MeshCore contacts. Use it when you need identity, last-heard time, battery, signal, position, and route state.',
+        'The table is shared, but MT and MC route information means different things because the protocols expose different metadata.',
+        'Info/Share opens full contact details. MT shows identity and public-key data. MC shows name, type, full public key, source state, path data, distance, and a MeshCore contact share link/QR when available.'
+      ],
+      split: [
+        {
+          title: 'MT Nodes',
+          kind: 'mt',
+          body: [
+            'MT rows show Meshtastic node IDs, names, signal, battery, position, and Last Seen. Hops is the radio/nodeDB view of how many repeaters away a node appears to be.',
+            'TR runs a real Meshtastic traceroute. That is the source OM uses when it can draw MT route lines on the map.',
+            'Last Seen from real received packets should stay fresh across Refresh; nodeDB-only timestamps are treated more cautiously.'
+          ],
+          buttons: [
+            ['TR', 'Send an MT traceroute and draw route-to-node / route-back if the node responds.'],
+            ['Pos', 'Request an MT position broadcast.'],
+            ['Info', 'Request MT node info and telemetry.'],
+            ['Info/Share', 'Open MT contact details, public-key data, and copyable share data.'],
+            ['DM', 'Open an MT direct message.'],
+            ['Ignore', 'Hide a noisy MT node from normal views.'],
+            ['Unignore', 'Restore an ignored MT node from History.']
+          ]
+        },
+        {
+          title: 'MC Contacts',
+          kind: 'mc',
+          body: [
+            'MC rows include short hash chips before names. These help match contacts to MC path hashes shown by messages, pings, and traces.',
+            'Path labels: direct means no known repeater, flood mode means open/unknown routing, route means a stored route exists, and 1 hop / 2 hops means known repeaters.',
+            'MC path hashes may be 1, 2, or 3 bytes. Short hashes can collide, so OM marks uncertain matches instead of pretending every hop is exact.',
+            'Route editing lets you choose the path hash size for the stored route. The Settings -> MeshCore default is used as the starting point.'
+          ],
+          buttons: [
+            ['Ping', 'Check MC reachability and draw observed path metadata when available.'],
+            ['Trace', 'Send an MC broadcast trace and draw known hops.'],
+            ['Route', 'Edit a stored MC contact route using repeater hash prefixes.'],
+            ['Info/Share', 'Open MC contact details, public key, type, source, distance, MeshCore share link, and contact QR.'],
+            ['★', 'Favorite an MC contact so it sorts higher.'],
+            ['Ignore', 'Hide a noisy MC contact from normal views.'],
+            ['Unignore', 'Restore an ignored MC contact from History.']
+          ]
+        }
+      ],
+      buttons: [
+        ['Live', 'Show currently active MT nodes and MC contacts.'],
+        ['History', 'Browse all remembered MT nodes and MC contacts.'],
+        ['Search', 'Filter visible node/contact rows by name, short name, ID, or radio metadata.'],
+        ['★ Fav first', 'Sort favorites above other rows.'],
+        ['MT', 'Show or hide MT rows in the shared table.'],
+        ['MC', 'Show or hide MC rows in the shared table.'],
+        ['Clear TR lock', 'Release a stuck traceroute lock if a previous request did not complete cleanly.'],
+        ['MT ignored', 'Show ignored MT nodes in History.'],
+        ['MC ignored', 'Show ignored MC contacts in History.'],
+        ['Map', 'Center the map on that node/contact and open its popup when a position is known.']
+      ]
+    },
+    {
+      title: 'Chat',
+      tags: 'chat messages mt mc channel dm reply split byte limit send history delete mention',
+      body: [
+        'Chat is for normal text traffic. Use the MT/MC selector when both networks are enabled.',
+        'Chat stays intentionally compact. Route details belong in Sense/Map, while Chat only shows small badges or links when useful.'
+      ],
+      split: [
+        {
+          title: 'MT Chat',
+          kind: 'mt',
+          body: [
+            'MT messages can show a small route badge: direct, 1 hop, 2 hops, etc.',
+            'A plain hop badge comes from packet hop metadata. It tells you hop count only, not the exact repeaters.',
+            'A cached-route badge means OM has a recent traceroute for that exact peer. Clicking it draws the cached MT route on Map.'
+          ],
+          buttons: [
+            ['Route badge', 'Shows packet hop count or a cached traceroute link for the exact MT peer.'],
+            ['Reply', 'Insert a reply prefix for MT text.'],
+            ['TR', 'Run traceroute from node actions when you need exact route nodes.']
+          ]
+        },
+        {
+          title: 'MC Chat',
+          kind: 'mc',
+          body: [
+            'MC messages are byte-limited by firmware and sender/channel overhead. OM checks byte length and auto-splits longer sends into safe parts.',
+            'MC Reply inserts native bracketed mentions where possible, so original MC users see a proper mention.',
+            'Received MC messages can show a small hop badge. Clicking it opens Sense/Map and pins the matching message path when OM has enough path data.',
+            'A badge such as flood mode describes route mode; a detail such as 2B/hop describes hop-hash size. They are separate facts.'
+          ],
+          buttons: [
+            ['Route badge', 'Shows MC direct/hop/flood-mode path metadata; click to open Sense/Map and inspect the message path.'],
+            ['Reply', 'Insert a native MC mention/reply prefix when possible.'],
+            ['Advert', 'Send this MC radio advert so other nodes learn its identity.'],
+            ['Byte counter', 'Shows remaining safe bytes; longer text is split into numbered parts when possible.']
+          ]
+        }
+      ],
+      buttons: [
+        ['MT', 'Switch Chat to Meshtastic channels and DMs.'],
+        ['MC', 'Switch Chat to MeshCore channels and DMs.'],
+        ['Send', 'Transmit the current message. Blocked when Silent Running is active.'],
+        ['Delete History', 'Delete saved visible history for the current conversation or channel.'],
+        ['Emoji', 'Open the emoji picker for the current message input.'],
+        ['Byte counter', 'MC only: shows remaining safe bytes or split-message state for the current input.'],
+        ['DM tab close', 'Close a direct-message tab without deleting history.'],
+        ['Channel tab', 'Switch between public/private MT channels or MC channel slots.']
+      ]
+    },
+    {
+      title: 'Map',
+      tags: 'map markers pins filters overlays marks notes traceroute gps paths layers center popup',
+      body: [
+        'Map is the main geographic view. It shows MT nodes, MC contacts, local radios, marks, self notes, overlays, and paths drawn by tools.',
+        'Click markers for quick actions. MT and MC filters let you reduce clutter when both networks are active.',
+        'Marks are mesh waypoints. Self Notes are local-only notes. Overlays are local shapes and imported GeoJSON.',
+        'Distance labels use the OM origin when available: live GPS first, then the manual OM position, then a connected/local radio position fallback. If OM has no origin and the node has only its own coordinates, distance is shown as unknown.'
+      ],
+      split: [
+        {
+          title: 'MT Map',
+          kind: 'mt',
+          body: [
+            'MT route lines come from traceroute results or cached traceroute replay. Response log hover/click controls preview and pinned routes, with SNR coloring when available.',
+            'If an intermediate MT node has no GPS, OM draws a bypass segment and marks that some hops had no map position.'
+          ],
+          buttons: [
+            ['TR', 'Run a traceroute from an MT marker popup.']
+          ]
+        },
+        {
+          title: 'MC Map',
+          kind: 'mc',
+          body: [
+            'MC route lines come from adverts, messages, pings, traces, or stored contact routes. OM shows all known hops it can resolve.',
+            'A warning marker means OM only knows a relay chain or partial path; it is not the final sender/contact position.'
+          ],
+          buttons: [
+            ['Ping', 'Run MC reachability check and draw observed path when available.'],
+            ['Trace', 'Run MC broadcast trace and draw resolved hops.'],
+            ['!', 'Known relay only or partial MC path warning.']
+          ]
+        }
+      ],
+      buttons: [
+        ['MT', 'Show or hide Meshtastic markers and paths on the map.'],
+        ['MC', 'Show or hide MeshCore markers and paths on the map.'],
+        ['Marks', 'Open the map waypoint panel for mesh-shared marks.'],
+        ['Self Notes', 'Open local-only map notes.'],
+        ['Overlays', 'Open the overlay editor/import panel.'],
+        ['Add Mark', 'Create a mesh waypoint/mark at the selected position.'],
+        ['Add Note', 'Create a local-only map note.'],
+        ['Point', 'Start drawing a point overlay.'],
+        ['Line', 'Start drawing a line/route overlay.'],
+        ['Area', 'Start drawing a polygon overlay.'],
+        ['Circle', 'Start drawing a circular overlay.'],
+        ['Finish', 'Finish the current overlay draft.'],
+        ['Layer menu', 'Choose map tiles and open map-layer tools.'],
+        ['Polar Grid', 'Show or hide the polar/range grid overlay.'],
+        ['Customize', 'Adjust polar grid appearance.'],
+        ['Save', 'Save the current mark, note, overlay, or edited settings.'],
+        ['Cancel', 'Cancel the current map edit/draft.'],
+        ['Zoom', 'Zoom the map to a saved overlay or known node position.']
+      ]
+    },
+    {
+      title: 'Sense/Map',
+      tags: 'sense activity passive active live rf map mc path hops ping trace log warning path refresh',
+      body: [
+        'Sense/Map is the live RF activity view. It is the best place to watch recent packets, adverts, messages, pings, traces, and path hops.',
+        'Hover or click activity entries to draw known paths. Shared controls are separated below because MT and MC expose different route data.'
+      ],
+      split: [
+        {
+          title: 'MT Sense/Map',
+          kind: 'mt',
+          body: [
+            'MT Sense logs heard packets and active Sense responses. Text entries can show SNR, a message preview, and hop count.',
+            'MT route badges in Sense use packet hop metadata when available. Hop-only badges are informational. If a cached traceroute exists for the exact sender, hovering the response-log row previews that route; clicking pins that one row, and clicking the same row again clears it.',
+            'MT hop count alone does not identify which repeaters were used; run TR when you need exact route nodes.'
+          ],
+          buttons: [
+            ['Sense Mesh', 'Broadcast an active MT Sense request and collect responses.'],
+            ['Passive', 'Continuously capture heard MT packets without transmitting.'],
+            ['Active', 'Periodically run MT Sense requests using the configured cooldown.'],
+            ['Response log', 'Lists heard MT packets and active Sense responses; only cached-route rows preview on hover and pin/clear on click.'],
+            ['direct', 'Packet metadata says the message was heard directly.'],
+            ['1 hop / 2 hops', 'MT badge for one/two packet hops. This is hop count, not exact route nodes.'],
+            ['cached route', 'A recent MT traceroute exists for this exact peer; hover to preview, click to pin only that entry or clear it.'],
+            ['Clear', 'Clear the current MT Sense detected-node list.']
+          ]
+        },
+        {
+          title: 'MC Sense/Map',
+          kind: 'mc',
+          body: [
+            'MC Sense logs adverts, messages, pings, traces, scans, and bot replies. It is the main place to inspect MC paths.',
+            'Route source badges explain where OM got the path: live means this packet/RX-log metadata; cached means stored contact route; inferred means a fallback line; refreshed means newer contact/path data changed the entry.',
+            'Flood mode is a route/delivery mode, not a byte size. 1B/hop, 2B/hop, or 3B/hop are hop-hash widths; larger widths reduce repeater ID collisions.',
+            'Observed path hops are shown as clickable hop IDs when OM can resolve them. Click a hop/repeater ID to focus the map on that hop.',
+            'When MC SNR is available, path segments use the same quality colors as MT traceroutes. Hover a colored segment to see its SNR value.',
+            'Confidence labels: likely, estimated, and ambiguous mean OM resolved a short hash but it is not guaranteed exact. Partial paths show only known relays.',
+            'MC hop badges say 1 hop / 2 hops to avoid confusing h with hours.'
+          ],
+          buttons: [
+            ['Scan', 'Flood-advertise on MC and collect responses/contacts for the scan window.'],
+            ['MC activity', 'Right-side log of MC adverts, messages, pings, traces, scans, and bot replies. Click entries to pin or clear paths.'],
+            ['live', 'Path came from this packet/RX-log metadata. Best source, but not a guarantee if hashes are short.'],
+            ['cached', 'Path came from stored MC contact route/cache, not necessarily this exact message.'],
+            ['inferred', 'OM drew a fallback such as sender/receiver or partial known line.'],
+            ['refreshed', 'Path changed after OM re-resolved it with newer contact/path data.'],
+            ['flood mode', 'Open/unknown routing mode for the message. It can still have 1B/2B/3B hop metadata.'],
+            ['1B/2B/3B per hop', 'Hop-hash size used in path metadata. 2B/hop is more precise than 1B/hop, but still separate from route mode.'],
+            ['1 hop / 2 hops', 'Known MC repeater count for this entry.'],
+            ['Hop ID', 'Clickable MC path hop/repeater hash; centers the map when OM knows a matching contact position.'],
+            ['likely', 'Best candidate was selected, but another match existed.'],
+            ['estimated', 'Short/ambiguous hash; use as likely route, not proof.'],
+            ['ambiguous', 'Candidates were too close to call confidently.'],
+            ['Path refresh', 'Refresh contact/path data for the selected message or node and redraw if better data exists.'],
+            ['!', 'Known relay only; marker is not final sender/contact location.'],
+            ['Clear', 'Clear the MC activity log.']
+          ]
+        }
+      ],
+      buttons: [
+        ['Map', 'Show the normal map panel.'],
+        ['Sense', 'Open the live RF Sense side panels.'],
+        ['MT', 'Show MT Sense controls and MT response log.'],
+        ['MC', 'Show MC Sense contacts and MC activity log.'],
+        ['Filter', 'Search/filter the visible Sense contact list or activity log.'],
+        ['📍', 'Indicates a known position or map-focus action for the entry.']
+      ]
+    },
+    {
+      title: 'Bot',
+      tags: 'bot commands motd weather ping automatic replies per radio settings activity test',
+      body: [
+        'Bot settings are per radio. A bot can answer enabled commands, send MOTD, and log activity.',
+        'Bot sends use the same backend transmit safeguards as manual sends. MC bot replies use the same byte-safe splitting behavior.',
+        'Use Bot activity to check what OM received and what it tried to answer.'
+      ],
+      buttons: [
+        ['Enable bot', 'Turn bot handling on for the selected radio.'],
+        ['Settings', 'Open per-radio bot command and response configuration.'],
+        ['Activity', 'Show recent bot command/reply activity.'],
+        ['Test MOTD', 'Send or preview the configured message-of-the-day path.'],
+        ['Save', 'Store bot command, MOTD, and response settings.'],
+        ['Same channel', 'Respond in the channel where the command arrived.'],
+        ['DM', 'Respond privately when the command and network support it.']
+      ]
+    },
+    {
+      title: 'Settings - Meshtastic',
+      tags: 'settings meshtastic mt radios add remove delete node config lora channels gps telemetry mqtt bluetooth wifi reboot shutdown',
+      body: [
+        'Settings -> Meshtastic manages MT radios and MT node configuration.',
+        'Add radios by serial device or TCP/WiFi. OM remembers USB serials so a radio can reconnect even if the port name changes.',
+        'Node settings write directly to the connected node. Reboot may be required for some firmware settings.'
+      ],
+      buttons: [
+        ['Serial', 'Add a Meshtastic radio by USB serial device.'],
+        ['TCP / WiFi', 'Add a Meshtastic radio reachable by host and TCP port.'],
+        ['↻', 'Rescan available serial ports.'],
+        ['Add', 'Add the selected/configured radio to OM.'],
+        ['Enable', 'Allow OM to connect this configured radio.'],
+        ['Disable', 'Keep the radio configured but disconnect/ignore it.'],
+        ['Remove', 'Remove the radio from OM but keep its message DB unless deleted separately.'],
+        ['Delete', 'Remove the radio and delete its associated saved message DB when applicable.'],
+        ['Edit', 'Open or edit the selected channel/config item.'],
+        ['Save', 'Write the current node/channel/settings block.'],
+        ['Turn off', 'Set the MT node screen timeout to 10 seconds.'],
+        ['Always on', 'Set the MT node screen timeout to never sleep.'],
+        ['Reboot', 'Ask the connected MT node to reboot.'],
+        ['Shutdown', 'Ask the connected MT node to shut down if supported.'],
+        ['Clear known nodes', 'Clear remembered remote nodes for the selected MT radio from OM history/live cache.']
+      ]
+    },
+    {
+      title: 'Settings - MeshCore',
+      tags: 'settings meshcore mc radios serial tcp wifi bluetooth bt channels tx power coords advert scan reboot import contacts radio params route flood qr share',
+      body: [
+        'Settings -> MeshCore manages MC radios, channels, device identity, coordinates, TX power, radio parameters, and default MC path hash size.',
+        'Add MC radios by USB serial, TCP/WiFi host and port, or Bluetooth Low Energy address plus optional PIN. BT address means the AA:BB:CC:DD:EE:FF device address exposed by the OS/phone Bluetooth tools.',
+        'MC capabilities vary by firmware. If a function returns unavailable, it usually means the radio or current connection state cannot do it right now.',
+        'Path Hash Mode chooses the preferred 1B/2B/3B per-hop hash for MC stored routes and the radio default when firmware supports it. OM tries the selected mode first and falls back to the highest mode the radio accepts.',
+        'Always use flood routing clears the selected MC contact path before DMs and status pings so firmware uses flood/automatic routing instead of stored or learned paths.',
+        'Import Contact accepts meshcore:// share links and writes the contact to the selected radio. Contact Info/Share exports official meshcore://contact/add links and QR codes; MC channel Info/Share exports meshcore://channel/add data when the channel secret is readable.',
+        'The temporary config-only repeater tool was removed. Configure only radios that OM can use as normal MC nodes.'
+      ],
+      buttons: [
+        ['Serial', 'Add a MeshCore radio by USB serial device.'],
+        ['TCP / WiFi', 'Add a MeshCore radio by host/IP and TCP port.'],
+        ['BT', 'Add a MeshCore BLE radio by Bluetooth address and optional PIN.'],
+        ['Add', 'Add the selected/configured MeshCore radio to OM.'],
+        ['Enable', 'Allow OM to connect this MC radio.'],
+        ['Disable', 'Keep the MC radio configured but disconnected.'],
+        ['Remove', 'Remove the MC radio from OM settings.'],
+        ['Advert', 'Send the radio advert so other MC nodes learn this radio.'],
+        ['Scan', 'Refresh MC contacts or query radio state where supported.'],
+        ['Import', 'Import a meshcore:// contact share link.'],
+        ['Save Radio Params', 'Write frequency, bandwidth, spreading factor, and coding rate.'],
+        ['Save TX Power', 'Write MC transmit power.'],
+        ['Save Path Mode', 'Write the preferred MC path hash size.'],
+        ['Always use flood routing', 'Force MC DMs and status pings through flood/automatic routing for this radio.'],
+        ['Rename', 'Write MC device name.'],
+        ['Select on map', 'Pick MC device coordinates from the map.'],
+        ['Set Coords', 'Write MC device coordinates.'],
+        ['Debug Events', 'Log raw MC serial events for 60 seconds for troubleshooting.'],
+        ['Set', 'Set or edit an MC channel slot.'],
+        ['Reboot Device', 'Try to reboot the connected MC radio.'],
+        ['Delete History', 'Delete saved MC channel history.']
+      ]
+    },
+    {
+      title: 'Settings - App',
+      tags: 'settings app appearance zoom accent notifications offline maps gps update manual intro cache regions',
+      body: [
+        'Settings -> App controls UI zoom, accent color, notifications, GPS receiver, offline map tiles, map regions, updates, and help.',
+        'The updater is conservative: trusted local/private access only, no dirty worktree, fast-forward only, explicit restart afterward.',
+        'If requirements changed on a Linux system with externally managed Python, the updater retries dependency installation with --break-system-packages after Python reports the PEP 668 block.',
+        'Distance units switch all app distance displays between kilometres and miles.',
+        'Manual OM position is an app-only fallback origin for distances and map context when there is no live GPS fix. It does not write coordinates to a radio by itself.',
+        'Offline maps are stored in browser IndexedDB; they are per browser/profile.'
+      ],
+      buttons: [
+        ['−', 'Decrease UI zoom.'],
+        ['+', 'Increase UI zoom.'],
+        ['Reset', 'Reset accent color to the default.'],
+        ['Distance units', 'Choose kilometres or miles for app distance labels and polar-grid range labels.'],
+        ['Check', 'Fetch/check GitHub origin and show whether an update is available.'],
+        ['Update', 'Pull the latest GitHub main branch if the local checkout is clean and fast-forwardable.'],
+        ['Restart', 'Restart OM after a successful update.'],
+        ['Show Intro', 'Open the first-launch overview.'],
+        ['Manual', 'Open this searchable manual.'],
+        ['New messages', 'Enable or disable in-app/browser message notifications.'],
+        ['New node seen', 'Enable or disable node/contact seen notifications.'],
+        ['Clear cache', 'Delete cached offline map tiles from this browser.'],
+        ['Save current map view', 'Download map tiles for the current map viewport.'],
+        ['Search', 'Find a map region/place for offline tile download.'],
+        ['GPS receiver', 'Select/configure the local GPS source used for OM and node position updates.'],
+        ['Manual OM position', 'Set or clear the app fallback origin used when GPS has no live fix.'],
+        ['Set from map', 'Pick the manual OM position from the map.'],
+        ['Send to nodes now', 'Push the current GPS receiver fix to connected nodes.']
+      ]
+    },
+    {
+      title: 'Overlays and Geofences',
+      tags: 'overlays geojson geofence zones area circle alerts enter leave map import split edit',
+      body: [
+        'Map overlays are local GeoJSON points, lines, areas, or circles. Use them for routes, zones, boundaries, and reference markers.',
+        'Area and circle overlays can become geofences. Geofence alerts can watch MT, MC, or both networks and notify on enter or leave.',
+        'Imported multi-feature GeoJSON renders as one overlay, but can be split into editable single-feature overlays.'
+      ],
+      buttons: [
+        ['Import', 'Import pasted or uploaded GeoJSON overlay data.'],
+        ['Edit', 'Edit a saved single-feature overlay on the map.'],
+        ['Split', 'Split a multi-feature overlay into editable single-feature overlays.'],
+        ['Geofence', 'Enable or disable geofence behavior for an area or circle.'],
+        ['Alert on enter', 'Notify when a tracked node/contact enters the geofence.'],
+        ['Alert on leave', 'Notify when a tracked node/contact leaves the geofence.'],
+        ['Both', 'Track MT and MC positions for this geofence.'],
+        ['MT only', 'Track only Meshtastic positions.'],
+        ['MC only', 'Track only MeshCore positions.']
+      ]
+    },
+    {
+      title: 'Version and Updates',
+      tags: 'version update github build release restart dirty worktree fast forward',
+      body: [
+        'OM versions use YYYY.MM.DD.N. The Settings updater also shows the exact Git build hash.',
+        'Every GitHub push should bump VERSION and add a VERSIONS.md entry.',
+        'If Update is disabled, the local install is probably dirty, ahead of GitHub, not a Git checkout, or already current.',
+        'When requirements.txt changes, the updater installs dependencies after pulling. On PEP 668 externally-managed Python installs, OM retries with --break-system-packages and logs that step in the update output.'
+      ],
+      buttons: [
+        ['Check', 'Refresh version/build status from origin/GitHub.'],
+        ['Update', 'Run a safe fast-forward update. Refuses dirty or locally-ahead installs.'],
+        ['Restart', 'Restart the server so updated code takes effect.']
+      ]
+    },
+    {
+      title: 'Limits and Troubleshooting',
+      tags: 'limits troubleshooting restart hard refresh no path direct usb firmware cache stale reconnect',
+      body: [
+        'After code changes, restart OverMesh and hard-refresh the browser if the UI looks stale.',
+        'Some MC path data depends on firmware and packet type. OM shows all known hops when available, but older packets or missing RX metadata may only show sender/receiver or a partial path.',
+        'If a USB radio stops responding after restart, unplug/replug can be necessary on some devices. Reconnect loops will pick it up again once the OS exposes the serial port.'
+      ],
+      buttons: [
+        ['Restart', 'Cleanly reload the OM server process.'],
+        ['Refresh', 'Reload visible frontend/backend data.'],
+        ['Path refresh', 'Try to refresh route/path data for a selected message/contact.'],
+        ['Clear TR lock', 'Release a stuck MT traceroute lock.'],
+        ['Enable', 'Reconnect a disabled configured radio.'],
+        ['Disable', 'Temporarily disconnect a configured radio without deleting it.']
+      ]
+    }
+  ];
+
+  function _manualText(section) {
+    const buttonText = (section.buttons || []).map(([label, desc]) => `${label} ${desc}`).join(' ');
+    const splitText = (section.split || []).map(group => [
+      group.title,
+      ...(group.body || []),
+      ...(group.buttons || []).map(([label, desc]) => `${label} ${desc}`)
+    ].flat().join(' ')).join(' ');
+    return [section.title, section.tags, ...(section.body || []), buttonText, splitText].join(' ').toLowerCase();
+  }
+
+  function _manualSearchParts(query = '') {
+    const raw = String(query || '').trim().toLowerCase();
+    return {
+      raw,
+      terms: raw.split(/\s+/).filter(Boolean),
+    };
+  }
+
+  function _manualEscapeRegExp(s) {
+    return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function _manualHighlight(text, parts) {
+    let out = escHtml(text || '');
+    const needles = [...new Set([parts?.raw, ...(parts?.terms || [])].filter(s => s && s.length >= 2))]
+      .sort((a, b) => b.length - a.length);
+    if (!needles.length) return out;
+    const re = new RegExp(`(${needles.map(needle => _manualEscapeRegExp(escHtml(needle))).join('|')})`, 'ig');
+    return out.replace(re, '<mark style="background:rgba(250,204,21,0.28);color:var(--text);border-radius:2px;padding:0 2px">$1</mark>');
+  }
+
+  function _manualScore(section, parts) {
+    if (!parts?.terms?.length) return { score: 1, matches: 0 };
+    const title = String(section.title || '').toLowerCase();
+    const tags = String(section.tags || '').toLowerCase();
+    const body = (section.body || []).join(' ').toLowerCase();
+    const buttons = (section.buttons || []).map(([label, desc]) => `${label} ${desc}`).join(' ').toLowerCase();
+    const split = (section.split || []).map(group => [
+      group.title,
+      ...(group.body || []),
+      ...(group.buttons || []).map(([label, desc]) => `${label} ${desc}`)
+    ].flat().join(' ')).join(' ').toLowerCase();
+    const all = [title, tags, body, buttons, split].join(' ');
+    let score = 0;
+    let matches = 0;
+    if (parts.raw && all.includes(parts.raw)) score += 12;
+    parts.terms.forEach(term => {
+      if (!all.includes(term)) return;
+      matches++;
+      if (title.includes(term)) score += 12;
+      if (tags.includes(term)) score += 8;
+      if (buttons.includes(term)) score += 5;
+      if (split.includes(term)) score += 4;
+      if (body.includes(term)) score += 3;
+    });
+    if (matches === parts.terms.length) score += 10;
+    return { score, matches };
+  }
+
+  function _manualButtonHtml(item, parts = null) {
+    const label = Array.isArray(item) ? item[0] : item?.label;
+    const desc = Array.isArray(item) ? item[1] : item?.desc;
+    return `<div style="display:grid;grid-template-columns:minmax(92px,max-content) minmax(0,1fr);gap:9px;align-items:start;margin:6px 0">
+      <span class="btn" style="display:inline-flex;align-items:center;justify-content:center;min-height:24px;padding:2px 9px;font-size:11px;line-height:1.2;cursor:default;pointer-events:none;white-space:nowrap">${_manualHighlight(label || '', parts)}</span>
+      <span style="font-size:12px;line-height:1.4;color:var(--muted);padding-top:2px">${_manualHighlight(desc || '', parts)}</span>
+    </div>`;
+  }
+
+  function _manualSplitHtml(groups, parts = null) {
+    if (!groups?.length) return '';
+    return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-top:9px">
+      ${groups.map(group => `
+        <div style="border:1px solid ${group.kind === 'mc' ? 'rgba(56,189,248,0.25)' : 'rgba(74,222,128,0.22)'};border-radius:8px;padding:10px;background:${group.kind === 'mc' ? 'rgba(56,189,248,0.045)' : 'rgba(74,222,128,0.035)'}">
+          <div style="font-size:12px;font-weight:700;color:${group.kind === 'mc' ? 'var(--mc-color)' : 'var(--accent)'};margin-bottom:7px">${_manualHighlight(group.title || '', parts)}</div>
+          ${(group.body || []).map(line => `<p style="font-size:12px;line-height:1.42;color:var(--text);margin:0 0 7px">${_manualHighlight(line, parts)}</p>`).join('')}
+          ${(group.buttons || []).length ? `<div style="border-top:1px solid var(--border);margin-top:8px;padding-top:6px">${group.buttons.map(btn => _manualButtonHtml(btn, parts)).join('')}</div>` : ''}
+        </div>
+      `).join('')}
+    </div>`;
+  }
+
+  function renderOmManual(query = '') {
+    const el = document.getElementById('manual-results');
+    if (!el) return;
+    const parts = _manualSearchParts(query);
+    const ranked = parts.terms.length
+      ? OM_MANUAL_SECTIONS.map(section => ({ section, ..._manualScore(section, parts) }))
+        .filter(r => r.score > 0 && r.matches > 0)
+        .sort((a, b) => b.score - a.score || a.section.title.localeCompare(b.section.title))
+      : OM_MANUAL_SECTIONS.map(section => ({ section, score: 1, matches: 0 }));
+    const sections = ranked.map(r => r.section);
+    if (!sections.length) {
+      el.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:12px 0">No manual sections match that search.</div>';
+      return;
+    }
+    const summary = parts.terms.length
+      ? `<div style="font-size:12px;color:var(--muted);padding:2px 0 9px">Showing ${sections.length} section${sections.length !== 1 ? 's' : ''} ranked by relevance.</div>`
+      : '';
+    el.innerHTML = summary + sections.map(section => `
+      <div class="manual-section" style="border:1px solid var(--border);background:var(--bg2);border-radius:8px;padding:12px 14px;margin-bottom:10px">
+        <div style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:7px">${_manualHighlight(section.title, parts)}</div>
+        ${(section.body || []).map(line => `<p style="font-size:12px;line-height:1.45;color:var(--text);margin:0 0 7px">${_manualHighlight(line, parts)}</p>`).join('')}
+        ${_manualSplitHtml(section.split, parts)}
+        ${(section.buttons || []).length ? `<div style="border-top:1px solid var(--border);margin-top:9px;padding-top:7px">${section.buttons.map(btn => _manualButtonHtml(btn, parts)).join('')}</div>` : ''}
+      </div>
+    `).join('');
+  }
+
+  function showOmManual() {
+    const modal = document.getElementById('manual-modal');
+    const search = document.getElementById('manual-search');
+    if (search) search.value = '';
+    renderOmManual('');
+    modal?.classList.add('open');
+    setTimeout(() => search?.focus(), 50);
+  }
+
+  function closeOmManual() {
+    document.getElementById('manual-modal')?.classList.remove('open');
+  }
+
+  function closeDmTab(id, event) {
+    event.stopPropagation();
+    const name = Array.from(document.querySelectorAll('.channel-tab[data-dm-id]'))
+      .find(el => el.dataset.dmId === id)?.dataset.dmName || id;
+    document.getElementById('confirm-ok').textContent = 'Delete';
+    showConfirm(`Close DM tab with ${name}?`, () => {
+      closedDmTabs.add(id);
+      saveClosedDmTabs();
+      unreadChannels.delete('dm:' + id);
+      _clearUnreadCount(unreadChannelCounts, 'dm:' + id);
+      if (chatChannel === 'dm:' + id) {
+        chatChannel = chatChannels[0]?.index ?? 0;
+      }
+      updateUnreadDots();
+      renderChannelTabs();
+      renderMessages();
+    });
+  }
+
+  function buildMsgEl(m) {
+    const pad = n => String(n).padStart(2, '0');
+    const d   = new Date(m.ts * 1000);
+    const t   = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const snrStr = (!m.sent && m.snr != null) ? ` · ${m.snr} dB` : '';
+    // Clickable sender name for received non-bot messages
+    const senderSpan = (nodeId, name) =>
+      nodeId && nodeId !== 'bot'
+        ? `<span class="msg-sender-link" onclick="openChatNodeActions('${jsSafe(nodeId)}','${jsSafe(name)}')">${escHtml(name)}</span>`
+        : escHtml(name);
+    const radioLabel = mtRadioLabel(m);
+    const radioPart = radioLabel ? `${escHtml(radioLabel)} · ` : '';
+    if (m.from_id === 'bot') {
+      const target = m.to_name || m.to_id || (m.is_dm ? '?' : `CH${m.channel ?? 0}`);
+      const meta = `<span class="mt-msg-tag" style="background:rgba(167,139,250,0.18);color:#a78bfa;border-color:rgba(167,139,250,0.4)">Bot</span>${radioPart}→ ${escHtml(target)} · ${t}`;
+      const el = document.createElement('div');
+      el.className = 'chat-msg received';
+      if (m.pkt_id) el.dataset.pktId = m.pkt_id;
+      el.innerHTML = `<div class="msg-meta">${meta}</div><div class="msg-bubble" style="background:rgba(167,139,250,0.15);border:1px solid rgba(167,139,250,0.3)">${escHtml(m.text)}</div>`;
+      return el;
+    }
+    // Emoji reaction — fallback standalone render (used only when target message not found in DOM)
+    if (m.is_emoji) {
+      const sender = m.sent ? 'You' : escHtml(m.from_name || m.from_id);
+      const el = document.createElement('div');
+      el.className = 'chat-msg received';
+      el.innerHTML = `<div class="msg-meta">${radioPart}${sender} · ${t}${snrStr}</div><div class="emoji-chip">${escHtml(m.text)}<span class="emoji-label">reaction</span></div>`;
+      return el;
+    }
+    let meta;
+    if (m.is_dm) {
+      meta = m.sent
+        ? `${radioPart}${t} · You → ${escHtml(m.to_name || m.to_id)}`
+        : `${radioPart}${senderSpan(m.from_id, m.from_name)} → You · ${t}${snrStr}`;
+    } else {
+      meta = m.sent
+        ? `${radioPart}${t} · ${escHtml(m.from_name)}`
+        : `${radioPart}${senderSpan(m.from_id, m.from_name)} · ${t}${snrStr}`;
+    }
+    const statusHtml = m.sent
+      ? `<div class="msg-status ${m.status || 'pending'}" data-msgid="${escHtml(m.id)}">${m.status === 'delivered' ? '✓' : m.status === 'failed' ? '✗' : '·'}</div>`
+      : '';
+    const replyBtn = !m.sent
+      ? `<button class="msg-reply-btn" onclick="replyToMt('${jsSafe(m.from_name || '')}')">↩ Reply</button>`
+      : '';
+    const routeMeta = _mtMessageRouteMeta(m);
+    const routeBtn = routeMeta
+      ? `<button class="mt-route-badge ${routeMeta.cached ? 'cached' : ''}" title="${escHtml(routeMeta.detail)}" onclick="event.stopPropagation();showMtMessageRoute('${jsSafe(m.id)}')">${escHtml(routeMeta.label)}</button>`
+      : '';
+    const el = document.createElement('div');
+    el.className = `chat-msg ${m.sent ? 'sent' : 'received'}`;
+    if (m.pkt_id) el.dataset.pktId = m.pkt_id;
+    el.innerHTML = `<div class="msg-meta">${meta}${routeBtn}${replyBtn}</div><div class="msg-bubble">${escHtml(m.text)}</div>${statusHtml}`;
+    return el;
+  }
+
+  function openChatNodeActions(nodeId, nodeName) {
+    const safeId = jsSafe(nodeId);
+    const nodeRadioId = (allNodes.find(n => n.id === nodeId) || {}).radio_id || activeRadioId || '';
+    openModal(nodeName, `
+      <div style="display:flex;flex-direction:column;gap:8px;padding:4px 0">
+        <button class="btn-primary" onclick="closeModal();doTraceroute('${safeId}','${jsSafe(nodeName)}','${jsSafe(nodeRadioId)}')" title="Run traceroute to this node">Traceroute</button>
+        <button class="btn-primary" onclick="closeModal();doDM('${safeId}','${jsSafe(nodeName)}')" title="Send a direct message to this node">Direct Message</button>
+        <button class="btn-primary" onclick="closeModal();doNodeInfo('${safeId}','${jsSafe(nodeName)}')" title="Request node info exchange">Node Info</button>
+        <button class="btn-primary" onclick="closeModal();doReqPos('${safeId}','${jsSafe(nodeName)}')" title="Request GPS position from this node">Request Position</button>
+      </div>`);
+  }
+
+  function renderMessages() {
+    const container = document.getElementById('chat-messages');
+    const isDmTab     = typeof chatChannel === 'string' && chatChannel.startsWith('dm:');
+    const dmContactId = isDmTab ? chatChannel.slice(3) : null;
+    const activeMsgs = getActiveChatMsgs();
+    const filtered = isDmTab
+      ? activeMsgs.filter(m => m.is_dm && ((m.sent || m.from_id === 'bot') ? m.to_id : m.from_id) === dmContactId)
+      : activeMsgs.filter(m => m.channel === chatChannel && !m.is_dm);
+    if (!filtered.length) {
+      container.innerHTML = `<div class="chat-empty">No messages yet</div>`;
+      return;
+    }
+    container.innerHTML = '';
+    let lastDay = null;
+    const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    const pad = n => String(n).padStart(2,'0');
+    filtered.forEach(m => {
+      // Emoji reaction — try to attach to the original message element
+      if (m.is_emoji && m.reply_pkt_id) {
+        const targetEl = container.querySelector(`[data-pkt-id="${m.reply_pkt_id}"]`);
+        if (targetEl) {
+          _attachReactionChip(targetEl, m);
+          return;
+        }
+      }
+      const d = new Date(m.ts * 1000);
+      const dayKey = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+      if (dayKey !== lastDay) {
+        const now = new Date();
+        const isToday = d.getFullYear()===now.getFullYear() && d.getMonth()===now.getMonth() && d.getDate()===now.getDate();
+        const yesterday = new Date(now); yesterday.setDate(now.getDate()-1);
+        const isYesterday = d.getFullYear()===yesterday.getFullYear() && d.getMonth()===yesterday.getMonth() && d.getDate()===yesterday.getDate();
+        const label = isToday ? 'Today' : isYesterday ? 'Yesterday' : `${days[d.getDay()]}, ${pad(d.getDate())}.${pad(d.getMonth()+1)}.${d.getFullYear()}`;
+        const div = document.createElement('div');
+        div.className = 'chat-date-divider';
+        div.innerHTML = `<span>${label}</span>`;
+        container.appendChild(div);
+        lastDay = dayKey;
+      }
+      container.appendChild(buildMsgEl(m));
+    });
+    container.scrollTop = container.scrollHeight;
+  }
+
+  function _attachReactionChip(targetEl, m) {
+    let reactions = targetEl.querySelector('.msg-reactions');
+    if (!reactions) {
+      reactions = document.createElement('div');
+      reactions.className = 'msg-reactions';
+      targetEl.appendChild(reactions);
+    }
+    const chip = document.createElement('span');
+    chip.className = 'emoji-chip';
+    chip.title = `${m.from_name || m.from_id || ''} reacted`;
+    chip.textContent = m.text;
+    reactions.appendChild(chip);
+  }
+
+  function appendMessage(m) {
+    const container = document.getElementById('chat-messages');
+    const empty = container.querySelector('.chat-empty');
+    if (empty) empty.remove();
+    const wasAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 40;
+    // Emoji reaction — try to attach to original message
+    if (m.is_emoji && m.reply_pkt_id) {
+      const targetEl = container.querySelector(`[data-pkt-id="${m.reply_pkt_id}"]`);
+if (targetEl) {
+        _attachReactionChip(targetEl, m);
+        return;
+      }
+    }
+    container.appendChild(buildMsgEl(m));
+    if (wasAtBottom) container.scrollTop = container.scrollHeight;
+  }
+
+  async function sendChat() {
+    const input = document.getElementById('chat-input');
+    const text  = input.value.trim();
+    if (!text) return;
+    const doSend = async () => {
+      input.value = '';
+      try {
+        if (await handleCrossCommand(text)) return;
+        const isDmTab = typeof chatChannel === 'string' && chatChannel.startsWith('dm:');
+        const payload = isDmTab
+          ? { text, channel: 0, dest_id: chatChannel.slice(3), radio_id: activeRadioId }
+          : { text, channel: chatChannel, radio_id: activeRadioId };
+        const r = await fetch('/api/chat/send', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload)
+        });
+        if (!r.ok) throw new Error(await r.text());
+      } catch(e) {
+        input.value = text;
+        showAlert(String(e?.message || e || 'Send failed.'));
+        console.error('Send failed:', e);
+      }
+    };
+    if (_silentMode) { showSilentConfirm('Sending is not possible while Silent Running is enabled.'); return; }
+    await doSend();
+  }
+
+  function updateUnreadDots() {
+    saveUnreadState();
+    _updateDocumentUnreadBadge();
+    // Chat is the 2nd main tab (index 1)
+    const chatTabEl = document.querySelectorAll('.tab')[1];
+    if (chatTabEl) {
+      chatTabEl.classList.toggle('has-unread',    unreadChannels.size > 0 && currentTab !== 'chat');
+      chatTabEl.classList.toggle('has-mc-unread', mcUnreadTabs.size   > 0 && (currentTab !== 'chat' || chatNetwork !== 'mc'));
+    }
+    // MC toggle button in chat toolbar — dot when MC has unread and MT pane is active
+    const btnMt = document.getElementById('chat-net-mt');
+    const btnMc = document.getElementById('chat-net-mc');
+    if (btnMt) btnMt.classList.toggle('has-unread', unreadChannels.size > 0 && chatNetwork !== 'mt');
+    if (btnMc) btnMc.classList.toggle('has-mc-unread', mcUnreadTabs.size > 0 && chatNetwork !== 'mc');
+  }
+
+  // ── Tab switching ──────────────────────────────────────────────────────────
+  function switchTab(name) {
+    currentTab = name;
+    localStorage.setItem('activeTab', name);
+    const names = ['nodes','chat','map','bot','settings'];
+    document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', names[i] === name));
+    document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + name));
+    if (name === 'nodes')    { initNodesFilterPills(); renderLive(); }
+    if (name === 'chat')     { initChat(); updateUnreadDots(); }
+    if (name === 'map')      {
+      initMapFilterPills();
+      if (!window._mapResizeObserver) { window._mapResizeObserver = new ResizeObserver(() => leafletMap && leafletMap.invalidateSize()); window._mapResizeObserver.observe(document.getElementById('map')); }
+      requestAnimationFrame(() => {
+        // rAF 1: set correct map heights so Leaflet reads them correctly on init
+        const panel   = document.getElementById('panel-map');
+        const toolbar = document.getElementById('map-toolbar');
+        const mvm     = document.getElementById('map-view-map');
+        const sp      = document.getElementById('sense-panel');
+        const lp      = document.getElementById('sense-log-panel');
+        const body    = document.getElementById('map-body');
+        if (panel && toolbar) {
+          const h = Math.min(
+            panel.offsetHeight - toolbar.offsetHeight,
+            window.innerHeight - toolbar.getBoundingClientRect().bottom
+          );
+          if (h > 0) {
+            if (body) body.style.height = h + 'px';
+            if (mvm)  mvm.style.height  = h + 'px';
+            if (sp)   sp.style.height   = h + 'px';
+            if (lp)   lp.style.height   = h + 'px';
+          }
+        }
+        const doMapInit = () => {
+          initMap();
+          leafletMap && leafletMap.invalidateSize();
+          updateMapMarkers(allNodes);
+          renderMcMapMarkers();
+          if (!_mapStaticLoaded) {
+            _mapStaticLoaded = true;
+            loadWaypoints();
+            loadNotes();
+            loadGpsSettings();
+          }
+          if (localStorage.getItem('sensePanelOpen') === '1') toggleSensePanel(true);
+        };
+        if (!leafletMap) {
+          // rAF 2: init map only AFTER browser has painted with the correct heights
+          requestAnimationFrame(doMapInit);
+        } else {
+          doMapInit();
+        }
+      });
+    }
+    if (name === 'bot')      { initBot(); }
+    if (name === 'settings') { initSettings(); }
+    updatePipVisibility();
+  }
+
+  // ── View toggle (Live / History) ───────────────────────────────────────────
+  function setView(v) {
+    currentView = v;
+    // Sync search text between the two search bars
+    const liveQ    = document.getElementById('node-search');
+    const historyQ = document.getElementById('history-search');
+    if (v === 'history') historyQ.value = liveQ.value;
+    else                 liveQ.value    = historyQ.value;
+    document.getElementById('btn-live').classList.toggle('active', v === 'live');
+    document.getElementById('btn-history').classList.toggle('active', v === 'history');
+    document.getElementById('live-view').style.display    = v === 'live' ? '' : 'none';
+    document.getElementById('history-view').style.display = v === 'history' ? '' : 'none';
+    document.getElementById('live-controls').style.display    = v === 'live' ? 'flex' : 'none';
+    document.getElementById('history-controls').style.display = v === 'history' ? 'flex' : 'none';
+    if (v === 'history') loadHistory();
+    else renderLive();
+  }
+
+  // ── Favorites ──────────────────────────────────────────────────────────────
+  function toggleFav(nodeId, currentState) {
+    fetch(`/api/db/node/${nodeId}`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ is_favorite: !currentState })
+    }).then(() => {
+      if (currentView === 'live') loadLive();
+      else loadHistory();
+    }).catch(e => console.error('toggleFav failed:', e));
+  }
+
+  function toggleMcFav(id) {
+    if (mcFavs[id]) delete mcFavs[id];
+    else mcFavs[id] = true;
+    localStorage.setItem('mcFavs', JSON.stringify(mcFavs));
+    renderLive();
+  }
+
+  function ignoreMcContact(id, currentlyIgnored) {
+    fetch(`/api/mc/contacts/${encodeURIComponent(id)}/ignore`, {
+      method: 'PATCH', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ignored: !currentlyIgnored})
+    }).then(() => {
+      if (!currentlyIgnored) mcIgnored.add(id); else mcIgnored.delete(id);
+      renderLive();
+      if (currentView === 'history') loadHistory();
+    }).catch(e => console.error('ignoreMcContact failed:', e));
+  }
+
+  function deleteMcContact(id, name, radioId) {
+    document.getElementById('confirm-ok').textContent = 'Delete';
+    showConfirm(`Remove "${name}" from OverMesh? If it is still on the MC radio, OM will remove it there too.`, () => {
+      fetch(`/api/mc/${encodeURIComponent(radioId)}/contacts/${encodeURIComponent(id)}`, {method: 'DELETE'})
+        .then(r => r.json()).then(d => {
+          if (d.error) { showAlert(d.error); return; }
+          if (leafletMap) { try { leafletMap.closePopup(); } catch(e) {} }
+          if (mcContacts[radioId]) {
+            delete mcContacts[radioId][id];
+            Object.entries(mcContacts[radioId]).forEach(([key, c]) => {
+              if (c?.id === id || c?.full_key === id) delete mcContacts[radioId][key];
+            });
+          }
+          mcIgnored.delete(id);
+          renderLive();
+          if (currentView === 'history') loadHistory();
+          renderMcMapMarkers();
+        }).catch(e => console.error('deleteMcContact failed:', e))
+        .finally(() => { document.getElementById('confirm-ok').textContent = 'OK'; });
+    });
+  }
+
+  function toggleMcShowIgnored() {
+    mcShowIgnored = !mcShowIgnored;
+    const btn = document.getElementById('mc-show-ignored-btn');
+    if (btn) { btn.classList.toggle('active', mcShowIgnored); btn.textContent = mcShowIgnored ? '🚫 MC: ignored only' : '🚫 MC ignored'; }
+    loadHistory();
+  }
+
+  function toggleFavFirst() {
+    favFirst = !favFirst;
+    document.getElementById('fav-filter-btn').classList.toggle('active', favFirst);
+    renderLive();
+  }
+
+  function toggleDbFavFirst() {
+    dbFavFirst = !dbFavFirst;
+    document.getElementById('db-fav-first-btn').classList.toggle('active', dbFavFirst);
+    loadHistory();
+  }
+
+  function toggleShowIgnored() {
+    showIgnored = !showIgnored;
+    const btn = document.getElementById('db-show-ignored-btn');
+    btn.classList.toggle('active', showIgnored);
+    btn.textContent = showIgnored ? '🚫 MT: ignored only' : '🚫 MT ignored';
+    loadHistory();
+  }
+
+  function ignoreNode(nodeId, currentState) {
+    fetch(`/api/db/node/${nodeId}`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ is_ignored: !currentState })
+    }).then(() => {
+      if (currentView === 'live') loadLive();
+      else loadHistory();
+    }).catch(e => console.error('ignoreNode failed:', e));
+  }
+
+  // ── Live sort ──────────────────────────────────────────────────────────────
+  function setLiveSort(col) {
+    if (liveSort.col === col) {
+      liveSort.dir *= -1;
+    } else {
+      liveSort.col = col;
+      liveSort.dir = col === 'long_name' ? 1 : -1;
+    }
+    updateLiveSortArrows();
+    renderLive();
+  }
+
+  function updateLiveSortArrows() {
+    document.querySelectorAll('#live-view thead th[data-col]').forEach(th => {
+      const isActive = th.dataset.col === liveSort.col;
+      th.classList.toggle('sort-active', isActive);
+      th.querySelector('.sort-arrow').textContent = isActive ? (liveSort.dir === 1 ? '▲' : '▼') : '';
+    });
+  }
+
+  function setDbSort(col) {
+    if (dbSort.col === col) {
+      dbSort.dir = dbSort.dir === 'desc' ? 'asc' : 'desc';
+    } else {
+      dbSort.col = col;
+      dbSort.dir = col === 'long_name' ? 'asc' : 'desc';
+    }
+    updateDbSortArrows();
+    loadHistory();
+  }
+
+  function updateDbSortArrows() {
+    document.querySelectorAll('#history-view thead th[data-dbcol]').forEach(th => {
+      const isActive = th.dataset.dbcol === dbSort.col;
+      th.classList.toggle('sort-active', isActive);
+      th.querySelector('.sort-arrow').textContent = isActive ? (dbSort.dir === 'asc' ? '▲' : '▼') : '';
+    });
+  }
+
+  function sortedLive(nodes) {
+    const col = liveSort.col, dir = liveSort.dir;
+    const sorted = [...nodes].sort((a, b) => {
+      const av = a[col], bv = b[col];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return (typeof av === 'string' ? av.localeCompare(bv) : av - bv) * dir;
+    });
+    // Local node always pinned to top, then favorites, then rest
+    const local = sorted.filter(n => n.is_local);
+    const rest  = sorted.filter(n => !n.is_local);
+    if (!favFirst) return [...local, ...rest];
+    return [...local, ...rest.filter(n => n.is_favorite), ...rest.filter(n => !n.is_favorite)];
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  function snrClass(v)     { return v == null ? '' : v >= 5 ? 'snr-good' : v >= -5 ? 'snr-ok' : 'snr-bad'; }
+  function battClass(v)    { return v == null ? '' : v >= 60 ? 'battery-high' : v >= 30 ? 'battery-mid' : 'battery-low'; }
+  function battDisplay(v)  { return v == null ? '—' : v === 101 ? '⚡' : v + '%'; }
+  function nodeTs(ts) {
+    ts = Number(ts || 0);
+    if (!Number.isFinite(ts) || ts <= 0) return 0;
+    return ts;
+  }
+  function nodeLastHeardLabel(n) {
+    const ts = nodeTs(n?.last_heard_ts);
+    if (n?._last_heard_live && ts) return senseTimeAgo(ts);
+    return n?.last_heard || (ts ? senseTimeAgo(ts) : '—');
+  }
+  function lhClass(ts) {
+    ts = nodeTs(ts);
+    if (!ts) return '';
+    const age = Date.now()/1000 - ts;
+    if (age < 0) return '';
+    return age < 300 ? 'lh-fresh' : age < 1800 ? '' : 'lh-stale';
+  }
+
+  function clearSearch(id) {
+    const el = document.getElementById(id);
+    el.value = '';
+    el.dispatchEvent(new Event('input'));
+  }
+
+  // ── Render Live ────────────────────────────────────────────────────────────
+  function toggleNodeFilter(type) {
+    if (type === 'mt') {
+      mapShowMt = !mapShowMt;
+      localStorage.setItem('mapShowMt', mapShowMt ? '1' : '0');
+      document.getElementById('nodes-mt-pill')?.classList.toggle('active', mapShowMt);
+      document.getElementById('map-mt-pill')?.classList.toggle('active', mapShowMt);
+      updateMapMarkers(allNodes);
+    } else {
+      mapShowMc = !mapShowMc;
+      localStorage.setItem('mapShowMc', mapShowMc ? '1' : '0');
+      document.getElementById('nodes-mc-pill')?.classList.toggle('active', mapShowMc);
+      document.getElementById('map-mc-pill')?.classList.toggle('active', mapShowMc);
+      renderMcMapMarkers();
+      _updateScanBtnVisibility();
+    }
+    renderLive();
+  }
+
+  function initNodesFilterPills() {
+    document.getElementById('nodes-mt-pill')?.classList.toggle('active', mapShowMt);
+    document.getElementById('nodes-mc-pill')?.classList.toggle('active', mapShowMc);
+  }
+
+  function initMapFilterPills() {
+    document.getElementById('map-mt-pill')?.classList.toggle('active', mapShowMt);
+    document.getElementById('map-mc-pill')?.classList.toggle('active', mapShowMc);
+  }
+
+  function toggleMapFilter(net) {
+    if (net === 'mt') {
+      mapShowMt = !mapShowMt;
+      localStorage.setItem('mapShowMt', mapShowMt ? '1' : '0');
+      document.getElementById('map-mt-pill')?.classList.toggle('active', mapShowMt);
+      document.getElementById('nodes-mt-pill')?.classList.toggle('active', mapShowMt);
+      updateMapMarkers(allNodes);
+    } else {
+      mapShowMc = !mapShowMc;
+      localStorage.setItem('mapShowMc', mapShowMc ? '1' : '0');
+      document.getElementById('map-mc-pill')?.classList.toggle('active', mapShowMc);
+      document.getElementById('nodes-mc-pill')?.classList.toggle('active', mapShowMc);
+      renderMcMapMarkers();
+      _updateScanBtnVisibility();
+    }
+    if (pipOpen) updatePipMarkers(allNodes);
+    renderLive();
+  }
+
+  function renderLive() {
+    const tbody  = document.getElementById('live-tbody');
+    const query  = (document.getElementById('node-search')?.value || '').toLowerCase().trim();
+    const real   = !mapShowMt ? [] : allNodes.filter(n => {
+      if (!n.id) return false;
+      if (!query) return true;
+      return (n.long_name || '').toLowerCase().includes(query) ||
+             (n.short_name || '').toLowerCase().includes(query) ||
+             (n.id || '').toLowerCase().includes(query);
+    });
+    tbody.innerHTML = real.length ? sortedLive(real).map(n => `
+      <tr data-id="${n.id}" class="${n.is_favorite ? 'is-favorite' : ''}">
+        <td><span class="star ${n.is_favorite ? 'starred' : ''}" onclick="toggleFav('${jsSafe(n.id)}', ${n.is_favorite})" title="${n.is_favorite ? 'Remove from favourites' : 'Add to favourites'}">&#9733;</span></td>
+        <td>
+          <div class="name-cell-main">
+            <span class="name-cell-title">${escHtml(n.long_name)}</span>
+          </div>
+          <div class="name-cell-meta">${escHtml([n.hw_model, n.id].filter(Boolean).join(' · '))}</div>
+        </td>
+        <td><span class="short-name">${escHtml(n.short_name)}</span></td>
+        <td class="${snrClass(n.snr)}">${n.snr != null ? n.snr + ' dB' : '—'}</td>
+        <td class="${battClass(n.battery)}">${battDisplay(n.battery)}</td>
+        <td>${n.hops_away != null ? n.hops_away : '—'}</td>
+        <td>${escHtml(_mtNodeDistanceLabel(n))}</td>
+        <td class="${lhClass(n.last_heard_ts)}">${escHtml(nodeLastHeardLabel(n))}</td>
+        <td class="node-actions">
+          <button class="act-btn" title="Traceroute" onclick="doTraceroute('${jsSafe(n.id)}','${jsSafe(n.long_name)}','${jsSafe(n.radio_id || '')}')">TR</button>
+          <button class="act-btn" title="Direct message" onclick="doDM('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">DM</button>
+          <button class="act-btn" title="Request position" onclick="doReqPos('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Pos</button>
+          <button class="act-btn" title="Exchange info" onclick="doNodeInfo('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Info</button>
+          <button class="act-btn" title="Contact details and share data" onclick="openMtNodeDetails('${jsSafe(n.id)}')">Info/Share</button>
+          ${n.latitude != null && n.longitude != null
+            ? `<button class="act-btn" title="Show on map" onclick="centerNodeOnMap('${jsSafe(n.id)}')">Map</button>`
+            : `<button class="act-btn" title="No GPS position" style="opacity:0.35;cursor:default" disabled>Map</button>`}
+        </td>
+        <td>${escHtml(n.radio_name)}</td>
+        <td><span class="ignore-btn" onclick="ignoreNode('${jsSafe(n.id)}', false)" title="Ignore node">&#128683;</span></td>
+      </tr>`).join('') : '';
+    // Append MC contacts
+    const mcEnabled = mapShowMc && Object.keys(mcLastStatus).length > 0 && localStorage.getItem('mcHide') !== '1';
+    const allMcContacts = [];
+    if (mcEnabled) Object.entries(mcContacts).forEach(([rid, contacts]) => {
+      Object.values(contacts).forEach(c => allMcContacts.push({...c, _rid: rid}));
+    });
+    const mcFiltered = allMcContacts.filter(c => {
+      const radioStatus = mcLastStatus[c._rid]?.status || 'disconnected';
+      if (radioStatus !== 'connected' && !c.archived_only) return false;
+      if (mcIgnored.has(c.id)) return false;
+      if (!query) return true;
+      return (c.long_name || '').toLowerCase().includes(query) ||
+             (c.short_name || '').toLowerCase().includes(query) ||
+             (c.id || '').toLowerCase().includes(query);
+    });
+    if (!real.length && !mcFiltered.length) {
+      tbody.innerHTML = '<tr><td colspan="11" class="no-data">No nodes found</td></tr>';
+    }
+    if (mcFiltered.length) {
+      // Sort: favourited MC contacts first when favFirst is on
+      const mcSorted = favFirst
+        ? [...mcFiltered.filter(c => mcFavs[c.id || c.full_key]), ...mcFiltered.filter(c => !mcFavs[c.id || c.full_key])]
+        : mcFiltered;
+      tbody.innerHTML += `<tr><td colspan="11" style="padding:3px 8px;font-size:11px;font-weight:600;color:var(--mc-color);background:rgba(56,189,248,0.07);border-top:1px solid rgba(56,189,248,0.25)">MeshCore</td></tr>`;
+      tbody.innerHTML += mcSorted.map(c => {
+        const cid    = c.id || c.full_key || '';
+        const isFav  = !!mcFavs[cid];
+        const name   = mcContactNameHtml(c, c.long_name || c.name || c.id || '?', c._rid);
+        const sname  = escHtml((c.short_name || '?').slice(0,4).toUpperCase());
+        const path   = c.out_path_len != null ? mcPathHopLabel(c.out_path_len, true) : '—';
+        const last   = c.last_heard_ts ? senseTimeAgo(c.last_heard_ts) : escHtml(c.last_seen || '—');
+        const shortKey = (c.full_key || c.id || '').slice(0, 12);
+        const connectedRadios = Object.values(mcLastStatus).filter(s => s?.status === 'connected').length;
+        const metaRadio = connectedRadios > 1 ? (mcLastStatus[c._rid]?.name || mcLastStatus[c._rid]?.node_name || '') : '';
+        const archiveMeta = c.archived_only ? 'OM archive' : '';
+        const meta   = escHtml([shortKey, metaRadio, archiveMeta].filter(Boolean).join(' · '));
+        const pk     = jsSafe(c.full_key || c.id || '');
+        const rid    = jsSafe(c._rid);
+        const lat    = c.latitude ?? c.lat;
+        const lon    = c.longitude ?? c.lon;
+        const hasCoords = lat != null && lon != null;
+        const isIgnored = mcIgnored.has(cid);
+        const radioConnected = mcLastStatus[c._rid]?.status === 'connected';
+        const dmButton = c.type !== 2
+          ? (radioConnected
+            ? `<button class="act-btn" title="Direct message" onclick="doMcDm('${pk}','${rid}','${jsSafe(c.long_name||'')}')">DM</button>`
+            : `<button class="act-btn" title="MC radio disconnected" style="opacity:0.35;cursor:default" disabled>DM</button>`)
+          : '';
+        const routeButton = radioConnected
+          ? `<button class="act-btn" title="Edit stored route path" onclick="openMcRouteEditor('${jsSafe(cid)}','${rid}')">Route</button>`
+          : `<button class="act-btn" title="MC radio disconnected" style="opacity:0.35;cursor:default" disabled>Route</button>`;
+        const pingButton = radioConnected
+          ? `<button class="act-btn" title="Ping this node (request status)" onclick="doMcPing('${pk}','${rid}','${jsSafe(c.long_name||'')}')">Ping</button>`
+          : `<button class="act-btn" title="MC radio disconnected" style="opacity:0.35;cursor:default" disabled>Ping</button>`;
+        const manageButton = mcCanRemoteManage(c)
+          ? (radioConnected
+            ? `<button class="act-btn" title="Remote repeater/room management" onclick="openMcRemoteManage('${pk}','${rid}','${jsSafe(c.long_name||c.name||cid||'')}')">Manage</button>`
+            : `<button class="act-btn" title="MC radio disconnected" style="opacity:0.35;cursor:default" disabled>Manage</button>`)
+          : '';
+        return `<tr data-id="${jsSafe(cid)}" class="${isFav ? 'is-favorite' : ''}${isIgnored ? ' is-ignored' : ''}">
+          <td><span class="star ${isFav ? 'starred' : ''}" onclick="toggleMcFav('${jsSafe(cid)}')" title="${isFav ? 'Remove from favourites' : 'Add to favourites'}">&#9733;</span></td>
+          <td>
+            <div class="name-cell-main">
+              <span class="name-cell-title">${name}</span>${mcTypeBadge(c.type ?? 0)}${mcRouteIndicator(c, c._rid)}
+            </div>
+            <div class="name-cell-meta">${meta}</div>
+          </td>
+          <td><span class="short-name">${sname}</span></td>
+          <td>—</td><td>—</td>
+          <td>${path}</td>
+          <td>${escHtml(_mcNodeDistanceLabel(c, c._rid))}</td>
+          <td>${last}</td>
+          <td class="node-actions">
+            ${dmButton}
+            ${routeButton}
+            ${hasCoords
+              ? `<button class="act-btn" title="Show on map" onclick="centerMcOnMap(${lat},${lon})">Map</button>`
+              : `<button class="act-btn" title="No coordinates available" style="opacity:0.35;cursor:default" disabled>Map</button>`}
+            ${pingButton}
+            ${manageButton}
+            <button class="act-btn" title="Contact details and share data" onclick="openMcContactShare('${jsSafe(cid)}','${rid}')">Info/Share</button>
+          </td>
+          <td>${escHtml(mcLastStatus[c._rid]?.name || mcLastStatus[c._rid]?.node_name || '')}</td>
+          <td style="display:flex;gap:8px;align-items:center">
+            ${isIgnored
+              ? `<span class="unignore-btn" onclick="ignoreMcContact('${jsSafe(cid)}',true)" title="Unignore">&#128683;</span>`
+              : `<span class="ignore-btn" onclick="ignoreMcContact('${jsSafe(cid)}',false)" title="Ignore">&#128683;</span>`}
+            <span class="delete-btn" onclick="deleteMcContact('${jsSafe(cid)}','${jsSafe(c.long_name||cid)}','${rid}')" title="Remove from OverMesh">&#10005;</span>
+          </td>
+        </tr>`;
+      }).join('');
+    }
+
+    document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false});
+    const countEl = document.getElementById('nodes-count');
+    const parts = [];
+    if (mapShowMt) parts.push(`MT: ${real.length}`);
+    if (mcEnabled) parts.push(`MC: ${mcFiltered.length}`);
+    const countText = parts.join(' · ');
+    if (countEl) countEl.textContent = countText;
+    _lastMtCount = real.length;
+    _lastMcCount = mcFiltered.length;
+    _updateMapNodeCount();
+  }
+
+  let _lastMtCount = 0, _lastMcCount = 0;
+  function _updateNetworkPillVisibility() {
+    const mtConnected = hasConnectedMtRadios();
+    const mcConnected = hasConnectedMcRadios() && localStorage.getItem('mcHide') !== '1';
+    const mapWrap = document.getElementById('map-net-filter');
+    const senseWrap = document.getElementById('sense-net-filter');
+    const mtSense = document.getElementById('sense-net-mt');
+    const mcSense = document.getElementById('sense-net-mc');
+    const senseOpen = document.getElementById('sense-panel')?.style.display !== 'none';
+    if (mtSense) mtSense.style.display = mtConnected ? '' : 'none';
+    if (mcSense) mcSense.style.display = mcConnected ? '' : 'none';
+    if (mapWrap) mapWrap.style.display = (!senseOpen && mtConnected && mcConnected) ? '' : 'none';
+    if (senseWrap) senseWrap.style.display = (senseOpen && mtConnected && mcConnected) ? '' : 'none';
+    if (_senseNet === 'mt' && !mtConnected && mcConnected) _senseNet = 'mc';
+    if (_senseNet === 'mc' && !mcConnected && mtConnected) _senseNet = 'mt';
+  }
+
+  function _updateMapNodeCount() {
+    const el = document.getElementById('map-node-count');
+    if (!el) return;
+    _updateNetworkPillVisibility();
+    const senseOpen = document.getElementById('sense-panel')?.style.display !== 'none';
+    if (senseOpen) {
+      el.textContent = _senseNet === 'mc' ? `MC: ${_lastMcCount}` : `MT: ${_lastMtCount}`;
+    } else {
+      const parts = [];
+      if (_lastMtCount) parts.push(`MT: ${_lastMtCount}`);
+      if (_lastMcCount) parts.push(`MC: ${_lastMcCount}`);
+      el.textContent = parts.join(' · ');
+    }
+  }
+
+  // ── Render History ─────────────────────────────────────────────────────────
+  function filterHistory() {
+    const q = (document.getElementById('history-search')?.value || '').toLowerCase();
+    const filtered = q ? _historyNodes.filter(n =>
+      (n.long_name || '').toLowerCase().includes(q) ||
+      (n.short_name || '').toLowerCase().includes(q) ||
+      (n.id || '').toLowerCase().includes(q)
+    ) : _historyNodes;
+    _renderHistoryRows(filtered);
+  }
+
+  function renderHistory(nodes) {
+    _historyNodes = nodes;
+    const q = (document.getElementById('history-search')?.value || '').toLowerCase();
+    const filtered = q ? nodes.filter(n =>
+      (n.long_name || '').toLowerCase().includes(q) ||
+      (n.short_name || '').toLowerCase().includes(q) ||
+      (n.id || '').toLowerCase().includes(q)
+    ) : nodes;
+    _renderHistoryRows(filtered);
+  }
+
+  function _renderHistoryRows(nodes) {
+    const tbody = document.getElementById('history-tbody');
+
+    // Collect MC contacts for history
+    const allMcContacts = [];
+    Object.keys(mcContacts).forEach(rid => {
+      Object.values(mcContacts[rid] || {}).forEach(c => { allMcContacts.push({...c, _rid: rid}); });
+    });
+    const mcHistFiltered = mcShowIgnored
+      ? allMcContacts.filter(c => mcIgnored.has(c.id || ''))
+      : allMcContacts.filter(c => !mcIgnored.has(c.id || ''));
+
+    if (!nodes.length && !mcHistFiltered.length) {
+      tbody.innerHTML = '<tr><td colspan="11" class="no-data">No nodes in database yet</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = nodes.map(n => `
+      <tr class="${n.is_favorite ? 'is-favorite' : ''} ${n.is_ignored ? 'is-ignored' : ''}">
+        <td><span class="star ${n.is_favorite ? 'starred' : ''}" onclick="toggleFav('${jsSafe(n.id)}', ${!!n.is_favorite})" title="${n.is_favorite ? 'Remove from favourites' : 'Add to favourites'}">&#9733;</span></td>
+        <td>
+          <div class="name-cell-main">
+            <span class="name-cell-title">${escHtml(n.long_name)}</span>
+          </div>
+          ${n.hw_model ? `<div class="name-cell-meta">${escHtml(n.hw_model)}</div>` : ''}
+        </td>
+        <td><span class="short-name">${escHtml(n.short_name)}</span></td>
+        <td>${escHtml(n.first_seen_str)}</td>
+        <td>${escHtml(n.last_seen_str)}</td>
+        <td class="${snrClass(n.last_snr)}">${n.last_snr != null ? n.last_snr + ' dB' : '—'}</td>
+        <td class="${battClass(n.last_battery)}">${battDisplay(n.last_battery)}</td>
+        <td>${n.hops_away != null ? n.hops_away : '—'}</td>
+        <td>${_distanceLabel(n.distance)}</td>
+        <td class="notes-cell">
+          ${n.notes
+            ? `<span class="note-text" title="${escHtml(n.notes)}">${escHtml(n.notes)}</span>`
+            : `<span class="note-placeholder">+ note</span>`}
+          <span class="note-edit-btn" onclick="openNoteEdit('${jsSafe(n.id)}','${jsSafe(n.long_name)}')" title="Edit note">&#9998;</span>
+        </td>
+        <td style="display:flex;gap:8px;align-items:center">
+          ${n.is_ignored
+            ? `<span class="unignore-btn" onclick="ignoreNode('${jsSafe(n.id)}', true)" title="Unignore">&#128683;</span>`
+            : `<span class="ignore-btn"   onclick="ignoreNode('${jsSafe(n.id)}', false)" title="Ignore">&#128683;</span>`}
+          <span class="delete-btn" onclick="deleteNode('${jsSafe(n.id)}', '${jsSafe(n.long_name)}')" title="Delete from device">&#10005;</span>
+        </td>
+      </tr>`).join('');
+
+    if (mcHistFiltered.length) {
+      tbody.innerHTML += `<tr><td colspan="11" style="padding:3px 8px;font-size:11px;font-weight:600;color:var(--mc-color);background:rgba(56,189,248,0.07);border-top:1px solid rgba(56,189,248,0.25)">MeshCore</td></tr>`;
+      tbody.innerHTML += mcHistFiltered.map(c => {
+        const cid       = c.id || c.full_key || '';
+        const isFav     = !!mcFavs[cid];
+        const isIgnored = mcIgnored.has(cid);
+        const name      = mcContactNameHtml(c, c.long_name || c.name || c.id || '?', c._rid);
+        const sname     = escHtml((c.short_name || '?').slice(0,4).toUpperCase());
+        const path      = c.out_path_len != null ? mcPathHopLabel(c.out_path_len, true) : '—';
+        const last      = c.last_heard_ts ? senseTimeAgo(c.last_heard_ts) : escHtml(c.last_seen || '—');
+        const shortKey2  = (c.full_key || c.id || '').slice(0, 12);
+        const connRads2  = Object.values(mcLastStatus).filter(s => s?.status === 'connected').length;
+        const metaRad2   = connRads2 > 1 ? (mcLastStatus[c._rid]?.name || mcLastStatus[c._rid]?.node_name || '') : '';
+        const meta       = escHtml([shortKey2, metaRad2].filter(Boolean).join(' · '));
+        const pk        = jsSafe(c.full_key || c.id || '');
+        const rid       = jsSafe(c._rid);
+        return `<tr class="${isFav ? 'is-favorite' : ''}${isIgnored ? ' is-ignored' : ''}">
+          <td><span class="star ${isFav ? 'starred' : ''}" onclick="toggleMcFav('${jsSafe(cid)}')" title="${isFav ? 'Remove from favourites' : 'Add to favourites'}">&#9733;</span></td>
+          <td>
+            <div class="name-cell-main">
+              <span class="name-cell-title">${name}</span>${mcTypeBadge(c.type ?? 0)}
+            </div>
+            <div class="name-cell-meta">${meta}</div>
+          </td>
+          <td><span class="short-name">${sname}</span></td>
+          <td>—</td><td>${last}</td><td>—</td><td>—</td><td>${path}</td><td>—</td><td>—</td>
+          <td style="display:flex;gap:8px;align-items:center">
+            ${isIgnored
+              ? `<span class="unignore-btn" onclick="ignoreMcContact('${jsSafe(cid)}',true)" title="Unignore">&#128683;</span>`
+              : `<span class="ignore-btn" onclick="ignoreMcContact('${jsSafe(cid)}',false)" title="Ignore">&#128683;</span>`}
+            <span class="delete-btn" onclick="deleteMcContact('${jsSafe(cid)}','${jsSafe(c.long_name||cid)}','${rid}')" title="Delete from device">&#10005;</span>
+          </td>
+        </tr>`;
+      }).join('');
+    }
+  }
+
+  // ── Delete node ────────────────────────────────────────────────────────────
+  function deleteNode(nodeId, name) {
+    document.getElementById('confirm-ok').textContent = 'Delete';
+    showConfirm(`Delete "${name}" from the device and OverMesh history?`, () => {
+      fetch(`/api/db/node/${encodeURIComponent(nodeId)}`, { method: 'DELETE' })
+        .then(r => {
+          if (!r.ok) return;
+          if (leafletMap) {
+            try { leafletMap.closePopup(); } catch(e) {}
+            if (senseMarkers[nodeId]) {
+              try { leafletMap.removeLayer(senseMarkers[nodeId]); } catch(e) {}
+              delete senseMarkers[nodeId];
+            }
+          }
+          allNodes = allNodes.filter(n => n.id !== nodeId);
+          renderLive();
+          updateMapMarkers(allNodes);
+          loadHistory();
+        })
+        .catch(e => console.error('deleteNode failed', e))
+        .finally(() => { document.getElementById('confirm-ok').textContent = 'OK'; });
+    });
+  }
+
+  // ── Notes inline edit ──────────────────────────────────────────────────────
+  function openNoteEdit(nodeId, nodeName) {
+    const node = allNodes.find(n => n.id === nodeId);
+    const current = node?.notes || '';
+    openModal('Note — ' + nodeName, `
+      <textarea class="note-textarea" id="note-ta">${escHtml(current)}</textarea>
+      <div class="note-modal-actions">
+        <button class="btn-secondary" onclick="saveNote('${jsSafe(nodeId)}', true)" title="Clear note">Clear</button>
+        <button class="dm-send" onclick="saveNote('${jsSafe(nodeId)}', false)">Save</button>
+      </div>`);
+    setTimeout(() => { const t = document.getElementById('note-ta'); if(t){t.focus();t.selectionStart=t.value.length;} }, 50);
+  }
+
+  function saveNote(nodeId, clear) {
+    const val = clear ? '' : (document.getElementById('note-ta')?.value.trim() || '');
+    fetch(`/api/db/node/${nodeId}`, {
+      method: 'PATCH',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({notes: val})
+    }).then(r => { if (r.ok) { closeModal(); loadHistory(); } })
+      .catch(e => console.error('saveNote failed:', e));
+  }
+
+  // ── Node count header ──────────────────────────────────────────────────────
+  function updateHeaderNodeCount(nodes) {
+    const el = document.getElementById('header-node-count');
+    if (!el) return;
+    if (!hasConnectedMtRadios() && hasConnectedMcRadios()) {
+      setHeaderNodeCountDivider(false);
+      el.style.display = 'none';
+      return;
+    }
+    if (!hasConnectedMtRadios()) {
+      setHeaderNodeCountDivider(true);
+      el.style.display = '';
+      el.textContent = 'No radios connected';
+      return;
+    }
+    setHeaderNodeCountDivider(false);
+    const real   = nodes.filter(n => n.id);
+    const now    = Date.now() / 1000;
+    const onlineIds = new Set(real.filter(n => n.last_heard_ts && (now - n.last_heard_ts) < 900).map(n => n.id));
+    // Merge sense responses that are within the same 900s window (avoid inflating count with stale sense data)
+    if (_senseResponses) {
+      Object.entries(_senseResponses).forEach(([id, n]) => {
+        if (n.ts && (now - n.ts) < 900) onlineIds.add(id);
+      });
+    }
+    el.style.display = '';
+    el.innerHTML = `Nodes: <span style="color:var(--text)">${real.length}</span> &nbsp;|&nbsp; Online: <span style="color:var(--accent)">${onlineIds.size}</span>`;
+  }
+
+  function updateHeaderMcCount() {
+    const el = document.getElementById('header-mc-count');
+    if (!el) return;
+    const anyConnected = Object.values(mcLastStatus).some(s => s.status === 'connected')
+                         && localStorage.getItem('mcHide') !== '1';
+    if (!anyConnected) { el.style.display = 'none'; return; }
+    let total = 0;
+    Object.entries(mcContacts).forEach(([rid, rc]) => {
+      if (mcLastStatus[rid]?.status !== 'connected') return;
+      total += Object.keys(rc).length;
+    });
+    el.style.display = '';
+    el.innerHTML = `Contacts: <span style="color:var(--mc-color)">${total}</span>`;
+  }
+
+  // ── Data loading ───────────────────────────────────────────────────────────
+  function loadLive() {
+    const mtSelected = [...selectedRadioIds].filter(id => !id.startsWith('mc_'));
+    const radioParam = mtSelected.length === 1 ? `?radio_id=${encodeURIComponent(mtSelected[0])}` : '';
+    fetch(`/api/nodes${radioParam}`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(nodes => {
+      // Preserve recent true live packet timestamps over nodeDB refresh data.
+      const liveCache = {};
+      const nowSec = Math.floor(Date.now() / 1000);
+      allNodes.forEach(n => {
+        const ts = nodeTs(n.last_heard_ts);
+        const liveAt = nodeTs(n._last_heard_live_at);
+        if (ts && n._last_heard_live && liveAt && (nowSec - liveAt) < 900) {
+          liveCache[n.id] = {ts, liveAt};
+        }
+      });
+      nodes.forEach(n => {
+        n.last_heard_ts = nodeTs(n.last_heard_ts);
+        if (liveCache[n.id]) {
+          n.last_heard_ts = liveCache[n.id].ts;
+          n._last_heard_live = true;
+          n._last_heard_live_at = liveCache[n.id].liveAt;
+        }
+        n.last_heard = nodeLastHeardLabel(n);
+      });
+      allNodes = nodes;
+      renderLive();
+      updateMapMarkers(nodes);
+      updateHeaderNodeCount(nodes);
+      updatePipMarkers(nodes);
+      if (_showPolarGrid && !_polarGridLayer) _drawPolarGrid();
+      // Node seen / returned detection
+      const nowTs = Math.floor(Date.now() / 1000);
+      const curIds = new Set(nodes.filter(n => n.id && !n.is_local).map(n => n.id));
+      if (notifReady) {
+        nodes.filter(n => n.id && !n.is_local).forEach(n => {
+          const id = n.id;
+          const prevSeen = _prevMtNodeSeen.get(id) || 0;
+          const curSeen = n.last_heard_ts || 0;
+          if (!prevNodeIds.has(id)) {
+            const label = `${n.long_name} (${n.short_name})`;
+            maybeShowInAppNodeSeen('MT node seen', `<b>${escHtml(label)}</b>`, `toast-node-mt-${id}`);
+            sendNotif('Node online', `${label} appeared on mesh`, `node-${id}`, 'node');
+            playNotificationSound('node');
+          } else if (prevSeen && curSeen > prevSeen && (curSeen - prevSeen) >= _returnedGapThresholdSeconds() && (nowTs - curSeen) <= INAPP_NODE_RECENT_WINDOW_S) {
+            maybeShowInAppNodeReturned('MT node seen again', `<b>${escHtml(n.long_name)}</b> returned after a long gap`, `toast-node-return-mt-${id}`);
+          }
+        });
+      }
+      prevNodeIds = curIds;
+      _prevMtNodeSeen = new Map(nodes.filter(n => n.id && !n.is_local).map(n => [n.id, n.last_heard_ts || 0]));
+      notifReady  = true;
+    }).catch(e => console.error('loadLive failed', e));
+    fetch('/api/status').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(status => {
+      updateRadioSelector(status);
+      _mtStatusSoundPrimed = true;
+      updateHeaderNodeCount(allNodes);
+      updateMcPills();  // re-evaluate chat-net-toggle + node/map pills now that MT status is fresh
+      if (currentTab === 'settings') settingsRefresh();
+    }).catch(e => console.error('status poll failed', e));
+  }
+
+  function loadHistory() {
+    updateDbSortArrows();
+    fetch(`/api/db/nodes?sort=${dbSort.col}&dir=${dbSort.dir}&fav_first=${dbFavFirst ? 1 : 0}&show_ignored=${showIgnored ? 1 : 0}`)
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(renderHistory)
+      .catch(e => console.error('loadHistory failed:', e));
+  }
+
+  function loadCurrent(btn) {
+    const refreshBtn = btn || document.getElementById('header-refresh-btn');
+    if (refreshBtn) {
+      refreshBtn.classList.add('refreshing');
+      const label = refreshBtn.querySelector('.btn-label');
+      if (label) label.textContent = 'Refreshing';
+    }
+    loadLive(); // always refresh node data, status bar, header count, map
+    initMc();   // refresh MC radios, contacts, channels, pills, and map markers
+    loadMcSettingsNodes();
+    if (currentTab === 'nodes' && currentView === 'history') loadHistory();
+    if (currentTab === 'chat')  initChat();
+    if (currentTab === 'bot')   { botInitDone = false; initBot(); }
+    window.clearTimeout(loadCurrent._resetTimer);
+    loadCurrent._resetTimer = window.setTimeout(() => {
+      if (!refreshBtn) return;
+      refreshBtn.classList.remove('refreshing');
+      const label = refreshBtn.querySelector('.btn-label');
+      if (label) label.textContent = 'Refresh';
+    }, 1200);
+  }
+
+  // ── Clock ──────────────────────────────────────────────────────────────────
+  function updateClock() {
+    const now  = new Date();
+    const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    const pad  = n => String(n).padStart(2, '0');
+    document.getElementById('clock-time').textContent =
+      `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+    const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    document.getElementById('clock-date').textContent =
+      `${days[now.getDay()]}, ${now.getDate()} ${months[now.getMonth()]}`;
+  }
+  updateClock();
+  setInterval(updateClock, 1000);
+
+  // ── Node Actions ───────────────────────────────────────────────────────────
+  function openModal(title, bodyHtml) {
+    document.getElementById('modal-title').textContent = title;
+    document.getElementById('modal-body').innerHTML = bodyHtml;
+    document.getElementById('action-modal').classList.add('open');
+  }
+  function closeModal() {
+    document.getElementById('action-modal').classList.remove('open');
+    _editWpId    = null;
+    _editNoteId  = null;
+    _mcRouteEditor = null;
+    if (_nodeInfoTimer) { clearInterval(_nodeInfoTimer); _nodeInfoTimer = null; }
+  }
+
+  function _detailRows(rows) {
+    return `<div class="contact-detail-grid">${rows.map(([k, v]) =>
+      `<div class="k">${escHtml(k)}</div><div class="v">${escHtml(v == null || v === '' ? '—' : String(v))}</div>`
+    ).join('')}</div>`;
+  }
+
+  function btnFeedback(btn, label, ms) {
+    if (!btn) return;
+    ms = ms || 1500;
+    const orig = btn.textContent;
+    btn.textContent = label || '✓ Done';
+    btn.disabled = true;
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, ms);
+  }
+
+  function copyTextById(id, btn) {
+    const el = document.getElementById(id);
+    const text = el ? (el.textContent || el.value || '') : '';
+    if (!text) return;
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).catch(() => showAlert('Copy failed.'));
+    } else {
+      showAlert(text);
+    }
+    if (btn) {
+      const orig = btn.textContent;
+      btn.textContent = '✓ Copied';
+      btn.disabled = true;
+      setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500);
+    }
+  }
+
+  function openMtNodeDetails(nodeId) {
+    const n = allNodes.find(x => x.id === nodeId);
+    if (!n) { showAlert('Node not found.'); return; }
+    const localRows = [
+      ['Network', 'Meshtastic'],
+      ['Name', n.long_name],
+      ['Short', n.short_name],
+      ['Node ID', n.id],
+      ['Hardware', n.hw_model],
+      ['Radio', n.radio_name || n.radio_id],
+      ['SNR', n.snr != null ? `${n.snr} dB` : ''],
+      ['Battery', battDisplay(n.battery)],
+      ['Hops', n.hops_away],
+      ['Distance', _mtNodeDistanceLabel(n)],
+      ['Latitude', n.latitude],
+      ['Longitude', n.longitude],
+      ['Last heard', nodeLastHeardLabel(n)],
+    ];
+    openModal('MT Node Details', `
+      <div id="mt-detail-rows">${_detailRows(localRows)}</div>
+      <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Meshtastic share data</div>
+        <div id="mt-share-qr-area" class="modal-loading" style="padding:10px 0;text-align:left">Preparing contact details…</div>
+      </div>
+    `);
+    const detailBox = document.getElementById('mt-detail-rows');
+    const area = document.getElementById('mt-share-qr-area');
+    const qs = n.radio_id ? `?radio_id=${encodeURIComponent(n.radio_id)}` : '';
+    fetch(`/api/nodes/${encodeURIComponent(nodeId)}/share${qs}`)
+      .then(r => r.json().then(d => ({ok: r.ok, d})))
+      .then(({ok, d}) => {
+        if (!area) return;
+        if (!ok || d.error) {
+          area.innerHTML = `<div class="modal-error" style="padding:0;text-align:left">${escHtml(d.error || 'Share data unavailable.')}</div>`;
+          return;
+        }
+        const details = d.details || {};
+        const rows = [
+          ['Network', details.network || 'Meshtastic'],
+          ['Name', details.name || n.long_name],
+          ['Short', details.short_name || n.short_name],
+          ['Node ID', details.node_id || n.id],
+          ['Node num', details.node_num],
+          ['Pubkey hex', details.public_key_hex],
+          ['Hardware', details.hardware || n.hw_model],
+          ['Role', details.role],
+          ['Radio', details.radio_name || details.radio_id || n.radio_name || n.radio_id],
+          ['SNR', details.snr != null ? `${details.snr} dB` : ''],
+          ['RSSI', details.rssi != null ? `${details.rssi} dBm` : ''],
+          ['Battery', battDisplay(details.battery)],
+          ['Voltage', details.voltage],
+          ['Hops', details.hops_away],
+          ['Distance', _mtNodeDistanceLabel(n)],
+          ['Latitude', details.latitude],
+          ['Longitude', details.longitude],
+          ['Altitude', details.altitude],
+          ['Last heard', nodeLastHeardLabel(n)],
+        ];
+        if (detailBox) detailBox.innerHTML = _detailRows(rows);
+        area.className = '';
+        area.innerHTML = `
+          <div id="mt-share-link" class="share-link-box">${escHtml(d.uri || '')}</div>
+          <div id="mt-share-json" class="share-link-box" style="margin-top:8px">${escHtml(d.json || JSON.stringify(details))}</div>
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+            <button class="btn" onclick="copyTextById('mt-share-link')">Copy share data</button>
+            <button class="btn" onclick="copyTextById('mt-share-json')">Copy JSON</button>
+          </div>`;
+      })
+      .catch(e => {
+        if (area) area.innerHTML = `<div class="modal-error" style="padding:0;text-align:left">Share data export failed: ${escHtml(e.message)}</div>`;
+      });
+  }
+
+  function openMcContactShare(contactId, radioId) {
+    const c = findMcContactByKeyPrefix(contactId, radioId) || {};
+    const fullKey = c.full_key || c.public_key || c.id || contactId;
+    const rid = radioId || c._rid || '';
+    const radio = mcLastStatus[rid] || {};
+    const lat = c.latitude ?? c.lat;
+    const lon = c.longitude ?? c.lon;
+    const rows = [
+      ['Network', 'MeshCore'],
+      ['Name', c.long_name || c.name || c.adv_name],
+      ['Short', c.short_name],
+      ['Type', mcTypeLabel(c.type ?? c.contact_type ?? 0)],
+      ['ID', (c.id || fullKey || '').slice(0, 12)],
+      ['Pubkey hex', fullKey],
+      ['Radio', radio.name || radio.node_name || rid],
+      ['Source', c.archived_only ? 'OM archive' : (c.source_state || 'live')],
+      ['Path', c.out_path || ''],
+      ['Hops', c.out_path_len != null ? mcPathHopLabel(c.out_path_len, true) : ''],
+      ['Distance', _mcNodeDistanceLabel(c, rid)],
+      ['Latitude', lat],
+      ['Longitude', lon],
+      ['Last seen', c.last_heard_ts ? senseTimeAgo(c.last_heard_ts) : (c.last_seen || '')],
+    ];
+    openModal('MC Contact Details', `
+      ${_detailRows(rows)}
+      <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">MeshCore share data</div>
+        <div id="mc-share-area" class="modal-loading" style="padding:10px 0;text-align:left">Preparing contact details…</div>
+      </div>
+    `);
+    const area = document.getElementById('mc-share-area');
+    fetch(`/api/mc/${encodeURIComponent(rid)}/contacts/${encodeURIComponent(fullKey)}/share`)
+      .then(r => r.json().then(d => ({ok: r.ok, d})))
+      .then(({ok, d}) => {
+        if (!area) return;
+        if (!ok || d.error) {
+          area.innerHTML = `<div class="modal-error" style="padding:0;text-align:left">${escHtml(d.error || 'Share data unavailable.')}</div>`;
+          return;
+        }
+        area.className = '';
+        const det = d.details || {};
+        const name = escHtml(det.name || 'Unknown');
+        const keyFull = escHtml(det.full_key || '');
+        const keyShort = keyFull ? `&lt;${keyFull.slice(0,8)}…${keyFull.slice(-8)}&gt;` : '';
+        const qrHtml = d.qr_svg
+          ? `<div style="text-align:center;margin:8px 0 12px">
+               <div style="display:inline-block;background:#fff;padding:8px;border-radius:6px;line-height:0">
+                 <div style="width:180px;height:180px;overflow:hidden">${d.qr_svg}</div>
+               </div>
+               <div style="font-size:11px;color:var(--muted);margin-top:6px">Scan with MeshCore app → Menu → Add Contact → Scan QR Code</div>
+             </div>`
+          : '';
+        area.innerHTML = `
+          <div style="text-align:center;margin-bottom:8px">
+            <div style="font-weight:600;font-size:15px">${name}</div>
+            <div style="font-size:11px;color:var(--muted);font-family:monospace">${keyShort}</div>
+          </div>
+          ${qrHtml}
+          <div id="mc-share-link" class="share-link-box">${escHtml(d.uri || '')}</div>
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+            <button class="btn" onclick="copyTextById('mc-share-link',this)">Copy share link</button>
+          </div>`;
+      })
+      .catch(e => {
+        if (area) area.innerHTML = `<div class="modal-error" style="padding:0;text-align:left">Share data export failed: ${escHtml(e.message)}</div>`;
+      });
+  }
+
+  function trTimerStart(updateFn) {
+    let elapsed = 0;
+    updateFn(elapsed);
+    return setInterval(() => { elapsed++; updateFn(elapsed); }, 1000);
+  }
+
+  function _trBusyText(remaining) {
+    const sec = Math.max(1, parseInt(remaining, 10) || 30);
+    return `Traceroute is temporarily unavailable. A previous TR is still finishing; try again in about ${sec}s.`;
+  }
+
+  function _showTrBusy(bodyEl, remaining) {
+    const msg = _trBusyText(remaining);
+    const isMapPanel = !!bodyEl?.closest?.('.map-panel-body');
+    const clearAction = isMapPanel ? 'unlockTraceroutePanel(this, true)' : 'unlockTraceroute(true)';
+    const clearBtn = `<button class="btn" style="margin-top:10px" onclick="${clearAction}" title="Cancel the pending traceroute and release the OM TR lock">Clear TR lock</button>`;
+    showToast('Traceroute busy', escHtml(msg), 'node', 'traceroute-busy');
+    if (bodyEl) bodyEl.innerHTML = `<div class="modal-error" style="font-weight:600">${escHtml(msg)}</div>${clearBtn}`;
+  }
+
+  async function _trCanStart(bodyEl) {
+    if (_activeTracerouteController) {
+      const elapsed = Math.floor((Date.now() - _activeTracerouteStartedAt) / 1000);
+      _showTrBusy(bodyEl, Math.max(1, 30 - elapsed));
+      return false;
+    }
+    try {
+      const st = await fetch('/api/traceroute/status');
+      const sd = await st.json();
+      if (sd.locked || sd.active) {
+        _showTrBusy(bodyEl, sd.remaining || 30);
+        return false;
+      }
+    } catch(e) { /* proceed; the POST endpoint still enforces the lock */ }
+    return true;
+  }
+
+  async function doTraceroute(nodeId, nodeName, radioId = '') {
+    openModal('Traceroute — ' + nodeName,
+      `<div class="modal-loading" id="tr-modal-status">Checking…</div>`);
+    const modalBody = document.getElementById('modal-body');
+    if (!await _trCanStart(modalBody)) return;
+    document.getElementById('modal-body').innerHTML =
+      `<div class="modal-loading" id="tr-modal-status">Sending traceroute… 30s</div>`;
+    const controller = {};
+    _activeTracerouteController = controller;
+    _activeTracerouteStartedAt = Date.now();
+    const timerId = trTimerStart(s => {
+      const el = document.getElementById('tr-modal-status');
+      if (!el) return;
+      if (s <= 30) el.textContent = `Sending traceroute… ${30 - s}s`;
+      else el.textContent = 'Waiting for traceroute cleanup…';
+    });
+    try {
+      const trRadioId = radioId || activeRadioId;
+      const r = await fetch(`/api/node/${encodeURIComponent(nodeId)}/traceroute`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({radio_id: trRadioId})});
+      clearInterval(timerId);
+      const d = await r.json();
+      if (!r.ok) {
+        const isLocked = r.status === 429;
+        if (isLocked) {
+          _showTrBusy(document.getElementById('modal-body'), d.remaining || 30);
+          return;
+        }
+        document.getElementById('modal-body').innerHTML =
+          `<div class="modal-error">${escHtml(d.error)}</div>`;
+        return;
+      }
+      // snrTowards[i] = SNR of link route[i]→route[i+1]
+      const buildChain = (nodes, snrs) => nodes.map((node, i) => {
+        const isEnd = i === 0 || i === nodes.length - 1;
+        const snr   = snrs?.[i];
+        const nodeEl = `<div class="tr-node${isEnd ? ' tr-end' : ''}">${escHtml(node)}</div>`;
+        const linkEl = i < nodes.length - 1
+          ? `<div class="tr-link ${snr != null ? snrClass(snr) : 'tr-link-muted'}">${snr != null ? `↓ ${snr} dB` : '↓'}</div>`
+          : '';
+        return nodeEl + linkEl;
+      }).join('');
+      document.getElementById('modal-body').innerHTML = `
+        <div class="tr-section">Route to node</div>
+        <div class="tr-chain">${buildChain(d.route, d.snrTowards)}</div>
+        <div class="tr-section">Route back</div>
+        <div class="tr-chain">${buildChain(d.routeBack, d.snrBack)}</div>`;
+    } catch(e) {
+      clearInterval(timerId);
+      document.getElementById('modal-body').innerHTML =
+        `<div class="modal-error">Request failed: ${escHtml(e.message)}</div>`;
+    } finally {
+      if (_activeTracerouteController === controller) _activeTracerouteController = null;
+      _activeTracerouteStartedAt = 0;
+    }
+  }
+
+  async function unlockTraceroute(force = false) {
+    document.getElementById('modal-body').innerHTML =
+      '<div class="modal-loading">Releasing lock…</div>';
+    try {
+      const r = await fetch('/api/traceroute/reset', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({force})
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        document.getElementById('modal-body').innerHTML =
+          `<div class="modal-error">${escHtml(d.error || 'Traceroute is still running.')}</div>`;
+        return;
+      }
+      document.getElementById('modal-body').innerHTML =
+        '<div class="modal-success">Lock released. You can now send a new traceroute.</div>';
+    } catch(e) {
+      document.getElementById('modal-body').innerHTML =
+        `<div class="modal-error">Failed: ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  async function unlockTraceroutePanel(btn, force = false) {
+    const body = btn.closest('.map-panel-body');
+    if (body) body.innerHTML = '<div style="color:var(--muted);font-size:12px">Releasing lock…</div>';
+    try {
+      const r = await fetch('/api/traceroute/reset', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({force})
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        if (body) body.innerHTML = `<div class="modal-error">${escHtml(d.error || 'Traceroute is still running.')}</div>`;
+        return;
+      }
+      // Also clear the frontend controller so the guard in openMapTR stops blocking
+      _activeTracerouteController = null;
+      if (body) body.innerHTML =
+        '<div class="modal-success">Lock released. You can now send a new traceroute.</div>';
+    } catch(e) {
+      if (body) body.innerHTML = `<div class="modal-error">Failed: ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  function doDM(nodeId, nodeName) {
+    openModal('Direct Message — ' + nodeName, `
+      <div class="modal-node">Send a DM to ${escHtml(nodeName)}</div>
+      <div class="dm-row">
+        <input class="dm-input" id="dm-input" placeholder="Type a message..." maxlength="200"
+               onkeydown="if(event.key==='Enter')sendDM('${jsSafe(nodeId)}')">
+        <button class="dm-send" onclick="sendDM('${jsSafe(nodeId)}')">Send</button>
+      </div>
+      <div id="dm-status"></div>`);
+    setTimeout(() => document.getElementById('dm-input')?.focus(), 50);
+  }
+
+  async function sendDM(nodeId) {
+    const input = document.getElementById('dm-input');
+    const msg = input?.value.trim();
+    if (!msg) return;
+    const status = document.getElementById('dm-status');
+    status.innerHTML = '<div class="modal-loading">Sending...</div>';
+    try {
+      const r = await fetch(`/api/node/${encodeURIComponent(nodeId)}/dm`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({message: msg, radio_id: activeRadioId})
+      });
+      const d = await r.json();
+      if (r.ok) {
+        status.innerHTML = '<div class="modal-success">Sent.</div>';
+        input.value = '';
+      } else {
+        status.innerHTML = `<div class="modal-error">${escHtml(d.error)}</div>`;
+      }
+    } catch(e) {
+      status.innerHTML = `<div class="modal-error">Failed: ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  async function doReqPos(nodeId, nodeName) {
+    openModal('Request Position — ' + nodeName,
+      `<div class="modal-loading">Requesting position from ${escHtml(nodeName)}...</div>`);
+    try {
+      const r = await fetch(`/api/node/${encodeURIComponent(nodeId)}/position`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({radio_id: activeRadioId})});
+      const d = await r.json();
+      document.getElementById('modal-body').innerHTML = r.ok
+        ? `<div class="modal-success">Position request sent. Node should broadcast its location shortly.</div>`
+        : `<div class="modal-error">${escHtml(d.error)}</div>`;
+    } catch(e) {
+      document.getElementById('modal-body').innerHTML =
+        `<div class="modal-error">Failed: ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  async function doNodeInfo(nodeId, nodeName) {
+    if (_nodeInfoTimer) { clearInterval(_nodeInfoTimer); _nodeInfoTimer = null; }
+    openModal('Node Info — ' + nodeName,
+      `<div class="modal-loading" id="node-info-status">Requesting telemetry from ${escHtml(nodeName)}… 15s</div>`);
+    let countdown = 15;
+    _nodeInfoTimer = setInterval(() => {
+      countdown--;
+      const el = document.getElementById('node-info-status');
+      if (!el) { clearInterval(_nodeInfoTimer); _nodeInfoTimer = null; return; }
+      if (countdown <= -30) {
+        el.textContent = `No response from ${nodeName}.`;
+        clearInterval(_nodeInfoTimer); _nodeInfoTimer = null;
+      } else {
+        el.textContent = `Requesting telemetry from ${nodeName}\u2026 ${countdown}s`;
+      }
+    }, 1000);
+    try {
+      const r = await fetch(`/api/node/${encodeURIComponent(nodeId)}/info`, {method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({radio_id: activeRadioId})});
+      clearInterval(_nodeInfoTimer); _nodeInfoTimer = null;
+      const d = await r.json();
+      if (!r.ok) {
+        document.getElementById('modal-body').innerHTML = `<div class="modal-error">${escHtml(d.error)}</div>`;
+        return;
+      }
+      const row = (label, val) => val != null && val !== ''
+        ? `<tr><td>${label}</td><td>${val}</td></tr>` : '';
+      const snrC = v => v == null ? '—' : `<span class="${v >= 5 ? 'snr-good' : v >= -5 ? 'snr-ok' : 'snr-bad'}">${v} dB</span>`;
+      const battC = v => v == null ? '—' : `<span class="${v >= 60 ? 'battery-high' : v >= 30 ? 'battery-mid' : 'battery-low'}">${v === 101 ? '⚡ Charging' : v + '%'}</span>`;
+      const fmt2 = v => v != null ? v.toFixed(2) : null;
+      const coordLink = (lat, lon) => lat != null && lon != null
+        ? `<a href="https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=14/${lat}/${lon}" target="_blank" style="color:var(--accent)">${lat.toFixed(5)}, ${lon.toFixed(5)}</a>`
+        : null;
+      const staleNote = d.fresh ? '' :
+        `<div style="color:var(--yellow);font-size:11px;margin-bottom:8px">&#9888; Node did not respond — showing cached data</div>`;
+      document.getElementById('modal-body').innerHTML = staleNote + `
+        <table class="info-table">
+          <tr><td colspan="2" class="info-section">Identity</td></tr>
+          ${row('Long name', escHtml(d.long_name))}
+          ${row('Short name', escHtml(d.short_name))}
+          ${row('HW model', escHtml(d.hw_model))}
+          ${row('Role', escHtml(d.role))}
+          <tr><td colspan="2" class="info-section">Signal</td></tr>
+          ${row('SNR', snrC(d.snr))}
+          ${row('RSSI', d.rssi != null ? d.rssi + ' dBm' : null)}
+          ${row('Hops away', d.hops_away)}
+          ${row('Last heard', escHtml(d.last_heard))}
+          <tr><td colspan="2" class="info-section">Power</td></tr>
+          ${row('Battery', battC(d.battery))}
+          ${row('Voltage', d.voltage != null ? d.voltage.toFixed(2) + ' V' : null)}
+          ${row('Uptime', escHtml(d.uptime))}
+          <tr><td colspan="2" class="info-section">Radio</td></tr>
+          ${row('Ch utilization', d.channel_util != null ? d.channel_util.toFixed(1) + '%' : null)}
+          ${row('Air util TX', d.air_util_tx != null ? d.air_util_tx.toFixed(1) + '%' : null)}
+          <tr><td colspan="2" class="info-section">Location</td></tr>
+          ${row('Coordinates', coordLink(d.latitude, d.longitude))}
+          ${row('Altitude', d.altitude != null ? d.altitude + ' m' : null)}
+          ${d.temperature != null || d.humidity != null || d.pressure != null
+            ? '<tr><td colspan="2" class="info-section">Environment</td></tr>' : ''}
+          ${row('Temperature', d.temperature != null ? fmt2(d.temperature) + ' °C' : null)}
+          ${row('Humidity', d.humidity != null ? fmt2(d.humidity) + '%' : null)}
+          ${row('Pressure', d.pressure != null ? fmt2(d.pressure) + ' hPa' : null)}
+        </table>`;
+    } catch(e) {
+      clearInterval(_nodeInfoTimer);
+      document.getElementById('modal-body').innerHTML =
+        `<div class="modal-error">Failed: ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  function togglePowerMenu(e) {
+    e.stopPropagation();
+    document.getElementById('power-menu').classList.toggle('open');
+  }
+  document.addEventListener('click', () => {
+    document.getElementById('power-menu')?.classList.remove('open');
+  });
+
+  async function restartOverMeshNow(btn) {
+      btnFeedback(btn, '✓ Restarting…', 3000);
+      try { await fetch('/api/restart', {method: 'POST'}); } catch(_) {}
+      document.body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;color:var(--muted)">
+        <div style="font-size:32px">&#x21BA;</div>
+        <div style="font-size:16px">OverMesh will restart in a few seconds…</div>
+      </div>`;
+      setTimeout(() => location.reload(), 8000);
+  }
+
+  function doRestart() {
+    document.getElementById('power-menu')?.classList.remove('open');
+    document.getElementById('confirm-ok').textContent = 'Restart';
+    showConfirm('Restart the OverMesh server?', async () => {
+      await restartOverMeshNow();
+    });
+  }
+
+  function doShutdown() {
+    document.getElementById('power-menu').classList.remove('open');
+    document.getElementById('confirm-ok').textContent = 'Shut down';
+    showConfirm('Shut down the OverMesh server?', async () => {
+      try { await fetch('/api/shutdown', {method: 'POST'}); } catch(_) {}
+      document.body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;color:var(--muted)">
+        <div style="font-size:24px;color:var(--accent)">&#x23FB;</div>
+        <div style="font-size:16px">OverMesh stopped.</div>
+        <div style="font-size:12px;max-width:320px;text-align:center">Restart OverMesh using the same method you normally use on this machine.</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">Or run:</div>
+        <code onclick="navigator.clipboard.writeText('systemctl --user start overmesh')" title="Click to copy" style="font-size:12px;background:var(--bg2);border:1px solid var(--border);padding:4px 10px;border-radius:6px;cursor:pointer;user-select:all">systemctl --user start overmesh</code>
+      </div>`;
+    });
+  }
+
+  // ── Map ────────────────────────────────────────────────────────────────────
+  let leafletMap    = null;
+  let _mapStaticLoaded = false;  // waypoints/notes/GPS only fetched once per session
+  let mapMarkers    = {};
+  let clusterMarkers = {};  // posKey → cluster badge marker
+  let mcClusterMarkers = {};  // posKey → MC cluster badge marker
+  let waypointMarkers = {};
+  let waypointsData   = {};  // wp_id → wp object (for edit modal)
+  let notesData       = {};  // note_id → note object
+  let noteMarkers     = {};  // note_id → leaflet marker
+  let _gpsMarker      = null;
+  let _gpsEnabled     = false;
+  let _localGpsPos    = null;  // {lat, lon} when GPS has fix — set from gps_position SSE
+  let _omManualPos    = null;  // {lat, lon} app-only manual origin when GPS is unavailable
+  let _distanceUnit   = 'km';   // app-wide distance display unit: km or mi
+  let _traceMapLines  = [];
+  let _showTrMap      = (() => { try { const v = localStorage.getItem('mapShowTrSnr'); return v === null ? true : v === '1'; } catch(e) { return true; } })();
+  let _lastTraceData  = null;   // most recent traceroute result object
+  let _traceHistory   = [];     // [{ts, nodeName, data}] last 10, newest first
+  let _polarGridLayer = null;
+  let _showPolarGrid  = (() => { try { return localStorage.getItem('mapShowPolarGrid') === '1'; } catch(e) { return false; } })();
+  let _polarGridColor         = (() => { try { return localStorage.getItem('mapPolarGridColor')    || '#4ade80'; } catch(e) { return '#4ade80'; } })();
+  let _polarGridHardness      = (() => { try { return parseFloat(localStorage.getItem('mapPolarGridHardness')) || 0.6; } catch(e) { return 0.6; } })();
+  let _showIntercardinals     = (() => { try { return localStorage.getItem('mapPolarIntercard') === '1'; } catch(e) { return false; } })();
+  let mapLocked     = false;
+  let mapLabels     = false;
+  let _activeTileLayer = null;
+  let _mapLayerDefs = [];
+  let _mapLayerObjects = {};
+  let _mapLayerMenuPanel = null;
+  let _mapLayerDraft = null;
+  let _mapLayerDraftLayer = null;
+  let _mapLayerVertexMarkers = [];
+  let _mapLayerSelectedVertex = -1;
+  let _geofenceStates = {};
+
+  function _haversineMeters(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const toRad = d => d * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat / 2) ** 2
+      + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    const clamped = Math.max(0, Math.min(1, a));
+    return 2 * R * Math.atan2(Math.sqrt(clamped), Math.sqrt(1 - clamped));
+  }
+
+  function _distanceKm(lat1, lon1, lat2, lon2) {
+    if ([lat1, lon1, lat2, lon2].some(v => v == null || !Number.isFinite(Number(v)))) return null;
+    return _haversineMeters(Number(lat1), Number(lon1), Number(lat2), Number(lon2)) / 1000;
+  }
+
+  function _distanceLabel(km) {
+    const kmNum = Number(km);
+    if (km == null || !Number.isFinite(kmNum)) return '—';
+    const value = _distanceUnit === 'mi' ? kmNum * 0.621371 : kmNum;
+    const unit = _distanceUnit === 'mi' ? 'mi' : 'km';
+    if (value < 10) return `${value.toFixed(1)} ${unit}`;
+    return `${Math.round(value)} ${unit}`;
+  }
+
+  function _distanceStepsKm() {
+    const steps = [1, 2, 5, 10, 25, 50];
+    return _distanceUnit === 'mi'
+      ? steps.map(v => ({km: v / 0.621371, label: `${v}mi`}))
+      : steps.map(v => ({km: v, label: `${v}km`}));
+  }
+
+  function _setDistanceUnit(unit) {
+    _distanceUnit = unit === 'mi' ? 'mi' : 'km';
+    const sel = document.getElementById('settings-distance-unit');
+    if (sel) sel.value = _distanceUnit;
+    renderLive();
+    if (currentView === 'history') loadHistory();
+    renderMcMapMarkers();
+    updateMapMarkers(allNodes);
+    if (_showPolarGrid) _drawPolarGrid();
+  }
+
+  function _normalizeCoordPair(lat, lon) {
+    const latNum = Number(lat);
+    const lonNum = Number(lon);
+    if (!Number.isFinite(latNum) || !Number.isFinite(lonNum)) return null;
+    if (latNum < -90 || latNum > 90 || lonNum < -180 || lonNum > 180) return null;
+    return {lat: latNum, lon: lonNum};
+  }
+
+  function _setOmManualPos(lat, lon) {
+    _omManualPos = _normalizeCoordPair(lat, lon);
+    if (_showPolarGrid) _drawPolarGrid();
+    if (mapLocked && leafletMap) centerOnLocal();
+  }
+
+  function _omLocalOrigin() {
+    if (_localGpsPos) return {lat: _localGpsPos.lat, lon: _localGpsPos.lon};
+    if (_omManualPos) return {lat: _omManualPos.lat, lon: _omManualPos.lon};
+    return null;
+  }
+
+  function _mtLocalPosition(radioId = '') {
+    const origin = _omLocalOrigin();
+    if (origin) return origin;
+    const local = allNodes.find(n => n.is_local && n.latitude != null && n.longitude != null && (!radioId || n.radio_id === radioId))
+      || allNodes.find(n => n.is_local && n.latitude != null && n.longitude != null);
+    return local ? {lat: Number(local.latitude), lon: Number(local.longitude)} : null;
+  }
+
+  function _mcLocalPosition(radioId = '') {
+    const origin = _omLocalOrigin();
+    if (origin) return origin;
+    const st = (radioId && mcLastStatus[radioId]) || (activeMcRadioId && mcLastStatus[activeMcRadioId]) || null;
+    if (st && st.lat != null && st.lon != null) return {lat: Number(st.lat), lon: Number(st.lon)};
+    const any = Object.values(mcLastStatus).find(s => s?.status === 'connected' && s.lat != null && s.lon != null);
+    return any ? {lat: Number(any.lat), lon: Number(any.lon)} : null;
+  }
+
+  function _mtNodeDistanceLabel(node) {
+    if (!node || node.latitude == null || node.longitude == null) return '—';
+    const origin = _mtLocalPosition(node.radio_id || '');
+    if (!origin) return '—';
+    return _distanceLabel(_distanceKm(origin.lat, origin.lon, node.latitude, node.longitude));
+  }
+
+  function _mcNodeDistanceLabel(contact, radioId = '') {
+    if (!contact) return '—';
+    const lat = contact.latitude ?? contact.lat;
+    const lon = contact.longitude ?? contact.lon;
+    if (lat == null || lon == null) return '—';
+    const origin = _mcLocalPosition(radioId || contact._rid || contact.radio_id || '');
+    if (!origin) return '—';
+    return _distanceLabel(_distanceKm(origin.lat, origin.lon, lat, lon));
+  }
+
+  function _mcDistanceFromLocal(contact, radioId = '') {
+    if (!contact) return null;
+    const lat = contact.latitude ?? contact.lat;
+    const lon = contact.longitude ?? contact.lon;
+    if (lat == null || lon == null) return null;
+    const origin = _mcLocalPosition(radioId || contact._rid || contact.radio_id || '');
+    if (!origin) return null;
+    return _distanceKm(origin.lat, origin.lon, lat, lon);
+  }
+
+  function _destPoint(lat, lon, bearingDeg, distM) {
+    const R = 6371000;
+    const br = bearingDeg * Math.PI / 180;
+    const dR = distM / R;
+    const lat1 = lat * Math.PI / 180;
+    const lon1 = lon * Math.PI / 180;
+    const lat2 = Math.asin(Math.sin(lat1) * Math.cos(dR) + Math.cos(lat1) * Math.sin(dR) * Math.cos(br));
+    const lon2 = lon1 + Math.atan2(Math.sin(br) * Math.sin(dR) * Math.cos(lat1), Math.cos(dR) - Math.sin(lat1) * Math.sin(lat2));
+    return {lat: lat2 * 180 / Math.PI, lon: lon2 * 180 / Math.PI};
+  }
+
+  function _circleRing(center, radiusM, steps = 48) {
+    const ring = [];
+    for (let i = 0; i < steps; i++) {
+      const p = _destPoint(center.lat, center.lon, (360 * i) / steps, radiusM);
+      ring.push([p.lon, p.lat]);
+    }
+    if (ring.length) ring.push(ring[0]);
+    return ring;
+  }
+
+  const TILE_LAYERS = {
+    osm:      { label: 'OpenStreetMap', url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 19 },
+    voyager:  { label: 'Voyager',       url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
+    positron: { label: 'Positron',      url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
+    esri_sat: { label: 'Esri Satellite', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles © Esri', maxZoom: 18 },
+    esri_topo:{ label: 'Esri Topo',     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles © Esri', maxZoom: 18 },
+    topo:     { label: 'OpenTopoMap',   url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, © <a href="https://opentopomap.org">OpenTopoMap</a>', maxZoom: 17 },
+  };
+
+  // ── Polar grid ─────────────────────────────────────────────────────────────
+  function _hexToRgba(hex, alpha) {
+    const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+  function _tintColor(hex, v) {
+    // v=1: full color, v→0: blend toward white
+    const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+    const m = c => Math.round(c + (255 - c) * (1 - v));
+    return '#' + [m(r),m(g),m(b)].map(x => x.toString(16).padStart(2,'0')).join('');
+  }
+  function _offsetByKm(lat, lon, km, bearingDeg) {
+    const R = 6371, d = km / R, b = bearingDeg * Math.PI / 180;
+    const φ1 = lat * Math.PI / 180, λ1 = lon * Math.PI / 180;
+    const φ2 = Math.asin(Math.sin(φ1) * Math.cos(d) + Math.cos(φ1) * Math.sin(d) * Math.cos(b));
+    const λ2 = λ1 + Math.atan2(Math.sin(b) * Math.sin(d) * Math.cos(φ1), Math.cos(d) - Math.sin(φ1) * Math.sin(φ2));
+    return [φ2 * 180 / Math.PI, λ2 * 180 / Math.PI];
+  }
+
+  function _clearPolarGrid() {
+    if (_polarGridLayer) { try { leafletMap && leafletMap.removeLayer(_polarGridLayer); } catch(e) {} _polarGridLayer = null; }
+  }
+
+  function _drawPolarGrid() {
+    _clearPolarGrid();
+    if (!_showPolarGrid || !leafletMap) return;
+    const center = _mtLocalPosition();
+    const cLat = center?.lat;
+    const cLon = center?.lon;
+    if (cLat == null) return;
+    _polarGridLayer = L.layerGroup().addTo(leafletMap);
+    const h       = _polarGridHardness;
+    const tinted  = _tintColor(_polarGridColor, h);
+    const gc       = _hexToRgba(tinted, 0.55);
+    const gcB      = _hexToRgba(tinted, 0.80);
+    const gcLabel  = _hexToRgba(tinted, 0.90);
+    const gcKmLabel = `rgba(220,225,220,${0.55 + h * 0.30})`; // near-neutral, hardness-scaled opacity
+    const wRing   = 0.7  + h * 0.9;
+    const wMajor  = 0.9  + h * 1.1;
+    const wMinor  = 0.4  + h * 0.7;
+    _distanceStepsKm().forEach(({km, label}) => {
+      L.circle([cLat, cLon], {radius: km * 1000, color: gc, weight: wRing, fillOpacity: 0, interactive: false}).addTo(_polarGridLayer);
+      const lPt = _offsetByKm(cLat, cLon, km, 0);
+      L.marker(lPt, {icon: L.divIcon({html: `<div style="font-size:11px;color:${gcKmLabel};white-space:nowrap;font-weight:700;text-shadow:0 0 3px #000,0 0 6px #000,0 0 10px #000;letter-spacing:0.02em">${label}</div>`, iconAnchor: [-2, 8], className: ''}), interactive: false}).addTo(_polarGridLayer);
+    });
+    const cardinals = {0:'N', 90:'E', 180:'S', 270:'W'};
+    for (let b = 0; b < 360; b += 30) {
+      const isMajor = b % 90 === 0;
+      L.polyline([[cLat, cLon], _offsetByKm(cLat, cLon, 55, b)], {color: isMajor ? gcB : gc, weight: isMajor ? wMajor : wMinor, interactive: false, dashArray: isMajor ? null : '3,6'}).addTo(_polarGridLayer);
+      if (cardinals[b]) {
+        L.marker(_offsetByKm(cLat, cLon, 52, b), {icon: L.divIcon({html: `<div style="font-size:11px;color:${gcLabel};font-weight:700;text-shadow:0 0 4px #000">${cardinals[b]}</div>`, iconAnchor: [6, 8], className: ''}), interactive: false}).addTo(_polarGridLayer);
+      }
+    }
+    if (_showIntercardinals) {
+      const wIntercard = wMinor + (wMajor - wMinor) * 0.55;
+      const intercardinals = {45:'NE', 135:'SE', 225:'SW', 315:'NW'};
+      [45, 135, 225, 315].forEach(b => {
+        L.polyline([[cLat, cLon], _offsetByKm(cLat, cLon, 55, b)], {color: gcB, weight: wIntercard, interactive: false, dashArray: '8,6'}).addTo(_polarGridLayer);
+        L.marker(_offsetByKm(cLat, cLon, 52, b), {icon: L.divIcon({html: `<div style="font-size:10px;color:${gcLabel};font-weight:700;text-shadow:0 0 4px #000">${intercardinals[b]}</div>`, iconAnchor: [8, 8], className: ''}), interactive: false}).addTo(_polarGridLayer);
+      });
+    }
+  }
+
+  function togglePolarGrid() {
+    _showPolarGrid = !_showPolarGrid;
+    try { localStorage.setItem('mapShowPolarGrid', _showPolarGrid ? '1' : '0'); } catch(e) {}
+    document.getElementById('map-polar-btn')?.classList.toggle('active', _showPolarGrid);
+    _drawPolarGrid();
+  }
+
+  function setPolarGridColor(color) {
+    _polarGridColor = color;
+    try { localStorage.setItem('mapPolarGridColor', color); } catch(e) {}
+    document.querySelectorAll('#pgpicker-grid .cpicker-sw').forEach(s => {
+      s.classList.toggle('selected', s.dataset.color === color);
+    });
+    const hexEl  = document.getElementById('pgpicker-hex');
+    const prevEl = document.getElementById('pgpicker-preview');
+    if (hexEl)  hexEl.value = color;
+    if (prevEl) prevEl.style.background = color;
+    if (_showPolarGrid) _drawPolarGrid();
+  }
+
+  function setPolarGridHardness(v) {
+    _polarGridHardness = Math.max(0.1, Math.min(1, v));
+    try { localStorage.setItem('mapPolarGridHardness', String(_polarGridHardness)); } catch(e) {}
+    if (_showPolarGrid) _drawPolarGrid();
+  }
+
+  function toggleIntercardinals() {
+    _showIntercardinals = !_showIntercardinals;
+    try { localStorage.setItem('mapPolarIntercard', _showIntercardinals ? '1' : '0'); } catch(e) {}
+    const chk = document.getElementById('pg-intercard-check');
+    if (chk) chk.textContent = _showIntercardinals ? '✓' : '';
+    if (_showPolarGrid) _drawPolarGrid();
+  }
+
+  function _pgpickerBuildGrid() {
+    const grid = document.getElementById('pgpicker-grid');
+    if (!grid) return;
+    grid.innerHTML = '';
+    PG_PALETTE.forEach(c => {
+      const d = document.createElement('div');
+      d.className = 'cpicker-sw' + (c === _polarGridColor ? ' selected' : '');
+      d.style.background = c;
+      d.dataset.color = c;
+      d.onclick = () => setPolarGridColor(c);
+      grid.appendChild(d);
+    });
+    const hexEl  = document.getElementById('pgpicker-hex');
+    const prevEl = document.getElementById('pgpicker-preview');
+    if (hexEl)  hexEl.value = _polarGridColor;
+    if (prevEl) prevEl.style.background = _polarGridColor;
+  }
+
+  function pgpickerHexInput(val) {
+    if (/^#[0-9a-fA-F]{6}$/.test(val)) setPolarGridColor(val);
+  }
+
+  function openPolarCustomize() {
+    _pgpickerBuildGrid();
+    const slider = document.getElementById('polar-hardness-slider');
+    if (slider) slider.value = _polarGridHardness;
+    const chk = document.getElementById('pg-intercard-check');
+    if (chk) chk.textContent = _showIntercardinals ? '✓' : '';
+    document.getElementById('polar-customize-modal').classList.add('open');
+  }
+
+  function closePolarCustomize() {
+    document.getElementById('polar-customize-modal').classList.remove('open');
+  }
+
+  // ── SNR traceroute map paths ────────────────────────────────────────────────
+  function _snrLineColor(snr) {
+    if (snr == null) return '#a78bfa';
+    if (snr >= 0)    return '#4ade80';
+    if (snr >= -10)  return '#facc15';
+    return '#f87171';
+  }
+  function _snrLineOpacity(snr) {
+    if (snr == null) return 0.55;
+    return 0.45 + Math.max(0, Math.min(1, (snr + 20) / 35)) * 0.4;
+  }
+
+  function _nodeLatLon(nodeId) {
+    if (!nodeId) return null;
+    if (nodeId === 'local') {
+      const origin = _mtLocalPosition();
+      return origin ? [origin.lat, origin.lon] : null;
+    }
+    const n = allNodes.find(n => n.id === nodeId && n.latitude != null);
+    return n ? [n.latitude, n.longitude] : null;
+  }
+
+  function _clearTraceLines() {
+    _traceMapLines.forEach(l => { try { leafletMap && leafletMap.removeLayer(l); } catch(e) {} });
+    _traceMapLines = [];
+  }
+
+  function _currentMtTraceMapData() {
+    return _lastTraceData;
+  }
+
+  function _drawTraceRouteOnMap(trData) {
+    _clearTraceLines();
+    if (!_showTrMap || !leafletMap) return;
+
+    // Build per-segment SNR lookups for both directions so each tooltip can show both values
+    const _segKey = (a, b) => [a, b].sort().join('|');
+    const toSnrMap = {}, backSnrMap = {};
+    (trData.routeIds || []).forEach((id, i, arr) => {
+      if (i < arr.length - 1) toSnrMap[_segKey(id, arr[i + 1])] = trData.snrTowards?.[i];
+    });
+    (trData.routeBackIds || []).forEach((id, i, arr) => {
+      if (i < arr.length - 1) backSnrMap[_segKey(id, arr[i + 1])] = trData.snrBack?.[i];
+    });
+
+    const drawPath = (ids, snrs, dashed) => {
+      if (!ids || ids.length < 2) return;
+
+      // Dots at every node with a known position
+      ids.forEach((id, i) => {
+        const pt = _nodeLatLon(id);
+        if (!pt) return;
+        const snr = i < (snrs?.length || 0) ? snrs[i] : (i > 0 ? snrs?.[i - 1] : null);
+        _traceMapLines.push(L.circleMarker(pt, {radius: 6, color: '#111', fillColor: _snrLineColor(snr ?? null), fillOpacity: 1, weight: 1.5, interactive: false}).addTo(leafletMap));
+      });
+
+      // Draw segments between consecutive known-position nodes.
+      // If one or more intermediate nodes lack GPS we draw a thinner "bypass" line across them
+      // so the full path shape is always visible on the map.
+      let prevKnown = null; // { idx, pos }
+      for (let j = 0; j < ids.length; j++) {
+        const pos = _nodeLatLon(ids[j]);
+        if (!pos) continue;
+        if (prevKnown !== null) {
+          const pi = prevKnown.idx, p1 = prevKnown.pos;
+          const skipped = j - pi - 1; // intermediate hops without GPS
+
+          // Average SNR across all covered hops (pi … j-1)
+          const coveredSnrs = snrs ? snrs.slice(pi, j).filter(v => v != null) : [];
+          const snr = coveredSnrs.length ? coveredSnrs.reduce((a, b) => a + b, 0) / coveredSnrs.length : null;
+
+          const color    = _snrLineColor(snr);
+          const weight   = skipped > 0 ? 2 : 4;
+          const opacity  = skipped > 0 ? 0.45 : _snrLineOpacity(snr);
+          const dashArr  = dashed ? '6,5' : (skipped > 0 ? '3,8' : null);
+
+          // Shadow
+          _traceMapLines.push(L.polyline([p1, pos], {color: '#111', weight: weight + 3, opacity: 0.4, lineCap: 'round', interactive: false}).addTo(leafletMap));
+
+          const seg = L.polyline([p1, pos], {color, weight, opacity, dashArray: dashArr, lineCap: 'round'});
+
+          // Tooltip — one line per covered hop that has SNR data
+          const tipLines = [];
+          for (let h = pi; h < j; h++) {
+            const k = _segKey(ids[h], ids[h + 1]);
+            const snrTo   = toSnrMap[k];
+            const snrBack = backSnrMap[k];
+            if (snrTo != null || snrBack != null) {
+              tipLines.push(`To: ${snrTo != null ? snrTo + ' dB' : '—'} &nbsp; Back: ${snrBack != null ? snrBack + ' dB' : '—'}`);
+            }
+          }
+          if (skipped > 0) tipLines.push(`<em style="color:#a78bfa">${skipped} hop${skipped > 1 ? 's' : ''} — no GPS</em>`);
+          if (tipLines.length) seg.bindTooltip(tipLines.join('<br>'), {sticky: true, direction: 'top'});
+
+          seg.addTo(leafletMap);
+          _traceMapLines.push(seg);
+
+          // Wing markers — same approved style as MC paths, with pixel-size stable across zoom.
+          const wingArm = _mcWingArm('trace') * 1.28;
+          const wCount  = Math.max(1, Math.min(6, Math.ceil(_mcWingCount(p1, pos) * 0.55)));
+          const wingOpacity = skipped > 0 ? 0.45 : 1.0;
+          Array.from({length: wCount}, (_, idx) => (idx + 1) / (wCount + 1)).forEach(t => {
+            const wingPts = _mcWingLatLngs(p1, pos, t, wingArm, 19);
+            if (wingPts.length === 3) {
+              _traceMapLines.push(L.polyline(wingPts, {
+                color: '#111', weight: weight + 3, opacity: skipped > 0 ? 0.32 : 0.52,
+                dashArray: null, lineCap: 'round', lineJoin: 'round', interactive: false
+              }).addTo(leafletMap));
+              _traceMapLines.push(L.polyline(wingPts, {
+                color, weight: (skipped > 0 ? 2 : 4) + 1, opacity: wingOpacity,
+                dashArray: null, lineCap: 'round', lineJoin: 'round', interactive: false
+              }).addTo(leafletMap));
+            }
+          });
+        }
+        prevKnown = { idx: j, pos };
+      }
+    };
+    drawPath(trData.routeIds,     trData.snrTowards, false);
+    drawPath(trData.routeBackIds, trData.snrBack,    true);
+  }
+
+  function toggleTrMap() {
+    _showTrMap = !_showTrMap;
+    try { localStorage.setItem('mapShowTrSnr', _showTrMap ? '1' : '0'); } catch(e) {}
+    if (!_showTrMap) {
+      _clearTraceLines();
+      _activeMtRouteKey = null;
+      _activeMtRouteEntryKey = null;
+      _mtRefreshSenseRouteSelection();
+    }
+    else if (_lastTraceData) _drawTraceRouteOnMap(_lastTraceData);
+  }
+
+  function _mtCachedTraceForNode(nodeId, radioId = null) {
+    if (!nodeId || nodeId === 'local' || nodeId === '^all') return null;
+    return _traceHistory.find(e => {
+      if (!e?.data) return false;
+      if (radioId && e.radioId && e.radioId !== radioId) return false;
+      const ids = e.data.routeIds || [];
+      const backIds = e.data.routeBackIds || [];
+      return e.nodeId === nodeId || ids[ids.length - 1] === nodeId || backIds[0] === nodeId;
+    }) || null;
+  }
+
+  function _mtHopRouteLabel(hops) {
+    if (hops == null) return 'route';
+    return hops === 0 ? 'direct' : `${hops} hop${hops !== 1 ? 's' : ''}`;
+  }
+
+  function _mtCachedTraceHopSummary(cached) {
+    if (!cached?.data) return null;
+    const routeIds = cached.data.routeIds || [];
+    const backIds = cached.data.routeBackIds || [];
+    const routeHops = routeIds.length >= 2 ? Math.max(0, routeIds.length - 2) : null;
+    const backHops = backIds.length >= 2 ? Math.max(0, backIds.length - 2) : null;
+    const fmt = h => h === 0 ? '0' : String(h);
+    if (routeHops != null && backHops != null && routeHops !== backHops) {
+      return {
+        label: `${fmt(routeHops)}/${fmt(backHops)} hops`,
+        detail: `${_mtHopRouteLabel(routeHops)} toward node, ${_mtHopRouteLabel(backHops)} back`,
+        hops: Math.max(routeHops, backHops),
+      };
+    }
+    const hops = routeHops ?? backHops;
+    if (hops == null) return null;
+    return {
+      label: _mtHopRouteLabel(hops),
+      detail: `${_mtHopRouteLabel(hops)} cached traceroute`,
+      hops,
+    };
+  }
+
+  function _mtRouteKey(targetId, radioId = '') {
+    return `${radioId || activeRadioId || 'mt'}:${targetId || ''}`;
+  }
+
+  function _mtRefreshSenseRouteSelection() {
+    document.querySelectorAll('#sense-log > .mt-route-selected').forEach(el => el.classList.remove('mt-route-selected'));
+    if (!_activeMtRouteEntryKey) return;
+    document.querySelectorAll('#sense-log > div[data-mt-entry-key]').forEach(el => {
+      if (el.dataset.mtEntryKey === _activeMtRouteEntryKey) el.classList.add('mt-route-selected');
+    });
+  }
+
+  function _mtClearSelectedRoute() {
+    _clearTraceLines();
+    _activeMtRouteKey = null;
+    _activeMtRouteEntryKey = null;
+    _mtHoverRouteKey = null;
+    _mtHoverHadTraceLines = false;
+    _mtHoverPrevShowTrMap = null;
+    _mtRefreshSenseRouteSelection();
+  }
+
+  function _mtSetTraceMapVisible(show) {
+    _showTrMap = !!show;
+    try { localStorage.setItem('mapShowTrSnr', _showTrMap ? '1' : '0'); } catch(_) {}
+  }
+
+  function _mtMessageRouteMeta(m) {
+    if (!m || m.is_emoji) return null;
+    const targetId = m.sent ? (m.to_id || null) : (m.from_id || null);
+    if (!targetId || targetId === 'local' || targetId === '^all') return null;
+    const hopNum = m.hops != null ? Number(m.hops) : NaN;
+    const hasHopCount = Number.isFinite(hopNum) && hopNum >= 0;
+    const cached = _mtCachedTraceForNode(targetId, m.radio_id || activeRadioId);
+    if (!hasHopCount && !cached) return null;
+    const routeIds = cached?.data?.routeIds || [];
+    const inferred = routeIds.length >= 2 ? Math.max(0, routeIds.length - 2) : null;
+    const hops = hasHopCount ? hopNum : inferred;
+    const label = _mtHopRouteLabel(hops);
+    return {
+      targetId,
+      label,
+      hops,
+      cached,
+      source: cached ? (hasHopCount ? 'packet hops + cached route' : 'cached route') : 'packet hop count',
+      detail: cached
+        ? `Show cached traceroute for ${cached.nodeName || targetId}`
+        : `${hops === 0 ? 'Direct packet' : `${hops} hop${hops !== 1 ? 's' : ''}`} reported by packet metadata`,
+    };
+  }
+
+  function showMtMessageRoute(msgId) {
+    const m = chatMsgs.find(x => x.id === msgId);
+    const meta = _mtMessageRouteMeta(m);
+    if (!meta) return;
+    const routeKey = _mtRouteKey(meta.targetId, m?.radio_id || activeRadioId);
+    if (_activeMtRouteKey === routeKey) {
+      _mtClearSelectedRoute();
+      return;
+    }
+    if (meta.cached?.data) {
+      switchTab('map');
+      if (!_showTrMap) {
+        _showTrMap = true;
+        try { localStorage.setItem('mapShowTrSnr', '1'); } catch(_) {}
+      }
+      _drawTraceRouteOnMap(meta.cached.data);
+      _lastTraceData = meta.cached.data;
+      _activeMtRouteKey = routeKey;
+      _activeMtRouteEntryKey = null;
+      _mtRefreshSenseRouteSelection();
+      const targetPos = _nodeLatLon(meta.targetId);
+      if (targetPos && leafletMap) leafletMap.panTo(targetPos);
+    } else {
+      showToast('MT route', escHtml(meta.detail), 'node', `mt-route-${msgId}`);
+    }
+  }
+
+  function _mtSenseRouteMeta(n) {
+    if (!n?.from_id || n.from_id === 'local') return null;
+    const msg = n.msg_id ? chatMsgs.find(m => m.id === n.msg_id) : null;
+    if (msg) return _mtMessageRouteMeta(msg);
+    const hopNum = n.hops != null ? Number(n.hops) : NaN;
+    const hasHopCount = Number.isFinite(hopNum) && hopNum >= 0;
+    const cached = _mtCachedTraceForNode(n.from_id, n.radio_id || activeRadioId);
+    if (!hasHopCount && !cached) return null;
+    const cachedSummary = _mtCachedTraceHopSummary(cached);
+    const inferred = cachedSummary?.hops ?? null;
+    const hops = hasHopCount ? hopNum : inferred;
+    const label = cachedSummary ? cachedSummary.label : _mtHopRouteLabel(hops);
+    return {
+      targetId: n.from_id,
+      label,
+      hops,
+      cached,
+      detail: cached
+        ? `Show cached traceroute for ${cached.nodeName || n.from_id}: ${cachedSummary?.detail || 'route available'}`
+        : 'Packet hop count only',
+    };
+  }
+
+  function showMtSenseRoute(fromId, radioId = '', entryKey = '') {
+    const routeKey = _mtRouteKey(fromId, radioId || activeRadioId);
+    if (_activeMtRouteKey === routeKey && _activeMtRouteEntryKey === entryKey) {
+      _mtClearSelectedRoute();
+      return;
+    }
+    const cached = _mtCachedTraceForNode(fromId, radioId || activeRadioId);
+    if (!cached?.data) {
+      showToast('MT route', 'No cached traceroute is available for this node yet.', 'node', `mt-sense-route-${fromId}`);
+      return;
+    }
+    switchTab('map');
+    if (!_showTrMap) {
+      _showTrMap = true;
+      try { localStorage.setItem('mapShowTrSnr', '1'); } catch(_) {}
+    }
+    _drawTraceRouteOnMap(cached.data);
+    _lastTraceData = cached.data;
+    _activeMtRouteKey = routeKey;
+    _activeMtRouteEntryKey = entryKey || routeKey;
+    _mtRefreshSenseRouteSelection();
+    const targetPos = _nodeLatLon(fromId);
+    if (targetPos && leafletMap) leafletMap.panTo(targetPos);
+  }
+
+  function previewMtSenseRoute(fromId, radioId = '', on = true) {
+    const routeKey = _mtRouteKey(fromId, radioId || activeRadioId);
+    if (_activeMtRouteKey) return;
+    if (!on) {
+      if (_mtHoverRouteKey !== routeKey) return;
+      const restoreData = _mtHoverHadTraceLines ? _currentMtTraceMapData() : null;
+      _mtHoverRouteKey = null;
+      if (_mtHoverPrevShowTrMap === false) _mtSetTraceMapVisible(false);
+      else if (_mtHoverPrevShowTrMap === true) _mtSetTraceMapVisible(true);
+      if (restoreData && _showTrMap) _drawTraceRouteOnMap(restoreData);
+      else _clearTraceLines();
+      _mtHoverHadTraceLines = false;
+      _mtHoverPrevShowTrMap = null;
+      return;
+    }
+    const cached = _mtCachedTraceForNode(fromId, radioId || activeRadioId);
+    if (!cached?.data) return;
+    _mtHoverRouteKey = routeKey;
+    _mtHoverHadTraceLines = _traceMapLines.length > 0;
+    _mtHoverPrevShowTrMap = _showTrMap;
+    if (!_showTrMap) _mtSetTraceMapVisible(true);
+    _drawTraceRouteOnMap(cached.data);
+  }
+
+  function _mtSensePacketKey(n) {
+    if (!n?.pkt_id) return '';
+    return `sense-mt-pkt-${String(n.radio_id || activeRadioId || 'mt').replace(/[^A-Za-z0-9_-]/g, '_')}-${String(n.from_id || '').replace(/[^A-Za-z0-9_-]/g, '_')}-${n.pkt_id}`;
+  }
+
+  function setTileLayer(key) {
+    if (!leafletMap) return;
+    const def = TILE_LAYERS[key] || TILE_LAYERS.osm;
+    if (_activeTileLayer) {
+      // Update cache prefix BEFORE setUrl so new tiles use the right key
+      _activeTileLayer.options.cachePrefix = key;
+      _activeTileLayer.setUrl(def.url);
+      if (leafletMap.attributionControl) {
+        leafletMap.attributionControl.removeAttribution(_activeTileLayer.options.attribution);
+        leafletMap.attributionControl.addAttribution(def.attribution);
+      }
+      _activeTileLayer.options.attribution = def.attribution;
+      _activeTileLayer.options.maxZoom     = def.maxZoom;
+    } else {
+      _activeTileLayer = new OfflineTileLayer(def.url, { attribution: def.attribution, maxZoom: def.maxZoom, cachePrefix: key });
+      _activeTileLayer.addTo(leafletMap);
+    }
+    try { localStorage.setItem('mapTileLayer', key); } catch(e) {}
+    document.querySelectorAll('.map-layer-opt').forEach(el => el.classList.toggle('active', el.dataset.layer === key));
+    const btn = document.getElementById('map-layer-btn');
+    if (btn) btn.classList.toggle('active', key !== 'osm');
+    // Update the offline save label so it's clear which layer you're saving
+    const lbl = document.getElementById('tile-save-layer-label');
+    if (lbl) lbl.textContent = def.label;
+  }
+  let mapSearchQuery = '';
+  let _wpPickMode   = false;
+  let _wpPickEscHandler = null;
+
+  let _autoCacheTiles = localStorage.getItem('om_autocache') === '1'; // default off
+
+  function setAutoCacheTiles(val) {
+    _autoCacheTiles = val;
+    localStorage.setItem('om_autocache', val ? '1' : '0');
+  }
+
+  // ---- Offline Tile Cache (IndexedDB, no external deps) ----
+  const _TILE_DB   = 'om_tiles_v1';
+  const _TILE_STORE = 't';
+  let _tileDbConn    = null;
+  let _tileDbOpening = null; // deduplicates concurrent first-open calls
+
+  function _tileDb() {
+    if (_tileDbConn)    return Promise.resolve(_tileDbConn);
+    if (_tileDbOpening) return _tileDbOpening;
+    _tileDbOpening = new Promise((res, rej) => {
+      const req = indexedDB.open(_TILE_DB, 1);
+      req.onupgradeneeded = e => e.target.result.createObjectStore(_TILE_STORE);
+      req.onsuccess = e => {
+        _tileDbConn    = e.target.result;
+        _tileDbOpening = null;
+        _tileDbConn.onclose = () => { _tileDbConn = null; };
+        res(_tileDbConn);
+      };
+      req.onerror = e => { _tileDbOpening = null; rej(e.target.error); };
+    });
+    return _tileDbOpening;
+  }
+  function tileGet(key) {
+    return _tileDb().then(db => new Promise((res, rej) => {
+      const req = db.transaction(_TILE_STORE).objectStore(_TILE_STORE).get(key);
+      req.onsuccess = e => res(e.target.result || null);
+      req.onerror   = e => rej(e.target.error);
+    }));
+  }
+  function tilePut(key, blob) {
+    return _tileDb().then(db => new Promise((res, rej) => {
+      const req = db.transaction(_TILE_STORE, 'readwrite').objectStore(_TILE_STORE).put(blob, key);
+      req.onsuccess = () => res();
+      req.onerror   = e => rej(e.target.error);
+    }));
+  }
+  function tileCount() {
+    return _tileDb().then(db => new Promise((res, rej) => {
+      const req = db.transaction(_TILE_STORE).objectStore(_TILE_STORE).count();
+      req.onsuccess = e => res(e.target.result);
+      req.onerror   = e => rej(e.target.error);
+    }));
+  }
+  function tileClear() {
+    return _tileDb().then(db => new Promise((res, rej) => {
+      const req = db.transaction(_TILE_STORE, 'readwrite').objectStore(_TILE_STORE).clear();
+      req.onsuccess = () => res();
+      req.onerror   = e => rej(e.target.error);
+    }));
+  }
+
+  // TileLayer subclass: checks cache first, saves to cache on network fetch
+  const OfflineTileLayer = L.TileLayer.extend({
+    createTile(coords, done) {
+      const tile = document.createElement('img');
+      tile.alt = '';
+      tile.setAttribute('role', 'presentation');
+      L.DomEvent.on(tile, 'load',  L.Util.bind(this._tileOnLoad,  this, done, tile));
+      L.DomEvent.on(tile, 'error', L.Util.bind(this._tileOnError, this, done, tile));
+      const key = `${this.options.cachePrefix || 'osm'}/${coords.z}/${coords.x}/${coords.y}`;
+      const _setBlobSrc = (img, blob) => {
+        const url = URL.createObjectURL(blob);
+        const revoke = () => URL.revokeObjectURL(url);
+        img.addEventListener('load',  revoke, { once: true });
+        img.addEventListener('error', revoke, { once: true });
+        img.src = url;
+      };
+      tileGet(key).then(blob => {
+        if (blob) {
+          _setBlobSrc(tile, blob);
+        } else {
+          fetch(this.getTileUrl(coords))
+            .then(r => r.ok ? r.blob() : Promise.reject())
+            .then(blob => { if (_autoCacheTiles) tilePut(key, blob).catch(() => {}); _setBlobSrc(tile, blob); })
+            .catch(() => { tile.src = this.getTileUrl(coords); });
+        }
+      }).catch(() => { tile.src = this.getTileUrl(coords); });
+      return tile;
+    }
+  });
+
+  // Tile coordinate helpers
+  function _latlngToTile(lat, lng, z) {
+    const n = Math.pow(2, z);
+    return {
+      x: Math.floor((lng + 180) / 360 * n),
+      y: Math.floor((1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * n),
+      z,
+    };
+  }
+  function _tilesForBounds(bounds, minZ, maxZ) {
+    const tiles = [];
+    const sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
+    for (let z = minZ; z <= maxZ; z++) {
+      const nw = _latlngToTile(ne.lat, sw.lng, z);
+      const se = _latlngToTile(sw.lat, ne.lng, z);
+      for (let x = nw.x; x <= se.x; x++)
+        for (let y = nw.y; y <= se.y; y++)
+          tiles.push({ z, x, y });
+    }
+    return tiles;
+  }
+
+  // Download tiles for current map view
+  let _savingTiles = false;
+  async function saveTilesCurrentView(_btn) {
+    if (!leafletMap || _savingTiles) return;
+    _savingTiles = true;
+    const btn  = _btn || document.getElementById('tile-save-btn');
+    const prog = document.getElementById('tile-progress-wrap');
+    const bar  = document.getElementById('tile-progress-bar');
+    const txt  = document.getElementById('tile-progress-text');
+    btn.disabled = true;
+    prog.style.display = 'block';
+    bar.style.width = '0';
+
+    const extra   = parseInt(document.getElementById('tile-extra-zoom').value) || 0;
+    const curZ    = Math.round(leafletMap.getZoom());
+    const maxZ    = Math.min(19, curZ + extra);
+    const bounds  = leafletMap.getBounds();
+    const tiles   = _tilesForBounds(bounds, curZ, maxZ);
+    if (!tiles.length) {
+      txt.textContent = 'No tiles at this zoom level.';
+      btn.disabled = false;
+      _savingTiles = false;
+      return;
+    }
+    let saved = 0, skipped = 0, failed = 0;
+
+    const _layerKey = _activeTileLayer ? (_activeTileLayer.options.cachePrefix || 'osm') : 'osm';
+    const BATCH = 4;
+    try {
+    for (let i = 0; i < tiles.length; i += BATCH) {
+      await Promise.all(tiles.slice(i, i + BATCH).map(async ({ z, x, y }) => {
+        const key = `${_layerKey}/${z}/${x}/${y}`;
+        if (await tileGet(key)) { skipped++; return; }
+        try {
+          const tileUrl = _activeTileLayer
+            ? _activeTileLayer.getTileUrl({ z, x, y, ...L.Util.extend({}, { z, x, y }) })
+            : `https://a.tile.openstreetmap.org/${z}/${x}/${y}.png`;
+          const r = await fetch(tileUrl);
+          if (r.ok) { await tilePut(key, await r.blob()); saved++; }
+          else failed++;
+        } catch { failed++; }
+      }));
+      const done = saved + skipped + failed;
+      bar.style.width = (done / tiles.length * 100).toFixed(1) + '%';
+      txt.textContent = `${done}/${tiles.length} — ${saved} saved, ${skipped} cached, ${failed} failed`;
+      await new Promise(r => setTimeout(r, 10));
+    }
+
+    bar.style.width = '100%';
+    txt.textContent = `Done — ${saved} saved, ${skipped} already cached, ${failed} failed`;
+    btnFeedback(btn, '✓ Saved');
+    } catch (err) {
+      txt.textContent = `Save failed — ${err.message}`;
+      btn.disabled = false;
+    } finally {
+      _savingTiles = false;
+      refreshTileCacheInfo();
+    }
+  }
+
+  function clearTileCache(btn) {
+    document.getElementById('confirm-ok').textContent = 'Clear';
+    showConfirm('Clear all cached tiles? Saved region configs are kept but tile counts will be reset.', () => {
+      tileClear().then(() => {
+        saveRegions(loadRegions().map(r => ({ ...r, tiles: 0 })));
+        renderRegionList();
+        refreshTileCacheInfo();
+        btnFeedback(btn, '✓ Cleared');
+      }).catch(() => {
+        document.getElementById('tile-cache-count').textContent = 'Clear failed — try refreshing';
+      });
+    });
+  }
+
+  function refreshTileCacheInfo() {
+    tileCount().then(n => {
+      document.getElementById('tile-cache-count').textContent =
+        n > 0 ? `${n.toLocaleString()} tiles cached (≈${Math.round(n * 12 / 1024)} MB)` : 'No tiles cached';
+    }).catch(() => {
+      document.getElementById('tile-cache-count').textContent = 'unavailable';
+    });
+  }
+
+  function updateTileEstimate() {
+    if (!leafletMap) return;
+    const extra = parseInt(document.getElementById('tile-extra-zoom').value) || 0;
+    const curZ  = Math.round(leafletMap.getZoom());
+    const maxZ  = Math.min(19, curZ + extra);
+    const n     = _tilesForBounds(leafletMap.getBounds(), curZ, maxZ).length;
+    document.getElementById('tile-estimate').textContent =
+      `~${n.toLocaleString()} tiles (zoom ${curZ}–${maxZ}, ≈${Math.round(n * 12 / 1024)} MB)`;
+  }
+
+  // ---- Map Regions ----
+  const QUICK_REGIONS = {
+    'Slovenia':  { sw: [45.42, 13.37], ne: [46.88, 16.61] },
+    'Croatia':   { sw: [42.38, 13.50], ne: [46.56, 19.45] },
+    'Austria':   { sw: [46.37,  9.53], ne: [49.02, 17.17] },
+    'Italy':     { sw: [36.61,  6.62], ne: [47.09, 18.79] },
+    'Trieste':   { sw: [45.56, 13.65], ne: [45.72, 13.88] },
+    'Ljubljana': { sw: [46.00, 14.40], ne: [46.13, 14.60] },
+  };
+
+  let _pendingRegion = null; // { name, sw:[lat,lng], ne:[lat,lng] }
+  let _downloadingRegion = false;
+
+  function loadRegions() {
+    try { return JSON.parse(localStorage.getItem('om_regions') || '[]'); }
+    catch { return []; }
+  }
+  function saveRegions(list) { localStorage.setItem('om_regions', JSON.stringify(list)); }
+
+  function renderRegionList() {
+    const list = loadRegions();
+    const el = document.getElementById('region-list');
+    if (!list.length) {
+      el.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:4px 0">No saved regions yet.</div>';
+      return;
+    }
+    el.innerHTML = list.map(r => `
+      <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)">
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="font-size:13px;font-weight:500">${escHtml(r.name)}</span>
+            <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:var(--bg);border:1px solid var(--border);color:var(--muted);white-space:nowrap">${escHtml(r.layerLabel || 'OpenStreetMap')}</span>
+          </div>
+          <div style="font-size:11px;color:var(--muted)">zoom ${r.minZ}–${r.maxZ} · ${r.tiles.toLocaleString()} tiles · ≈${Math.round(r.tiles * 12 / 1024)} MB · ${r.date}</div>
+        </div>
+        <button class="btn-sm" title="Re-download this region with current tile layer" style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:22px;padding:0;flex-shrink:0" onclick="redownloadRegion('${jsSafe(r.id)}')">↻</button>
+        <button class="btn-sm" title="Remove this saved region" style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:22px;padding:0;flex-shrink:0;color:var(--danger,#f87171)" onclick="deleteRegion('${jsSafe(r.id)}')">✕</button>
+      </div>`).join('');
+  }
+
+  function pickQuickRegion(name) {
+    const r = QUICK_REGIONS[name];
+    if (!r) return;
+    _pendingRegion = { name, sw: r.sw, ne: r.ne };
+    showRegionConfig(name);
+  }
+
+  function searchRegion() {
+    const q = document.getElementById('region-search').value.trim();
+    const resultsEl = document.getElementById('region-search-results');
+    if (!q) { resultsEl.style.display = 'none'; return; }
+    resultsEl.style.display = 'block';
+    resultsEl.innerHTML = '<div style="padding:6px 10px;color:var(--muted)">Searching…</div>';
+    fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=6`, {
+      headers: { 'Accept-Language': 'en' }
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(results => {
+      if (!results.length) {
+        resultsEl.innerHTML = '<div style="padding:6px 10px;color:var(--muted)">No results.</div>';
+        return;
+      }
+      resultsEl.innerHTML = results.map((r, i) =>
+        `<div style="padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--border)"
+              onmouseover="this.style.background='var(--bg2)'" onmouseout="this.style.background=''"
+              onclick="pickSearchResult(${i})" data-idx="${i}">${escHtml(r.display_name.split(',').slice(0,3).join(','))}</div>`
+      ).join('');
+      resultsEl._results = results;
+    }).catch(() => {
+      resultsEl.innerHTML = '<div style="padding:6px 10px;color:var(--muted)">Search failed — check connection.</div>';
+    });
+  }
+
+  function pickSearchResult(i) {
+    const resultsEl = document.getElementById('region-search-results');
+    const r = resultsEl._results && resultsEl._results[i];
+    if (!r) return;
+    const bb = r.boundingbox; // [min_lat, max_lat, min_lng, max_lng]
+    _pendingRegion = {
+      name: r.display_name.split(',')[0].trim(),
+      sw: [parseFloat(bb[0]), parseFloat(bb[2])],
+      ne: [parseFloat(bb[1]), parseFloat(bb[3])],
+    };
+    resultsEl.style.display = 'none';
+    document.getElementById('region-search').value = '';
+    showRegionConfig(_pendingRegion.name);
+  }
+
+  function showRegionConfig(name, layerKey) {
+    document.getElementById('region-config-title').textContent = name;
+    document.getElementById('region-config').style.display = 'block';
+    document.getElementById('region-dl-progress').style.display = 'none';
+    document.getElementById('region-dl-btn').disabled = false;
+    const sel = document.getElementById('region-dl-layer');
+    sel.innerHTML = Object.entries(TILE_LAYERS).map(([k, def]) =>
+      `<option value="${k}">${escHtml(def.label)}</option>`).join('');
+    sel.value = layerKey || (_activeTileLayer ? (_activeTileLayer.options.cachePrefix || 'osm') : 'osm');
+    updateRegionEstimate();
+  }
+
+  function cancelRegionConfig() {
+    _pendingRegion = null;
+    document.getElementById('region-config').style.display = 'none';
+  }
+
+  function updateRegionEstimate() {
+    if (!_pendingRegion) return;
+    const minZ = parseInt(document.getElementById('region-min-z').value) || 9;
+    const maxZ = parseInt(document.getElementById('region-max-z').value) || 14;
+    const bounds = L.latLngBounds(
+      L.latLng(_pendingRegion.sw[0], _pendingRegion.sw[1]),
+      L.latLng(_pendingRegion.ne[0], _pendingRegion.ne[1])
+    );
+    const n = _tilesForBounds(bounds, Math.min(minZ,maxZ), Math.max(minZ,maxZ)).length;
+    document.getElementById('region-config-estimate').textContent =
+      `~${n.toLocaleString()} tiles · ≈${Math.round(n * 12 / 1024)} MB`;
+  }
+
+  function _tileUrlForLayer(layerKey, z, x, y) {
+    const def = TILE_LAYERS[layerKey] || TILE_LAYERS.osm;
+    const s = 'abc'[Math.abs(x + y) % 3];
+    return def.url.replace('{s}', s).replace('{z}', z).replace('{x}', x).replace('{y}', y).replace('{r}', '');
+  }
+
+  async function downloadSelectedRegion() {
+    if (!_pendingRegion || _downloadingRegion) return;
+    _downloadingRegion = true;
+    const pendingRegion = _pendingRegion; // capture — cancelRegionConfig() can null _pendingRegion mid-download
+    const minZ    = parseInt(document.getElementById('region-min-z').value) || 9;
+    const maxZ    = parseInt(document.getElementById('region-max-z').value) || 14;
+    const bounds  = L.latLngBounds(
+      L.latLng(pendingRegion.sw[0], pendingRegion.sw[1]),
+      L.latLng(pendingRegion.ne[0], pendingRegion.ne[1])
+    );
+    const tiles   = _tilesForBounds(bounds, Math.min(minZ,maxZ), Math.max(minZ,maxZ));
+    const btn     = document.getElementById('region-dl-btn');
+    const prog    = document.getElementById('region-dl-progress');
+    const bar     = document.getElementById('region-dl-bar');
+    const txt     = document.getElementById('region-dl-text');
+    btn.disabled  = true;
+    prog.style.display = 'block';
+    bar.style.width = '0';
+
+    if (!tiles.length) {
+      txt.textContent = 'No tiles in this region for the selected zoom range.';
+      btn.disabled = false;
+      _downloadingRegion = false;
+      return;
+    }
+
+    const layerKey   = document.getElementById('region-dl-layer').value || 'osm';
+    const layerLabel = (TILE_LAYERS[layerKey] || TILE_LAYERS.osm).label;
+    let saved = 0, skipped = 0, failed = 0;
+    const BATCH = 4;
+    try {
+    for (let i = 0; i < tiles.length; i += BATCH) {
+      await Promise.all(tiles.slice(i, i + BATCH).map(async ({ z, x, y }) => {
+        const key = `${layerKey}/${z}/${x}/${y}`;
+        if (await tileGet(key)) { skipped++; return; }
+        try {
+          const r = await fetch(_tileUrlForLayer(layerKey, z, x, y));
+          if (r.ok) { await tilePut(key, await r.blob()); saved++; }
+          else failed++;
+        } catch { failed++; }
+      }));
+      const done = saved + skipped + failed;
+      bar.style.width = (done / tiles.length * 100).toFixed(1) + '%';
+      txt.textContent = `${done}/${tiles.length} — ${saved} saved, ${skipped} cached`;
+      await new Promise(r => setTimeout(r, 10));
+    }
+
+    // Save region metadata
+    const regions = loadRegions();
+    const existIdx = regions.findIndex(r => r.name === pendingRegion.name && r.minZ === Math.min(minZ,maxZ) && r.maxZ === Math.max(minZ,maxZ) && (r.layerKey || 'osm') === layerKey);
+    const entry = {
+      id: existIdx >= 0 ? regions[existIdx].id : 'reg_' + Date.now(),
+      name: pendingRegion.name,
+      sw: pendingRegion.sw, ne: pendingRegion.ne,
+      minZ: Math.min(minZ,maxZ), maxZ: Math.max(minZ,maxZ),
+      tiles: saved + skipped,
+      date: new Date().toISOString().slice(0,10),
+      layerKey, layerLabel,
+    };
+    if (existIdx >= 0) regions[existIdx] = entry;
+    else regions.push(entry);
+    saveRegions(regions);
+
+    txt.textContent = `Done — ${saved} new tiles, ${skipped} already cached, ${failed} failed`;
+    _pendingRegion = null;
+    setTimeout(() => {
+      if (!_pendingRegion) document.getElementById('region-config').style.display = 'none';
+      renderRegionList();
+      refreshTileCacheInfo();
+    }, 2000);
+    } catch (err) {
+      txt.textContent = `Download failed — ${err.message}`;
+      btn.disabled = false;
+    } finally {
+      _downloadingRegion = false;
+    }
+  }
+
+  function redownloadRegion(id) {
+    if (_downloadingRegion) return;
+    const r = loadRegions().find(r => r.id === id);
+    if (!r) return;
+    _pendingRegion = { name: r.name, sw: r.sw, ne: r.ne };
+    document.getElementById('region-min-z').value = r.minZ;
+    document.getElementById('region-max-z').value = r.maxZ;
+    showRegionConfig(r.name, r.layerKey || 'osm');
+  }
+
+  function deleteRegion(id) {
+    const regions = loadRegions();
+    const r = regions.find(r => r.id === id);
+    if (!r) return;
+    document.getElementById('confirm-ok').textContent = 'Delete';
+    showConfirm(`Delete "${r.name}" and its cached tiles?`, async () => { try {
+      const bounds = L.latLngBounds(L.latLng(r.sw[0], r.sw[1]), L.latLng(r.ne[0], r.ne[1]));
+      const tiles  = _tilesForBounds(bounds, r.minZ, r.maxZ);
+      const db = await _tileDb();
+      const tx = db.transaction(_TILE_STORE, 'readwrite');
+      const store = tx.objectStore(_TILE_STORE);
+      tiles.forEach(({ z, x, y }) => store.delete(`${z}/${x}/${y}`));
+      await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
+      saveRegions(regions.filter(r => r.id !== id));
+      renderRegionList();
+      refreshTileCacheInfo();
+    } catch (err) {
+      showAlert('Delete failed — tiles not removed: ' + err.message);
+    } });
+  }
+
+  function _mapLayerPopupHtml(feature) {
+    const props = feature?.properties || {};
+    const title = props.name || props.title || props.label || props.id || 'Map layer item';
+    const desc  = props.description || props.desc || props.notes || props.note || '';
+    const parts = [`<div style="font-size:12px"><b>${escHtml(String(title))}</b>`];
+    if (desc) parts.push(`<div style="color:var(--muted);margin-top:4px">${escHtml(String(desc))}</div>`);
+    parts.push('</div>');
+    return parts.join('');
+  }
+
+  function _overlayLabelMarker(lat, lon, text) {
+    return L.marker([lat, lon], {
+      interactive: false,
+      keyboard: false,
+      icon: L.divIcon({
+        className: '',
+        html: `<div class="map-label" style="padding:1px 6px !important">${escHtml(String(text))}</div>`,
+        iconSize: null,
+      })
+    });
+  }
+
+  function _buildMapLayerLeaflet(def) {
+    const interactive = def?.interactive !== false;
+    const showLabels = def?.showLabels !== false;
+    const group = L.featureGroup();
+    const geo = L.geoJSON(def.data, {
+      interactive,
+      style: () => ({
+        color: def.color || '#f59e0b',
+        weight: 3,
+        opacity: 0.95,
+        fillColor: def.color || '#f59e0b',
+        fillOpacity: 0.12,
+      }),
+      pointToLayer: (feature, latlng) => L.circleMarker(latlng, {
+        radius: 6,
+        color: def.color || '#f59e0b',
+        weight: 2,
+        fillColor: def.color || '#f59e0b',
+        fillOpacity: 0.75,
+      }),
+      onEachFeature: (feature, layer) => {
+        const props = feature?.properties || {};
+        if (Object.keys(props).length) layer.bindPopup(_mapLayerPopupHtml(feature));
+      }
+    });
+    group.addLayer(geo);
+    const features = _mapLayerFeatureList(def.data);
+    features.forEach(feature => {
+      const props = feature?.properties || {};
+      const geom = feature?.geometry || {};
+      const overlayLabel = props.name || '';
+      if (showLabels && overlayLabel) {
+        try {
+          if (geom.type === 'Point') {
+            const [lon, lat] = geom.coordinates || [];
+            if (lat != null && lon != null) group.addLayer(_overlayLabelMarker(lat, lon, overlayLabel));
+          } else if (geom.type === 'LineString') {
+            const coords = geom.coordinates || [];
+            const mid = coords[Math.floor(coords.length / 2)];
+            if (mid) group.addLayer(_overlayLabelMarker(mid[1], mid[0], overlayLabel));
+          } else if (geom.type === 'Polygon') {
+            const ring = (geom.coordinates || [])[0] || [];
+            if (ring.length) {
+              const avg = ring.slice(0, -1).reduce((acc, [lon, lat]) => ({lat: acc.lat + lat, lon: acc.lon + lon}), {lat: 0, lon: 0});
+              const count = Math.max(ring.length - 1, 1);
+              group.addLayer(_overlayLabelMarker(avg.lat / count, avg.lon / count, overlayLabel));
+            }
+          }
+        } catch (e) {}
+      }
+      const pointLabels = Array.isArray(props.vertex_labels) ? props.vertex_labels : [];
+      if (showLabels && geom.type === 'Polygon' && props.shape !== 'circle' && pointLabels.length) {
+        const ring = (geom.coordinates || [])[0] || [];
+        ring.slice(0, -1).forEach(([lon, lat], idx) => {
+          const label = pointLabels[idx] || String(idx + 1);
+          group.addLayer(_overlayLabelMarker(lat, lon, label));
+        });
+      }
+    });
+    return group;
+  }
+
+  function _mapLayerFeatureList(data) {
+    if (!data || typeof data !== 'object') return [];
+    if (data.type === 'FeatureCollection') return Array.isArray(data.features) ? data.features.filter(Boolean) : [];
+    if (data.type === 'Feature') return [data];
+    return [{type: 'Feature', properties: {}, geometry: data}];
+  }
+
+  function _isPolygonGeofence(def) {
+    if (!def?.is_geofence) return false;
+    const features = _mapLayerFeatureList(def.data);
+    if (features.length !== 1) return false;
+    return features[0]?.geometry?.type === 'Polygon';
+  }
+
+  function _pointInRing(lat, lon, ring) {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const xi = ring[i][1], yi = ring[i][0];
+      const xj = ring[j][1], yj = ring[j][0];
+      const intersect = ((yi > lat) !== (yj > lat)) &&
+        (lon < ((xj - xi) * (lat - yi)) / ((yj - yi) || 1e-12) + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+
+  function _pointInPolygonFeature(lat, lon, feature) {
+    const coords = feature?.geometry?.coordinates;
+    const outer = Array.isArray(coords) ? coords[0] : null;
+    if (!outer || outer.length < 4) return false;
+    return _pointInRing(lat, lon, outer);
+  }
+
+  function _geofenceEntityKey(network, id, radioId = '') {
+    return `${network}:${radioId}:${id}`;
+  }
+
+  function _checkEntityGeofences(entity) {
+    if (entity.lat == null || entity.lon == null) return;
+    const geofences = _mapLayerDefs.filter(_isPolygonGeofence);
+    const entityKey = _geofenceEntityKey(entity.network, entity.id, entity.radioId || '');
+    const nextState = {};
+    geofences.forEach(def => {
+      const gf = def.geofence || {};
+      const networks = gf.networks || 'both';
+      if (networks !== 'both' && networks !== String(entity.network || '').toLowerCase()) return;
+      const feature = _mapLayerFeatureList(def.data)[0];
+      const inside = !!feature && _pointInPolygonFeature(entity.lat, entity.lon, feature);
+      nextState[def.id] = inside;
+      const prevInside = _geofenceStates[entityKey]?.[def.id];
+      if (prevInside == null) return;
+      if (inside === prevInside) return;
+      if (inside && gf.enter === false) return;
+      if (!inside && gf.leave === false) return;
+      const title = inside ? `${entity.network} entered geofence` : `${entity.network} left geofence`;
+      const body = `<b>${escHtml(entity.name || entity.id || '?')}</b> ${inside ? 'entered' : 'left'} <b>${escHtml(def.name || 'geofence')}</b>`;
+      if (gf.notify_app !== false) {
+        showToast(title, body, 'node-return', `geofence-${entityKey}-${def.id}-${inside ? 'in' : 'out'}`, {persistent: true});
+      }
+      if (gf.notify_browser !== false) {
+        sendNotif(title, `${entity.name || entity.id || '?'} ${inside ? 'entered' : 'left'} ${def.name || 'geofence'}`, `geofence-${entityKey}-${def.id}-${inside ? 'in' : 'out'}`, 'node', {persistent: true});
+      }
+    });
+    _geofenceStates[entityKey] = nextState;
+  }
+
+  function _refreshAllGeofences() {
+    if (!_mapLayerDefs.some(_isPolygonGeofence)) {
+      _geofenceStates = {};
+      return;
+    }
+    const nextKeys = new Set();
+    (allNodes || []).forEach(n => {
+      if (n?.latitude == null || n?.longitude == null) return;
+      const key = _geofenceEntityKey('MT', n.id || '', n.radio_id || '');
+      nextKeys.add(key);
+      _checkEntityGeofences({
+        network: 'MT',
+        id: n.id || '',
+        radioId: n.radio_id || '',
+        name: n.long_name || n.short_name || n.id || '?',
+        lat: n.latitude,
+        lon: n.longitude,
+      });
+    });
+    Object.entries(mcContacts || {}).forEach(([radioId, contacts]) => {
+      Object.values(contacts || {}).forEach(c => {
+        const lat = c.latitude;
+        const lon = c.longitude;
+        if (lat == null || lon == null) return;
+        const key = _geofenceEntityKey('MC', c.id || '', radioId);
+        nextKeys.add(key);
+        _checkEntityGeofences({
+          network: 'MC',
+          id: c.id || '',
+          radioId,
+          name: c.long_name || c.name || c.id || '?',
+          lat,
+          lon,
+        });
+      });
+    });
+    Object.keys(_geofenceStates).forEach(key => {
+      if (!nextKeys.has(key)) delete _geofenceStates[key];
+    });
+  }
+
+  function renderMapOverlays() {
+    if (!leafletMap) return;
+    Object.values(_mapLayerObjects).forEach(layer => {
+      try { leafletMap.removeLayer(layer); } catch(e) {}
+    });
+    _mapLayerObjects = {};
+    _mapLayerDefs.forEach(def => {
+      if (!def.enabled || !def.data) return;
+      try {
+        const layer = _buildMapLayerLeaflet(def);
+        _mapLayerObjects[def.id] = layer;
+        layer.addTo(leafletMap);
+      } catch (e) {
+        console.error('renderMapOverlays failed for layer', def.id, e);
+      }
+    });
+    _refreshAllGeofences();
+  }
+
+  function refreshMapLayerPanelOptions() {
+    if (!_mapLayerMenuPanel) return;
+    _mapLayerMenuPanel.innerHTML = '';
+    const title = L.DomUtil.create('div', '', _mapLayerMenuPanel);
+    title.textContent = 'Overlays';
+    title.style.cssText = 'padding:6px 10px 4px 10px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;border-top:1px solid var(--border);margin-top:4px';
+    if (!_mapLayerDefs.length) {
+      const empty = L.DomUtil.create('div', '', _mapLayerMenuPanel);
+      empty.textContent = 'No saved overlays';
+      empty.style.cssText = 'padding:6px 10px 8px 10px;font-size:12px;color:var(--muted)';
+      return;
+    }
+    _mapLayerDefs.forEach(def => {
+      const opt = L.DomUtil.create('div', 'map-layer-opt', _mapLayerMenuPanel);
+      opt.dataset.overlayId = String(def.id);
+      opt.classList.toggle('active', !!def.enabled);
+      opt.innerHTML = `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${escHtml(def.color || '#f59e0b')};margin-right:8px;vertical-align:middle"></span>${escHtml(def.name)}${def.enabled ? '<span style="color:#4ade80;margin-left:6px;font-size:13px;font-weight:700">✓</span>' : ''}`;
+      L.DomEvent.on(opt, 'click', e => {
+        L.DomEvent.stopPropagation(e);
+        toggleMapLayerEnabled(def.id, !def.enabled, {silent: true});
+      });
+    });
+  }
+
+  function _mapLayerDraftLabel() {
+    if (!_mapLayerDraft) return 'Overlay edit mode';
+    if (_mapLayerDraft.finished) return 'Overlay shape finished. Save it or keep editing.';
+    if (_mapLayerDraft.mode === 'point') return 'Click once on the map to place the point';
+    if (_mapLayerDraft.mode === 'line') return 'Click on the map to add line vertices, then double-click to finish';
+    if (_mapLayerDraft.mode === 'circle') return _mapLayerDraft.center ? 'Move the mouse to size the circle, then click again to finish' : 'Click on the map to place the circle center';
+    return 'Click on the map to add area corners, then double-click to finish';
+  }
+
+  function _syncOverlayBanner() {
+    const banner = document.getElementById('overlay-pick-banner');
+    const btn = document.getElementById('overlay-pick-cancel');
+    const active = !!_mapLayerDraft;
+    document.body.classList.toggle('overlay-pick-mode', active);
+    if (!active) document.body.classList.remove('overlay-dragging');
+    if (banner) {
+      banner.style.display = active ? 'block' : 'none';
+      banner.textContent = _mapLayerDraftLabel();
+    }
+    if (btn) btn.style.display = active ? 'block' : 'none';
+    if (leafletMap?.doubleClickZoom) {
+      if (active) leafletMap.doubleClickZoom.disable();
+      else leafletMap.doubleClickZoom.enable();
+    }
+  }
+
+  function _makeDraftVertexIcon(color = '#f59e0b', selected = false) {
+    const size = selected ? 14 : 12;
+    const offset = selected ? 7 : 6;
+    const bg = selected ? color : '#fff';
+    const border = selected ? '#fff' : color;
+    return L.divIcon({
+      className: '',
+      html: `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${escHtml(bg)};border:2px solid ${escHtml(border)};box-shadow:0 0 6px rgba(0,0,0,0.45)"></div>`,
+      iconSize: [size, size],
+      iconAnchor: [offset, offset],
+    });
+  }
+
+  function _clearMapLayerDraftVisuals() {
+    if (_mapLayerDraftLayer && leafletMap) {
+      try { leafletMap.removeLayer(_mapLayerDraftLayer); } catch(e) {}
+    }
+    _mapLayerDraftLayer = null;
+    _mapLayerVertexMarkers.forEach(marker => {
+      try { leafletMap && leafletMap.removeLayer(marker); } catch(e) {}
+    });
+    _mapLayerVertexMarkers = [];
+  }
+
+  function _draftToGeoJson(draft) {
+    const verts = draft.vertices || [];
+    const props = {
+      name: draft.name || '',
+      description: draft.description || '',
+    };
+    if (draft.mode === 'point') {
+      if (!verts.length) return null;
+      return { type: 'FeatureCollection', features: [{ type: 'Feature', properties: props, geometry: { type: 'Point', coordinates: [verts[0].lon, verts[0].lat] } }] };
+    }
+    if (draft.mode === 'circle') {
+      if (!draft.center || !(draft.radius_m > 0)) return null;
+      props.shape = 'circle';
+      props.center_lat = draft.center.lat;
+      props.center_lon = draft.center.lon;
+      props.radius_m = Math.round(draft.radius_m);
+      const ring = _circleRing(draft.center, draft.radius_m);
+      return { type: 'FeatureCollection', features: [{ type: 'Feature', properties: props, geometry: { type: 'Polygon', coordinates: [ring] } }] };
+    }
+    if (draft.mode === 'line') {
+      if (verts.length < 2) return null;
+      props.vertex_labels = verts.map((v, idx) => (v.label || '').trim() || String(idx + 1));
+      return { type: 'FeatureCollection', features: [{ type: 'Feature', properties: props, geometry: { type: 'LineString', coordinates: verts.map(v => [v.lon, v.lat]) } }] };
+    }
+    if (verts.length < 3) return null;
+    props.vertex_labels = verts.map((v, idx) => (v.label || '').trim() || String(idx + 1));
+    const ring = verts.map(v => [v.lon, v.lat]);
+    ring.push([verts[0].lon, verts[0].lat]);
+    return { type: 'FeatureCollection', features: [{ type: 'Feature', properties: props, geometry: { type: 'Polygon', coordinates: [ring] } }] };
+  }
+
+  function _renderMapLayerDraft() {
+    _clearMapLayerDraftVisuals();
+    _syncOverlayBanner();
+    if (!leafletMap || !_mapLayerDraft) return;
+    if (_mapLayerSelectedVertex >= _mapLayerDraft.vertices.length) _mapLayerSelectedVertex = -1;
+    const geojson = _draftToGeoJson(_mapLayerDraft);
+    if (geojson) {
+      _mapLayerDraftLayer = _buildMapLayerLeaflet({color: _mapLayerDraft.color || '#f59e0b', data: geojson, interactive: false, showLabels: false});
+      _mapLayerDraftLayer.addTo(leafletMap);
+    }
+    if (_mapLayerDraft.mode === 'circle' && _mapLayerDraft.center) {
+      const centerMarker = L.marker([_mapLayerDraft.center.lat, _mapLayerDraft.center.lon], {
+        icon: _makeDraftVertexIcon(_mapLayerDraft.color || '#f59e0b', _mapLayerSelectedVertex === 0),
+        draggable: true,
+        autoPan: true
+      });
+      centerMarker.bindTooltip('Center', { permanent: true, direction: 'top', className: 'map-label', offset: [0, -10] });
+      centerMarker.on('click', e => {
+        L.DomEvent.stop(e.originalEvent || e);
+        _mapLayerSelectedVertex = 0;
+        _renderMapLayerDraft();
+        renderOverlayPanel();
+      });
+      centerMarker.on('mousedown', e => {
+        L.DomEvent.stop(e.originalEvent || e);
+        leafletMap?.dragging?.disable();
+        _mapLayerSelectedVertex = 0;
+      });
+      centerMarker.on('dragstart', () => {
+        leafletMap?.dragging?.disable();
+        document.body.classList.add('overlay-dragging');
+        _mapLayerSelectedVertex = 0;
+      });
+      centerMarker.on('drag', e => {
+        const ll = e.target.getLatLng();
+        _mapLayerDraft.center = {lat: ll.lat, lon: ll.lng};
+        _renderMapLayerDraft();
+        renderOverlayPanel();
+      });
+      centerMarker.on('dragend', () => {
+        leafletMap?.dragging?.enable();
+        document.body.classList.remove('overlay-dragging');
+      });
+      centerMarker.on('mouseup', () => {
+        leafletMap?.dragging?.enable();
+        document.body.classList.remove('overlay-dragging');
+      });
+      centerMarker.addTo(leafletMap);
+      _mapLayerVertexMarkers.push(centerMarker);
+      if (_mapLayerDraft.radius_m > 0) {
+        const edge = _destPoint(_mapLayerDraft.center.lat, _mapLayerDraft.center.lon, 90, _mapLayerDraft.radius_m);
+        const edgeMarker = L.marker([edge.lat, edge.lon], {
+          icon: _makeDraftVertexIcon(_mapLayerDraft.color || '#f59e0b', _mapLayerSelectedVertex === 1),
+          draggable: true,
+          autoPan: true
+        });
+        edgeMarker.bindTooltip(`${Math.round(_mapLayerDraft.radius_m)} m`, { permanent: true, direction: 'top', className: 'map-label', offset: [0, -10] });
+        edgeMarker.on('click', e => {
+          L.DomEvent.stop(e.originalEvent || e);
+          _mapLayerSelectedVertex = 1;
+          _renderMapLayerDraft();
+          renderOverlayPanel();
+        });
+        edgeMarker.on('mousedown', e => {
+          L.DomEvent.stop(e.originalEvent || e);
+          leafletMap?.dragging?.disable();
+          _mapLayerSelectedVertex = 1;
+        });
+        edgeMarker.on('dragstart', () => {
+          leafletMap?.dragging?.disable();
+          document.body.classList.add('overlay-dragging');
+          _mapLayerSelectedVertex = 1;
+        });
+        edgeMarker.on('drag', e => {
+          const ll = e.target.getLatLng();
+          _mapLayerDraft.radius_m = _haversineMeters(_mapLayerDraft.center.lat, _mapLayerDraft.center.lon, ll.lat, ll.lng);
+          _mapLayerDraft.finished = _mapLayerDraft.radius_m > 0;
+          _renderMapLayerDraft();
+          renderOverlayPanel();
+        });
+        edgeMarker.on('dragend', () => {
+          leafletMap?.dragging?.enable();
+          document.body.classList.remove('overlay-dragging');
+        });
+        edgeMarker.on('mouseup', () => {
+          leafletMap?.dragging?.enable();
+          document.body.classList.remove('overlay-dragging');
+        });
+        edgeMarker.addTo(leafletMap);
+        _mapLayerVertexMarkers.push(edgeMarker);
+      }
+      return;
+    }
+    _mapLayerDraft.vertices.forEach((vertex, idx) => {
+      const marker = L.marker([vertex.lat, vertex.lon], {icon: _makeDraftVertexIcon(_mapLayerDraft.color || '#f59e0b', idx === _mapLayerSelectedVertex), draggable: true, autoPan: true});
+      marker.bindTooltip((vertex.label || String(idx + 1)), { permanent: true, direction: 'top', className: 'map-label', offset: [0, -10] });
+      marker.on('click', e => {
+        L.DomEvent.stop(e.originalEvent || e);
+        _mapLayerSelectedVertex = idx;
+        _renderMapLayerDraft();
+        renderOverlayPanel();
+      });
+      marker.on('mousedown', e => {
+        L.DomEvent.stop(e.originalEvent || e);
+        leafletMap?.dragging?.disable();
+        _mapLayerSelectedVertex = idx;
+      });
+      marker.on('dragstart', () => {
+        leafletMap?.dragging?.disable();
+        document.body.classList.add('overlay-dragging');
+        _mapLayerSelectedVertex = idx;
+      });
+      marker.on('drag', e => {
+        const ll = e.target.getLatLng();
+        _mapLayerDraft.vertices[idx] = {..._mapLayerDraft.vertices[idx], lat: ll.lat, lon: ll.lng};
+        _renderMapLayerDraft();
+        renderOverlayPanel();
+      });
+      marker.on('dragend', () => {
+        leafletMap?.dragging?.enable();
+        document.body.classList.remove('overlay-dragging');
+      });
+      marker.on('mouseup', () => {
+        leafletMap?.dragging?.enable();
+        document.body.classList.remove('overlay-dragging');
+      });
+      marker.addTo(leafletMap);
+      _mapLayerVertexMarkers.push(marker);
+    });
+  }
+
+  function _extractEditableMapLayer(data) {
+    let feature = null;
+    if (!data || typeof data !== 'object') throw new Error('Layer has no GeoJSON data.');
+    if (data.type === 'FeatureCollection') {
+      if (!Array.isArray(data.features) || data.features.length !== 1) throw new Error('Only single-feature overlays can be edited in the map for now.');
+      feature = data.features[0];
+    } else if (data.type === 'Feature') {
+      feature = data;
+    } else {
+      feature = {type: 'Feature', properties: {}, geometry: data};
+    }
+    const geom = feature.geometry || {};
+    if (geom.type === 'Point') {
+      return {mode: 'point', vertices: [{lat: geom.coordinates[1], lon: geom.coordinates[0], label: feature.properties?.name || ''}], description: feature.properties?.description || feature.properties?.desc || ''};
+    }
+    if (geom.type === 'LineString') {
+      const labels = Array.isArray(feature.properties?.vertex_labels) ? feature.properties.vertex_labels : [];
+      return {mode: 'line', vertices: (geom.coordinates || []).map(([lon, lat], idx) => ({lat, lon, label: labels[idx] || String(idx + 1)})), description: feature.properties?.description || feature.properties?.desc || ''};
+    }
+    if (geom.type === 'Polygon') {
+      if (feature.properties?.shape === 'circle' && feature.properties?.center_lat != null && feature.properties?.center_lon != null && feature.properties?.radius_m != null) {
+        return {
+          mode: 'circle',
+          center: {lat: Number(feature.properties.center_lat), lon: Number(feature.properties.center_lon)},
+          radius_m: Number(feature.properties.radius_m) || 0,
+          vertices: [],
+          description: feature.properties?.description || feature.properties?.desc || ''
+        };
+      }
+      const ring = (geom.coordinates || [])[0] || [];
+      if (ring.length < 4) throw new Error('Polygon ring is incomplete.');
+      const labels = Array.isArray(feature.properties?.vertex_labels) ? feature.properties.vertex_labels : [];
+      return {mode: 'polygon', vertices: ring.slice(0, -1).map(([lon, lat], idx) => ({lat, lon, label: labels[idx] || String(idx + 1)})), description: feature.properties?.description || feature.properties?.desc || ''};
+    }
+    throw new Error(`Editing for ${geom.type || 'unknown'} geometry is not supported yet.`);
+  }
+
+  function _mapLayerEditableState(def) {
+    try {
+      const features = _mapLayerFeatureList(def?.data);
+      if (features.length !== 1) return {editable: false, reason: features.length > 1 ? 'multi' : 'empty'};
+      _extractEditableMapLayer(def.data);
+      return {editable: true, reason: ''};
+    } catch (e) {
+      return {editable: false, reason: 'unsupported'};
+    }
+  }
+
+  function startMapLayerDraft(mode) {
+    _mapLayerDraft = {
+      mode,
+      layerId: null,
+      name: '',
+      description: '',
+      color: '#f59e0b',
+      enabled: true,
+      vertices: [],
+      center: null,
+      radius_m: 0,
+      finished: false,
+      is_geofence: false,
+      geofence: {
+        enter: true,
+        leave: true,
+        notify_app: true,
+        notify_browser: true,
+        networks: 'both',
+      },
+    };
+    _mapLayerSelectedVertex = -1;
+    renderOverlayPanel();
+    const body = document.getElementById('overlay-panel-body');
+    if (body && body.style.display === 'none') toggleOverlayPanel();
+    _renderMapLayerDraft();
+  }
+
+  function editMapLayer(id) {
+    const def = _mapLayerDefs.find(layer => layer.id === id);
+    if (!def) return;
+    try {
+      const editable = _extractEditableMapLayer(def.data);
+      _mapLayerDraft = {
+        mode: editable.mode,
+        layerId: id,
+        name: def.name || '',
+        description: editable.description || '',
+        color: def.color || '#f59e0b',
+        enabled: def.enabled !== false,
+        vertices: editable.vertices || [],
+        center: editable.center || null,
+        radius_m: editable.radius_m || 0,
+        finished: editable.mode === 'circle' ? !!(editable.radius_m > 0) : true,
+        is_geofence: !!def.is_geofence,
+        geofence: {
+          enter: def.geofence?.enter !== false,
+          leave: def.geofence?.leave !== false,
+          notify_app: def.geofence?.notify_app !== false,
+          notify_browser: def.geofence?.notify_browser !== false,
+          networks: def.geofence?.networks || 'both',
+        },
+      };
+      _mapLayerSelectedVertex = -1;
+      renderOverlayPanel();
+      _renderMapLayerDraft();
+      const body = document.getElementById('overlay-panel-body');
+      if (body && body.style.display === 'none') toggleOverlayPanel();
+    } catch (e) {
+      showAlert(String(e.message || e));
+    }
+  }
+
+  function cancelMapLayerDraft() {
+    _mapLayerDraft = null;
+    _mapLayerSelectedVertex = -1;
+    _clearMapLayerDraftVisuals();
+    _syncOverlayBanner();
+    renderOverlayPanel();
+  }
+
+  function mapLayerDraftAddVertex(lat, lon) {
+    if (!_mapLayerDraft) return;
+    if (_mapLayerDraft.mode === 'circle') {
+      if (!_mapLayerDraft.center) {
+        _mapLayerDraft.center = {lat, lon};
+        _mapLayerDraft.radius_m = 0;
+        _mapLayerDraft.finished = false;
+        _mapLayerSelectedVertex = 0;
+      } else {
+        _mapLayerDraft.radius_m = _haversineMeters(_mapLayerDraft.center.lat, _mapLayerDraft.center.lon, lat, lon);
+        _mapLayerDraft.finished = _mapLayerDraft.radius_m > 0;
+        _mapLayerSelectedVertex = 1;
+      }
+      _renderMapLayerDraft();
+      renderOverlayPanel();
+      return;
+    }
+    if (_mapLayerDraft.finished && _mapLayerDraft.mode !== 'point') return;
+    const nextLabel = String((_mapLayerDraft.vertices?.length || 0) + 1);
+    if (_mapLayerDraft.mode === 'point') _mapLayerDraft.vertices = [{lat, lon, label: _mapLayerDraft.name || ''}];
+    else _mapLayerDraft.vertices.push({lat, lon, label: nextLabel});
+    _mapLayerSelectedVertex = _mapLayerDraft.vertices.length - 1;
+    if (_mapLayerDraft.mode === 'point') _mapLayerDraft.finished = true;
+    _renderMapLayerDraft();
+    renderOverlayPanel();
+  }
+
+  function deleteLastMapLayerVertex(btn) {
+    if (!_mapLayerDraft || !_mapLayerDraft.vertices.length) return;
+    _mapLayerDraft.vertices.pop();
+    if (_mapLayerSelectedVertex >= _mapLayerDraft.vertices.length) _mapLayerSelectedVertex = _mapLayerDraft.vertices.length - 1;
+    _mapLayerDraft.finished = false;
+    _renderMapLayerDraft();
+    renderOverlayPanel();
+    btnFeedback(btn, '✓ Deleted');
+  }
+
+  function deleteSelectedMapLayerVertex(btn) {
+    if (!_mapLayerDraft || _mapLayerSelectedVertex < 0 || _mapLayerSelectedVertex >= _mapLayerDraft.vertices.length) return;
+    _mapLayerDraft.vertices.splice(_mapLayerSelectedVertex, 1);
+    if (_mapLayerSelectedVertex >= _mapLayerDraft.vertices.length) _mapLayerSelectedVertex = _mapLayerDraft.vertices.length - 1;
+    _mapLayerDraft.finished = false;
+    _renderMapLayerDraft();
+    renderOverlayPanel();
+    btnFeedback(btn, '✓ Deleted');
+  }
+
+  function finishMapLayerDraft() {
+    if (!_mapLayerDraft) return;
+    const statusEl = document.getElementById('overlay-editor-status');
+    const needed = _mapLayerDraft.mode === 'point' ? 1 : _mapLayerDraft.mode === 'line' ? 2 : _mapLayerDraft.mode === 'circle' ? 1 : 3;
+    const valid = _mapLayerDraft.mode === 'circle'
+      ? !!(_mapLayerDraft.center && _mapLayerDraft.radius_m > 0)
+      : ((_mapLayerDraft.vertices || []).length >= needed);
+    if (!valid) {
+      if (statusEl) statusEl.textContent = _mapLayerDraft.mode === 'point' ? 'Place the point on the map first.' : _mapLayerDraft.mode === 'line' ? 'A line needs at least 2 points.' : _mapLayerDraft.mode === 'circle' ? 'Pick the center, move the mouse to size the circle, then click again.' : 'An area needs at least 3 points.';
+      return;
+    }
+    _mapLayerDraft.finished = true;
+    if (statusEl) statusEl.textContent = 'Shape finished. Save it when ready.';
+    _renderMapLayerDraft();
+    renderOverlayPanel();
+  }
+
+  async function splitMapLayerIntoEditable(id) {
+    const def = _mapLayerDefs.find(layer => layer.id === id);
+    if (!def) return;
+    const features = _mapLayerFeatureList(def.data);
+    if (features.length < 2) {
+      showAlert('That overlay is already a single feature.');
+      return;
+    }
+    const safeBase = def.name || 'Overlay';
+    const statusEl = document.getElementById('overlay-editor-status');
+    if (statusEl) statusEl.textContent = 'Splitting…';
+    try {
+      for (let i = 0; i < features.length; i++) {
+        const feature = features[i];
+        const fname = feature?.properties?.name || feature?.properties?.title || `${safeBase} ${i + 1}`;
+        const payload = {
+          name: fname,
+          color: def.color || '#f59e0b',
+          data: {type: 'FeatureCollection', features: [feature]},
+          enabled: def.enabled,
+          is_geofence: !!def.is_geofence,
+          geofence: def.geofence || {enter: true, leave: true, notify_app: true, notify_browser: true, networks: 'both'},
+        };
+        const r = await fetch('/api/map_layers', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok || data.error) throw new Error(data.error || r.status);
+      }
+      const del = await fetch(`/api/map_layers/${id}`, {method: 'DELETE'});
+      const delData = await del.json().catch(() => ({}));
+      if (!del.ok || delData.error) throw new Error(delData.error || del.status);
+      await loadMapLayers({silent: true});
+      if (statusEl) statusEl.textContent = 'Overlay split into editable parts.';
+    } catch (e) {
+      if (statusEl) statusEl.textContent = `Split failed: ${e.message || e}`;
+    }
+  }
+
+  async function saveMapLayerDraft(btn) {
+    if (!_mapLayerDraft) return;
+    const nameEl = document.getElementById('overlay-editor-name');
+    const colorEl = document.getElementById('overlay-editor-color');
+    const statusEl = document.getElementById('overlay-editor-status');
+    const name = (nameEl?.value || '').trim();
+    const color = colorEl?.value || '#f59e0b';
+    _mapLayerDraft.name = name;
+    _mapLayerDraft.description = (document.getElementById('overlay-editor-description')?.value || '').trim();
+    _mapLayerDraft.color = color;
+    const geojson = _draftToGeoJson(_mapLayerDraft);
+    if (!geojson) {
+      if (statusEl) statusEl.textContent = _mapLayerDraft.mode === 'point' ? 'Place the point on the map first.' : _mapLayerDraft.mode === 'line' ? 'A line needs at least 2 points.' : _mapLayerDraft.mode === 'circle' ? 'Pick the center, move the mouse to size the circle, then click again.' : 'An area needs at least 3 points.';
+      return;
+    }
+    if (statusEl) statusEl.textContent = 'Saving…';
+    try {
+      const isEdit = !!_mapLayerDraft.layerId;
+      const r = await fetch(isEdit ? `/api/map_layers/${_mapLayerDraft.layerId}` : '/api/map_layers', {
+        method: isEdit ? 'PATCH' : 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name, color, data: geojson, enabled: _mapLayerDraft.enabled !== false, is_geofence: !!_mapLayerDraft.is_geofence, geofence: _mapLayerDraft.geofence || {enter: true, leave: true, notify_app: true, notify_browser: true, networks: 'both'}})
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.error) throw new Error(data.error || r.status);
+      btnFeedback(btn, '✓ Saved');
+      cancelMapLayerDraft();
+      await loadMapLayers({silent: true});
+    } catch (e) {
+      if (statusEl) statusEl.textContent = `Save failed: ${e.message || e}`;
+    }
+  }
+
+  function renderOverlayPanel() {
+    const body = document.getElementById('overlay-panel-body');
+    const count = document.getElementById('overlay-panel-count');
+    if (!body) return;
+    if (count) count.textContent = _mapLayerDefs.length ? `(${_mapLayerDefs.length})` : '';
+    const draft = _mapLayerDraft;
+    const editing = !!draft;
+    const vertices = draft?.vertices || [];
+    const selectedLabel = draft?.mode === 'circle'
+      ? (_mapLayerSelectedVertex === 0 ? 'Selected: center' : _mapLayerSelectedVertex === 1 ? 'Selected: radius' : 'No handle selected')
+      : _mapLayerSelectedVertex >= 0 ? `Selected point: ${_mapLayerSelectedVertex + 1}` : 'No point selected';
+    const selectedVertex = _mapLayerSelectedVertex >= 0 ? vertices[_mapLayerSelectedVertex] : null;
+    const gf = draft?.geofence || {enter: true, leave: true, notify_app: true, notify_browser: true, networks: 'both'};
+    const tip = !editing ? 'Create simple overlays directly on the map.' : draft.mode === 'point' ? 'Click the map to place the point. Drag the handle to adjust it.' : draft.mode === 'line' ? 'Click to add vertices. Double-click to finish. Drag handles to refine the path.' : 'Click to add corners. Double-click to finish. Drag handles to refine the area.';
+    body.innerHTML = `
+      <div style="padding:8px 10px;display:grid;gap:8px">
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="overlay-tool-btn ${draft?.mode === 'point' ? 'active' : ''}" onclick="startMapLayerDraft('point')">Point</button>
+          <button class="overlay-tool-btn ${draft?.mode === 'line' ? 'active' : ''}" onclick="startMapLayerDraft('line')">Line</button>
+          <button class="overlay-tool-btn ${draft?.mode === 'circle' ? 'active' : ''}" onclick="startMapLayerDraft('circle')">Circle</button>
+          <button class="overlay-tool-btn ${draft?.mode === 'polygon' ? 'active' : ''}" onclick="startMapLayerDraft('polygon')">Area</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted)">${escHtml(tip)}</div>
+        <div style="display:${editing ? 'grid' : 'none'};gap:8px;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg3)">
+          <div>
+            <label class="settings-label" for="overlay-editor-name">Name</label>
+            <input id="overlay-editor-name" class="settings-input" maxlength="60" value="${escHtml(draft?.name || '')}" placeholder="Optional overlay label" oninput="_mapLayerDraft && (_mapLayerDraft.name=this.value,_renderMapLayerDraft())">
+          </div>
+          <div>
+            <label class="settings-label" for="overlay-editor-description">Description</label>
+            <textarea id="overlay-editor-description" class="settings-input" placeholder="Optional popup text" style="width:100%;min-height:66px;resize:vertical;height:auto;padding-top:8px;padding-bottom:8px" oninput="_mapLayerDraft && (_mapLayerDraft.description=this.value)">${escHtml(draft?.description || '')}</textarea>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <label class="settings-label" for="overlay-editor-color" style="margin:0">Color</label>
+            <input id="overlay-editor-color" type="color" value="${escHtml(draft?.color || '#f59e0b')}" style="width:48px;height:28px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:2px" onchange="_mapLayerDraft && (_mapLayerDraft.color=this.value,_renderMapLayerDraft())">
+            <span style="font-size:11px;color:var(--muted)">${draft?.layerId ? 'Editing saved overlay' : 'New overlay'}${draft?.finished ? ' · finished' : ''}</span>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text)">
+            <input type="checkbox" ${draft?.is_geofence ? 'checked' : ''} ${draft?.mode === 'polygon' || draft?.mode === 'circle' ? '' : 'disabled'} onchange="_mapLayerDraft && (_mapLayerDraft.is_geofence=this.checked)">
+            <span>Use as geofence ${draft?.mode === 'polygon' || draft?.mode === 'circle' ? '' : '(areas only)'}</span>
+          </label>
+          <div style="display:${draft?.is_geofence ? 'grid' : 'none'};gap:8px;padding:8px;border:1px solid rgba(245,158,11,0.28);border-radius:6px;background:rgba(245,158,11,0.06)">
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px">Geofence options</div>
+            <div style="display:flex;gap:14px;flex-wrap:wrap">
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" ${gf.enter ? 'checked' : ''} onchange="_mapLayerDraft && (_mapLayerDraft.geofence.enter=this.checked)"> Alert on enter</label>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" ${gf.leave ? 'checked' : ''} onchange="_mapLayerDraft && (_mapLayerDraft.geofence.leave=this.checked)"> Alert on leave</label>
+            </div>
+            <div style="display:flex;gap:14px;flex-wrap:wrap">
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" ${gf.notify_app ? 'checked' : ''} onchange="_mapLayerDraft && (_mapLayerDraft.geofence.notify_app=this.checked)"> In-app</label>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" ${gf.notify_browser ? 'checked' : ''} onchange="_mapLayerDraft && (_mapLayerDraft.geofence.notify_browser=this.checked)"> Browser</label>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span style="font-size:12px;color:var(--muted)">Track:</span>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="radio" name="overlay-gf-net" ${gf.networks === 'both' ? 'checked' : ''} onchange="_mapLayerDraft && (_mapLayerDraft.geofence.networks='both')"> Both</label>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="radio" name="overlay-gf-net" ${gf.networks === 'mt' ? 'checked' : ''} onchange="_mapLayerDraft && (_mapLayerDraft.geofence.networks='mt')"> MT only</label>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px"><input type="radio" name="overlay-gf-net" ${gf.networks === 'mc' ? 'checked' : ''} onchange="_mapLayerDraft && (_mapLayerDraft.geofence.networks='mc')"> MC only</label>
+            </div>
+          </div>
+          <div style="font-size:11px;color:var(--muted)">${draft?.mode === 'circle' ? `Radius: ${draft?.radius_m ? Math.round(draft.radius_m) + ' m' : 'not set'}` : `Vertices: ${vertices.length}`}${editing && draft?.mode !== 'point' ? ` · ${escHtml(selectedLabel)}` : ''}</div>
+          <div style="display:${draft?.mode === 'polygon' && selectedVertex ? 'grid' : 'none'};gap:6px">
+            <label class="settings-label" for="overlay-point-label">Point label</label>
+            <input id="overlay-point-label" class="settings-input" maxlength="24" value="${escHtml(selectedVertex?.label || String((_mapLayerSelectedVertex >= 0 ? _mapLayerSelectedVertex + 1 : 1)))}" placeholder="1" oninput="_mapLayerDraft && _mapLayerSelectedVertex >= 0 && (_mapLayerDraft.vertices[_mapLayerSelectedVertex].label=this.value,_renderMapLayerDraft())">
+          </div>
+          <div id="overlay-editor-status" style="font-size:12px;color:var(--muted);min-height:14px"></div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="overlay-tool-btn" onclick="saveMapLayerDraft(this)">Save</button>
+            <button class="overlay-tool-btn" onclick="finishMapLayerDraft()">Finish</button>
+            <button class="overlay-tool-btn" onclick="deleteLastMapLayerVertex(this)">Delete last</button>
+            <button class="overlay-tool-btn" onclick="deleteSelectedMapLayerVertex(this)" ${_mapLayerSelectedVertex < 0 ? 'disabled' : ''}>Delete selected</button>
+            <button class="overlay-tool-btn" onclick="cancelMapLayerDraft()">Cancel</button>
+          </div>
+        </div>
+      </div>
+      <div style="border-top:1px solid var(--border)"></div>
+      <div>${_mapLayerDefs.length ? _mapLayerDefs.map(def => {
+        const state = _mapLayerEditableState(def);
+        const features = _mapLayerFeatureList(def.data).length || 0;
+        const actionBtn = state.editable
+          ? `<button class="overlay-mini-btn" onclick="event.stopPropagation();editMapLayer(${def.id})" title="Edit this overlay">✎</button>`
+          : state.reason === 'multi'
+            ? `<button class="overlay-mini-btn" onclick="event.stopPropagation();splitMapLayerIntoEditable(${def.id})" title="Split into editable single-feature overlays">⇄</button>`
+            : '';
+        return `
+        <div class="mp-item" onclick="zoomToMapLayer(${def.id})">
+          <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${escHtml(def.color || '#f59e0b')};flex-shrink:0"></span>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(def.name || 'Unnamed')}</div>
+            <div style="font-size:10px;color:var(--muted)">${def.enabled ? 'Visible on map' : 'Hidden'}${def.is_geofence ? ` · geofence (${escHtml((def.geofence?.networks || 'both').toUpperCase())})` : ''} · ${features} feature${features === 1 ? '' : 's'}${state.reason === 'multi' ? ' · split to edit' : ''}</div>
+          </div>
+          <button class="overlay-mini-btn" onclick="event.stopPropagation();toggleMapLayerEnabled(${def.id}, ${!def.enabled})" title="${def.enabled ? 'Hide overlay' : 'Show overlay'}">${def.enabled ? '◉' : '○'}</button>
+          ${_isPolygonGeofence(def) || (state.editable && (def.data?.features?.[0]?.geometry?.type === 'Polygon' || def.data?.geometry?.type === 'Polygon')) ? `<button class="overlay-mini-btn" onclick="event.stopPropagation();toggleMapLayerGeofence(${def.id}, ${!def.is_geofence})" title="${def.is_geofence ? 'Disable geofence' : 'Enable geofence'}">${def.is_geofence ? '⌁' : '⊚'}</button>` : ''}
+          ${actionBtn}
+          <button class="overlay-mini-btn" onclick="event.stopPropagation();deleteMapLayer(${def.id}, '${jsSafe(def.name)}')" title="Delete this overlay">✕</button>
+        </div>
+      `;
+      }).join('') : '<div style="padding:8px 10px;font-size:11px;color:var(--muted)">No overlays yet.</div>'}</div>
+    `;
+  }
+
+  function renderMapLayerList() {
+    const wrap = document.getElementById('map-layer-list');
+    if (!wrap) return;
+    if (!_mapLayerDefs.length) {
+      wrap.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:4px 0">No saved map layers yet.</div>';
+      return;
+    }
+    wrap.innerHTML = _mapLayerDefs.map(def => `
+      <div style="display:flex;align-items:center;gap:8px;padding:7px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2)">
+        <label style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;cursor:pointer">
+          <input type="checkbox" ${def.enabled ? 'checked' : ''} onchange="toggleMapLayerEnabled(${def.id}, this.checked)">
+          <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${escHtml(def.color || '#f59e0b')};flex-shrink:0"></span>
+          <span style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(def.name)}${def.is_geofence ? ' · Geofence' : ''}</span>
+        </label>
+        ${_isPolygonGeofence(def) || (_mapLayerEditableState(def).editable && (_mapLayerFeatureList(def.data)[0]?.geometry?.type === 'Polygon')) ? `<button class="btn-sm" type="button" onclick="toggleMapLayerGeofence(${def.id}, ${!def.is_geofence})">${def.is_geofence ? 'Geofence on' : 'Geofence off'}</button>` : ''}
+        <button class="btn-sm" type="button" onclick="zoomToMapLayer(${def.id})">Zoom</button>
+        <button class="btn-sm" type="button" style="color:var(--danger,#f87171)" onclick="deleteMapLayer(${def.id}, '${jsSafe(def.name)}')">Delete</button>
+      </div>
+    `).join('');
+  }
+
+  async function loadMapLayers(opts = {}) {
+    try {
+      const r = await fetch('/api/map_layers');
+      if (!r.ok) throw new Error(r.status);
+      _mapLayerDefs = await r.json();
+      renderMapLayerList();
+      renderOverlayPanel();
+      refreshMapLayerPanelOptions();
+      renderMapOverlays();
+    } catch (e) {
+      console.error('loadMapLayers failed:', e);
+      if (!opts.silent) {
+        const statusEl = document.getElementById('map-layer-status');
+        if (statusEl) statusEl.textContent = `Failed to load layers: ${e.message || e}`;
+      }
+    }
+  }
+
+  async function toggleMapLayerGeofence(id, enabled) {
+    const statusEl = document.getElementById('overlay-editor-status') || document.getElementById('map-layer-status');
+    try {
+      const r = await fetch(`/api/map_layers/${id}`, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({is_geofence: enabled})
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.error) throw new Error(data.error || r.status);
+      _mapLayerDefs = _mapLayerDefs.map(def => def.id === id ? data.layer : def);
+      renderMapLayerList();
+      renderOverlayPanel();
+      refreshMapLayerPanelOptions();
+      renderMapOverlays();
+      if (statusEl) statusEl.textContent = enabled ? 'Geofence enabled.' : 'Geofence disabled.';
+    } catch (e) {
+      if (statusEl) statusEl.textContent = `Geofence update failed: ${e.message || e}`;
+    }
+  }
+
+  function handleMapLayerFileInput(event) {
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const txt = String(reader.result || '');
+      const ta = document.getElementById('map-layer-geojson');
+      if (ta) ta.value = txt;
+      const nameInput = document.getElementById('map-layer-name');
+      if (nameInput && !nameInput.value.trim()) {
+        nameInput.value = file.name.replace(/\.(geojson|json)$/i, '');
+      }
+      const statusEl = document.getElementById('map-layer-status');
+      if (statusEl) statusEl.textContent = `Loaded ${file.name}`;
+    };
+    reader.onerror = () => {
+      const statusEl = document.getElementById('map-layer-status');
+      if (statusEl) statusEl.textContent = 'Could not read that file.';
+    };
+    reader.readAsText(file);
+  }
+
+  async function saveMapLayer(btn) {
+    const nameEl = document.getElementById('map-layer-name');
+    const colorEl = document.getElementById('map-layer-color');
+    const geoEl = document.getElementById('map-layer-geojson');
+    const statusEl = document.getElementById('map-layer-status');
+    const name = (nameEl?.value || '').trim();
+    const raw = (geoEl?.value || '').trim();
+    const color = colorEl?.value || '#f59e0b';
+    if (!name) {
+      statusEl.textContent = 'Name required.';
+      return;
+    }
+    if (!raw) {
+      statusEl.textContent = 'GeoJSON required.';
+      return;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      statusEl.textContent = `Invalid JSON: ${e.message}`;
+      return;
+    }
+    statusEl.textContent = 'Saving…';
+    try {
+      const r = await fetch('/api/map_layers', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name, color, data: parsed, enabled: true})
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.error) throw new Error(data.error || r.status);
+      nameEl.value = '';
+      geoEl.value = '';
+      const fileEl = document.getElementById('map-layer-file');
+      if (fileEl) fileEl.value = '';
+      statusEl.textContent = `Saved layer "${data.layer?.name || name}".`;
+      btnFeedback(btn, '✓ Saved');
+      await loadMapLayers({silent: true});
+    } catch (e) {
+      statusEl.textContent = `Save failed: ${e.message || e}`;
+    }
+  }
+
+  async function toggleMapLayerEnabled(id, enabled, opts = {}) {
+    try {
+      const r = await fetch(`/api/map_layers/${id}`, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enabled})
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.error) throw new Error(data.error || r.status);
+      _mapLayerDefs = _mapLayerDefs.map(def => def.id === id ? data.layer : def);
+      renderMapLayerList();
+      renderOverlayPanel();
+      refreshMapLayerPanelOptions();
+      renderMapOverlays();
+      if (!opts.silent) {
+        const statusEl = document.getElementById('map-layer-status');
+        if (statusEl) statusEl.textContent = enabled ? 'Layer enabled.' : 'Layer hidden.';
+      }
+    } catch (e) {
+      console.error('toggleMapLayerEnabled failed:', e);
+      if (!opts.silent) {
+        const statusEl = document.getElementById('map-layer-status');
+        if (statusEl) statusEl.textContent = `Update failed: ${e.message || e}`;
+      }
+      await loadMapLayers({silent: true});
+    }
+  }
+
+  function zoomToMapLayer(id) {
+    const def = _mapLayerDefs.find(layer => layer.id === id);
+    if (!def || !def.data) return;
+    switchTab('map');
+    requestAnimationFrame(() => {
+      try {
+        const layer = _mapLayerObjects[id] || _buildMapLayerLeaflet(def);
+        const bounds = layer.getBounds && layer.getBounds();
+        if (bounds && bounds.isValid && bounds.isValid()) leafletMap.fitBounds(bounds.pad(0.12));
+      } catch (e) {
+        console.error('zoomToMapLayer failed:', e);
+      }
+    });
+  }
+
+  function deleteMapLayer(id, name) {
+    document.getElementById('confirm-ok').textContent = 'Delete';
+    showConfirm(`Delete map layer "${name}"?`, async () => {
+      const statusEl = document.getElementById('map-layer-status');
+      if (statusEl) statusEl.textContent = 'Deleting…';
+      try {
+        const r = await fetch(`/api/map_layers/${id}`, {method: 'DELETE'});
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok || data.error) throw new Error(data.error || r.status);
+        _mapLayerDefs = _mapLayerDefs.filter(def => def.id !== id);
+        renderMapLayerList();
+        renderOverlayPanel();
+        refreshMapLayerPanelOptions();
+        renderMapOverlays();
+        if (statusEl) statusEl.textContent = 'Layer deleted.';
+      } catch (e) {
+        if (statusEl) statusEl.textContent = `Delete failed: ${e.message || e}`;
+      }
+    });
+  }
+
+  function initMap() {
+    if (leafletMap) return;
+    const _savedMapView = (() => { try { return JSON.parse(localStorage.getItem('mapView')); } catch(e) { return null; } })();
+    const _initCenter = _savedMapView ? [_savedMapView.lat, _savedMapView.lng] : [46.05, 14.50];
+    const _initZoom   = _savedMapView ? _savedMapView.zoom : 9;
+    leafletMap = L.map('map', { zoomSnap: 0.5, zoomDelta: 0.5 }).setView(_initCenter, _initZoom);
+    const _savedLayer = (() => { try { return localStorage.getItem('mapTileLayer') || 'osm'; } catch(e) { return 'osm'; } })();
+    setTileLayer(_savedLayer);
+    if (_showPolarGrid) _drawPolarGrid();
+    fetch('/api/traceroute/history').then(r => r.json()).then(rows => {
+      if (!Array.isArray(rows) || !rows.length) return;
+      _traceHistory = rows.map(r => ({ ts: r.ts * 1000, nodeId: r.node_id, nodeName: r.node_name, radioId: r.radio_id, data: r.data }));
+      if (_traceHistory.length) _lastTraceData = _traceHistory[0].data;
+      if (chatNetwork === 'mt') renderMessages();
+    }).catch(() => {});
+
+    // Save map position on every move so it survives refresh
+    leafletMap.on('moveend', () => {
+      const c = leafletMap.getCenter();
+      try { localStorage.setItem('mapView', JSON.stringify({lat: c.lat, lng: c.lng, zoom: leafletMap.getZoom()})); } catch(e) {}
+    });
+    leafletMap.on('zoomend', () => {
+      if (_showTrMap && _traceMapLines.length) {
+        const trData = _currentMtTraceMapData();
+        if (trData) _drawTraceRouteOnMap(trData);
+      }
+      if (_mcActiveHoverPath) showMcHoverPath(_mcActiveHoverPath, true);
+    });
+
+    // Unlock when user drags manually
+    leafletMap.on('dragstart', () => setMapLock(false));
+
+    // Position pick mode + mark pick mode
+    leafletMap.on('click', (e) => {
+      const lat = e.latlng.lat;
+      const lon = e.latlng.lng;
+      if (_wpPickMode) {
+        cancelWaypointPick();
+        openWaypointModal(lat, lon);
+        return;
+      }
+      if (_mapLayerDraft) {
+        mapLayerDraftAddVertex(lat, lon);
+        return;
+      }
+      if (!_mapPickMode) return;
+      if (_mapPickMode === 'mc') {
+        cancelMapPick();
+        switchTab('settings');
+        switchSettingsTab('mc');
+        const latEl = document.getElementById('mc-coords-lat');
+        const lonEl = document.getElementById('mc-coords-lon');
+        if (latEl) latEl.value = lat.toFixed(6);
+        if (lonEl) lonEl.value = lon.toFixed(6);
+        const st = document.getElementById('mc-actions-status');
+        if (st) {
+          st.innerHTML = `<span style="color:var(--accent)">Position set to ${lat.toFixed(5)}, ${lon.toFixed(5)}. Click Save coords to send it to the MC node.</span>`;
+        }
+      } else if (_mapPickMode === 'om') {
+        document.getElementById('om-pos-lat').value = lat.toFixed(6);
+        document.getElementById('om-pos-lon').value = lon.toFixed(6);
+        cancelMapPick();
+        switchTab('settings');
+        switchSettingsTab('app');
+        omManualPosStatus(`Position set to ${lat.toFixed(5)}, ${lon.toFixed(5)}. Save to use it as OM origin.`, true);
+      } else {
+        document.getElementById('node-cfg-fixed-lat').value = lat.toFixed(6);
+        document.getElementById('node-cfg-fixed-lon').value = lon.toFixed(6);
+        // Auto-enable fixed position if not already checked
+        const cb = document.getElementById('node-cfg-fixed-pos');
+        if (!cb.checked) { cb.checked = true; toggleFixedCoords(); }
+        cancelMapPick();
+        nodeCfgStatus('position', `Position set to ${lat.toFixed(5)}, ${lon.toFixed(5)}. Adjust precision, then Save.`, true);
+      }
+    });
+    leafletMap.on('mousemove', (e) => {
+      if (!_mapLayerDraft || _mapLayerDraft.mode !== 'circle' || !_mapLayerDraft.center || _mapLayerDraft.finished) return;
+      _mapLayerDraft.radius_m = _haversineMeters(_mapLayerDraft.center.lat, _mapLayerDraft.center.lon, e.latlng.lat, e.latlng.lng);
+      _renderMapLayerDraft();
+      renderOverlayPanel();
+    });
+    leafletMap.on('dblclick', (e) => {
+      if (!_mapLayerDraft) return;
+      if (_mapLayerDraft.mode === 'circle') return;
+      L.DomEvent.stop(e);
+      finishMapLayerDraft();
+    });
+
+    // Locate/lock button
+    const LocateCtrl = L.Control.extend({
+      onAdd() {
+        const btn = L.DomUtil.create('div', 'map-locate-btn');
+        btn.id    = 'map-locate-btn';
+        btn.title = 'Lock on my location';
+        btn.innerHTML = '⊕';
+        L.DomEvent.on(btn, 'click', L.DomEvent.stopPropagation);
+        L.DomEvent.on(btn, 'click', () => {
+          if (mapLocked) { setMapLock(false); } else { setMapLock(true); centerOnLocal(); }
+        });
+        return btn;
+      }
+    });
+    new LocateCtrl({ position: 'topleft' }).addTo(leafletMap);
+
+    // Labels toggle
+    const LabelsCtrl = L.Control.extend({
+      onAdd() {
+        const btn = L.DomUtil.create('div', 'map-locate-btn');
+        btn.id    = 'map-labels-btn';
+        btn.title = 'Toggle node name labels';
+        btn.innerHTML = 'Aa';
+        btn.style.fontSize = '11px';
+        btn.style.fontWeight = '600';
+        L.DomEvent.on(btn, 'click', L.DomEvent.stopPropagation);
+        L.DomEvent.on(btn, 'click', () => setMapLabels(!mapLabels));
+        return btn;
+      }
+    });
+    new LabelsCtrl({ position: 'topleft' }).addTo(leafletMap);
+
+    // Layer switcher
+    const LayerCtrl = L.Control.extend({
+      onAdd() {
+        const wrap = L.DomUtil.create('div');
+        wrap.style.position = 'relative';
+
+        const btn = L.DomUtil.create('div', 'map-locate-btn', wrap);
+        btn.id    = 'map-layer-btn';
+        btn.title = 'Switch map layer';
+        btn.innerHTML = '⧉';
+        btn.style.fontSize = '16px';
+
+        const panel = L.DomUtil.create('div', '', wrap);
+        panel.id = 'map-layer-panel';
+        L.DomEvent.disableScrollPropagation(panel);
+        Object.entries(TILE_LAYERS).forEach(([key, def]) => {
+          const opt = L.DomUtil.create('div', 'map-layer-opt', panel);
+          opt.textContent  = def.label;
+          opt.dataset.layer = key;
+          const saved = (() => { try { return localStorage.getItem('mapTileLayer') || 'osm'; } catch(e) { return 'osm'; } })();
+          if (key === saved) opt.classList.add('active');
+          L.DomEvent.on(opt, 'click', (e) => {
+            L.DomEvent.stopPropagation(e);
+            setTileLayer(key);
+            panel.classList.remove('open');
+          });
+        });
+        _mapLayerMenuPanel = L.DomUtil.create('div', '', panel);
+        refreshMapLayerPanelOptions();
+
+        // Separator
+        const sep = L.DomUtil.create('div', '', panel);
+        sep.style.cssText = 'border-top:1px solid var(--border);margin:4px 2px 2px';
+
+        // Polar grid toggle
+        const gridOpt = L.DomUtil.create('div', 'map-layer-opt', panel);
+        gridOpt.id = 'map-polar-btn';
+        gridOpt.textContent = 'Polar Grid';
+        if (_showPolarGrid) gridOpt.classList.add('active');
+        L.DomEvent.on(gridOpt, 'click', (e) => { L.DomEvent.stopPropagation(e); togglePolarGrid(); });
+
+        // Polar grid customize link
+        const custBtn = L.DomUtil.create('div', '', panel);
+        custBtn.textContent = 'Customize…';
+        custBtn.style.cssText = 'padding:2px 10px 6px 12px;font-size:11px;color:var(--muted);cursor:pointer';
+        custBtn.onmouseenter = () => { custBtn.style.color = 'var(--text)'; };
+        custBtn.onmouseleave = () => { custBtn.style.color = 'var(--muted)'; };
+        L.DomEvent.on(custBtn, 'click', (e) => { L.DomEvent.stopPropagation(e); openPolarCustomize(); });
+
+        L.DomEvent.on(btn, 'click', L.DomEvent.stopPropagation);
+        L.DomEvent.on(btn, 'click', () => panel.classList.toggle('open'));
+        leafletMap.on('click', () => panel.classList.remove('open'));
+
+        const savedKey = (() => { try { return localStorage.getItem('mapTileLayer') || 'osm'; } catch(e) { return 'osm'; } })();
+        if (savedKey !== 'osm') btn.classList.add('active');
+
+        return wrap;
+      }
+    });
+    new LayerCtrl({ position: 'topleft' }).addTo(leafletMap);
+
+    // Mark add button
+    const WpCtrl = L.Control.extend({
+      onAdd() {
+        const btn = L.DomUtil.create('div', 'map-locate-btn');
+        btn.id    = 'map-wp-btn';
+        btn.title = 'Add Mark — place a marker on the map and share it with the mesh';
+        btn.innerHTML = '📍';
+        btn.style.fontSize = '14px';
+        L.DomEvent.on(btn, 'click', L.DomEvent.stopPropagation);
+        L.DomEvent.on(btn, 'click', () => startWaypointPick());
+        return btn;
+      }
+    });
+    new WpCtrl({ position: 'topleft' }).addTo(leafletMap);
+
+    // Legend
+    const LegendCtrl = L.Control.extend({
+      onAdd() {
+        const div = L.DomUtil.create('div', 'map-legend');
+        div.innerHTML = `
+          <div class="map-legend-title">Nodes</div>
+          <div class="map-legend-row"><span class="map-legend-dot" style="background:#86efac"></span>Fresh &lt;30m</div>
+          <div class="map-legend-row"><span class="map-legend-dot" style="background:#e07b30"></span>Recent &lt;2h</div>
+          <div class="map-legend-row"><span class="map-legend-dot" style="background:#f85149"></span>Old &gt;2h</div>
+          <div class="map-legend-row"><span class="map-legend-dot" style="background:#6e7681"></span>Unknown</div>
+          <div class="map-legend-row" style="margin-top:4px"><span class="map-legend-dot" style="background:#3b82f6;outline:2px solid #3b82f6;outline-offset:2px"></span>You</div>
+          <div id="map-legend-mc"><div class="map-legend-title" style="margin-top:8px">MeshCore</div>
+          <div class="map-legend-row"><span class="map-legend-dot" style="background:#3b82f6;border-color:white;border-radius:2px"></span>MC node</div></div>`;
+        return div;
+      }
+    });
+    new LegendCtrl({ position: 'bottomleft' }).addTo(leafletMap);
+
+    // Wire up standalone search bar
+    const searchInput = document.getElementById('map-search-input');
+    L.DomEvent.disableClickPropagation(searchInput);
+    L.DomEvent.disableScrollPropagation(searchInput);
+    searchInput.addEventListener('input', e => {
+      mapSearchQuery = e.target.value.toLowerCase().trim();
+      applyMapSearch();
+    });
+    applyMcVisibility();
+    loadMapLayers({silent: true});
+    renderMapOverlays();
+    renderOverlayPanel();
+    try {
+      if (localStorage.getItem('overlayPanelCollapsed') === '0') {
+        const body = document.getElementById('overlay-panel-body');
+        const chev = document.getElementById('overlay-panel-chev');
+        if (body) body.style.display = '';
+        if (chev) chev.textContent = '▲';
+      }
+    } catch(e) {}
+  }
+
+  function setMapLabels(show) {
+    mapLabels = show;
+    const btn = document.getElementById('map-labels-btn');
+    if (btn) btn.classList.toggle('active', show);
+    Object.values(mapMarkers).forEach(marker => {
+      if (show) marker.openTooltip();
+      else      marker.closeTooltip();
+    });
+    Object.values(senseMarkers).forEach(marker => { if (show) marker.openTooltip(); else marker.closeTooltip(); });
+    mcMapMarkers.forEach(marker => { if (show) marker.openTooltip(); else marker.closeTooltip(); });
+    Object.values(mcClusterMarkers).forEach(marker => { if (show) marker.openTooltip(); else marker.closeTooltip(); });
+    if (_gpsMarker) { if (show) _gpsMarker.openTooltip(); else _gpsMarker.closeTooltip(); }
+  }
+
+  function applyMapSearch() {
+    if (!leafletMap) return;
+    Object.entries(mapMarkers).forEach(([id, marker]) => {
+      const node = allNodes.find(n => n.id === id);
+      if (!node) return;
+      const matches = !mapSearchQuery ||
+        (node.long_name || '').toLowerCase().includes(mapSearchQuery) ||
+        (node.short_name || '').toLowerCase().includes(mapSearchQuery);
+      if (matches && !leafletMap.hasLayer(marker)) marker.addTo(leafletMap);
+      if (!matches && leafletMap.hasLayer(marker)) leafletMap.removeLayer(marker);
+    });
+    // Also filter cluster badges: show if any node in the group matches
+    const posKey = n => _mapPosKey(n.latitude, n.longitude);
+    Object.entries(clusterMarkers).forEach(([k, marker]) => {
+      const anyMatch = !mapSearchQuery || allNodes.some(n =>
+        n.latitude != null && posKey(n) === k &&
+        ((n.long_name || '').toLowerCase().includes(mapSearchQuery) ||
+         (n.short_name || '').toLowerCase().includes(mapSearchQuery))
+      );
+      if (anyMatch && !leafletMap.hasLayer(marker)) marker.addTo(leafletMap);
+      if (!anyMatch && leafletMap.hasLayer(marker)) leafletMap.removeLayer(marker);
+    });
+    mcMapMarkers.forEach(marker => {
+      const data = marker._omMcMapData || null;
+      if (!data) return;
+      const matches = !mapSearchQuery || `${data.long_name || ''} ${data.name || ''} ${data.id || ''}`.toLowerCase().includes(mapSearchQuery);
+      if (matches && !leafletMap.hasLayer(marker)) marker.addTo(leafletMap);
+      if (!matches && leafletMap.hasLayer(marker)) leafletMap.removeLayer(marker);
+    });
+    Object.entries(mcClusterMarkers).forEach(([_, marker]) => {
+      const items = marker._omClusterItems || [];
+      const anyMatch = !mapSearchQuery || items.some(item =>
+        `${item.long_name || ''} ${item.name || ''} ${item.id || ''}`.toLowerCase().includes(mapSearchQuery)
+      );
+      if (anyMatch && !leafletMap.hasLayer(marker)) marker.addTo(leafletMap);
+      if (!anyMatch && leafletMap.hasLayer(marker)) leafletMap.removeLayer(marker);
+    });
+  }
+
+  function setMapLock(locked) {
+    mapLocked = locked;
+    // When locked: zoom towards map center (kept on local node). When unlocked: zoom towards mouse (default).
+    leafletMap.options.scrollWheelZoom = locked ? 'center' : true;
+    const btn = document.getElementById('map-locate-btn');
+    if (btn) btn.classList.toggle('active', locked);
+  }
+
+  function centerOnLocal() {
+    const origin = _omLocalOrigin();
+    if (origin) {
+      leafletMap.setView([origin.lat, origin.lon], leafletMap.getZoom());
+      return;
+    }
+    // Try MT local node first
+    const local = allNodes.find(n => n.is_local && n.latitude != null);
+    if (local) { leafletMap.setView([local.latitude, local.longitude], leafletMap.getZoom()); return; }
+    // Fall back to connected MC radio position
+    for (const st of Object.values(mcLastStatus)) {
+      if (st?.status === 'connected' && st.lat != null && st.lat !== 0) {
+        leafletMap.setView([st.lat, st.lon], leafletMap.getZoom());
+        return;
+      }
+    }
+  }
+
+  // ── Marks ──────────────────────────────────────────────────────────────
+
+  function startWaypointPick() {
+    _wpPickMode = true;
+    switchTab('map');
+    document.getElementById('wp-pick-banner').style.display = 'block';
+    document.getElementById('wp-pick-cancel').style.display = 'block';
+    document.body.classList.add('map-pick-mode');
+    _wpPickEscHandler = e => { if (e.key === 'Escape') cancelWaypointPick(); };
+    document.addEventListener('keydown', _wpPickEscHandler);
+  }
+
+  function cancelWaypointPick() {
+    _wpPickMode = false;
+    document.getElementById('wp-pick-banner').style.display = 'none';
+    document.getElementById('wp-pick-cancel').style.display = 'none';
+    document.body.classList.remove('map-pick-mode');
+    if (_wpPickEscHandler) { document.removeEventListener('keydown', _wpPickEscHandler); _wpPickEscHandler = null; }
+  }
+
+  let _wpLat = null, _wpLon = null;
+  let _wpFocusedInput = 'name';  // track which input gets emoji
+  let _wpMarkerEmoji  = '📍';   // emoji used as the map marker icon
+
+  const WP_EMOJIS = [
+    ['🏕️','⛺','🏔️','💧','⛽','🏠','🅿️','📍'],
+    ['⚠️','🚫','🔴','🟢','📡','🔧','🏥','🚧'],
+    ['⭐','📌','🚩','🎯','🗺️','👮','🔭','🌲'],
+  ];
+
+  async function openWaypointModal(lat, lon) {
+    _wpLat = lat; _wpLon = lon;
+    _editWpId = null;
+    _wpDestNode = null;
+    _wpMarkerEmoji = '📍';
+    // Fetch channels for selector
+    let channels = [{index:0, name:'Primary'}];
+    try {
+      const ctrl = new AbortController();
+      const timeout = setTimeout(() => ctrl.abort(), 3000);
+      const chParam = activeRadioId ? `?radio_id=${encodeURIComponent(activeRadioId)}` : '';
+      const r = await fetch(`/api/chat/channels${chParam}`, {signal: ctrl.signal});
+      clearTimeout(timeout);
+      if (!r.ok) throw new Error(r.status);
+      const ch = await r.json();
+      if (ch && ch.length) channels = ch;
+    } catch(e) {}
+
+    const chOptions = channels.map(c =>
+      `<option value="${c.index}">${escHtml(c.name || 'CH' + c.index)}</option>`
+    ).join('');
+
+    const markerRows = WP_EMOJIS.map(row =>
+      `<div style="display:flex;gap:3px;flex-wrap:wrap">${row.map(e => {
+        const sel = e === _wpMarkerEmoji;
+        return `<button onclick="selectWpMarker('${jsSafe(e)}')" data-marker-emoji="${e}"
+          style="font-size:15px;padding:2px 3px;background:${sel?'var(--accent-dim)':'var(--bg3)'};border:1px solid ${sel?'var(--accent)':'var(--border)'};border-radius:4px;cursor:pointer;line-height:1.4">${e}</button>`;
+      }).join('')}</div>`
+    ).join('');
+
+    const textRows = WP_EMOJIS.map(row =>
+      `<div style="display:flex;gap:3px;flex-wrap:wrap">${row.map(e =>
+        `<button onclick="insertWpEmoji('${jsSafe(e)}')" style="font-size:15px;padding:2px 3px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;line-height:1.4">${e}</button>`
+      ).join('')}</div>`
+    ).join('');
+
+    openModal('New Mark / Note', `
+      <div style="display:flex;flex-direction:column;gap:10px;min-width:280px;max-width:360px">
+
+        <!-- Tab bar -->
+        <div style="display:flex;border-bottom:1px solid var(--border);margin-bottom:2px;margin-top:-4px">
+          <button id="wptab-mark" onclick="wpSwitchTab('mark')"
+            style="flex:1;padding:6px 4px;background:none;border:none;border-bottom:2px solid var(--accent);color:var(--accent);cursor:pointer;font-size:12px;font-weight:600">📡 Mark</button>
+          <button id="wptab-note" onclick="wpSwitchTab('note')"
+            style="flex:1;padding:6px 4px;background:none;border:none;border-bottom:2px solid transparent;color:var(--text);cursor:pointer;font-size:12px">📝 Self Note</button>
+        </div>
+
+        <!-- ── Mark tab ── -->
+        <div id="wptab-mark-content">
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <div>
+              <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Map marker</label>
+              <div style="display:flex;align-items:flex-start;gap:8px">
+                <div id="wp-marker-preview" style="font-size:22px;min-width:34px;height:34px;display:flex;align-items:center;justify-content:center;background:var(--bg3);border:1px solid var(--accent);border-radius:6px;flex-shrink:0">${_wpMarkerEmoji}</div>
+                <div style="display:flex;flex-direction:column;gap:3px">${markerRows}</div>
+              </div>
+            </div>
+            <div>
+              <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Name *</label>
+              <input id="wp-name-input" class="settings-input" placeholder="e.g. Camp, Hazard, Relay" maxlength="30"
+                     style="width:100%;box-sizing:border-box"
+                     onfocus="_wpFocusedInput='name'"
+                     onkeydown="if(event.key==='Enter')sendWaypoint()">
+            </div>
+            <div>
+              <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Description</label>
+              <input id="wp-desc-input" class="settings-input" placeholder="Optional (max 80 chars)" maxlength="80"
+                     style="width:100%;box-sizing:border-box"
+                     onfocus="_wpFocusedInput='desc'">
+            </div>
+            <div>
+              <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Add to text</label>
+              <div style="display:flex;flex-direction:column;gap:3px">${textRows}</div>
+            </div>
+            <div style="font-size:11px;color:var(--muted)">📍 ${lat.toFixed(5)}, ${lon.toFixed(5)}</div>
+            <div style="border-top:1px solid var(--border);padding-top:8px;display:flex;flex-direction:column;gap:8px">
+              <div style="display:flex;align-items:center;gap:10px">
+                <span style="font-size:12px;color:var(--muted);white-space:nowrap">Channel</span>
+                <select id="wp-channel-select" style="padding:3px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:12px;flex:1">
+                  ${chOptions}
+                </select>
+              </div>
+              <div style="display:flex;align-items:flex-start;gap:10px">
+                <span style="font-size:12px;color:var(--muted);white-space:nowrap;margin-top:4px">Send to</span>
+                <div style="display:flex;flex-direction:column;gap:4px;flex:1">
+                  <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
+                    <input type="radio" name="wp-dest" value="all" checked onchange="wpToggleDest(this.value)"> All (broadcast)
+                  </label>
+                  <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
+                    <input type="radio" name="wp-dest" value="node" onchange="wpToggleDest(this.value)"> Specific node
+                  </label>
+                  <div id="wp-node-wrap" style="display:none;margin-top:2px">
+                    <input id="wp-node-search" class="settings-input" placeholder="Search node…" maxlength="40"
+                           style="width:100%;box-sizing:border-box;font-size:12px"
+                           oninput="wpFilterNodes(this.value)"
+                           onblur="setTimeout(()=>{const r=document.getElementById('wp-node-results');if(r){r.style.display='none';r.innerHTML='';}},150)">
+                    <div id="wp-node-results" style="max-height:100px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;margin-top:2px;background:var(--bg2);display:none"></div>
+                    <div id="wp-node-selected" style="margin-top:4px;min-height:4px"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div id="wp-send-status" style="font-size:12px;min-height:14px"></div>
+            <div style="display:flex;gap:8px;justify-content:flex-end">
+              <button class="btn" onclick="closeModal()">Cancel</button>
+              <button class="btn-primary" onclick="sendWaypoint()">Send</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Self Note tab ── -->
+        <div id="wptab-note-content" style="display:none">
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <div>
+              <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Map marker</label>
+              <div style="display:flex;align-items:flex-start;gap:8px">
+                <div id="note-marker-preview" style="font-size:22px;min-width:34px;height:34px;display:flex;align-items:center;justify-content:center;background:var(--bg3);border:1px solid var(--border);border-radius:6px;flex-shrink:0">${_wpMarkerEmoji}</div>
+                <div style="display:flex;flex-direction:column;gap:3px">${markerRows}</div>
+              </div>
+            </div>
+            <div>
+              <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Name *</label>
+              <input id="note-name-input" class="settings-input" placeholder="e.g. Parking spot, View point" maxlength="30"
+                     style="width:100%;box-sizing:border-box"
+                     onkeydown="if(event.key==='Enter')saveMapNote()">
+            </div>
+            <div>
+              <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Note</label>
+              <input id="note-desc-input" class="settings-input" placeholder="Optional details" maxlength="200"
+                     style="width:100%;box-sizing:border-box">
+            </div>
+            <div style="font-size:11px;color:var(--muted)">📍 ${lat.toFixed(5)}, ${lon.toFixed(5)}</div>
+            <div style="font-size:11px;color:var(--muted);background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:6px 8px">
+              Stored locally only — not sent over the mesh.
+            </div>
+            <div id="note-save-status" style="font-size:12px;min-height:14px"></div>
+            <div style="display:flex;gap:8px;justify-content:flex-end">
+              <button class="btn" onclick="closeModal()">Cancel</button>
+              <button class="btn-primary" onclick="saveMapNote()">Save</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    `);
+    setTimeout(() => document.getElementById('wp-name-input')?.focus(), 50);
+  }
+
+  let _wpDestNode = null;  // {id, name} or null
+
+  function wpToggleDest(val) {
+    const wrap = document.getElementById('wp-node-wrap');
+    if (wrap) wrap.style.display = val === 'node' ? 'block' : 'none';
+    if (val === 'all') { _wpDestNode = null; wpRenderSelected(); }
+  }
+
+  function wpFilterNodes(q) {
+    const results = document.getElementById('wp-node-results');
+    if (!results) return;
+    q = q.trim().toLowerCase();
+    if (!q) { results.style.display = 'none'; return; }
+    const matches = allNodes.filter(n => !n.is_local && n.id !== _wpDestNode?.id &&
+      ((n.long_name || '').toLowerCase().includes(q) || (n.short_name || '').toLowerCase().includes(q))
+    ).slice(0, 8);
+    if (!matches.length) { results.style.display = 'none'; return; }
+    results.innerHTML = matches.map(n =>
+      `<div onmousedown="event.preventDefault();wpSelectNode('${jsSafe(n.id)}','${jsSafe(n.long_name || n.short_name || n.id)}')"
+            style="padding:4px 8px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--border)"
+            onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''">
+        <span style="color:var(--accent)">${escHtml(n.short_name || '?')}</span>
+        <span style="color:var(--text);margin-left:6px">${escHtml(n.long_name || n.id)}</span>
+      </div>`
+    ).join('');
+    results.style.display = 'block';
+  }
+
+  function wpSelectNode(id, name) {
+    _wpDestNode = {id, name};
+    wpRenderSelected();
+    const inp = document.getElementById('wp-node-search');
+    const res = document.getElementById('wp-node-results');
+    if (inp) inp.value = '';
+    if (res) { res.style.display = 'none'; res.innerHTML = ''; }
+  }
+
+  function wpRemoveNode() {
+    _wpDestNode = null;
+    wpRenderSelected();
+  }
+
+  function wpRenderSelected() {
+    const wrap = document.getElementById('wp-node-selected');
+    if (!wrap) return;
+    if (!_wpDestNode) { wrap.innerHTML = ''; return; }
+    wrap.innerHTML =
+      `<div style="display:inline-flex;align-items:center;gap:4px;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;padding:2px 6px;font-size:11px;color:var(--accent)">
+        ${escHtml(_wpDestNode.name)}
+        <span onclick="wpRemoveNode()" style="cursor:pointer;color:var(--muted);margin-left:2px">✕</span>
+      </div>`;
+  }
+
+  function insertWpEmoji(emoji) {
+    const inputId = _wpFocusedInput === 'desc' ? 'wp-desc-input' : 'wp-name-input';
+    const el = document.getElementById(inputId);
+    if (!el) return;
+    const start = el.selectionStart ?? el.value.length;
+    const end   = el.selectionEnd   ?? el.value.length;
+    el.value = el.value.slice(0, start) + emoji + el.value.slice(end);
+    el.selectionStart = el.selectionEnd = start + emoji.length;
+    el.focus();
+  }
+
+  function selectWpMarker(emoji) {
+    _wpMarkerEmoji = emoji;
+    ['wp-marker-preview','note-marker-preview'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = emoji;
+    });
+    document.querySelectorAll('[data-marker-emoji]').forEach(btn => {
+      const sel = btn.dataset.markerEmoji === emoji;
+      btn.style.borderColor = sel ? 'var(--accent)' : 'var(--border)';
+      btn.style.background  = sel ? 'var(--accent-dim)' : 'var(--bg3)';
+    });
+  }
+
+  function wpSwitchTab(tab) {
+    ['mark','note'].forEach(t => {
+      const btn     = document.getElementById(`wptab-${t}`);
+      const content = document.getElementById(`wptab-${t}-content`);
+      const active  = t === tab;
+      if (btn) {
+        btn.style.borderBottom = active ? '2px solid var(--accent)' : '2px solid transparent';
+        btn.style.color        = active ? 'var(--accent)' : 'var(--text)';
+        btn.style.fontWeight   = active ? '600' : 'normal';
+      }
+      if (content) content.style.display = active ? '' : 'none';
+    });
+    setTimeout(() => {
+      document.getElementById(tab === 'mark' ? 'wp-name-input' : 'note-name-input')?.focus();
+    }, 50);
+  }
+
+  async function saveMapNote() {
+    const name = (document.getElementById('note-name-input')?.value || '').trim();
+    const desc = (document.getElementById('note-desc-input')?.value || '').trim();
+    const status = document.getElementById('note-save-status');
+    if (!name) { if (status) { status.style.color='var(--red)'; status.textContent='Name is required.'; } return; }
+    if (status) { status.style.color='var(--muted)'; status.textContent='Saving…'; }
+    try {
+      const res = await fetch('/api/notes', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({name, description: desc, lat: _wpLat, lon: _wpLon, marker_emoji: _wpMarkerEmoji})
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.ok) {
+        if (status) { status.style.color='var(--green)'; status.textContent='Saved!'; }
+        setTimeout(closeModal, 800);
+      } else {
+        if (status) { status.style.color='var(--red)'; status.textContent=data.error||'Save failed'; }
+      }
+    } catch(e) {
+      if (status) { status.style.color='var(--red)'; status.textContent='Network error'; }
+    }
+  }
+
+  async function loadNotes() {
+    try {
+      const res = await fetch('/api/notes');
+      if (!res.ok) throw new Error(res.status);
+      const notes = await res.json();
+      // Remove markers for notes no longer in list
+      const activeIds = new Set(notes.map(n => n.id));
+      Object.keys(noteMarkers).forEach(id => {
+        if (!activeIds.has(Number(id))) { if (leafletMap) leafletMap.removeLayer(noteMarkers[id]); delete noteMarkers[id]; delete notesData[Number(id)]; }
+      });
+      notes.forEach(n => { if (!noteMarkers[n.id]) renderNoteMarker(n); });
+      renderMarksPanel();
+      try {
+        if (localStorage.getItem('notesPanelCollapsed') === '0') {
+          const body = document.getElementById('notes-panel-body');
+          const chev = document.getElementById('notes-panel-chev');
+          if (body) body.style.display = '';
+          if (chev) chev.textContent = '▲';
+        }
+      } catch(e) {}
+    } catch(e) {}
+  }
+
+  function renderNoteMarker(note) {
+    if (!note || note.id == null) return;
+    if (!leafletMap) return;
+    if (noteMarkers[note.id]) { leafletMap.removeLayer(noteMarkers[note.id]); delete noteMarkers[note.id]; }
+    if (note.lat == null || note.lon == null) return;
+    notesData[note.id] = note;
+    const emoji = note.marker_emoji || '📝';
+    const icon = L.divIcon({
+      html: `<div style="font-size:20px;line-height:1;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.5));opacity:0.85">${escHtml(emoji)}</div>`,
+      className: '', iconSize: [24, 24], iconAnchor: [6, 22]
+    });
+    const ts = note.ts ? new Date(note.ts * 1000).toLocaleString([], {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit', hour12: false}) : '';
+    const popupHtml = `
+      <div style="min-width:160px;max-width:220px">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Self Note</div>
+        <div style="font-weight:600;font-size:13px;color:var(--text);margin-bottom:4px">${escHtml(note.name)}</div>
+        ${note.description ? `<div style="font-size:12px;color:var(--text);margin-bottom:6px">${escHtml(note.description)}</div>` : ''}
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px">${ts}</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px">
+          <button onclick="openEditNoteModal(${note.id})"
+            title="Edit this note's name or description"
+            style="font-size:11px;padding:3px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text);cursor:pointer">Edit</button>
+          <button onclick="shareNote(${note.id})"
+            title="Broadcast this note as a Meshtastic waypoint on the mesh"
+            style="font-size:11px;padding:3px 8px;background:var(--accent-dim);border:1px solid var(--accent);border-radius:4px;color:var(--accent);cursor:pointer">Share</button>
+          <button onclick="document.getElementById('confirm-ok').textContent='Delete';showConfirm('Delete note \u201c${jsSafe(note.name||'this note')}\u201d?',()=>deleteNote(${note.id}))"
+            title="Delete this note — local only, does not affect the mesh"
+            style="font-size:11px;padding:3px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--red);cursor:pointer">Delete</button>
+        </div>
+      </div>`;
+    noteMarkers[note.id] = L.marker([note.lat, note.lon], {icon})
+      .addTo(leafletMap)
+      .bindPopup(popupHtml, {maxWidth: 240});
+    renderMarksPanel();
+  }
+
+  async function deleteNote(note_id) {
+    const r = await fetch(`/api/notes/${note_id}`, {method:'DELETE'}).catch(() => null);
+    if (!r || !r.ok) return;
+    if (noteMarkers[note_id]) { if (leafletMap) { leafletMap.closePopup(); leafletMap.removeLayer(noteMarkers[note_id]); } delete noteMarkers[note_id]; }
+    delete notesData[note_id];
+    renderMarksPanel();
+  }
+
+  function shareNote(note_id) {
+    const note = notesData[note_id];
+    if (!note) return;
+    if (leafletMap) leafletMap.closePopup();
+    openWaypointModal(note.lat, note.lon).then(() => {
+      setTimeout(() => {
+        const nameEl = document.getElementById('wp-name-input');
+        const descEl = document.getElementById('wp-desc-input');
+        if (nameEl) nameEl.value = note.name;
+        if (descEl) descEl.value = note.description || '';
+        selectWpMarker(note.marker_emoji || '📍');
+      }, 100);
+    });
+  }
+
+  let _editNoteId = null;
+
+  function openEditNoteModal(note_id) {
+    const note = notesData[note_id];
+    if (!note) return;
+    _editNoteId  = note_id;
+    _wpMarkerEmoji = note.marker_emoji || '📝';
+    if (leafletMap) leafletMap.closePopup();
+    const markerRows = WP_EMOJIS.map(row =>
+      `<div style="display:flex;gap:3px;flex-wrap:wrap">${row.map(e => {
+        const sel = e === _wpMarkerEmoji;
+        return `<button onclick="selectWpMarker('${jsSafe(e)}')" data-marker-emoji="${e}"
+          style="font-size:15px;padding:2px 3px;background:${sel?'var(--accent-dim)':'var(--bg3)'};border:1px solid ${sel?'var(--accent)':'var(--border)'};border-radius:4px;cursor:pointer;line-height:1.4">${e}</button>`;
+      }).join('')}</div>`
+    ).join('');
+    openModal('Edit Note', `
+      <div style="display:flex;flex-direction:column;gap:10px;min-width:280px;max-width:360px">
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Map marker</label>
+          <div style="display:flex;align-items:flex-start;gap:8px">
+            <div id="note-marker-preview" style="font-size:22px;min-width:34px;height:34px;display:flex;align-items:center;justify-content:center;background:var(--bg3);border:1px solid var(--border);border-radius:6px;flex-shrink:0">${_wpMarkerEmoji}</div>
+            <div style="display:flex;flex-direction:column;gap:3px">${markerRows}</div>
+          </div>
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Name *</label>
+          <input id="note-name-input" class="settings-input" value="${escHtml(note.name)}" maxlength="30"
+                 style="width:100%;box-sizing:border-box"
+                 onkeydown="if(event.key==='Enter')saveNoteEdit()">
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Note</label>
+          <input id="note-desc-input" class="settings-input" value="${escHtml(note.description||'')}" maxlength="200"
+                 style="width:100%;box-sizing:border-box">
+        </div>
+        <div id="note-save-status" style="font-size:12px;min-height:14px"></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn" onclick="closeModal()">Cancel</button>
+          <button class="btn-primary" onclick="saveNoteEdit()">Save</button>
+        </div>
+      </div>
+    `);
+    setTimeout(() => document.getElementById('note-name-input')?.focus(), 50);
+  }
+
+  async function saveNoteEdit() {
+    const name = (document.getElementById('note-name-input')?.value || '').trim();
+    const desc = (document.getElementById('note-desc-input')?.value || '').trim();
+    const status = document.getElementById('note-save-status');
+    if (!name) { if (status) { status.style.color='var(--red)'; status.textContent='Name is required.'; } return; }
+    if (status) { status.style.color='var(--muted)'; status.textContent='Saving…'; }
+    try {
+      const res = await fetch(`/api/notes/${_editNoteId}`, {
+        method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({name, description: desc, marker_emoji: _wpMarkerEmoji})
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.ok) {
+        _editNoteId = null;
+        if (status) { status.style.color='var(--green)'; status.textContent='Saved!'; }
+        setTimeout(closeModal, 800);
+      } else {
+        if (status) { status.style.color='var(--red)'; status.textContent=data.error||'Save failed'; }
+      }
+    } catch(e) {
+      if (status) { status.style.color='var(--red)'; status.textContent='Network error'; }
+    }
+  }
+
+  async function sendWaypoint() {
+    const lat  = _wpLat, lon = _wpLon;
+    const name = (document.getElementById('wp-name-input')?.value || '').trim();
+    const desc = (document.getElementById('wp-desc-input')?.value || '').trim();
+    const chEl = document.getElementById('wp-channel-select');
+    const channel_index = chEl ? parseInt(chEl.value) : 0;
+    const destRadio = document.querySelector('input[name="wp-dest"]:checked');
+    const useNode   = destRadio?.value === 'node' && _wpDestNode !== null;
+    const status = document.getElementById('wp-send-status');
+    if (!name) { if (status) { status.style.color='var(--red)'; status.textContent='Name is required.'; } return; }
+    if (!activeRadioId) { if (status) { status.style.color='var(--red)'; status.textContent='No radio connected.'; } return; }
+    if (useNode && !_wpDestNode) { if (status) { status.style.color='var(--red)'; status.textContent='Select a node.'; } return; }
+    if (status) { status.style.color='var(--muted)'; status.textContent='Sending…'; }
+    try {
+      const res = await fetch('/api/waypoints/send', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name, description: desc, lat, lon, channel_index,
+          destination_ids: useNode ? [_wpDestNode.id] : null,
+          radio_id: activeRadioId, marker_emoji: _wpMarkerEmoji})
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.ok) {
+        if (status) { status.style.color='var(--green)'; status.textContent = 'Sent!'; }
+        setTimeout(closeModal, 1000);
+      } else {
+        if (status) { status.style.color='var(--red)'; status.textContent = data.error || 'Send failed'; }
+      }
+      // sent === 0: error already shown, modal stays open so user can retry
+    } catch(e) {
+      if (status) { status.style.color='var(--red)'; status.textContent='Network error'; }
+      setTimeout(closeModal, 2000);
+    }
+  }
+
+  function renderWaypointMarker(wp) {
+    if (!wp || wp.id == null) return;
+    if (!leafletMap) return;
+    if (waypointMarkers[wp.id]) { leafletMap.removeLayer(waypointMarkers[wp.id]); delete waypointMarkers[wp.id]; }
+    if (wp.lat == null || wp.lon == null) return;
+    const extMap = localStorage.getItem('extMapProvider') || 'osm';
+    const extUrl = extMap === 'google'
+      ? `https://maps.google.com/?q=${encodeURIComponent(wp.lat + ',' + wp.lon)}`
+      : `https://www.openstreetmap.org/?mlat=${wp.lat}&mlon=${wp.lon}&zoom=15#map=15/${wp.lat}/${wp.lon}`;
+    const fromName = wp.from_id === 'local' ? 'You' : escHtml(wp.from_id || '?');
+    const ts = wp.ts ? new Date(wp.ts * 1000).toLocaleString([], {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit', hour12: false}) : '';
+    const markerEmoji = wp.marker_emoji || '📍';
+    const icon = L.divIcon({
+      html: `<div style="font-size:20px;line-height:1;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.6))">${escHtml(markerEmoji)}</div>`,
+      className: '', iconSize: [24, 24], iconAnchor: [6, 22]
+    });
+    const popupHtml = `
+      <div style="min-width:180px;max-width:240px">
+        <div style="font-weight:600;font-size:13px;color:var(--accent);margin-bottom:4px">${escHtml(wp.name)}</div>
+        ${wp.description ? `<div style="font-size:12px;color:var(--text);margin-bottom:6px">${escHtml(wp.description)}</div>` : ''}
+        <div style="font-size:11px;color:var(--muted);margin-bottom:1px">From: ${fromName}</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px">${ts}</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px">
+          <a href="${extUrl}" target="_blank" rel="noopener"
+             style="font-size:11px;padding:3px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text);text-decoration:none;text-align:center">Open in map ↗</a>
+          <button id="wp-rebcast-${wp.id}" style="font-size:11px;padding:3px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text);cursor:pointer"
+                  title="Re-send this mark to all original recipients on the mesh"
+                  onclick="rebroadcastWaypoint(${wp.id})">Re-broadcast</button>
+          <button style="font-size:11px;padding:3px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text);cursor:pointer"
+                  title="Edit this mark's name, icon, description, channel or recipients"
+                  onclick="openEditWaypointModal(${wp.id})">Edit</button>
+          <button style="font-size:11px;padding:3px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--red);cursor:pointer"
+                  title="Delete this mark — sends expiry packet to the mesh so all nodes remove it"
+                  onclick="document.getElementById('confirm-ok').textContent='Delete';showConfirm('Delete this Mark from the mesh?',()=>deleteWaypoint(${wp.id}))">Delete</button>
+        </div>
+      </div>`;
+    waypointsData[wp.id] = wp;
+    waypointMarkers[wp.id] = L.marker([wp.lat, wp.lon], {icon})
+      .bindPopup(popupHtml, {className: 'om-popup', maxWidth: 260})
+      .addTo(leafletMap);
+    renderMarksPanel();
+  }
+
+  async function loadWaypoints() {
+    try {
+      const res = await fetch('/api/waypoints');
+      if (!res.ok) return;
+      const wps = await res.json();
+      const activeIds = new Set(wps.map(wp => wp.id));
+      // Remove stale markers (deleted while map tab was closed)
+      Object.keys(waypointMarkers).forEach(id => {
+        if (!activeIds.has(Number(id))) { if (leafletMap) leafletMap.removeLayer(waypointMarkers[id]); delete waypointMarkers[id]; delete waypointsData[Number(id)]; }
+      });
+      wps.forEach(wp => { if (!waypointMarkers[wp.id]) renderWaypointMarker(wp); });
+      renderMarksPanel();
+      // Restore expanded state if user had it open
+      try {
+        if (localStorage.getItem('marksPanelCollapsed') === '0') {
+          const body = document.getElementById('marks-panel-body');
+          const chev = document.getElementById('marks-panel-chev');
+          if (body) body.style.display = '';
+          if (chev) chev.textContent = '▲';
+        }
+      } catch(e) {}
+    } catch(e) {}
+  }
+
+  async function deleteWaypoint(wp_id) {
+    try {
+      const res = await fetch(`/api/waypoints/${wp_id}`, {method: 'DELETE'});
+      if (!res.ok) return;
+      if (waypointMarkers[wp_id]) {
+        if (leafletMap) { leafletMap.removeLayer(waypointMarkers[wp_id]); leafletMap.closePopup(); }
+        delete waypointMarkers[wp_id];
+      }
+      delete waypointsData[wp_id];
+      renderMarksPanel();
+    } catch(e) {}
+  }
+
+  function renderMarksPanel() {
+    const mBody  = document.getElementById('marks-panel-body');
+    const mCount = document.getElementById('marks-panel-count');
+    if (mBody) {
+      const wps = Object.values(waypointsData);
+      if (mCount) mCount.textContent = wps.length ? `(${wps.length})` : '';
+      mBody.innerHTML = wps.length
+        ? wps.sort((a,b) => (b.ts||0)-(a.ts||0)).map(wp => {
+            const emoji = wp.marker_emoji || '📍';
+            const from  = wp.from_id === 'local' ? 'You' : escHtml(wp.from_id || '?');
+            return `<div class="mp-item" onclick="flyToMark(${wp.id})">
+              <span style="font-size:18px;line-height:1;flex-shrink:0">${escHtml(emoji)}</span>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(wp.name||'Unnamed')}</div>
+                <div style="font-size:10px;color:var(--muted)">From: ${from}</div>
+              </div>
+              <button onclick="event.stopPropagation();document.getElementById('confirm-ok').textContent='Delete';showConfirm('Delete \u201c${jsSafe(wp.name||'this mark')}\u201d from the mesh?',()=>deleteWaypoint(${wp.id}))"
+                style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:2px 5px;border-radius:3px;flex-shrink:0;line-height:1"
+                title="Delete mark">✕</button>
+            </div>`;
+          }).join('')
+        : '<div style="padding:8px 10px;font-size:11px;color:var(--muted)">No marks yet.</div>';
+    }
+    const nBody  = document.getElementById('notes-panel-body');
+    const nCount = document.getElementById('notes-panel-count');
+    if (nBody) {
+      const notes = Object.values(notesData);
+      if (nCount) nCount.textContent = notes.length ? `(${notes.length})` : '';
+      nBody.innerHTML = notes.length
+        ? notes.sort((a,b) => (b.ts||0)-(a.ts||0)).map(note => {
+            const emoji = note.marker_emoji || '📝';
+            return `<div class="mp-item" onclick="flyToNote(${note.id})">
+              <span style="font-size:18px;line-height:1;flex-shrink:0;opacity:0.75">${escHtml(emoji)}</span>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(note.name||'Unnamed')}</div>
+                <div style="font-size:10px;color:var(--muted)">Private note</div>
+              </div>
+              <button onclick="event.stopPropagation();openEditNoteModal(${note.id})"
+                style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:2px 5px;border-radius:3px;flex-shrink:0;line-height:1"
+                title="Edit note">✎</button>
+              <button onclick="event.stopPropagation();document.getElementById('confirm-ok').textContent='Delete';showConfirm('Delete note \u201c${jsSafe(note.name||'this note')}\u201d?',()=>deleteNote(${note.id}))"
+                style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:2px 5px;border-radius:3px;flex-shrink:0;line-height:1"
+                title="Delete note">✕</button>
+            </div>`;
+          }).join('')
+        : '<div style="padding:8px 10px;font-size:11px;color:var(--muted)">No notes yet.</div>';
+    }
+  }
+
+  function toggleMarksPanel() {
+    const body = document.getElementById('marks-panel-body');
+    const chev = document.getElementById('marks-panel-chev');
+    if (!body) return;
+    const collapsed = body.style.display === 'none';
+    body.style.display = collapsed ? '' : 'none';
+    if (chev) chev.textContent = collapsed ? '▲' : '▼';
+    try { localStorage.setItem('marksPanelCollapsed', collapsed ? '0' : '1'); } catch(e) {}
+  }
+
+  function toggleNotesPanel() {
+    const body = document.getElementById('notes-panel-body');
+    const chev = document.getElementById('notes-panel-chev');
+    if (!body) return;
+    const collapsed = body.style.display === 'none';
+    body.style.display = collapsed ? '' : 'none';
+    if (chev) chev.textContent = collapsed ? '▲' : '▼';
+    try { localStorage.setItem('notesPanelCollapsed', collapsed ? '0' : '1'); } catch(e) {}
+  }
+
+  function toggleOverlayPanel() {
+    const body = document.getElementById('overlay-panel-body');
+    const chev = document.getElementById('overlay-panel-chev');
+    if (!body) return;
+    const collapsed = body.style.display === 'none';
+    body.style.display = collapsed ? '' : 'none';
+    if (chev) chev.textContent = collapsed ? '▲' : '▼';
+    try { localStorage.setItem('overlayPanelCollapsed', collapsed ? '0' : '1'); } catch(e) {}
+  }
+
+  function flyToMark(wp_id) {
+    const wp = waypointsData[wp_id];
+    if (!wp || !leafletMap) return;
+    leafletMap.setView([wp.lat, wp.lon], Math.max(leafletMap.getZoom(), 14));
+    const marker = waypointMarkers[wp_id];
+    if (marker) setTimeout(() => marker.openPopup(), 300);
+  }
+
+  function flyToNote(note_id) {
+    const note = notesData[note_id];
+    if (!note || !leafletMap) return;
+    leafletMap.setView([note.lat, note.lon], Math.max(leafletMap.getZoom(), 14));
+    const marker = noteMarkers[note_id];
+    if (marker) setTimeout(() => marker.openPopup(), 300);
+  }
+
+  const _rebcastTimers = {};
+  async function rebroadcastWaypoint(wp_id) {
+    const btn = document.getElementById(`wp-rebcast-${wp_id}`);
+    if (btn) { btn.textContent = 'Sending…'; btn.disabled = true; }
+    const resetBtn = () => { if (btn) { btn.textContent = 'Re-broadcast'; btn.style.color = ''; btn.disabled = false; } delete _rebcastTimers[wp_id]; };
+    try {
+      const res = await fetch(`/api/waypoints/${wp_id}/rebroadcast`, {method: 'POST'});
+      const data = await res.json().catch(() => ({}));
+      if (btn) {
+        btn.textContent = data.ok ? 'Sent ✓' : (data.error || 'Failed');
+        btn.style.color = data.ok ? 'var(--green)' : 'var(--red)';
+        clearTimeout(_rebcastTimers[wp_id]);
+        _rebcastTimers[wp_id] = setTimeout(resetBtn, 2000);
+      }
+    } catch(e) {
+      if (btn) { btn.textContent = 'Error'; btn.style.color = 'var(--red)'; clearTimeout(_rebcastTimers[wp_id]); _rebcastTimers[wp_id] = setTimeout(resetBtn, 2000); }
+    }
+  }
+
+  let _editWpId = null;
+
+  async function openEditWaypointModal(wp_id) {
+    const wp = waypointsData[wp_id];
+    if (!wp) return;
+    _editWpId = wp_id;
+    // Strip coordinates appended to description before showing
+    const rawDesc = (wp.description || '').replace(/\n[\d.-]+,[\d.-]+$/, '').trim();
+    const initMarker = wp.marker_emoji || '📍';
+    _wpMarkerEmoji = initMarker;
+    _wpFocusedInput = 'name';
+
+    // Pre-populate single destination from stored data
+    _wpDestNode = null;
+    const storedIds = wp.destination_ids || (wp.destination_id && wp.destination_id !== '^all' ? [wp.destination_id] : null);
+    if (storedIds && storedIds.length > 0) {
+      const node = allNodes.find(n => n.id === storedIds[0]);
+      if (node) _wpDestNode = {id: node.id, name: node.long_name || node.short_name || node.id};
+    }
+    const isNode = _wpDestNode !== null;
+
+    // Fetch channels
+    let channels = [{index:0, name:'Primary'}];
+    try {
+      const ctrl = new AbortController();
+      const timeout = setTimeout(() => ctrl.abort(), 3000);
+      const chParam = activeRadioId ? `?radio_id=${encodeURIComponent(activeRadioId)}` : '';
+      const r = await fetch(`/api/chat/channels${chParam}`, {signal: ctrl.signal});
+      clearTimeout(timeout);
+      if (!r.ok) throw new Error(r.status);
+      const ch = await r.json();
+      if (ch && ch.length) channels = ch;
+    } catch(e) {}
+
+    const currentChIdx = wp.channel_index ?? 0;
+    const chOptions = channels.map(c =>
+      `<option value="${c.index}"${c.index === currentChIdx ? ' selected' : ''}>${escHtml(c.name || 'CH' + c.index)}</option>`
+    ).join('');
+
+    const markerRows = WP_EMOJIS.map(row =>
+      `<div style="display:flex;gap:3px;flex-wrap:wrap">${row.map(e => {
+        const sel = e === initMarker;
+        return `<button onclick="selectWpMarker('${jsSafe(e)}')" data-marker-emoji="${e}"
+          style="font-size:15px;padding:2px 3px;background:${sel?'var(--accent-dim)':'var(--bg3)'};border:1px solid ${sel?'var(--accent)':'var(--border)'};border-radius:4px;cursor:pointer;line-height:1.4">${e}</button>`;
+      }).join('')}</div>`
+    ).join('');
+
+    const textRows = WP_EMOJIS.map(row =>
+      `<div style="display:flex;gap:3px;flex-wrap:wrap">${row.map(e =>
+        `<button onclick="insertWpEmoji('${jsSafe(e)}')" style="font-size:15px;padding:2px 3px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;cursor:pointer;line-height:1.4">${e}</button>`
+      ).join('')}</div>`
+    ).join('');
+
+    openModal('Edit Mark', `
+      <div style="display:flex;flex-direction:column;gap:10px;min-width:280px;max-width:360px">
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Map marker</label>
+          <div style="display:flex;align-items:flex-start;gap:8px">
+            <div id="wp-marker-preview" style="font-size:22px;min-width:34px;height:34px;display:flex;align-items:center;justify-content:center;background:var(--bg3);border:1px solid var(--accent);border-radius:6px;flex-shrink:0">${initMarker}</div>
+            <div style="display:flex;flex-direction:column;gap:3px">${markerRows}</div>
+          </div>
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Name *</label>
+          <input id="wp-name-input" class="settings-input" placeholder="Name" maxlength="30"
+                 style="width:100%;box-sizing:border-box" value="${escHtml(wp.name || '')}"
+                 onfocus="_wpFocusedInput='name'"
+                 onkeydown="if(event.key==='Enter')saveWaypoint()">
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Description</label>
+          <input id="wp-desc-input" class="settings-input" placeholder="Optional (max 80 chars)" maxlength="80"
+                 style="width:100%;box-sizing:border-box" value="${escHtml(rawDesc)}"
+                 onfocus="_wpFocusedInput='desc'">
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Add to text</label>
+          <div style="display:flex;flex-direction:column;gap:3px">${textRows}</div>
+        </div>
+        <div style="border-top:1px solid var(--border);padding-top:8px;display:flex;flex-direction:column;gap:8px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:12px;color:var(--muted);white-space:nowrap">Channel</span>
+            <select id="wp-channel-select" style="padding:3px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:12px;flex:1">
+              ${chOptions}
+            </select>
+          </div>
+          <div style="display:flex;align-items:flex-start;gap:10px">
+            <span style="font-size:12px;color:var(--muted);white-space:nowrap;margin-top:4px">Send to</span>
+            <div style="display:flex;flex-direction:column;gap:4px;flex:1">
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
+                <input type="radio" name="wp-dest" value="all" ${!isNode ? 'checked' : ''} onchange="wpToggleDest(this.value)"> All (broadcast)
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
+                <input type="radio" name="wp-dest" value="node" ${isNode ? 'checked' : ''} onchange="wpToggleDest(this.value)"> Specific node
+              </label>
+              <div id="wp-node-wrap" style="display:${isNode ? 'block' : 'none'};margin-top:2px">
+                <input id="wp-node-search" class="settings-input" placeholder="Search node…" maxlength="40"
+                       style="width:100%;box-sizing:border-box;font-size:12px"
+                       oninput="wpFilterNodes(this.value)"
+                       onblur="setTimeout(()=>{const r=document.getElementById('wp-node-results');if(r){r.style.display='none';r.innerHTML='';}},150)">
+                <div id="wp-node-results" style="max-height:100px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;margin-top:2px;background:var(--bg2);display:none"></div>
+                <div id="wp-node-selected" style="margin-top:4px;min-height:4px"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="wp-send-status" style="font-size:12px;min-height:14px"></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn" onclick="closeModal()">Cancel</button>
+          <button class="btn-primary" onclick="saveWaypoint()">Save</button>
+        </div>
+      </div>
+    `);
+    setTimeout(() => { document.getElementById('wp-name-input')?.focus(); wpRenderSelected(); }, 50);
+  }
+
+  async function saveWaypoint() {
+    const wp = waypointsData[_editWpId];
+    if (!wp) return;
+    const name = (document.getElementById('wp-name-input')?.value || '').trim();
+    const desc = (document.getElementById('wp-desc-input')?.value || '').trim();
+    const chEl = document.getElementById('wp-channel-select');
+    const channel_index = chEl ? parseInt(chEl.value) : (wp.channel_index ?? 0);
+    const destRadio = document.querySelector('input[name="wp-dest"]:checked');
+    const useNode  = destRadio?.value === 'node' && _wpDestNode !== null;
+    const dest_ids = useNode ? [_wpDestNode.id] : null;
+    const status = document.getElementById('wp-send-status');
+    if (!name) { if (status) { status.style.color='var(--red)'; status.textContent='Name is required.'; } return; }
+    if (status) { status.style.color='var(--muted)'; status.textContent='Saving…'; }
+    try {
+      const res = await fetch(`/api/waypoints/${_editWpId}`, {
+        method: 'PUT', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name, description: desc, marker_emoji: _wpMarkerEmoji,
+          radio_id: activeRadioId, channel_index, destination_ids: dest_ids})
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.ok) {
+        if (status) { status.style.color='var(--green)'; status.textContent = 'Saved!'; }
+        _editWpId = null;
+        setTimeout(closeModal, 800);
+      } else {
+        if (status) { status.style.color='var(--red)'; status.textContent = data.error || 'Save failed'; }
+      }
+    } catch(e) {
+      if (status) { status.style.color='var(--red)'; status.textContent='Network error'; }
+    }
+  }
+
+  // ── Map DM overlay ────────────────────────────────────────────────────────
+  let mapDmContactId   = null;
+  let mapDmContactName = '';
+
+  function openMapDM(id, name) {
+    mapDmContactId   = id;
+    mapDmContactName = name;
+    document.getElementById('map-dm-title').textContent = 'DM · ' + name;
+    document.getElementById('map-dm-window').classList.add('visible');
+    renderMapDM();
+    setTimeout(() => document.getElementById('map-dm-input').focus(), 50);
+    if (leafletMap) leafletMap.closePopup();
+  }
+
+  function closeMapDM() {
+    mapDmContactId = null;
+    document.getElementById('map-dm-window').classList.remove('visible');
+  }
+
+  function renderMapDM() {
+    if (!mapDmContactId) return;
+    const container = document.getElementById('map-dm-msgs');
+    const msgs = getActiveChatMsgs().filter(m => m.is_dm && (m.sent ? m.to_id : m.from_id) === mapDmContactId);
+    if (!msgs.length) {
+      container.innerHTML = '<div style="color:var(--muted);font-size:12px;text-align:center;margin-top:20px">No messages yet</div>';
+      return;
+    }
+    const pad = n => String(n).padStart(2, '0');
+    const wasAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 30;
+    container.innerHTML = msgs.map(m => {
+      const d = new Date(m.ts * 1000);
+      const t = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      const statusHtml = m.sent
+        ? `<span class="msg-status ${m.status || 'pending'}" data-msgid="${m.id}" style="font-size:10px">${m.status === 'delivered' ? '✓' : m.status === 'failed' ? '✗' : '·'}</span>`
+        : '';
+      return `<div style="display:flex;flex-direction:column;align-items:${m.sent ? 'flex-end' : 'flex-start'}">
+        <div style="font-size:10px;color:var(--muted);margin-bottom:2px">${m.sent ? 'You' : escHtml(m.from_name)} · ${t} ${statusHtml}</div>
+        <div style="background:${m.sent ? 'var(--accent-dim)' : 'var(--bg3)'};border:1px solid ${m.sent ? 'var(--accent)' : 'var(--border)'};border-radius:6px;padding:5px 9px;font-size:12px;max-width:90%">${escHtml(m.text)}</div>
+      </div>`;
+    }).join('');
+    if (wasAtBottom) container.scrollTop = container.scrollHeight;
+  }
+
+  async function sendMapDM() {
+    const input = document.getElementById('map-dm-input');
+    const text  = input.value.trim();
+    if (!text || !mapDmContactId) return;
+    const doSend = async () => {
+      input.value = '';
+      try {
+        const r = await fetch('/api/chat/send', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ text, channel: 0, dest_id: mapDmContactId, radio_id: activeRadioId })
+        });
+        if (!r.ok) throw new Error(await r.text());
+      } catch(e) { console.error('Map DM send failed:', e); }
+    };
+    if (_silentMode) { showSilentConfirm('Sending is not possible while Silent Running is enabled.'); return; }
+    await doSend();
+  }
+
+  // ── Dynamic map panel factory ───────────────────────────────────────────
+  function _openMapPanel(label) {
+    const container = document.getElementById('map-right-panels');
+    const panel = document.createElement('div');
+    panel.className = 'map-panel-window';
+
+    const hdr = document.createElement('div');
+    hdr.className = 'map-panel-header';
+    hdr.innerHTML = `<span>${escHtml(label)}</span>`;
+    const closeBtn = document.createElement('span');
+    closeBtn.className = 'map-tr-close';
+    closeBtn.textContent = '✕';
+    closeBtn.onclick = () => {
+      if (panel._timer) { clearInterval(panel._timer); panel._timer = null; }
+      panel.remove();
+    };
+    hdr.appendChild(closeBtn);
+
+    const body = document.createElement('div');
+    body.className = 'map-panel-body';
+
+    panel.appendChild(hdr);
+    panel.appendChild(body);
+    container.appendChild(panel);
+    if (leafletMap) leafletMap.closePopup();
+    return { panel, body };
+  }
+
+  // ── Map Traceroute overlay ─────────────────────────────────────────────────
+  async function openMapTR(nodeId, nodeName, radioId = '') {
+    // Close any existing TR panel (removes stale panel from DOM; old fetch continues silently)
+    if (_activeTrPanel) { _activeTrPanel.remove(); _activeTrPanel = null; }
+    const { panel, body } = _openMapPanel('TR · ' + nodeName);
+    _activeTrPanel = panel;
+    // Clear _activeTrPanel when user manually closes the panel
+    const _trCloseBtn = panel.querySelector('.map-tr-close');
+    if (_trCloseBtn) { const _orig = _trCloseBtn.onclick; _trCloseBtn.onclick = () => {
+      _activeTrPanel = null;
+      _clearTraceLines();
+      _orig && _orig();
+    }; }
+    if (!await _trCanStart(body)) return;
+
+    body.innerHTML = '<div style="color:var(--muted);font-size:12px" class="tr-status">Sending traceroute… 30s</div>';
+    const controller = {};
+    _activeTracerouteController = controller;
+    _activeTracerouteStartedAt = Date.now();
+    const timerId = trTimerStart(s => {
+      const el = body.querySelector('.tr-status');
+      if (!el) return;
+      if (s <= 30) el.textContent = `Sending traceroute… ${30 - s}s`;
+      else el.textContent = 'Waiting for traceroute cleanup…';
+    });
+    try {
+      const trRadioId = radioId || activeRadioId;
+      const r = await fetch(`/api/node/${encodeURIComponent(nodeId)}/traceroute`, { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({radio_id: trRadioId}) });
+      clearInterval(timerId);
+      const d = await r.json();
+      if (!r.ok) {
+        const isLocked = r.status === 429;
+        if (isLocked) {
+          _showTrBusy(body, d.remaining || 30);
+          return;
+        }
+        body.innerHTML = `<div class="modal-error">${escHtml(d.error)}</div>`;
+        return;
+      }
+      const buildChain = (nodes, snrs) => nodes.map((node, i) => {
+        const isEnd = i === 0 || i === nodes.length - 1;
+        const snr   = snrs?.[i];
+        const nodeEl = `<div class="tr-node${isEnd ? ' tr-end' : ''}">${escHtml(node)}</div>`;
+        const linkEl = i < nodes.length - 1
+          ? `<div class="tr-link ${snr != null ? snrClass(snr) : 'tr-link-muted'}">${snr != null ? `↓ ${snr} dB` : '↓'}</div>`
+          : '';
+        return nodeEl + linkEl;
+      }).join('');
+      body.innerHTML = `
+        <div class="tr-section">Route to node</div>
+        <div class="tr-chain">${buildChain(d.route, d.snrTowards)}</div>
+        <div class="tr-section">Route back</div>
+        <div class="tr-chain">${buildChain(d.routeBack, d.snrBack)}</div>`;
+      _lastTraceData = d;
+      _traceHistory.unshift({ ts: Date.now(), nodeId, nodeName, radioId: trRadioId, data: d });
+      if (_traceHistory.length > 10) _traceHistory.pop();
+      if (chatNetwork === 'mt') renderMessages();
+      if (_showTrMap) _drawTraceRouteOnMap(d);
+    } catch(e) {
+      clearInterval(timerId);
+      body.innerHTML = `<div class="modal-error">Request failed: ${escHtml(e.message)}</div>`;
+    } finally {
+      if (_activeTracerouteController === controller) _activeTracerouteController = null;
+      _activeTracerouteStartedAt = 0;
+      // NOTE: _activeTrPanel is intentionally NOT cleared here — it stays set so the next
+      // openMapTR call removes the old panel (result, error, or timeout) before creating a new one.
+      // It is only nulled when the user manually closes the panel (✕ button).
+    }
+  }
+
+  // ── Map Info overlay ────────────────────────────────────────────────────
+  async function openMapInfo(nodeId, nodeName) {
+    const { panel, body } = _openMapPanel('Info · ' + nodeName);
+    body.innerHTML = `<div style="color:var(--muted);font-size:12px" class="info-status">Requesting telemetry from ${escHtml(nodeName)}… 15s</div>`;
+    let countdown = 15;
+    panel._timer = setInterval(() => {
+      countdown--;
+      const el = body.querySelector('.info-status');
+      if (!el) { clearInterval(panel._timer); panel._timer = null; return; }
+      if (countdown <= -30) {
+        el.textContent = `No response from ${nodeName}.`;
+        clearInterval(panel._timer); panel._timer = null;
+      } else {
+        el.textContent = `Requesting telemetry from ${nodeName}… ${countdown}s`;
+      }
+    }, 1000);
+    try {
+      const r = await fetch(`/api/node/${encodeURIComponent(nodeId)}/info`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({radio_id: activeRadioId})});
+      clearInterval(panel._timer); panel._timer = null;
+      const d = await r.json();
+      if (!r.ok) { body.innerHTML = `<div class="modal-error">${escHtml(d.error)}</div>`; return; }
+      const row = (label, val) => val != null && val !== '' ? `<tr><td>${label}</td><td>${val}</td></tr>` : '';
+      const snrC = v => v == null ? '—' : `<span class="${v >= 5 ? 'snr-good' : v >= -5 ? 'snr-ok' : 'snr-bad'}">${v} dB</span>`;
+      const battC = v => v == null ? '—' : `<span class="${v >= 60 ? 'battery-high' : v >= 30 ? 'battery-mid' : 'battery-low'}">${v === 101 ? '⚡ Charging' : v + '%'}</span>`;
+      const fmt2 = v => v != null ? v.toFixed(2) : null;
+      const coordLink = (lat, lon) => lat != null && lon != null
+        ? `<a href="https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=14/${lat}/${lon}" target="_blank" style="color:var(--accent)">${lat.toFixed(5)}, ${lon.toFixed(5)}</a>`
+        : null;
+      const staleNote = d.fresh ? '' :
+        `<div style="color:var(--yellow);font-size:11px;margin-bottom:8px">&#9888; Node did not respond — showing cached data</div>`;
+      body.innerHTML = staleNote + `
+        <table class="info-table">
+          <tr><td colspan="2" class="info-section">Identity</td></tr>
+          ${row('Long name', escHtml(d.long_name))}
+          ${row('Short name', escHtml(d.short_name))}
+          ${row('HW model', escHtml(d.hw_model))}
+          ${row('Role', escHtml(d.role))}
+          <tr><td colspan="2" class="info-section">Signal</td></tr>
+          ${row('SNR', snrC(d.snr))}
+          ${row('RSSI', d.rssi != null ? d.rssi + ' dBm' : null)}
+          ${row('Hops away', d.hops_away)}
+          ${row('Last heard', escHtml(d.last_heard))}
+          <tr><td colspan="2" class="info-section">Power</td></tr>
+          ${row('Battery', battC(d.battery))}
+          ${row('Voltage', d.voltage != null ? d.voltage.toFixed(2) + ' V' : null)}
+          ${row('Uptime', escHtml(d.uptime))}
+          <tr><td colspan="2" class="info-section">Radio</td></tr>
+          ${row('Ch utilization', d.channel_util != null ? d.channel_util.toFixed(1) + '%' : null)}
+          ${row('Air util TX', d.air_util_tx != null ? d.air_util_tx.toFixed(1) + '%' : null)}
+          <tr><td colspan="2" class="info-section">Location</td></tr>
+          ${row('Coordinates', coordLink(d.latitude, d.longitude))}
+          ${row('Altitude', d.altitude != null ? d.altitude + ' m' : null)}
+          ${d.temperature != null || d.humidity != null || d.pressure != null
+            ? '<tr><td colspan="2" class="info-section">Environment</td></tr>' : ''}
+          ${row('Temperature', d.temperature != null ? fmt2(d.temperature) + ' °C' : null)}
+          ${row('Humidity', d.humidity != null ? fmt2(d.humidity) + '%' : null)}
+          ${row('Pressure', d.pressure != null ? fmt2(d.pressure) + ' hPa' : null)}
+        </table>`;
+    } catch(e) {
+      clearInterval(panel._timer); panel._timer = null;
+      body.innerHTML = `<div class="modal-error">Failed: ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  // ── GPS Trail overlay ────────────────────────────────────────────────────
+  const _trailLayers = {};   // nodeId -> [leaflet layers]
+
+  async function openGpsTrail(nodeId, nodeName) {
+    const { panel, body } = _openMapPanel('Trail · ' + nodeName);
+
+    const RANGES = [
+      { label: '1h',   hours: 1   },
+      { label: '6h',   hours: 6   },
+      { label: '24h',  hours: 24  },
+      { label: '7d',   hours: 168 },
+    ];
+
+    function trailColor(ts, oldest, newest) {
+      // Gradient from muted blue (old) to bright green (recent)
+      const t = (newest === oldest) ? 1 : (ts - oldest) / (newest - oldest);
+      const r = Math.round(40  + t * (74  - 40));
+      const g = Math.round(100 + t * (222 - 100));
+      const b = Math.round(180 + t * (128 - 180));
+      return `rgb(${r},${g},${b})`;
+    }
+
+    async function loadTrail(hours) {
+      body.innerHTML = `<div style="color:var(--muted);font-size:12px">Loading trail…</div>`;
+      _clearTrail(nodeId);
+      try {
+        const r = await fetch(`/api/node/${encodeURIComponent(nodeId)}/gps_history?hours=${hours}`);
+        const pts = await r.json();
+        if (!Array.isArray(pts) || pts.length === 0) {
+          body.innerHTML = `<div style="color:var(--muted);font-size:12px">No GPS history for this period.</div>${renderPicker(hours)}`;
+          return;
+        }
+        const oldest = pts[0].ts, newest = pts[pts.length - 1].ts;
+        const layers = [];
+        for (let i = 0; i < pts.length - 1; i++) {
+          const col = trailColor(pts[i].ts, oldest, newest);
+          const seg = L.polyline([[pts[i].lat, pts[i].lon],[pts[i+1].lat, pts[i+1].lon]],
+            {color: col, weight: 3, opacity: 0.85, lineCap: 'round'}).addTo(leafletMap);
+          layers.push(seg);
+        }
+        pts.forEach((p, i) => {
+          const col = trailColor(p.ts, oldest, newest);
+          const isEnd = i === 0 || i === pts.length - 1;
+          const dot = L.circleMarker([p.lat, p.lon], {
+            radius: isEnd ? 6 : 3, color: '#111', fillColor: col,
+            fillOpacity: 1, weight: 1, interactive: true,
+          });
+          const d = new Date(p.ts * 1000);
+          dot.bindTooltip(d.toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}), {direction:'top', sticky:false});
+          dot.addTo(leafletMap);
+          layers.push(dot);
+        });
+        _trailLayers[nodeId] = layers;
+        const bounds = L.latLngBounds(pts.map(p => [p.lat, p.lon]));
+        leafletMap.fitBounds(bounds, {padding: [40, 40], maxZoom: 14});
+        const span = newest - oldest;
+        const spanStr = span < 3600 ? `${Math.round(span/60)}m` : span < 86400 ? `${(span/3600).toFixed(1)}h` : `${(span/86400).toFixed(1)}d`;
+        body.innerHTML = `
+          <div style="font-size:11px;color:var(--muted);margin-bottom:6px">${pts.length} points · ${spanStr} span</div>
+          <div style="font-size:10px;color:var(--muted);margin-bottom:8px">
+            Blue = oldest &nbsp;→&nbsp; Green = most recent
+          </div>
+          ${renderPicker(hours)}`;
+      } catch(e) {
+        body.innerHTML = `<div class="modal-error">Failed: ${escHtml(e.message)}</div>${renderPicker(hours)}`;
+      }
+    }
+
+    function renderPicker(active) {
+      return `<div style="display:flex;gap:4px;margin-top:4px">${
+        RANGES.map(r =>
+          `<button class="map-popup-btn${r.hours === active ? ' active' : ''}"
+           onclick="document.querySelectorAll('.trail-range-btn').forEach(b=>b.classList.remove('active'));this.classList.add('active');_reloadTrail('${jsSafe(nodeId)}','${jsSafe(nodeName)}',${r.hours})"
+           style="${r.hours===active?'border-color:var(--accent);color:var(--accent)':''}">${r.label}</button>`
+        ).join('')
+      }</div>`;
+    }
+
+    panel._cleanupTrail = () => _clearTrail(nodeId);
+    const origClose = panel.querySelector('.map-tr-close');
+    if (origClose) {
+      const origOnclick = origClose.onclick;
+      origClose.onclick = () => { _clearTrail(nodeId); if (origOnclick) origOnclick(); };
+    }
+    loadTrail(24);
+    window._reloadTrail = (nid, nname, hours) => { if (nid === nodeId) loadTrail(hours); };
+  }
+
+  function _clearTrail(nodeId) {
+    (_trailLayers[nodeId] || []).forEach(l => { try { leafletMap && leafletMap.removeLayer(l); } catch(e) {} });
+    delete _trailLayers[nodeId];
+  }
+
+  // ── Map Position overlay ────────────────────────────────────────────────
+  async function openMapPos(nodeId, nodeName) {
+    const { panel, body } = _openMapPanel('Pos · ' + nodeName);
+    body.innerHTML = `<div class="modal-loading">Requesting position from ${escHtml(nodeName)}...</div>`;
+    try {
+      const r = await fetch(`/api/node/${encodeURIComponent(nodeId)}/position`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({radio_id: activeRadioId})});
+      const d = await r.json();
+      body.innerHTML = r.ok
+        ? `<div class="modal-success">Position request sent. Node should broadcast its location shortly.</div>`
+        : `<div class="modal-error">${escHtml(d.error)}</div>`;
+    } catch(e) {
+      body.innerHTML = `<div class="modal-error">Failed: ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  // ── Center MT node on map (Nodes tab "Map" button) ──────────────────────
+  function centerNodeOnMap(nodeId) {
+    const node = allNodes.find(n => n.id === nodeId);
+    if (!node) return;
+    let lat = node.latitude, lon = node.longitude;
+    // If this is our own local node and OM has a local origin, center there even if
+    // the radio's last broadcast position is stale.
+    if (node.is_local) {
+      const origin = _mtLocalPosition(node.radio_id || '');
+      if (origin) {
+        lat = origin.lat;
+        lon = origin.lon;
+      }
+    }
+    if (lat == null || lon == null) return;
+    switchTab('map');
+    setTimeout(() => {
+      if (!leafletMap) return;
+      leafletMap.setView([lat, lon], Math.max(leafletMap.getZoom(), 12));
+      if (mapMarkers[nodeId]) mapMarkers[nodeId].openPopup();
+    }, 80);
+  }
+
+  function showNodeInList(id) {
+    switchTab('nodes');
+    setView('live');
+    setTimeout(() => {
+      const row = [...document.querySelectorAll('#live-tbody tr')].find(r => r.dataset.id === id) || null;
+      if (!row) return;
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      row.classList.remove('highlight-flash'); // reset if already flashing
+      void row.offsetWidth;                    // force reflow to restart animation
+      row.classList.add('highlight-flash');
+      setTimeout(() => row.classList.remove('highlight-flash'), 4000);
+    }, 80);
+  }
+
+  function showMcNodeInList(id) {
+    switchTab('nodes');
+    setView('live');
+    setTimeout(() => {
+      const row = [...document.querySelectorAll('#live-tbody tr')].find(r => r.dataset.id === id) || null;
+      if (!row) return;
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      row.classList.remove('highlight-flash');
+      void row.offsetWidth;
+      row.classList.add('highlight-flash');
+      setTimeout(() => row.classList.remove('highlight-flash'), 4000);
+    }, 80);
+  }
+
+  function _mapPosKey(lat, lon) {
+    return `${Number(lat).toFixed(4)}_${Number(lon).toFixed(4)}`;
+  }
+
+  // MC uses a ~55m grid for proximity clustering (0.0005° ≈ 55m latitude)
+  function _mcMapPosKey(lat, lon) {
+    const g = 0.0005;
+    return `${(Math.round(Number(lat) / g) * g).toFixed(4)}_${(Math.round(Number(lon) / g) * g).toFixed(4)}`;
+  }
+
+  function markerColor(node) {
+    if (node.is_local) return '#3b82f6';   // blue — local node
+    if (!node.last_heard_ts) return '#6e7681';
+    const age = Date.now() / 1000 - node.last_heard_ts;
+    if (age < 1800)  return '#86efac';     // <30m — fresh green
+    if (age < 7200)  return '#e07b30';     // <2h  orange
+    return '#f85149';                       // old  red
+  }
+
+  function makeIcon(color, isLocal) {
+    const outer = isLocal ? 10 : 7;   // white halo radius
+    const inner = isLocal ? 7  : 4;   // colored fill radius
+    const sz    = (outer + 5) * 2;    // canvas size (room for pulse ring)
+    const c     = sz / 2;
+
+    const pulse = isLocal
+      ? `<circle cx="${c}" cy="${c}" r="${outer+4}" fill="none" stroke="${color}" stroke-width="1.5" class="map-node-pulse"/>`
+      : '';
+
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${sz}" height="${sz}" viewBox="0 0 ${sz} ${sz}" style="filter:drop-shadow(0 1px 4px rgba(0,0,0,0.8));overflow:visible">
+      ${pulse}
+      <circle cx="${c}" cy="${c}" r="${outer}" fill="white"/>
+      <circle cx="${c}" cy="${c}" r="${inner}" fill="${color}"/>
+    </svg>`;
+    return L.divIcon({
+      html: svg, className: '', iconSize: [sz, sz], iconAnchor: [c, c], popupAnchor: [0, -(c + 2)]
+    });
+  }
+
+  function battStr(b) { return b != null ? `${b}%` : '—'; }
+  function snrStr(s)  { return s != null ? `${s} dB` : '—'; }
+
+  function nodePopupHtml(n) {
+    const distanceText = _mtNodeDistanceLabel(n);
+    return `
+      <div class="map-popup-name">${escHtml(n.long_name)}${n.is_local ? '<span class="map-popup-local">YOU</span>' : ''}</div>
+      <div><b>Short:</b> ${escHtml(n.short_name)}${n.hw_model ? ` &nbsp;<span style="color:var(--muted);font-size:10px">${escHtml(n.hw_model)}</span>` : ''}</div>
+      <div><b>SNR:</b> ${snrStr(n.snr)} &nbsp; <b>Battery:</b> ${battStr(n.battery)}</div>
+      <div><b>Hops:</b> ${n.hops_away ?? '—'} &nbsp; <b>Distance:</b> ${escHtml(distanceText)}</div>
+      <div><b>Last heard:</b> <span class="map-popup-lh" data-ts="${n.last_heard_ts || 0}">${n.last_heard_ts ? senseTimeAgo(n.last_heard_ts) : '—'}</span></div>
+      <div style="color:var(--muted);font-size:11px;margin-top:2px">${n.latitude.toFixed(5)}, ${n.longitude.toFixed(5)}</div>
+      <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+        <button class="map-popup-btn" title="Show in Nodes list" onclick="showNodeInList('${jsSafe(n.id)}')">List</button>
+        ${!n.is_local ? `<button class="map-popup-btn" title="Send direct message" onclick="openMapDM('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">DM</button>` : ''}
+        ${!n.is_local ? `<button class="map-popup-btn" title="Traceroute to this node" onclick="openMapTR('${jsSafe(n.id)}','${jsSafe(n.long_name)}','${jsSafe(n.radio_id || '')}')">TR</button>` : ''}
+        ${!n.is_local ? `<button class="map-popup-btn" title="Set position" onclick="openMapPos('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Pos</button>` : ''}
+        ${!n.is_local ? `<button class="map-popup-btn" title="Node info &amp; settings" onclick="openMapInfo('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Info</button>` : ''}
+        <button class="map-popup-btn" title="GPS movement trail" onclick="openGpsTrail('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Trail</button>
+        ${!n.is_local ? `<button class="map-popup-btn danger" title="Delete from device" onclick="deleteNode('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Delete</button>` : ''}
+      </div>`;
+  }
+
+  function updateMapMarkers(nodes) {
+    if (!leafletMap) return;
+    if (!mapShowMt) {
+      Object.values(mapMarkers).forEach(m => leafletMap.removeLayer(m));
+      mapMarkers = {};
+      Object.values(clusterMarkers).forEach(m => leafletMap.removeLayer(m));
+      clusterMarkers = {};
+      // Sense markers are MT-specific — hide them too (keep dict for restore)
+      Object.values(senseMarkers).forEach(m => { try { leafletMap.removeLayer(m); } catch(e){} });
+      return;
+    }
+    // MT is visible — restore any sense markers that were removed
+    Object.values(senseMarkers).forEach(m => { try { if (!leafletMap.hasLayer(m)) leafletMap.addLayer(m); } catch(e){} });
+    const seen = new Set();
+    const withGps = nodes.filter(n => n.latitude != null && n.longitude != null);
+
+    // Group nodes that share the same position (rounded to 4dp ≈ 11m)
+    const posKey = n => `${n.latitude.toFixed(4)}_${n.longitude.toFixed(4)}`;
+    const clusters = {};
+    withGps.forEach(n => { const k = posKey(n); (clusters[k] = clusters[k] || []).push(n); });
+
+    // For clusters >1: use module-level clusterMarkers dict (posKey → marker)
+    const seenClusters = new Set();
+
+    withGps.forEach(n => {
+      seen.add(n.id);
+      const group = clusters[posKey(n)];
+
+      if (group.length === 1) {
+        // Normal single marker — remove any sense marker for this node to avoid overlap
+        if (senseMarkers[n.id]) {
+          try { leafletMap.removeLayer(senseMarkers[n.id]); } catch(e) {}
+          delete senseMarkers[n.id];
+        }
+        const color = markerColor(n);
+        const icon  = makeIcon(color, n.is_local);
+        const popup = nodePopupHtml(n);
+        if (mapMarkers[n.id]) {
+          mapMarkers[n.id].setLatLng([n.latitude, n.longitude]).setIcon(icon).setPopupContent(popup);
+          mapMarkers[n.id].setTooltipContent(n.short_name || n.long_name);
+        } else {
+          const marker = L.marker([n.latitude, n.longitude], {icon})
+            .bindPopup(popup)
+            .bindTooltip(n.short_name || n.long_name, {
+              permanent: true, direction: 'right', className: 'map-label', offset: [8, 0]
+            });
+          if (n.is_local) marker.on('click', () => { setMapLock(true); centerOnLocal(); });
+          mapMarkers[n.id] = marker.addTo(leafletMap);
+          if (!mapLabels) marker.closeTooltip();
+        }
+      } else {
+        // Cluster: one shared marker per unique position, remove individual markers
+        if (mapMarkers[n.id]) { leafletMap.removeLayer(mapMarkers[n.id]); delete mapMarkers[n.id]; }
+        const k = posKey(n);
+        seenClusters.add(k);
+        if (clusterMarkers[k]) {
+          // Update existing cluster marker (node count or local status may change)
+          const hasLocal = group.some(x => x.is_local);
+          const updatedIcon = L.divIcon({
+            className: '',
+            html: `<div style="
+              background:${hasLocal ? '#3b82f6' : 'var(--accent)'};
+              color:#0a0f1e;border-radius:50%;
+              width:28px;height:28px;display:flex;align-items:center;justify-content:center;
+              font-weight:700;font-size:12px;border:2px solid rgba(255,255,255,0.3);
+              box-shadow:0 1px 4px rgba(0,0,0,0.5)">${group.length}</div>`,
+            iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -14]
+          });
+          const updatedPopup = `
+            <div style="font-weight:700;margin-bottom:8px;color:var(--accent)">${group.length} nodes at this location</div>
+            <div style="color:var(--muted);font-size:11px;margin-bottom:10px">${group[0].latitude.toFixed(5)}, ${group[0].longitude.toFixed(5)} · ${escHtml(_mtNodeDistanceLabel(group[0]))}</div>
+            ${group.map(x => `
+              <div style="border-top:1px solid var(--border);padding-top:8px;margin-top:6px">
+                <div class="map-popup-name" style="margin-bottom:2px">${escHtml(x.long_name)}${x.is_local ? '<span class="map-popup-local">YOU</span>' : ''}${x.hw_model ? `<span style="color:var(--muted);font-size:10px;font-weight:400;margin-left:5px">${escHtml(x.hw_model)}</span>` : ''}</div>
+                <div style="font-size:11px;color:var(--muted);margin-bottom:4px">
+                  <b>SNR:</b> ${snrStr(x.snr)} &nbsp; <b>Batt:</b> ${battStr(x.battery)} &nbsp; <b>Dist:</b> ${escHtml(_mtNodeDistanceLabel(x))} &nbsp; <b>Seen:</b> ${escHtml(x.last_heard || '—')}
+                </div>
+                <div style="display:flex;gap:4px;flex-wrap:wrap">
+                  <button class="map-popup-btn" title="Show in Nodes list" onclick="showNodeInList('${jsSafe(x.id)}')">List</button>
+                  ${!x.is_local ? `<button class="map-popup-btn" title="Send direct message" onclick="openMapDM('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">DM</button>` : ''}
+                  ${!x.is_local ? `<button class="map-popup-btn" title="Traceroute to this node" onclick="openMapTR('${jsSafe(x.id)}','${jsSafe(x.long_name)}','${jsSafe(x.radio_id || '')}')">TR</button>` : ''}
+                  ${!x.is_local ? `<button class="map-popup-btn" title="Node info &amp; settings" onclick="openMapInfo('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">Info</button>` : ''}
+                  <button class="map-popup-btn" title="GPS movement trail" onclick="openGpsTrail('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">Trail</button>
+                  ${!x.is_local ? `<button class="map-popup-btn danger" title="Delete from device" onclick="deleteNode('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">Delete</button>` : ''}
+                </div>
+              </div>`).join('')}`;
+          clusterMarkers[k].setIcon(updatedIcon).setPopupContent(updatedPopup);
+          clusterMarkers[k].setTooltipContent(`${group.length} nodes`);
+          return;
+        }
+        const hasLocal = group.some(x => x.is_local);
+        const clusterIcon = L.divIcon({
+          className: '',
+          html: `<div style="
+            background:${hasLocal ? '#3b82f6' : 'var(--accent)'};
+            color:#0a0f1e;border-radius:50%;
+            width:28px;height:28px;display:flex;align-items:center;justify-content:center;
+            font-weight:700;font-size:12px;border:2px solid rgba(255,255,255,0.3);
+            box-shadow:0 1px 4px rgba(0,0,0,0.5)">${group.length}</div>`,
+          iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -14]
+        });
+        const clusterPopup = `
+          <div style="font-weight:700;margin-bottom:8px;color:var(--accent)">${group.length} nodes at this location</div>
+          <div style="color:var(--muted);font-size:11px;margin-bottom:10px">${group[0].latitude.toFixed(5)}, ${group[0].longitude.toFixed(5)} · ${escHtml(_mtNodeDistanceLabel(group[0]))}</div>
+          ${group.map(x => `
+            <div style="border-top:1px solid var(--border);padding-top:8px;margin-top:6px">
+              <div class="map-popup-name" style="margin-bottom:2px">${escHtml(x.long_name)}${x.is_local ? '<span class="map-popup-local">YOU</span>' : ''}${x.hw_model ? `<span style="color:var(--muted);font-size:10px;font-weight:400;margin-left:5px">${escHtml(x.hw_model)}</span>` : ''}</div>
+              <div style="font-size:11px;color:var(--muted);margin-bottom:4px">
+                <b>SNR:</b> ${snrStr(x.snr)} &nbsp; <b>Batt:</b> ${battStr(x.battery)} &nbsp; <b>Dist:</b> ${escHtml(_mtNodeDistanceLabel(x))} &nbsp; <b>Seen:</b> ${escHtml(x.last_heard || '—')}
+              </div>
+              <div style="display:flex;gap:4px;flex-wrap:wrap">
+                <button class="map-popup-btn" title="Show in Nodes list" onclick="showNodeInList('${jsSafe(x.id)}')">List</button>
+                ${!x.is_local ? `<button class="map-popup-btn" title="Send direct message" onclick="openMapDM('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">DM</button>` : ''}
+                ${!x.is_local ? `<button class="map-popup-btn" title="Traceroute to this node" onclick="openMapTR('${jsSafe(x.id)}','${jsSafe(x.long_name)}','${jsSafe(x.radio_id || '')}')">TR</button>` : ''}
+                ${!x.is_local ? `<button class="map-popup-btn" title="Node info &amp; settings" onclick="openMapInfo('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">Info</button>` : ''}
+                ${!x.is_local ? `<button class="map-popup-btn danger" title="Delete from device" onclick="deleteNode('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">Delete</button>` : ''}
+              </div>
+            </div>`).join('')}`;
+        const marker = L.marker([group[0].latitude, group[0].longitude], {icon: clusterIcon})
+          .bindPopup(clusterPopup, {maxWidth: 280, maxHeight: 400})
+          .bindTooltip(`${group.length} nodes`, { permanent: true, direction: 'right', className: 'map-label', offset: [8, 0] });
+        clusterMarkers[k] = marker.addTo(leafletMap);
+        if (!mapLabels) marker.closeTooltip();
+      }
+    });
+
+    // Remove markers for nodes that lost GPS
+    Object.keys(mapMarkers).forEach(id => {
+      if (!seen.has(id)) { leafletMap.removeLayer(mapMarkers[id]); delete mapMarkers[id]; }
+    });
+
+    // Remove cluster badges that no longer have nodes at that position
+    Object.keys(clusterMarkers).forEach(k => {
+      if (!seenClusters.has(k)) { leafletMap.removeLayer(clusterMarkers[k]); delete clusterMarkers[k]; }
+    });
+
+    // On first load, auto-centre only if no saved view exists
+    if (Object.keys(mapMarkers).length && !leafletMap._overmeshFitted) {
+      leafletMap._overmeshFitted = true;
+      const hasSavedView = !!localStorage.getItem('mapView');
+      if (!hasSavedView) {
+        const local = withGps.find(n => n.is_local);
+        if (local) {
+          leafletMap.setView([local.latitude, local.longitude], 11);
+        } else {
+          const group = L.featureGroup(Object.values(mapMarkers));
+          leafletMap.fitBounds(group.getBounds().pad(0.2));
+        }
+      }
+    }
+
+    // If locked, keep re-centring on local node
+    if (mapLocked) centerOnLocal();
+
+    applyMapSearch();
+    _refreshAllGeofences();
+  }
+
+  // ── Bot ────────────────────────────────────────────────────────────────────
+  let botConfig   = null;
+  let botInitDone = false;
+  let botNetwork  = localStorage.getItem('botNetwork') || 'mt';
+
+  function setBotView(v) {
+    document.getElementById('bot-btn-activity').classList.toggle('active', v === 'activity');
+    document.getElementById('bot-btn-settings').classList.toggle('active', v === 'settings');
+    document.getElementById('bot-view-activity').style.display = v === 'activity' ? '' : 'none';
+    document.getElementById('bot-view-settings').style.display = v === 'settings' ? '' : 'none';
+    if (v === 'settings') initBot();
+  }
+
+  function setBotNetwork(net) {
+    net = normalizeBotNetwork(net);
+    botNetwork = net;
+    localStorage.setItem('botNetwork', net);
+    document.getElementById('bot-net-mt').classList.toggle('active', net === 'mt');
+    document.getElementById('bot-net-mc').classList.toggle('active', net === 'mc');
+    botConfig = null;
+    initBot();
+  }
+
+  function _botRadioId() {
+    return botNetwork === 'mc' ? activeMcRadioId : activeRadioId;
+  }
+
+  function initBot() {
+    // Update MT/MC toggle visibility and label
+    botNetwork = normalizeBotNetwork(botNetwork);
+    localStorage.setItem('botNetwork', botNetwork);
+    const hasMt = hasConnectedMtRadios();
+    const hasMc = hasConnectedMcRadios();
+    const hasBoth = hasMc && hasMt;
+    document.getElementById('bot-net-row').style.display = hasBoth ? 'flex' : 'none';
+    document.getElementById('bot-net-mt').classList.toggle('active', botNetwork === 'mt');
+    document.getElementById('bot-net-mc').classList.toggle('active', botNetwork === 'mc');
+    const rid = _botRadioId();
+    document.getElementById('bot-net-label').textContent = rid ? `(${rid.slice(0, 8)}…)` : '';
+
+    const botChParam = rid ? '?radio_id=' + encodeURIComponent(rid) : '';
+
+    // Fetch channels: MT uses /api/chat/channels, MC uses /api/mc/<id>/channels
+    const chFetch = (botNetwork === 'mc' && rid)
+      ? fetch(`/api/mc/${encodeURIComponent(rid)}/channels`)
+          .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+          .then(d => (d.channels || [])
+            .filter(ch => (ch.name || '').trim() || (ch.hash || '').trim())
+            .map(ch => ({ index: ch.idx, name: ch.name || `CH${ch.idx}` })))
+      : fetch('/api/chat/channels' + botChParam)
+          .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+
+    Promise.all([
+      fetch('/api/bot/config' + botChParam).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }),
+      chFetch,
+    ]).then(([cfg, channels]) => {
+      botConfig = cfg;
+      applyBotConfig(cfg, channels);
+      renderBotStatus();
+    }).catch(e => console.warn('Bot init failed:', e));
+    // Load historical activity only once; new entries arrive via SSE
+    if (botInitDone) return;
+    botInitDone = true;
+    fetch('/api/bot/activity').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(activity => {
+      activity.slice().reverse().forEach(e => addBotActivityEntry(e, false));
+    }).catch(() => {});
+  }
+
+  function applyBotConfig(cfg, channels) {
+    document.getElementById('bot-enable').checked = cfg.enabled;
+    document.getElementById('bot-label').value = cfg.bot_label || 'OM Bot';
+
+    const listenChannels = Array.isArray(cfg.listen_channels) && cfg.listen_channels.length ? cfg.listen_channels : [0];
+    const motdChannels = Array.isArray(cfg.motd?.channels) && cfg.motd.channels.length ? cfg.motd.channels : listenChannels;
+
+    const chDiv = document.getElementById('bot-channels');
+    chDiv.innerHTML = channels.map(ch => `
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+        <input type="checkbox" value="${ch.index}"
+          ${listenChannels.includes(ch.index) ? 'checked' : ''}
+          onchange="saveBotConfig()">
+        CH${ch.index}${ch.name && ch.name !== 'Primary' ? ' · ' + escHtml(ch.name) : ''}
+      </label>
+    `).join('');
+
+    const motdDiv = document.getElementById('motd-channels');
+    motdDiv.innerHTML = channels.map(ch => `
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+        <input type="checkbox" value="${ch.index}"
+          ${motdChannels.includes(ch.index) ? 'checked' : ''}
+          onchange="saveBotConfig()">
+        CH${ch.index}${ch.name && ch.name !== 'Primary' ? ' · ' + escHtml(ch.name) : ''}
+      </label>
+    `).join('');
+
+    const labels = { ping: '🏓 ping', ack: '✋ ack', test: '🎙 test', sitrep: '📊 sitrep', cmd: '📋 cmd', motd: '📣 motd', joke: '🃏 joke', relay: '🔁 relay', dot: '👀 dot' };
+    const tbody = document.getElementById('bot-cmd-tbody');
+    tbody.innerHTML = Object.entries(cfg.commands).map(([name, c]) => `
+      <tr>
+        <td>${labels[name] || name}</td>
+        <td>
+          <label class="bot-toggle">
+            <input type="checkbox" data-cmd="${name}" data-field="enabled"
+              ${c.enabled ? 'checked' : ''} onchange="saveBotConfig()">
+            <span class="bot-toggle-slider"></span>
+          </label>
+        </td>
+        <td>
+          <select data-cmd="${name}" data-field="respond_via" onchange="saveBotConfig()"
+            style="font-size:12px;padding:3px 8px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px">
+            <option value="same" ${c.respond_via === 'same' ? 'selected' : ''}>Same channel</option>
+            <option value="dm"   ${c.respond_via === 'dm'   ? 'selected' : ''}>DM to sender</option>
+          </select>
+        </td>
+      </tr>
+    `).join('');
+
+    document.getElementById('motd-enable').checked   = cfg.motd.enabled;
+    document.getElementById('motd-interval').value   = cfg.motd.interval_hours;
+    document.getElementById('motd-fixed-time').value = cfg.motd.fixed_time || '08:00';
+    document.getElementById('motd-message').value    = cfg.motd.message;
+    setMotdMode(cfg.motd.mode || 'interval', false);
+    const relayCmd = cfg.commands?.relay || {};
+    setRelayMode(relayCmd.relay_mode || 'dm', false);
+    document.getElementById('relay-broadcast-ch').value = relayCmd.relay_channel ?? 0;
+  }
+
+  function setRelayMode(mode, save = true) {
+    const isDm = mode === 'dm';
+    document.getElementById('relay-mode-dm').classList.toggle('active', isDm);
+    document.getElementById('relay-mode-broadcast').classList.toggle('active', !isDm);
+    document.getElementById('relay-channel-row').style.display = isDm ? 'none' : 'flex';
+    if (save) saveBotConfig();
+  }
+
+  function setMotdMode(mode, save = true) {
+    const isFixed = mode === 'fixed';
+    document.getElementById('motd-mode-interval').classList.toggle('active', !isFixed);
+    document.getElementById('motd-mode-fixed').classList.toggle('active', isFixed);
+    document.getElementById('motd-interval-row').style.display = isFixed ? 'none' : 'flex';
+    document.getElementById('motd-fixed-row').style.display    = isFixed ? 'flex' : 'none';
+    if (save) saveBotConfig();
+  }
+
+  function testMotd() {
+    const status = document.getElementById('motd-test-status');
+    status.textContent = 'Sending…';
+    const rid = _botRadioId();
+    fetch('/api/bot/motd/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(rid ? { radio_id: rid } : {})
+    })
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(d => { status.textContent = d.ok ? 'Sent!' : (d.error || 'Failed'); })
+      .catch(() => { status.textContent = 'Error'; });
+    setTimeout(() => { document.getElementById('motd-test-status').textContent = ''; }, 4000);
+  }
+
+  function saveBotConfig() {
+    if (!botConfig) {
+      const st = document.getElementById('bot-save-status');
+      if (st) { st.textContent = 'Still loading…'; setTimeout(() => { st.textContent = ''; }, 2000); }
+      return;
+    }
+    botConfig.enabled   = document.getElementById('bot-enable').checked;
+    botConfig.bot_label = document.getElementById('bot-label').value.trim() || 'OM Bot';
+
+    botConfig.listen_channels = Array.from(
+      document.querySelectorAll('#bot-channels input[type=checkbox]:checked')
+    ).map(el => parseInt(el.value));
+
+    document.querySelectorAll('#bot-cmd-tbody input[data-cmd]').forEach(el => {
+      const cmd = el.dataset.cmd;
+      if (!botConfig.commands[cmd]) botConfig.commands[cmd] = {};
+      botConfig.commands[cmd].enabled = el.checked;
+    });
+    document.querySelectorAll('#bot-cmd-tbody select[data-cmd]').forEach(el => {
+      const cmd = el.dataset.cmd;
+      if (!botConfig.commands[cmd]) botConfig.commands[cmd] = {};
+      botConfig.commands[cmd].respond_via = el.value;
+    });
+
+    if (!botConfig.commands.relay) botConfig.commands.relay = {};
+    botConfig.commands.relay.relay_mode    = document.getElementById('relay-mode-broadcast').classList.contains('active') ? 'broadcast' : 'dm';
+    botConfig.commands.relay.relay_channel = parseInt(document.getElementById('relay-broadcast-ch').value) || 0;
+
+    botConfig.motd.enabled        = document.getElementById('motd-enable').checked;
+    botConfig.motd.mode           = document.getElementById('motd-mode-fixed').classList.contains('active') ? 'fixed' : 'interval';
+    botConfig.motd.interval_hours = parseInt(document.getElementById('motd-interval').value) || 4;
+    botConfig.motd.fixed_time     = document.getElementById('motd-fixed-time').value || '08:00';
+    botConfig.motd.message        = document.getElementById('motd-message').value;
+    botConfig.motd.channels       = Array.from(
+      document.querySelectorAll('#motd-channels input[type=checkbox]:checked')
+    ).map(el => parseInt(el.value));
+
+    fetch('/api/bot/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...botConfig, radio_id: _botRadioId() })
+    }).catch(e => console.error('saveBotConfig failed', e));
+    renderBotStatus();
+  }
+
+  function renderBotStatus() {
+    const label = document.getElementById('bot-status-label');
+    if (!label || !botConfig) return;
+    label.textContent = botConfig.enabled ? 'Bot active' : 'Bot disabled';
+    label.style.color = botConfig.enabled ? 'var(--accent)' : 'var(--muted)';
+  }
+
+  function addBotActivityEntry(entry, prepend) {
+    const log = document.getElementById('bot-activity-log');
+    if (!log) return;
+    // Clear placeholder
+    const placeholder = log.querySelector('.bot-no-activity');
+    if (placeholder) placeholder.remove();
+    const ts = new Date(entry.ts * 1000);
+    const timeStr = ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    const div = document.createElement('div');
+    div.className = 'bot-entry';
+    div.innerHTML = `
+      <div class="bot-entry-meta">${timeStr}<br>
+        <span style="color:var(--text)">${escHtml(entry.from_name)}</span><br>
+        <span style="font-size:11px">CH${entry.channel}</span>
+      </div>
+      <div>
+        <div class="bot-entry-cmd">${escHtml(entry.command)}</div>
+        <div class="bot-entry-resp">${escHtml(entry.response)}</div>
+      </div>
+    `;
+    if (prepend && log.firstChild) {
+      log.insertBefore(div, log.firstChild);
+    } else {
+      log.appendChild(div);
+    }
+  }
+
+  // ── Pip map ────────────────────────────────────────────────────────────────
+  let pipOpen    = false;
+  let pipInited  = false;
+  let pipMap     = null;
+  let pipMarkers = {};
+
+  function updatePipVisibility() {
+    const show = ['nodes', 'chat'].includes(currentTab);
+    document.getElementById('pip-btn').style.display  = (show && !pipOpen) ? 'flex'  : 'none';
+    document.getElementById('pip-wrap').style.display = (show &&  pipOpen) ? 'flex'  : 'none';
+    if (show && pipOpen) {
+      if (!pipInited) initPipMap();
+      else { setTimeout(() => pipMap && pipMap.invalidateSize(), 10); updatePipMarkers(allNodes); }
+    }
+  }
+
+  function togglePip() {
+    pipOpen = !pipOpen;
+    updatePipVisibility();
+  }
+
+  function initPipMap() {
+    pipInited = true;
+    pipMap = L.map('pip-map-el', {
+      zoomControl: false, attributionControl: false, zoomSnap: 1,
+    }).setView([46.05, 14.50], 9);
+    const _pipLayerKey = (() => { try { return localStorage.getItem('mapTileLayer') || 'osm'; } catch(e) { return 'osm'; } })();
+    const _pipDef = TILE_LAYERS[_pipLayerKey] || TILE_LAYERS.osm;
+    new OfflineTileLayer(_pipDef.url, { maxZoom: _pipDef.maxZoom }).addTo(pipMap);
+
+    // Draggable header
+    const wrap        = document.getElementById('pip-wrap');
+    const header      = document.getElementById('pip-header');
+    const resizeHandle = document.getElementById('pip-resize-handle');
+    let dragging = false, sx, sy, sr, sb;
+    let resizing = false, rsx, rsy, rwStart, rhStart;
+
+    header.addEventListener('mousedown', e => {
+      if (e.target.id === 'pip-collapse-btn' || e.target.id === 'pip-locate-btn') return;
+      dragging = true;
+      const r = wrap.getBoundingClientRect();
+      sx = e.clientX; sy = e.clientY;
+      sr = window.innerWidth  - r.right;
+      sb = window.innerHeight - r.bottom;
+      e.preventDefault();
+    });
+
+    // Top-left resize handle: dragging left/up expands the pip
+    resizeHandle.addEventListener('mousedown', e => {
+      resizing = true;
+      rsx = e.clientX; rsy = e.clientY;
+      const r = wrap.getBoundingClientRect();
+      rwStart = r.width; rhStart = r.height;
+      e.preventDefault(); e.stopPropagation();
+    });
+
+    document.addEventListener('mousemove', e => {
+      if (dragging) {
+        wrap.style.right  = Math.max(0, sr + (sx - e.clientX)) + 'px';
+        wrap.style.bottom = Math.max(0, sb + (sy - e.clientY)) + 'px';
+      }
+      if (resizing) {
+        const newW = Math.min(window.innerWidth * 0.5, Math.max(150, rwStart + (rsx - e.clientX)));
+        const newH = Math.min(window.innerHeight * 0.6, Math.max(130, rhStart + (rsy - e.clientY)));
+        wrap.style.width  = newW + 'px';
+        wrap.style.height = newH + 'px';
+      }
+    });
+    document.addEventListener('mouseup', () => { dragging = false; resizing = false; });
+
+    // Invalidate Leaflet size on any dimension change
+    new ResizeObserver(() => pipMap && pipMap.invalidateSize()).observe(wrap);
+
+    setTimeout(() => { pipMap.invalidateSize(); updatePipMarkers(allNodes); }, 50);
+  }
+
+  function updatePipMarkers(nodes) {
+    if (!pipMap || !pipInited) return;
+    const seen = new Set();
+    // MT markers — only when MT pill is active
+    if (mapShowMt) {
+      nodes.filter(n => n.latitude != null && n.longitude != null).forEach(n => {
+        seen.add(n.id);
+        const color = markerColor(n);
+        const r  = n.is_local ? 7 : 5;
+        const sz = r * 2 + 2;
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${sz}" height="${sz}" viewBox="0 0 ${sz} ${sz}">
+          <circle cx="${r+1}" cy="${r+1}" r="${r}" fill="${color}" stroke="white" stroke-width="1.5"/>
+        </svg>`;
+        const icon = L.divIcon({ html: svg, className: '', iconSize: [sz, sz], iconAnchor: [r+1, r+1] });
+        if (pipMarkers[n.id]) {
+          pipMarkers[n.id].setLatLng([n.latitude, n.longitude]).setIcon(icon);
+        } else {
+          pipMarkers[n.id] = L.marker([n.latitude, n.longitude], { icon })
+            .bindTooltip(escHtml(n.short_name || n.long_name), { direction: 'right', offset: [6, 0] })
+            .addTo(pipMap);
+        }
+      });
+    }
+    // MC markers — only when MC pill is active
+    if (mapShowMc) {
+      Object.entries(mcContacts || {}).forEach(([rid, radioContacts]) => {
+        if (mcLastStatus[rid]?.status !== 'connected') return;
+        Object.values(radioContacts).forEach(c => {
+          const lat = c.latitude ?? c.lat;
+          const lon = c.longitude ?? c.lon;
+          if (lat == null || lon == null) return;
+          const cid = 'mc_' + (c.id || c.full_key || '');
+          seen.add(cid);
+          const r = 5; const sz = r * 2 + 2;
+          const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${sz}" height="${sz}" viewBox="0 0 ${sz} ${sz}">
+            <rect x="1" y="1" width="${sz-2}" height="${sz-2}" fill="#38bdf8" stroke="white" stroke-width="1.5"/>
+          </svg>`;
+          const icon = L.divIcon({ html: svg, className: '', iconSize: [sz, sz], iconAnchor: [r+1, r+1] });
+          if (pipMarkers[cid]) {
+            pipMarkers[cid].setLatLng([lat, lon]).setIcon(icon);
+          } else {
+            pipMarkers[cid] = L.marker([lat, lon], { icon })
+              .bindTooltip(escHtml(c.long_name || c.name || cid), { direction: 'right', offset: [6, 0] })
+              .addTo(pipMap);
+          }
+        });
+      });
+    }
+    Object.keys(pipMarkers).forEach(id => {
+      if (!seen.has(id)) { pipMap.removeLayer(pipMarkers[id]); delete pipMarkers[id]; }
+    });
+    // Auto-center on first load
+    if (!pipMap._pipFitted && Object.keys(pipMarkers).length) {
+      pipMap._pipFitted = true;
+      const local = nodes.find(n => n.is_local && n.latitude != null);
+      if (local) {
+        pipMap.setView([local.latitude, local.longitude], 11);
+      } else {
+        const grp = L.featureGroup(Object.values(pipMarkers));
+        if (grp.getBounds().isValid()) pipMap.fitBounds(grp.getBounds().pad(0.3));
+      }
+    }
+  }
+
+  // ── Settings ───────────────────────────────────────────────────────────────
+  let settingsInited = false;
+  let _crossSettings = {rules: []};
+  let _crossEditId = null;
+  let _crossChannelNames = {mt: {}, mc: {}};
+  let _crossLoadedOnce = false;
+  let _crossLoading = false;
+  let _crossDirty = false;
+  const CROSS_SYSTEM_ENABLED = false;
+
+  function _crossRuleBlank() {
+    return {
+      id: '',
+      enabled: true,
+      mode: 'mirror',
+      source_network: 'mt',
+      source_radio_id: '',
+      source_channel: 0,
+      target_radio_id: '',
+      target_channel: 0,
+      bidirectional: false,
+      sender_filter_mode: 'any',
+      sender_filters: '',
+    };
+  }
+
+  function _crossChannelLabel(net, radioId, idx) {
+    const n = (((_crossChannelNames || {})[net] || {})[radioId] || {})[idx];
+    return n || `CH${idx}`;
+  }
+
+  function _crossChannelOptions(net, radioId, selected = 0) {
+    return Array.from({length: 8}, (_, i) =>
+      `<option value="${i}" ${i === selected ? 'selected' : ''}>${escHtml(_crossChannelLabel(net, radioId, i))}</option>`
+    ).join('');
+  }
+
+  function _crossRadioEntries(net) {
+    if (net === 'mc') {
+      return Object.entries(mcLastStatus || {}).map(([id, s]) => ({
+        id,
+        name: s?.name || s?.node_name || id,
+        status: s?.status || 'disconnected',
+      }));
+    }
+    return Object.entries(lastStatus || {}).map(([id, s]) => ({
+      id,
+      name: s?.name || id,
+      status: s?.status || 'disconnected',
+    }));
+  }
+
+  function _crossRuleSummary(rule) {
+    const srcNet = (rule.source_network || 'mt').toUpperCase();
+    const dstNet = srcNet === 'MT' ? 'MC' : 'MT';
+    const srcRadio = (_crossRadioEntries(rule.source_network).find(r => r.id === rule.source_radio_id)?.name) || rule.source_radio_id || '—';
+    const dstRadio = (_crossRadioEntries(rule.source_network === 'mt' ? 'mc' : 'mt').find(r => r.id === rule.target_radio_id)?.name) || rule.target_radio_id || '—';
+    const srcCh = _crossChannelLabel(rule.source_network, rule.source_radio_id, parseInt(rule.source_channel || 0));
+    const dstCh = _crossChannelLabel(rule.source_network === 'mt' ? 'mc' : 'mt', rule.target_radio_id, parseInt(rule.target_channel || 0));
+    const arrow = rule.mode === 'bridge' ? '↔' : '→';
+    return `${srcNet} ${srcRadio} / ${srcCh} ${arrow} ${dstNet} ${dstRadio} / ${dstCh}`;
+  }
+
+  function renderCrossRulesList() {
+    const el = document.getElementById('cross-rules-list');
+    if (!el) return;
+    const rules = (_crossSettings && Array.isArray(_crossSettings.rules)) ? _crossSettings.rules : [];
+    if (!rules.length) {
+      el.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:10px 12px;border:1px dashed var(--border);border-radius:6px">No cross-system rules yet.</div>';
+      return;
+    }
+    el.innerHTML = rules.map(rule => `
+      <div style="padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg2);display:grid;gap:6px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+          <div style="font-size:13px;font-weight:600">${escHtml(_crossRuleSummary(rule))}</div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:11px;color:${rule.enabled ? 'var(--accent)' : 'var(--muted)'}">${rule.enabled ? 'enabled' : 'disabled'}</span>
+            <button class="btn-secondary" style="font-size:11px;padding:3px 8px" onclick="crossToggleRule('${jsSafe(rule.id)}')">${rule.enabled ? 'Disable' : 'Enable'}</button>
+            <button class="btn-secondary" style="font-size:11px;padding:3px 8px" onclick="crossEditRule('${jsSafe(rule.id)}')">Edit</button>
+            <button class="btn-secondary" style="font-size:11px;padding:3px 8px;color:var(--red);border-color:var(--red)" onclick="crossDeleteRule('${jsSafe(rule.id)}')">Delete</button>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--muted)">
+          ${escHtml(rule.mode === 'bridge' ? 'Bridge · both ways' : 'Mirror · one way')}
+          ${rule.sender_filter_mode !== 'any' ? ' · filtered senders' : ''}
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function _renderCrossRadioOptions(sourceNet, sourceRadioId = '', targetRadioId = '', sourceChannel = 0, targetChannel = 0) {
+    const targetNet = sourceNet === 'mt' ? 'mc' : 'mt';
+    const sourceSel = document.getElementById('cross-source-radio');
+    const targetSel = document.getElementById('cross-target-radio');
+    const targetLbl = document.getElementById('cross-target-radio-label');
+    const sourceChSel = document.getElementById('cross-source-channel');
+    const targetChSel = document.getElementById('cross-target-channel');
+    if (targetLbl) targetLbl.textContent = `Target radio (${targetNet.toUpperCase()})`;
+    const srcEntries = _crossRadioEntries(sourceNet);
+    const dstEntries = _crossRadioEntries(targetNet);
+    if (sourceSel) {
+      sourceSel.innerHTML = srcEntries.length
+        ? srcEntries.map(r => `<option value="${escHtml(r.id)}" ${r.id === sourceRadioId ? 'selected' : ''}>${escHtml(r.name)}${r.status !== 'connected' ? ' (' + escHtml(r.status) + ')' : ''}</option>`).join('')
+        : '<option value="">No radios</option>';
+    }
+    if (targetSel) {
+      targetSel.innerHTML = dstEntries.length
+        ? dstEntries.map(r => `<option value="${escHtml(r.id)}" ${r.id === targetRadioId ? 'selected' : ''}>${escHtml(r.name)}${r.status !== 'connected' ? ' (' + escHtml(r.status) + ')' : ''}</option>`).join('')
+        : '<option value="">No radios</option>';
+    }
+    const srcRadio = sourceSel?.value || sourceRadioId || srcEntries[0]?.id || '';
+    const dstRadio = targetSel?.value || targetRadioId || dstEntries[0]?.id || '';
+    if (sourceChSel) sourceChSel.innerHTML = _crossChannelOptions(sourceNet, srcRadio, parseInt(sourceChannel || 0));
+    if (targetChSel) targetChSel.innerHTML = _crossChannelOptions(targetNet, dstRadio, parseInt(targetChannel || 0));
+  }
+
+  function crossSourceNetworkChanged() {
+    const srcNet = document.getElementById('cross-source-network')?.value || 'mt';
+    _renderCrossRadioOptions(srcNet);
+  }
+
+  function crossSourceRadioChanged() {
+    const srcNet = document.getElementById('cross-source-network')?.value || 'mt';
+    _renderCrossRadioOptions(srcNet,
+      document.getElementById('cross-source-radio')?.value || '',
+      document.getElementById('cross-target-radio')?.value || '',
+      parseInt(document.getElementById('cross-source-channel')?.value || '0'),
+      parseInt(document.getElementById('cross-target-channel')?.value || '0'));
+  }
+
+  function crossTargetRadioChanged() {
+    const srcNet = document.getElementById('cross-source-network')?.value || 'mt';
+    _renderCrossRadioOptions(srcNet,
+      document.getElementById('cross-source-radio')?.value || '',
+      document.getElementById('cross-target-radio')?.value || '',
+      parseInt(document.getElementById('cross-source-channel')?.value || '0'),
+      parseInt(document.getElementById('cross-target-channel')?.value || '0'));
+  }
+
+  async function _loadCrossChannelNames(mtStatus, mcStatus) {
+    const out = {
+      mt: Object.assign({}, (_crossChannelNames && _crossChannelNames.mt) || {}),
+      mc: Object.assign({}, (_crossChannelNames && _crossChannelNames.mc) || {}),
+    };
+    const mtIds = Object.keys(mtStatus || {});
+    const mcIds = Object.keys(mcStatus || {});
+    await Promise.all(mtIds.map(async rid => {
+      try {
+        const r = await fetch(`/api/chat/channels?radio_id=${encodeURIComponent(rid)}`);
+        if (!r.ok) return;
+        const rows = await r.json();
+        out.mt[rid] = Object.assign({}, out.mt[rid] || {});
+        (rows || []).forEach(ch => { out.mt[rid][ch.index] = ch.name || `CH${ch.index}`; });
+      } catch(_) {}
+    }));
+    await Promise.all(mcIds.map(async rid => {
+      try {
+        const r = await fetch(`/api/mc/${encodeURIComponent(rid)}/channels`);
+        if (!r.ok) return;
+        const rows = await r.json();
+        out.mc[rid] = Object.assign({}, out.mc[rid] || {});
+        (rows.channels || []).forEach(ch => { out.mc[rid][ch.idx] = ch.name || `CH${ch.idx}`; });
+      } catch(_) {}
+    }));
+    return out;
+  }
+
+  function _crossRuleFromEditor() {
+    const ruleId = _crossEditId || `cross_local_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const existing = ((_crossSettings && _crossSettings.rules) || []).find(r => r.id === ruleId);
+    const mode = document.getElementById('cross-mode')?.value || 'mirror';
+    return {
+      id: ruleId,
+      enabled: existing ? existing.enabled !== false : true,
+      mode,
+      bidirectional: mode === 'bridge',
+      source_network: document.getElementById('cross-source-network')?.value || 'mt',
+      source_radio_id: document.getElementById('cross-source-radio')?.value || '',
+      source_channel: parseInt(document.getElementById('cross-source-channel')?.value || '0'),
+      target_radio_id: document.getElementById('cross-target-radio')?.value || '',
+      target_channel: parseInt(document.getElementById('cross-target-channel')?.value || '0'),
+      sender_filter_mode: document.getElementById('cross-sender-filter-mode')?.value || 'any',
+      sender_filters: document.getElementById('cross-sender-filters')?.value || '',
+    };
+  }
+
+  function _crossFillEditor(rule = null) {
+    const r = Object.assign(_crossRuleBlank(), rule || {});
+    _crossEditId = r.id || null;
+    const sourceNet = r.source_network || 'mt';
+    document.getElementById('cross-mode').value = r.mode || 'mirror';
+    document.getElementById('cross-source-network').value = sourceNet;
+    document.getElementById('cross-sender-filter-mode').value = r.sender_filter_mode || 'any';
+    document.getElementById('cross-sender-filters').value = r.sender_filters || '';
+    _renderCrossRadioOptions(sourceNet, r.source_radio_id || '', r.target_radio_id || '', parseInt(r.source_channel || 0), parseInt(r.target_channel || 0));
+    _crossDirty = false;
+  }
+
+  function crossNewRule() {
+    _crossFillEditor(_crossRuleBlank());
+  }
+
+  function crossEditRule(ruleId) {
+    const rule = ((_crossSettings && _crossSettings.rules) || []).find(r => r.id === ruleId);
+    if (!rule) return;
+    _crossFillEditor(rule);
+  }
+
+  function crossDeleteRule(ruleId) {
+    _crossSettings.rules = ((_crossSettings && _crossSettings.rules) || []).filter(r => r.id !== ruleId);
+    if (_crossEditId === ruleId) crossNewRule();
+    renderCrossRulesList();
+    const statusEl = document.getElementById('cross-settings-status');
+    if (statusEl) statusEl.textContent = 'Saving...';
+    saveCrossSettings();
+  }
+
+  function crossToggleRule(ruleId) {
+    const rules = ((_crossSettings && _crossSettings.rules) || []).slice();
+    const idx = rules.findIndex(r => r.id === ruleId);
+    if (idx < 0) return;
+    rules[idx] = Object.assign({}, rules[idx], { enabled: !rules[idx].enabled });
+    _crossSettings.rules = rules;
+    renderCrossRulesList();
+    const statusEl = document.getElementById('cross-settings-status');
+    if (statusEl) statusEl.textContent = 'Saving...';
+    saveCrossSettings();
+  }
+
+  async function crossSaveEditorRule() {
+    const statusEl = document.getElementById('cross-settings-status');
+    const rule = _crossRuleFromEditor();
+    if (!rule.source_radio_id || !rule.target_radio_id) {
+      if (statusEl) statusEl.textContent = 'Select both source and target radios.';
+      return;
+    }
+    const rules = ((_crossSettings && _crossSettings.rules) || []).slice();
+    const idx = rules.findIndex(r => r.id === rule.id);
+    if (idx >= 0) rules[idx] = rule;
+    else rules.push(rule);
+    _crossSettings.rules = rules;
+    renderCrossRulesList();
+    _crossFillEditor(rule);
+    if (statusEl) statusEl.textContent = 'Saving...';
+    await saveCrossSettings();
+  }
+
+  async function loadCrossSettings() {
+    const statusEl = document.getElementById('cross-settings-status');
+    if (_crossLoading) return;
+    _crossLoading = true;
+    try {
+      const [mtResp, mcResp, crossResp] = await Promise.all([
+        fetch('/api/status'),
+        fetch('/api/mc/status'),
+        fetch('/api/settings/cross'),
+      ]);
+      if (!mtResp.ok || !mcResp.ok || !crossResp.ok) throw new Error('settings load failed');
+      const mt = await mtResp.json();
+      const mc = await mcResp.json();
+      const cfg = await crossResp.json();
+      lastStatus = mt || {};
+      const mcMap = {};
+      (mc.mc_nodes || []).forEach(n => { mcMap[n.id] = n; });
+      mcLastStatus = mcMap;
+      _crossChannelNames = await _loadCrossChannelNames(lastStatus, mcMap);
+      _crossSettings = {rules: Array.isArray(cfg.rules) ? cfg.rules : []};
+      renderCrossRulesList();
+      _crossFillEditor(_crossSettings.rules[0] || _crossRuleBlank());
+      _crossLoadedOnce = true;
+      if (statusEl) statusEl.textContent = '';
+    } catch (e) {
+      if (statusEl) statusEl.textContent = 'Cross-system settings load failed.';
+      console.error('loadCrossSettings failed:', e);
+    } finally {
+      _crossLoading = false;
+    }
+  }
+
+  async function saveCrossSettings() {
+    const statusEl = document.getElementById('cross-settings-status');
+    const payload = { rules: (_crossSettings && _crossSettings.rules) || [] };
+    if (statusEl) statusEl.textContent = 'Saving...';
+    try {
+      const r = await fetch('/api/settings/cross', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.error) throw new Error(data.error || r.status);
+      _crossSettings = data.cross || {rules: payload.rules || []};
+      renderCrossRulesList();
+      _crossFillEditor(_crossSettings.rules.find(r => r.id === _crossEditId) || _crossSettings.rules[0] || _crossRuleBlank());
+      if (statusEl) statusEl.textContent = 'Saved.';
+      _crossDirty = false;
+    } catch (e) {
+      if (statusEl) statusEl.textContent = String(e.message || e);
+      console.error('saveCrossSettings failed:', e);
+    }
+  }
+
+  function switchSettingsTab(name) {
+    if (name === 'cross' && !CROSS_SYSTEM_ENABLED) name = 'mt';
+    ['mt', 'mc', 'app', 'cross'].forEach(t => {
+      document.getElementById('st-' + t).style.display = t === name ? '' : 'none';
+      document.getElementById('stab-' + t).classList.toggle('active', t === name);
+    });
+    localStorage.setItem('settingsTab', name);
+    if (name === 'mc') {
+      const sel = document.getElementById('settings-mc-port-select');
+      if (!sel.options.length || !sel.options[0].value) settingsMcScanPorts();
+      loadMcNodeSettings();
+    }
+    if (CROSS_SYSTEM_ENABLED && name === 'cross' && !_crossLoadedOnce) loadCrossSettings();
+  }
+
+  let _settingsUpdatePoll = null;
+
+  function _updateSetButtons(info, state) {
+    const checkBtn = document.getElementById('settings-update-check-btn');
+    const runBtn = document.getElementById('settings-update-run-btn');
+    const restartBtn = document.getElementById('settings-update-restart-btn');
+    const running = !!state?.running;
+    if (checkBtn) {
+      checkBtn.disabled = running;
+      if (!running) checkBtn.textContent = 'Check';
+    }
+    if (runBtn) {
+      let disabledReason = '';
+      if (!info?.managed) disabledReason = 'This install is not managed by Git.';
+      else if (info?.dirty) disabledReason = 'Local file changes are present. Update is blocked until they are committed or cleaned.';
+      else if ((info?.ahead || 0) > 0) disabledReason = `Local commits are ahead of GitHub by ${info.ahead}. Push or reconcile first.`;
+      else if (!info?.update_available) disabledReason = 'No GitHub update is available.';
+      runBtn.disabled = running || !!disabledReason;
+      runBtn.textContent = running ? 'Updating…' : 'Update';
+      runBtn.title = running ? 'Update is running.' : (disabledReason || 'Pull the latest OverMesh code from GitHub.');
+    }
+    if (restartBtn) restartBtn.style.display = state?.ok && /Restart required/i.test(state?.message || '') ? '' : 'none';
+  }
+
+  function _renderUpdateStatus(payload) {
+    const info = payload?.info || {};
+    const state = payload?.state || {};
+    const summary = document.getElementById('settings-update-summary');
+    const logEl = document.getElementById('settings-update-log');
+    if (!summary) return;
+    if (payload?.error) {
+      summary.innerHTML = `<span style="color:var(--red)">${escHtml(payload.error)}</span>`;
+      _updateSetButtons(info, state);
+      return;
+    }
+    if (!info.managed) {
+      summary.innerHTML = `<span style="color:var(--muted)">${escHtml(info.error || 'This install is not managed by Git.')}</span>`;
+      _updateSetButtons(info, state);
+      return;
+    }
+    const parts = [
+      `Version <code>${escHtml(info.version || '0.0.0')}</code>`,
+      `Build <code>${escHtml(info.commit || '?')}</code>`,
+      info.remote_commit ? `GitHub <code>${escHtml(info.remote_commit)}</code>` : 'GitHub unknown',
+    ];
+    if (info.dirty) {
+      parts.push('<span style="color:var(--red)">local changes present</span>');
+      const dirtyLines = (info.dirty_summary || []).slice(0, 5).map(x => escHtml(x)).join('<br>');
+      if (dirtyLines) parts.push(`<span style="color:var(--muted)">Changed:<br>${dirtyLines}</span>`);
+    } else if ((info.ahead || 0) > 0) {
+      parts.push(`<span style="color:var(--yellow)">ahead by ${info.ahead}</span>`);
+    } else if (info.update_available) {
+      parts.push(`<span style="color:var(--accent)">${info.behind} update${info.behind !== 1 ? 's' : ''} available</span>`);
+    } else {
+      parts.push('<span style="color:var(--green)">up to date</span>');
+    }
+    if (state.message) {
+      const color = state.ok === false ? 'var(--red)' : state.ok === true ? 'var(--green)' : 'var(--muted)';
+      parts.push(`<span style="color:${color}">${escHtml(state.message)}</span>`);
+    }
+    summary.innerHTML = parts.join(' · ');
+    if (logEl) {
+      const lines = Array.isArray(state.log) ? state.log : [];
+      logEl.style.display = lines.length ? '' : 'none';
+      logEl.textContent = lines.join('\n');
+      if (lines.length) logEl.scrollTop = logEl.scrollHeight;
+    }
+    _updateSetButtons(info, state);
+  }
+
+  async function settingsLoadUpdateStatus(fetchRemote = false, btn) {
+    const checkBtn = btn || document.getElementById('settings-update-check-btn');
+    const summary = document.getElementById('settings-update-summary');
+    if (checkBtn && fetchRemote) {
+      checkBtn.disabled = true;
+      checkBtn.textContent = 'Checking…';
+    }
+    if (summary && fetchRemote) summary.innerHTML = '<span style="color:var(--muted)">Checking GitHub…</span>';
+    try {
+      const r = await fetch(`/api/settings/update/status${fetchRemote ? '?fetch=1' : ''}`);
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) data.error = data.error || `HTTP ${r.status}`;
+      _renderUpdateStatus(data);
+      if (data.state?.running && !_settingsUpdatePoll) {
+        _settingsUpdatePoll = setInterval(() => settingsLoadUpdateStatus(false), 1500);
+      }
+      if (!data.state?.running && _settingsUpdatePoll) {
+        clearInterval(_settingsUpdatePoll);
+        _settingsUpdatePoll = null;
+      }
+      if (fetchRemote && checkBtn) btnFeedback(checkBtn, '✓ Checked', 2000);
+    } catch(e) {
+      _renderUpdateStatus({error: String(e.message || e)});
+      if (checkBtn) { checkBtn.textContent = 'Check'; checkBtn.disabled = false; }
+    } finally {
+      if (!fetchRemote && checkBtn) { checkBtn.textContent = 'Check'; checkBtn.disabled = false; }
+    }
+  }
+
+  async function runOverMeshUpdate() {
+    await settingsLoadUpdateStatus(false);
+    const runBtn = document.getElementById('settings-update-run-btn');
+    if (runBtn?.disabled) {
+      showAlert(runBtn.title || 'Update is currently unavailable.');
+      return;
+    }
+    document.getElementById('confirm-ok').textContent = 'Update';
+    showConfirm('Update OverMesh now? Local changes will block the update, and a restart will be required after a successful pull.', async () => {
+      try {
+        const r = await fetch('/api/settings/update/run', {method: 'POST'});
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+        await settingsLoadUpdateStatus(false);
+        if (!_settingsUpdatePoll) _settingsUpdatePoll = setInterval(() => settingsLoadUpdateStatus(false), 1500);
+      } catch(e) {
+        showAlert(String(e.message || e));
+      }
+    });
+  }
+
+  function omManualPosStatus(text, ok = null) {
+    const el = document.getElementById('om-pos-status');
+    if (!el) return;
+    el.textContent = text || '';
+    el.style.color = ok == null ? 'var(--muted)' : ok ? 'var(--accent)' : 'var(--red)';
+  }
+
+  function _applyOmManualInputs() {
+    const latEl = document.getElementById('om-pos-lat');
+    const lonEl = document.getElementById('om-pos-lon');
+    if (!latEl || !lonEl) return;
+    latEl.value = _omManualPos ? _omManualPos.lat.toFixed(6) : '';
+    lonEl.value = _omManualPos ? _omManualPos.lon.toFixed(6) : '';
+  }
+
+  function applyAppSettings(cfg = {}) {
+    loadInAppNotifPrefs(cfg);
+    loadSoundPrefs(cfg);
+    loadBridgeSettings(cfg);
+    _setDistanceUnit(cfg.distance_unit || 'km');
+    settingsApplyZoom(cfg.zoom || 100);
+    const cd = cfg.sense_cooldown || 180;
+    document.getElementById('settings-sense-cooldown').value = cd;
+    document.getElementById('settings-sense-cooldown-display').textContent = senseCooldownSettingLabel(cd);
+    applyAccentColor(cfg.accent_color || '#4ade80');
+    _syncAccentSwatch();
+    _setOmManualPos(cfg.om_manual_lat, cfg.om_manual_lon);
+    _applyOmManualInputs();
+  }
+
+  function saveOmManualPosition(btn) {
+    const latRaw = document.getElementById('om-pos-lat')?.value.trim() || '';
+    const lonRaw = document.getElementById('om-pos-lon')?.value.trim() || '';
+    if (!latRaw && !lonRaw) {
+      clearOmManualPosition(btn);
+      return;
+    }
+    const coords = _normalizeCoordPair(latRaw, lonRaw);
+    if (!coords) {
+      omManualPosStatus('Invalid coordinates. Use the map picker or valid lat/lon values.', false);
+      return;
+    }
+    omManualPosStatus('Saving…');
+    fetch('/api/settings/app', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({om_manual_lat: coords.lat, om_manual_lon: coords.lon})
+    }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || `HTTP ${r.status}`); }))
+      .then(() => {
+        _setOmManualPos(coords.lat, coords.lon);
+        _applyOmManualInputs();
+        omManualPosStatus('Saved. OM will use this position when GPS has no live fix.', true);
+        btnFeedback(btn, '✓ Saved');
+      })
+      .catch(e => omManualPosStatus(String(e.message || e), false));
+  }
+
+  function clearOmManualPosition(btn) {
+    omManualPosStatus('Clearing…');
+    fetch('/api/settings/app', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({om_manual_lat: null, om_manual_lon: null})
+    }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || `HTTP ${r.status}`); }))
+      .then(() => {
+        _setOmManualPos(null, null);
+        _applyOmManualInputs();
+        omManualPosStatus('Cleared. OM will fall back to GPS or radio positions.', true);
+        btnFeedback(btn, '✓ Cleared');
+      })
+      .catch(e => omManualPosStatus(String(e.message || e), false));
+  }
+
+  function initSettings() {
+    switchSettingsTab(localStorage.getItem('settingsTab') || 'mt');
+    settingsLoadNodes();
+    loadMcSettingsNodes();
+    loadNotifPrefs();
+    loadInAppNotifPrefs();
+    loadSoundPrefs();
+    loadExtMapPref();
+    loadNodeCfgRadios();
+    loadMapLayers({silent: true});
+    document.getElementById('tile-autocache-toggle').checked = _autoCacheTiles;
+    refreshTileCacheInfo();
+    updateTileEstimate();
+    renderRegionList();
+    loadGpsSettings();
+    if (!settingsInited) {
+      settingsInited = true;
+      if (CROSS_SYSTEM_ENABLED && localStorage.getItem('settingsTab') !== 'cross' && !_crossLoadedOnce) loadCrossSettings();
+      settingsScanPorts();
+      settingsLoadUpdateStatus(false);
+      fetch('/api/settings/app').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(cfg => {
+        applyAppSettings(cfg);
+      }).catch(e => console.error('settings/app fetch failed:', e));
+    }
+  }
+
+  function _crossMarkDirty() {
+    _crossDirty = true;
+  }
+
+  function settingsRefresh() {
+    fetch('/api/settings/nodes').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
+      _renderSettingsRadios(data);
+      _renderNodeCfgTabs(data);
+    }).catch(e => console.error('settingsRefresh failed:', e));
+  }
+
+  // ── GPS receiver ──────────────────────────────────────────────────────────
+
+  function loadGpsSettings() {
+    fetch('/api/settings/gps')
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(cfg => {
+        _gpsEnabled = cfg.enabled || false;
+        document.getElementById('gps-enabled-toggle').checked   = _gpsEnabled;
+        document.getElementById('gps-auto-push-toggle').checked = cfg.auto_push || false;
+        const storedSecs = cfg.push_interval ?? 30;
+        const unitEl = document.getElementById('gps-push-interval-unit');
+        const valEl  = document.getElementById('gps-push-interval-val');
+        if (storedSecs % 3600 === 0) { unitEl.value = '3600'; valEl.value = storedSecs / 3600; }
+        else if (storedSecs % 60 === 0) { unitEl.value = '60'; valEl.value = storedSecs / 60; }
+        else { unitEl.value = '1'; valEl.value = storedSecs; }
+        const precMeters = cfg.precision_meters ?? bitToSliderMeters(cfg.precision ?? 32);
+        document.getElementById('gps-precision-slider').value = precMeters;
+        document.getElementById('gps-precision-label').textContent = precMeterLabel(precMeters);
+        _gpsPopulatePortList(cfg.port || '');
+        _gpsUpdatePosition(cfg);
+      })
+      .catch(e => console.error('loadGpsSettings failed:', e));
+  }
+
+  function gpsRefreshPorts() {
+    const currentPort = document.getElementById('gps-port-select').value;
+    _gpsPopulatePortList(currentPort);
+  }
+
+  function _gpsPopulatePortList(currentPort) {
+    fetch('/api/settings/ports')
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(data => {
+        const sel = document.getElementById('gps-port-select');
+        sel.innerHTML = '<option value="">— select port —</option>';
+        (data.ports || []).forEach(p => {
+          const opt = document.createElement('option');
+          opt.value = p.device;
+          opt.textContent = `${p.device} — ${p.description}`;
+          if (p.device === currentPort) opt.selected = true;
+          sel.appendChild(opt);
+        });
+      })
+      .catch(e => console.error('_gpsPopulatePortList failed:', e));
+  }
+
+  function _gpsUpdatePosition(pos) {
+    const fixEl   = document.getElementById('gps-card-fix');
+    const satsEl  = document.getElementById('gps-card-sats');
+    const latEl   = document.getElementById('gps-card-lat');
+    const lonEl   = document.getElementById('gps-card-lon');
+    const altEl   = document.getElementById('gps-card-alt');
+    const speedEl = document.getElementById('gps-card-speed');
+    const gpsBtn  = document.getElementById('btn-from-gps');
+    if (!fixEl) return;
+
+    if (!_gpsEnabled) {
+      _localGpsPos = null;
+      if (_showPolarGrid) _drawPolarGrid();
+      fixEl.style.color = 'var(--muted)';
+      fixEl.textContent = '● Disabled';
+      if (satsEl) satsEl.textContent = '—';
+      if (latEl)  latEl.textContent  = '—';
+      if (lonEl)  lonEl.textContent  = '—';
+      if (altEl)  altEl.textContent  = '—';
+      if (speedEl) speedEl.textContent = '—';
+      if (gpsBtn) gpsBtn.disabled = true;
+      _gpsRemoveMarker();
+      return;
+    }
+    if (pos.port && pos.port_present === false) {
+      _localGpsPos = null;
+      if (_showPolarGrid) _drawPolarGrid();
+      fixEl.style.color = 'var(--yellow, #facc15)';
+      fixEl.textContent = '● Dongle missing';
+      if (satsEl) satsEl.textContent = '0';
+      if (latEl)  latEl.textContent  = '—';
+      if (lonEl)  lonEl.textContent  = '—';
+      if (altEl)  altEl.textContent  = '—';
+      if (speedEl) speedEl.textContent = '—';
+      if (gpsBtn) gpsBtn.disabled = true;
+      _gpsRemoveMarker();
+      return;
+    }
+    if (pos.error && !pos.fix && pos.lat == null) {
+      _localGpsPos = null;
+      if (_showPolarGrid) _drawPolarGrid();
+      fixEl.style.color = 'var(--yellow, #facc15)';
+      fixEl.textContent = '● Error';
+      if (satsEl) satsEl.textContent = '0';
+      if (latEl)  latEl.textContent  = '—';
+      if (lonEl)  lonEl.textContent  = '—';
+      if (altEl)  altEl.textContent  = '—';
+      if (speedEl) speedEl.textContent = '—';
+      if (gpsBtn) gpsBtn.disabled = true;
+      _gpsRemoveMarker();
+      return;
+    }
+    if (pos.lat == null && !(pos.sats > 0)) {
+      _localGpsPos = null;
+      if (_showPolarGrid) _drawPolarGrid();
+      fixEl.style.color = 'var(--muted)';
+      fixEl.textContent = '● Searching…';
+      if (satsEl) satsEl.textContent = '0';
+      if (latEl)  latEl.textContent  = '—';
+      if (lonEl)  lonEl.textContent  = '—';
+      if (altEl)  altEl.textContent  = '—';
+      if (speedEl) speedEl.textContent = '—';
+      if (gpsBtn) gpsBtn.disabled = true;
+      _gpsRemoveMarker();
+      return;
+    }
+
+    const hasFix = pos.fix && pos.lat != null;
+    _localGpsPos = hasFix ? {lat: pos.lat, lon: pos.lon} : null;
+    if (_showPolarGrid) _drawPolarGrid();
+    fixEl.style.color = hasFix ? 'var(--accent)' : 'var(--yellow, #facc15)';
+    fixEl.textContent  = hasFix ? '● Fix' : '● No fix';
+    if (satsEl) satsEl.textContent = pos.sats != null ? pos.sats : '—';
+    if (latEl)  latEl.textContent  = pos.lat  != null ? pos.lat.toFixed(6)  : '—';
+    if (lonEl)  lonEl.textContent  = pos.lon  != null ? pos.lon.toFixed(6)  : '—';
+    if (altEl)  altEl.textContent  = pos.alt  != null ? pos.alt + ' m'      : '—';
+    if (speedEl) speedEl.textContent = pos.speed != null ? pos.speed.toFixed(1) + ' m/s' : '—';
+    if (gpsBtn) gpsBtn.disabled = !hasFix;
+    if (hasFix) _gpsPlaceMarker(pos.lat, pos.lon, pos.alt, pos.sats);
+    else _gpsRemoveMarker();
+  }
+
+  function _gpsPlaceMarker(lat, lon, alt, sats) {
+    if (!leafletMap) return;
+    const icon    = makeIcon('#3b82f6', false);  // blue — matches local node colour
+    const popup   = `<div style="font-size:13px"><b>📡 GPS Receiver</b><br>
+      <span style="color:var(--muted);font-size:11px">${lat.toFixed(6)}, ${lon.toFixed(6)}${alt != null ? ' · ' + alt + 'm' : ''}${sats ? ' · ' + sats + ' sats' : ''}</span></div>`;
+    if (_gpsMarker) {
+      _gpsMarker.setLatLng([lat, lon]).setIcon(icon).setPopupContent(popup);
+    } else {
+      _gpsMarker = L.marker([lat, lon], {icon})
+        .bindPopup(popup)
+        .bindTooltip('GPS', {permanent: true, direction: 'right', className: 'map-label', offset: [8, 0]})
+        .addTo(leafletMap);
+      if (!mapLabels) _gpsMarker.closeTooltip();
+    }
+  }
+
+  function _gpsRemoveMarker() {
+    if (_gpsMarker && leafletMap) { leafletMap.removeLayer(_gpsMarker); _gpsMarker = null; }
+  }
+
+  function saveGpsSettings() {
+    const enabled    = document.getElementById('gps-enabled-toggle').checked;
+    _gpsEnabled      = enabled;
+    const port       = document.getElementById('gps-port-select').value;
+    const auto_push  = document.getElementById('gps-auto-push-toggle').checked;
+    const precMeters = parseInt(document.getElementById('gps-precision-slider').value);
+    const precision  = metersToBit(precMeters);
+    const push_interval = Math.max(10, parseInt(document.getElementById('gps-push-interval-val').value || 30)
+                          * parseInt(document.getElementById('gps-push-interval-unit').value || 1));
+    const statusEl   = document.getElementById('gps-status');
+    statusEl.textContent = 'Saving…';
+    fetch('/api/settings/gps', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enabled, port, auto_push, precision, precision_meters: precMeters, push_interval}),
+    }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || `HTTP ${r.status}`); }))
+      .then((d) => {
+        statusEl.textContent = d.warning || (enabled ? '✓ GPS enabled' : '✓ Saved');
+        setTimeout(() => { statusEl.textContent = ''; }, 2000);
+        loadGpsSettings();
+      })
+      .catch(e => { statusEl.textContent = `✗ ${escHtml(String(e))}`; });
+  }
+
+  function fillPositionFromGps(btn) {
+    const statusEl = document.getElementById('node-cfg-position-status');
+    fetch('/api/settings/gps')
+      .then(r => r.json())
+      .then(d => {
+        if (!d.fix || d.lat == null || d.lon == null) {
+          if (statusEl) statusEl.textContent = '✗ No GPS fix available';
+          return;
+        }
+        const cb = document.getElementById('node-cfg-fixed-pos');
+        if (cb && !cb.checked) { cb.checked = true; toggleFixedCoords(); }
+        document.getElementById('node-cfg-fixed-lat').value = d.lat.toFixed(6);
+        document.getElementById('node-cfg-fixed-lon').value = d.lon.toFixed(6);
+        if (d.alt != null) document.getElementById('node-cfg-fixed-alt').value = d.alt;
+        if (statusEl) statusEl.textContent = `✓ Filled from GPS (${d.sats ?? 0} sats) — review and Save`;
+        btnFeedback(btn, '✓ Filled');
+      })
+      .catch(() => { if (statusEl) statusEl.textContent = '✗ Failed to read GPS data'; });
+  }
+
+  function gpsPushToNode() {
+    const statusEl = document.getElementById('gps-push-status');
+    statusEl.textContent = 'Sending…';
+    fetch('/api/gps/push', {method: 'POST'})
+      .then(r => r.json().then(d => ({ok: r.ok, d})))
+      .then(({ok, d}) => {
+        if (!ok) { statusEl.textContent = `✗ ${escHtml(d.error || 'Request failed')}`; return; }
+        const n = d.pushed ? d.pushed.length : 0;
+        statusEl.textContent = n ? `✓ Sent to ${n} node(s)` : '✓ Sent (no nodes connected)';
+        setTimeout(() => { statusEl.textContent = ''; }, 3000);
+      })
+      .catch(e => { statusEl.textContent = `✗ ${escHtml(String(e))}`; });
+  }
+
+  function _renderSettingsRadios(data) {
+    const list = document.getElementById('settings-nodes-list');
+      if (!data.nodes.length) {
+        list.innerHTML = '<p style="color:var(--muted);font-size:12px;margin:0">No radios configured.</p>';
+        return;
+      }
+      list.innerHTML = data.nodes.map(n => {
+        const dot = n.status === 'connected' ? 'dot-connected' : n.status === 'connecting' ? 'dot-connecting' : 'dot-disconnected';
+        const canRemove = data.nodes.length > 1;
+        return `<div class="radio-row">
+          <span class="status-dot ${dot}"></span>
+          <span class="radio-row-name">${escHtml(n.name)}</span>
+          <span class="radio-row-port" title="${escHtml(n.usb_serial || n.port)}">${escHtml(n.usb_serial ? n.port + ' ⬡' : n.port)}</span>
+          <span class="radio-row-status" style="${!n.enabled ? 'color:var(--muted)' : ''}">${n.enabled ? n.status : 'disabled'}</span>
+          ${canRemove ? `
+            <button class="btn-secondary" style="font-size:11px;padding:3px 8px;${n.enabled ? '' : 'color:var(--accent);border-color:var(--accent)'}"
+              title="${n.enabled ? 'Pause scanning for this device — keeps config and message history intact' : 'Resume scanning and connecting to this device'}"
+              onclick="settingsToggleNode('${jsSafe(n.id)}',${!n.enabled})">${n.enabled ? 'Disable' : 'Enable'}</button>
+            <button class="btn-secondary" style="font-size:11px;padding:3px 8px;margin-left:4px"
+              title="Remove this radio from OverMesh — config deleted, message history kept on disk"
+              onclick="settingsRemoveNode('${jsSafe(n.id)}','${jsSafe(n.name)}')">Remove</button>
+            <button class="btn-secondary" style="font-size:11px;padding:3px 8px;color:var(--red);border-color:var(--red);margin-left:4px"
+              title="Permanently delete this radio and wipe all its message history — cannot be undone"
+              onclick="settingsDeleteNode('${jsSafe(n.id)}','${jsSafe(n.name)}')">Delete</button>
+          ` : '<span style="font-size:11px;color:var(--muted)">primary</span>'}
+        </div>`;
+      }).join('');
+  }
+
+  function settingsLoadNodes() { settingsRefresh(); }
+
+  function settingsScanPorts() {
+    const sel = document.getElementById('settings-port-select');
+    sel.innerHTML = '<option value="">Scanning…</option>';
+    fetch('/api/settings/ports').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
+      const available = data.ports.filter(p => !p.in_use);
+      if (!available.length) {
+        sel.innerHTML = '<option value="">No available devices found</option>';
+        return;
+      }
+      sel.innerHTML = available.map(p => {
+        const label = p.description && p.description !== p.device
+          ? `${p.device} — ${p.description}`
+          : p.device;
+        return `<option value="${escHtml(p.usb_serial || p.device)}" data-port="${escHtml(p.device)}">${escHtml(label)}</option>`;
+      }).join('');
+    }).catch(e => { sel.innerHTML = '<option value="">Scan failed</option>'; console.error('Port scan failed:', e); });
+  }
+
+  let _addNodeType = 'serial';
+
+  function settingsSetAddType(type) {
+    _addNodeType = type;
+    document.getElementById('add-type-serial').classList.toggle('active', type === 'serial');
+    document.getElementById('add-type-tcp').classList.toggle('active', type === 'tcp');
+    document.getElementById('add-serial-fields').style.display = type === 'serial' ? 'flex' : 'none';
+    document.getElementById('add-tcp-fields').style.display    = type === 'tcp'    ? 'flex' : 'none';
+  }
+
+  function settingsAddNode() {
+    const name = document.getElementById('settings-node-name').value.trim();
+    const err  = document.getElementById('settings-add-error');
+    err.textContent = '';
+    if (!name) { err.textContent = 'Enter a name.'; return; }
+    let body = { name, type: _addNodeType };
+    if (_addNodeType === 'tcp') {
+      const host     = document.getElementById('settings-tcp-host').value.trim();
+      const tcp_port = parseInt(document.getElementById('settings-tcp-port').value.trim()) || 4403;
+      if (!host) { err.textContent = 'Enter an IP address or hostname.'; return; }
+      body.host     = host;
+      body.tcp_port = tcp_port;
+    } else {
+      const sel  = document.getElementById('settings-port-select');
+      const val  = sel.value;
+      const port = sel.options[sel.selectedIndex]?.dataset?.port || val;
+      if (!val) { err.textContent = 'Select a device.'; return; }
+      const isSerial = val && !val.startsWith('/');
+      body.usb_serial = isSerial ? val : '';
+      body.port       = port;
+    }
+    fetch('/api/settings/nodes/add', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
+      if (data.error) { err.textContent = data.error; return; }
+      document.getElementById('settings-node-name').value = '';
+      if (_addNodeType === 'tcp') document.getElementById('settings-tcp-host').value = '';
+      settingsLoadNodes();
+      settingsScanPorts();
+    }).catch(e => { err.textContent = 'Request failed.'; console.error('settingsAddNode failed:', e); });
+  }
+
+  function settingsToggleNode(id, enable) {
+    fetch(`/api/settings/nodes/${id}/set_enabled`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enabled: enable})
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
+      if (data.error) { showAlert(data.error); return; }
+      // Update lastStatus immediately so header pill appears/disappears without waiting for poll
+      if (lastStatus[id]) lastStatus[id].enabled = enable;
+      updateRadioSelector();
+      settingsLoadNodes();
+    }).catch(e => console.error('settingsToggleNode failed:', e));
+  }
+
+  function settingsRemoveNode(id, name) {
+    document.getElementById('confirm-ok').textContent = 'Remove';
+    showConfirm(`Remove radio "${escHtml(name)}"?`, () => {
+      fetch(`/api/settings/nodes/${id}/remove`, {method: 'POST'})
+        .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
+          if (data.error) { showAlert(data.error); return; }
+          settingsLoadNodes();
+        }).catch(e => console.error('removeNode failed:', e));
+    });
+  }
+
+  function settingsDeleteNode(id, name) {
+    document.getElementById('confirm-ok').textContent = 'Delete';
+    showConfirm(`DELETE "${escHtml(name)}" and wipe all message history? This cannot be undone.`, () => {
+      fetch(`/api/settings/nodes/${id}/delete`, {method: 'POST'})
+        .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
+          if (data.error) { showAlert(data.error); return; }
+          settingsLoadNodes();
+        }).catch(e => console.error('deleteNode failed:', e));
+    });
+  }
+
+  // ============================================================
+  // MeshCore (MC) support
+  // ============================================================
+
+  let mcLastStatus  = {};      // {config_id: {name, status, node_id, ...}}
+  let mcContacts    = {};      // {config_id: {contact_id: contact, ...}}
+  let mcMapMarkerById = {};    // contact_id → Leaflet marker (for MC Sense hover)
+  let _senseNet     = localStorage.getItem('senseNet') || 'mt';
+  let _mcPathLines  = [];      // L.polyline objects for MC path lines
+  let _mcHoverLines = [];      // temporary hover highlight polylines
+  let _mcActiveHoverPath = null;
+  let _mcRouteEditor = null;
+  let _mcSenseLogEntries = (() => {
+    try { const s = JSON.parse(localStorage.getItem('mcSenseLog') || '[]'); return Array.isArray(s) ? s.slice(-200) : []; }
+    catch(e) { return []; }
+  })(); // {text, ts, points} — MC activity log, persisted across refresh
+  let _mcChatRouteByKey = {};
+  let mcMessages = (() => {
+    try { const s = JSON.parse(localStorage.getItem('mcMessages') || '[]'); return Array.isArray(s) ? s.slice(-500) : []; }
+    catch(e) { return []; }
+  })();
+  function _saveMcMessages() {
+    try { localStorage.setItem('mcMessages', JSON.stringify(mcMessages.slice(-300))); } catch(e) {}
+  }
+  function _mcLocalMsgId() {
+    return `mc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  function _mcChatRouteKey(m) {
+    return [
+      m?.radio_id || '',
+      m?.id || m?.ts || '',
+      m?.subtype || '',
+      m?.channel ?? '',
+      m?.from_id || '',
+      m?.to_id || '',
+    ].join('|');
+  }
+
+  function _parseCrossCommand(text) {
+    const m = (text || '').trim().match(/^\/(mt|mc)(?:\s+|)([@#][^\s]+)\s+([\s\S]+)$/i);
+    if (!m) return null;
+    return {
+      network: m[1].toLowerCase(),
+      target: m[2],
+      text: (m[3] || '').trim(),
+    };
+  }
+
+  function _crossNormTarget(s) {
+    return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  }
+
+  function _crossPickBestTarget(raw, entries, label) {
+    const qRaw = String(raw || '').trim().toLowerCase();
+    const qNorm = _crossNormTarget(raw);
+    const scored = [];
+    entries.forEach(entry => {
+      let best = 0;
+      (entry.keys || []).forEach(k => {
+        const rawKey = String(k || '').trim().toLowerCase();
+        const normKey = _crossNormTarget(k);
+        if (!rawKey) return;
+        if (rawKey === qRaw) best = Math.max(best, 100);
+        else if (normKey && normKey === qNorm) best = Math.max(best, 95);
+        else if (rawKey.startsWith(qRaw)) best = Math.max(best, 80);
+        else if (normKey && qNorm && normKey.startsWith(qNorm)) best = Math.max(best, 75);
+        else if (rawKey.includes(qRaw)) best = Math.max(best, 60);
+        else if (normKey && qNorm && normKey.includes(qNorm)) best = Math.max(best, 55);
+      });
+      if (best > 0) scored.push({score: best, entry});
+    });
+    if (!scored.length) return { error: `${label} "${raw}" not found.` };
+    scored.sort((a, b) => b.score - a.score || String(a.entry.display || '').localeCompare(String(b.entry.display || '')));
+    if (scored.length > 1 && scored[0].score === scored[1].score) {
+      const names = scored.slice(0, 3).map(x => x.entry.display).join(', ');
+      return { error: `${label} "${raw}" is ambiguous: ${names}` };
+    }
+    return scored[0].entry;
+  }
+
+  function _resolveMtCommandTarget(token, radioId = null) {
+    if (!token) return { error: 'Missing MT target.' };
+    if (token.startsWith('#')) {
+      const ch = parseInt(token.slice(1), 10);
+      if (!Number.isInteger(ch) || ch < 0 || ch > 7) return { error: 'MT channel must be 0-7.' };
+      return { kind: 'channel', channel: ch };
+    }
+    if (!token.startsWith('@')) return { error: 'MT target must start with @ or #.' };
+    const raw = token.slice(1).trim();
+    if (!raw) return { error: 'Missing MT target name.' };
+    const entries = (allNodes || [])
+      .filter(n => !radioId || n.radio_id === radioId)
+      .map(n => ({
+      dest_id: n.id,
+      to_name: n.long_name || n.short_name || n.id,
+      display: n.long_name || n.short_name || n.id,
+      keys: [n.id, n.long_name, n.short_name],
+    }));
+    const match = _crossPickBestTarget(raw, entries, 'MT target');
+    if (match.error) return match;
+    return { kind: 'dm', dest_id: match.dest_id, to_name: match.to_name };
+  }
+
+  function _resolveMcCommandTarget(token) {
+    if (!token) return { error: 'Missing MC target.' };
+    if (token.startsWith('#')) {
+      const ch = parseInt(token.slice(1), 10);
+      if (!Number.isInteger(ch) || ch < 0 || ch > 7) return { error: 'MC channel must be 0-7.' };
+      return { kind: 'channel', channel: ch };
+    }
+    if (!token.startsWith('@')) return { error: 'MC target must start with @ or #.' };
+    const raw = token.slice(1).trim();
+    if (!raw) return { error: 'Missing MC target name.' };
+    const entries = [];
+    const radios = activeMcRadioId ? [activeMcRadioId, ...Object.keys(mcContacts).filter(id => id !== activeMcRadioId)] : Object.keys(mcContacts);
+    for (const rid of radios) {
+      const contacts = mcContacts[rid] || {};
+      for (const [pre, c] of Object.entries(contacts)) {
+        entries.push({
+          kind: 'dm',
+          target: pre,
+          to_name: c.long_name || c.id || pre,
+          radio_id: rid,
+          display: `${c.long_name || c.id || pre} (${mcLastStatus[rid]?.name || rid})`,
+          keys: [pre, c.full_key, c.id, c.long_name, c.short_name],
+        });
+      }
+    }
+    const match = _crossPickBestTarget(raw, entries, 'MC target');
+    if (match.error) return match;
+    return { kind: 'dm', target: match.target, to_name: match.to_name, radio_id: match.radio_id };
+  }
+
+  async function _sendMtCommand(target, text) {
+    if (!activeRadioId) throw new Error('No active MT radio.');
+    const payload = target.kind === 'dm'
+      ? { text, channel: 0, dest_id: target.dest_id, radio_id: activeRadioId }
+      : { text, channel: target.channel, radio_id: activeRadioId };
+    const r = await fetch('/api/chat/send', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    if (!r.ok) throw new Error(await r.text());
+  }
+
+  function _queueMcLocalMessage(radioId, text, opts = {}) {
+    const msgId = _mcLocalMsgId();
+    mcMessages.push({
+      id: msgId,
+      type: 'mc_message',
+      radio_id: radioId,
+      radio_name: mcLastStatus[radioId]?.name || '',
+      network: 'mc',
+      subtype: opts.kind === 'dm' ? 'dm' : 'channel',
+      channel: opts.kind === 'channel' ? opts.channel : undefined,
+      from_id: 'me',
+      to_id: opts.kind === 'dm' ? opts.target : undefined,
+      text,
+      ts: Math.floor(Date.now()/1000),
+      sent: true,
+      status: 'pending',
+    });
+    _saveMcMessages();
+    renderMcMessages();
+    return msgId;
+  }
+
+  async function _sendMcCommand(target, text) {
+    const radioId = target.radio_id || activeMcRadioId;
+    if (!radioId) throw new Error('No active MC radio.');
+    const chunks = _mcSplitTextByBytes(text, _mcTargetMsgLimit(target.kind, radioId));
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      const msgId = _queueMcLocalMessage(radioId, chunk, target);
+      try {
+        const endpoint = target.kind === 'dm'
+          ? `/api/mc/${encodeURIComponent(radioId)}/send_dm`
+          : `/api/mc/${encodeURIComponent(radioId)}/send_chan`;
+        const body = target.kind === 'dm'
+          ? { target: target.target, text: chunk }
+          : { text: chunk, channel: target.channel };
+        const r = await fetch(endpoint, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok || data.error) throw new Error(data.error || r.status);
+        _setMcMsgStatus(msgId, 'delivered');
+      } catch (e) {
+        _setMcMsgStatus(msgId, 'failed');
+        throw e;
+      }
+      if (chunks.length > 1 && i < chunks.length - 1) await _sleep(MC_SPLIT_SEND_DELAY_MS);
+    }
+  }
+
+  async function handleCrossCommand(rawText) {
+    if (!CROSS_SYSTEM_ENABLED) return false;
+    const cmd = _parseCrossCommand(rawText);
+    if (!cmd) return false;
+    if (!cmd.text) throw new Error('Message text required.');
+    if (cmd.network === 'mt') {
+      const target = _resolveMtCommandTarget(cmd.target, activeRadioId);
+      if (target.error) throw new Error(target.error);
+      await _sendMtCommand(target, cmd.text);
+      return true;
+    }
+    const target = _resolveMcCommandTarget(cmd.target);
+    if (target.error) throw new Error(target.error);
+    await _sendMcCommand(target, cmd.text);
+    return true;
+  }
+  function _setMcMsgStatus(msgId, status) {
+    const m = mcMessages.find(x => x.id === msgId);
+    if (!m) return;
+    m.status = status;
+    _saveMcMessages();
+    renderMcMessages();
+  }
+  let mcMapMarkers    = [];    // Leaflet markers for MC nodes on the main map
+  let activeMcRadioId = localStorage.getItem('activeMcRadioId') || null;  // currently viewed MC radio
+  let mcChatTab       = localStorage.getItem('mcChatTab') || 'chan:0';
+  const mcUnreadTabs      = new Set();
+  const mcUnreadCounts    = Object.create(null);
+  const mcKnownChannels   = {0: 'Public'};  // idx → display name
+  const mcDmContacts      = {};             // pubkey_pre → display name
+  let closedMcDmTabs = (() => { try { return new Set(JSON.parse(localStorage.getItem('closedMcDmTabs') || '[]')); } catch(e) { return new Set(); } })();
+  function saveMcClosedDmTabs() { localStorage.setItem('closedMcDmTabs', JSON.stringify([...closedMcDmTabs])); }
+  // Rebuild tab state from saved messages so tabs reappear after refresh
+  mcMessages.forEach(data => {
+    if (data.subtype === 'channel') {
+      const idx = data.channel ?? 0;
+      if (!mcKnownChannels[idx]) mcKnownChannels[idx] = `CH${idx}`;
+    } else if (data.subtype === 'dm' && !data.sent && data.from_id) {
+      if (!mcDmContacts[data.from_id] && !closedMcDmTabs.has(data.from_id)) mcDmContacts[data.from_id] = data.from_id;
+    }
+  });
+
+  // MC Sense contact selection
+  let _mcSenseSelectedId  = null;
+  let _mcSenseSelectedRid = null;
+
+  // MC Scan state
+  let _mcScanActive    = false;
+  let _mcScanRadioId   = null;
+  let _mcScanNewCount  = 0;
+  let _mcScanWindow    = 60;
+  let _mcScanRemaining = 0;
+  let _mcScanTimer     = null;
+
+  // -- Pills --
+  function updateMcPills() {
+    const sel  = document.getElementById('mc-radio-selector');
+    const sep  = document.getElementById('mc-pill-sep');
+    const netToggle = document.getElementById('chat-net-toggle');
+    if (!sel) return;
+    const allEntries       = Object.entries(mcLastStatus);
+    const connectedEntries = allEntries.filter(([, s]) => s.status === 'connected');
+    const mcIds = new Set(connectedEntries.map(([id]) => id));
+    let mcSelectionChanged = false;
+    [...selectedRadioIds].filter(id => id.startsWith('mc_')).forEach(id => {
+      if (!mcIds.has(id)) {
+        selectedRadioIds.delete(id);
+        mcSelectionChanged = true;
+      }
+    });
+    if (mcSelectionChanged) saveSelectedRadioIds();
+    if (!allEntries.length) {
+      // No MC radios configured at all — hide the selector entirely
+      activeMcRadioId = null;
+      localStorage.removeItem('activeMcRadioId');
+      sel.innerHTML = '';
+      sel.style.display = 'none';
+      if (sep) sep.style.display = 'none';
+      if (netToggle) netToggle.style.display = 'none';
+      if (chatNetwork === 'mc') setChatNetwork('mt');
+      applyMcVisibility();
+      _updateNetworkPillVisibility();
+      return;
+    }
+    // MC radios exist but none connected — hide the MC selector instead of stacking another empty-state label
+    if (!connectedEntries.length) {
+      activeMcRadioId = null;
+      localStorage.removeItem('activeMcRadioId');
+      const hasMt = hasConnectedMtRadios();
+      sel.style.display = 'none';
+      if (sep) sep.style.display = hasConnectedMtRadios() ? '' : 'none';
+      if (netToggle) netToggle.style.display = 'none';
+      if (chatNetwork === 'mc' && hasMt) setChatNetwork('mt');
+      sel.innerHTML = '';
+      applyMcVisibility();
+      _updateNetworkPillVisibility();
+      return;
+    }
+    // At least one MC radio connected — show pills for connected ones only
+    const bothChatNetworks = hasConnectedMtRadios() && connectedEntries.length > 0;
+    if (netToggle) netToggle.style.display = bothChatNetworks ? '' : 'none';
+    if (!bothChatNetworks && chatNetwork === 'mt') setChatNetwork('mc');
+    if (sep) sep.style.display = hasConnectedMtRadios() ? '' : 'none';
+    sel.style.display = '';
+    // Sync activeMcRadioId — use first connected MC radio if current is gone
+    if (!activeMcRadioId || !connectedEntries.find(([id]) => id === activeMcRadioId)) {
+      activeMcRadioId = connectedEntries[0][0];
+      localStorage.setItem('activeMcRadioId', activeMcRadioId);
+    }
+    // Auto-select MC radios if none are currently selected (handles refresh/reconnect)
+    const hasMcSelected = [...selectedRadioIds].some(id => id.startsWith('mc_'));
+    if (!hasMcSelected) {
+      connectedEntries.forEach(([id]) => selectedRadioIds.add(id));
+      saveSelectedRadioIds();
+    }
+    sel.innerHTML = connectedEntries.map(([id, s]) => {
+      const cls    = s.status === 'connected' ? 'dot-connected' : s.status === 'connecting' ? 'dot-connecting' : 'dot-disconnected';
+      const active = selectedRadioIds.has(id) ? ' active' : '';
+      return `<button class="radio-btn mc-btn${active}" onclick="toggleRadioSelection('${jsSafe(id)}')">`
+           + `<span class="mc-badge">MC</span><span class="status-dot ${cls}"></span>${escHtml(s.name)}</button>`;
+    }).join('');
+    applyMcVisibility();
+    _updateNetworkPillVisibility();
+  }
+
+  function _updateScanBtnVisibility() {
+    const mcConnected = Object.values(mcLastStatus).some(s => s.status === 'connected')
+                        && localStorage.getItem('mcHide') !== '1';
+    // Scan/Trace buttons live inside MC sense wrap — visible only when MC connected
+    const btn = document.getElementById('mc-scan-btn');
+    const st  = document.getElementById('mc-scan-status');
+if (btn) btn.style.display = mcConnected ? '' : 'none';
+    if (st && !mcConnected) st.style.display = 'none';
+  }
+
+  function applyMcVisibility() {
+    const hasMc = Object.keys(mcLastStatus).length > 0;
+    const mtConnected = hasConnectedMtRadios();
+    const mcConnected = hasConnectedMcRadios();
+    // Only honour explicit user-set hide ('1'). Never auto-set it — that caused MC contacts
+    // to stay hidden after the radio connected because the auto-hide ran on page load first.
+    const forcedHide = localStorage.getItem('mcHide') === '1';
+    const show = hasMc && !forcedHide;
+    // Settings MC tab button: visible when not force-hidden — user can reach it to add first MC radio
+    const stabMc = document.getElementById('stab-mc');
+    if (stabMc) stabMc.style.display = !forcedHide ? '' : 'none';
+    // Cross-system tab: parked for now.
+    // To re-enable: change `'none'` → `show ? '' : 'none'`
+    const stabCross = document.getElementById('stab-cross');
+    if (stabCross) stabCross.style.display = 'none';
+    // st-mc content: hide only when forcedHide (keeps MC Radios list accessible to add first radio)
+    const stMc = document.getElementById('st-mc');
+    if (stMc && forcedHide) stMc.style.display = 'none';
+    // st-cross: hide when no MC radios
+    const stCross = document.getElementById('st-cross');
+    if (stCross && !show) stCross.style.display = 'none';
+    // Map legend MC section — hide if MC not shown, or if sense panel is in MT mode
+    const mcLegend = document.getElementById('map-legend-mc');
+    if (mcLegend) mcLegend.style.display = (show && _senseNet !== 'mt') ? '' : 'none';
+    // Sync hide toggle checkbox
+    const hideToggle = document.getElementById('mc-hide-toggle');
+    if (hideToggle) hideToggle.checked = forcedHide;
+    // MC pill in Nodes tab + MT pill (only makes sense when both networks are visible)
+    const mcNodesPill = document.getElementById('nodes-mc-pill');
+    if (mcNodesPill) mcNodesPill.style.display = show && mcConnected ? '' : 'none';
+    const mtNodesPill = document.getElementById('nodes-mt-pill');
+    if (mtNodesPill) mtNodesPill.style.display = show && mtConnected ? '' : 'none';
+    // Scan button — shown only when MC radios exist + MC network is visible
+    _updateScanBtnVisibility();
+    // MC pill in Map tab + MT pill
+    const mcMapPill = document.getElementById('map-mc-pill');
+    if (mcMapPill) mcMapPill.style.display = show && mcConnected ? '' : 'none';
+    const mtMapPill = document.getElementById('map-mt-pill');
+    if (mtMapPill) mtMapPill.style.display = show && mtConnected ? '' : 'none';
+    if (!show) renderMcMapMarkers();
+    // MC Node Settings + Channels sections
+    const mcNS = document.getElementById('mc-node-settings-section');
+    const mcCh = document.getElementById('mc-channels-section');
+    const mcImp  = document.getElementById('mc-import-contact-section');
+    const mcImpCh = document.getElementById('mc-import-channel-section');
+    if (mcNS)    mcNS.style.display    = show ? '' : 'none';
+    if (mcCh)    mcCh.style.display    = show ? '' : 'none';
+    if (mcImp)   mcImp.style.display   = show ? '' : 'none';
+    if (mcImpCh) mcImpCh.style.display = show ? '' : 'none';
+    // Force-hide header pills + chat toggle when MC UI is suppressed
+    if (!show) {
+      const sep = document.getElementById('mc-pill-sep');
+      const sel = document.getElementById('mc-radio-selector');
+      const netToggle = document.getElementById('chat-net-toggle');
+      if (sep) sep.style.display = 'none';
+      if (sel) { sel.innerHTML = ''; sel.style.display = 'none'; }
+      if (netToggle) netToggle.style.display = 'none';
+      if (chatNetwork === 'mc') setChatNetwork('mt');
+      // Fall back from hidden settings tabs
+      const activeStab = document.querySelector('.settings-tab.active');
+      if (activeStab && activeStab.id === 'stab-cross') switchSettingsTab('mt');
+      if (activeStab && activeStab.id === 'stab-mc' && forcedHide) switchSettingsTab('mt');
+    } else {
+      // MC is shown — restore mc-radio-selector display (updateMcPills fills it)
+      const sel = document.getElementById('mc-radio-selector');
+      if (sel && sel.style.display === 'none') sel.style.display = 'flex';
+    }
+    _updateNetworkPillVisibility();
+  }
+
+  function setMcHide(hide) {
+    localStorage.setItem('mcHide', hide ? '1' : '0');
+    applyMcVisibility();
+  }
+
+  function switchMcRadio(id) {
+    activeMcRadioId = id;
+    localStorage.setItem('activeMcRadioId', id);
+    updateMcPills();
+    if (currentTab === 'chat' && chatNetwork === 'mc') _updateMcChatRadioLabel();
+    renderMcMessages();
+    if (currentTab === 'nodes') renderLive();
+  }
+
+  function _updateMcChatRadioLabel() {
+    const radioEl = document.getElementById('chat-radio');
+    if (!radioEl) return;
+    const activeName = activeMcRadioId && mcLastStatus[activeMcRadioId]
+      ? mcLastStatus[activeMcRadioId].name
+      : Object.values(mcLastStatus).filter(s => s.status === 'connected').map(x => x.name).join(', ');
+    radioEl.textContent = '📡 ' + (activeName || 'No MC radio');
+  }
+
+  // -- SSE events from backend (mc_status, mc_node, mc_message) --
+  function handleMcSseEvent(data) {
+    if (data.type === 'mc_status') {
+      const prevStatus = mcLastStatus[data.radio_id]?.status;
+      if (!mcLastStatus[data.radio_id]) mcLastStatus[data.radio_id] = {};
+      Object.assign(mcLastStatus[data.radio_id], {
+        name: data.name, status: data.status, radio_id: data.radio_id,
+      });
+      if (data.status === 'disconnected') delete mcLastStatus[data.radio_id].node_id;
+      if (_mcStatusSoundPrimed && data.status === 'connected' && prevStatus !== 'connected') {
+        playNotificationSound('radio');
+      }
+      if (data.status === 'connected') selectedRadioIds.add(data.radio_id);
+      else selectedRadioIds.delete(data.radio_id);
+      saveSelectedRadioIds();
+      if (data.status === 'connected') {
+        // Re-fetch full status to get radio params (freq/bw/sf/cr/tx_power)
+        // that are only available after a successful send_appstart() on connect
+        fetch('/api/mc/status')
+          .then(r => r.ok ? r.json() : null)
+          .then(d => {
+            if (!d) return;
+            (d.mc_nodes || []).forEach(n => { mcLastStatus[n.id] = n; });
+            updateMcPills();
+            loadMcSettingsNodes();
+            const activeStab = document.querySelector('.settings-tab.active');
+            if (activeStab && activeStab.id === 'stab-mc') loadMcNodeSettings(data.radio_id);
+            // Re-render nodes tab — contacts fetch may have completed first (race),
+            // leaving mcLastStatus empty and mcEnabled=false at render time.
+            if (currentTab === 'nodes') renderLive();
+          }).catch(() => {});
+        // Fetch contacts — initMc() only runs at page load so misses late connects
+        fetch(`/api/mc/${encodeURIComponent(data.radio_id)}/contacts`)
+          .then(r => r.ok ? r.json() : null)
+          .then(cd => {
+            if (!cd) return;
+            // Merge — don't wipe. If backend returns empty (TTLP still loading flash),
+            // keep whatever was already cached. _retry_contacts_async will push via SSE.
+            if (!mcContacts[data.radio_id]) mcContacts[data.radio_id] = {};
+            (cd.contacts || []).forEach(c => { mcContacts[data.radio_id][c.id] = c; });
+            // Update any DM tab names that are still showing the raw prefix
+            _mcRefreshDmContactNames(data.radio_id);
+            renderMcMapMarkers();
+            if (currentTab === 'nodes') renderLive();
+          }).catch(() => {});
+        // Fetch channel names
+        fetch(`/api/mc/${encodeURIComponent(data.radio_id)}/channels`)
+          .then(r => r.ok ? r.json() : null)
+          .then(cd => {
+            if (!cd) return;
+            (cd.channels || []).forEach(ch => { if (ch.name) mcKnownChannels[ch.idx] = ch.name; });
+            renderMcChatTabs();
+          }).catch(() => {});
+      } else {
+        if (data.status === 'disconnected') {
+          if (mcContacts[data.radio_id]) {
+            Object.values(mcContacts[data.radio_id]).forEach(c => {
+              c.source_state = 'archive';
+              c.archived_only = true;
+            });
+          }
+          fetch(`/api/mc/${encodeURIComponent(data.radio_id)}/contacts`)
+            .then(r => r.ok ? r.json() : null)
+            .then(cd => {
+              if (!cd) return;
+              mcContacts[data.radio_id] = {};
+              (cd.contacts || []).forEach(c => { mcContacts[data.radio_id][c.id] = c; });
+              _mcRefreshDmContactNames(data.radio_id);
+              renderMcMapMarkers();
+              if (currentTab === 'nodes') renderLive();
+            }).catch(() => {});
+        }
+        const pruned = _pruneMcDmState();
+        updateMcPills();
+        loadMcSettingsNodes();
+        if (pruned && currentTab === 'chat' && chatNetwork === 'mc') {
+          renderMcMessages();
+          _updateMcInput();
+        }
+      }
+      return;
+    }
+    if (data.type === 'mc_node') {
+      if (!mcContacts[data.radio_id]) mcContacts[data.radio_id] = {};
+      // Merge contact fields — exclude SSE envelope fields (type, radio_id, radio_name)
+      // so they don't overwrite contact properties (especially numeric contact_type vs event type string)
+      const isNew = !mcContacts[data.radio_id][data.id];
+      const {type: _t, radio_id: _r, radio_name: _n, ...contactFields} = data;
+      // contact_type is the node type (0=client,1=room,2=repeater) sent by background retry
+      if (contactFields.contact_type !== undefined) { contactFields.type = contactFields.contact_type; delete contactFields.contact_type; }
+      const _prevContact = mcContacts[data.radio_id][data.id] || {};
+      const _merged = Object.assign({}, _prevContact, contactFields);
+      // Don't clobber a real name with a hex fallback (pubkey[:8] when adv_name is missing)
+      if (_prevContact.long_name && !_prevContact.long_name.match(/^[0-9a-f]{6,}$/i) && _merged.long_name?.match(/^[0-9a-f]{6,}$/i)) {
+        _merged.long_name = _prevContact.long_name;
+      }
+      // Don't clobber known coordinates with null — ADVERTISEMENT events never carry coords,
+      // so a bare advert would wipe a previously known position off the map.
+      if (_prevContact.latitude  != null && _merged.latitude  == null) _merged.latitude  = _prevContact.latitude;
+      if (_prevContact.longitude != null && _merged.longitude == null) _merged.longitude = _prevContact.longitude;
+      mcContacts[data.radio_id][data.id] = _merged;
+      const prevSeenTs = _mcContactSeenTs(_prevContact);
+      const curSeenTs = _mcContactSeenTs(_merged);
+      const nowTs = Math.floor(Date.now() / 1000);
+      const contactLabel = _merged.long_name || _merged.name || data.id || '?';
+      if (notifReady) {
+        if (isNew) {
+          _scheduleMcNodeSeenNotification(data.radio_id, data.id, contactLabel);
+        } else if (prevSeenTs && curSeenTs > prevSeenTs && (curSeenTs - prevSeenTs) >= _returnedGapThresholdSeconds() && (nowTs - curSeenTs) <= INAPP_NODE_RECENT_WINDOW_S) {
+          const label = _mcNotificationContactLabel(data.radio_id, data.id, contactLabel);
+          maybeShowInAppNodeReturned('MC contact seen again', `<b>${escHtml(label)}</b> returned after a long gap`, `toast-node-return-mc-${data.radio_id}-${data.id}`);
+        }
+      }
+      _mcRefreshDmContactNames(data.radio_id);
+      if (_mcScanActive && data.radio_id === _mcScanRadioId && isNew) _mcScanNewCount++;
+      if (currentTab === 'nodes') renderLive();
+      renderMcMapMarkers();
+      // MC Sense panel updates
+      if (_senseNet === 'mc' && document.getElementById('sense-panel')?.style.display !== 'none') {
+        renderMcSensePanel();
+        addMcSenseLogEntry(data);
+      }
+      return;
+    }
+    if (data.type === 'mc_coords_updated') {
+      if (!mcLastStatus[data.radio_id]) mcLastStatus[data.radio_id] = {};
+      mcLastStatus[data.radio_id].lat = data.lat;
+      mcLastStatus[data.radio_id].lon = data.lon;
+      renderMcMapMarkers();
+      return;
+    }
+    if (data.type === 'mc_scan_started') {
+      _mcScanActive   = true;
+      _mcScanRadioId  = data.radio_id;
+      _mcScanNewCount = 0;
+      _mcScanWindow   = data.window || 60;
+      _mcScanRemaining = _mcScanWindow;
+      const btn = document.getElementById('mc-scan-btn');
+      const st  = document.getElementById('mc-scan-status');
+      if (btn) { btn.textContent = 'Scanning…'; btn.disabled = true; }
+      if (st)  { st.style.display = ''; st.textContent = `${_mcScanRemaining}s`; }
+      // Log scan start in MC activity
+      if (_senseNet === 'mc' && document.getElementById('sense-panel')?.style.display !== 'none') {
+        const ts = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
+        const radioName = mcLastStatus[data.radio_id]?.name || data.radio_id;
+        const entry = { kind: 'scan', ts, radioId: data.radio_id, radioName };
+        _mcSenseLogEntries.unshift(entry);
+        if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
+        renderMcSenseLog();
+      }
+      _mcScanTimer = setInterval(() => {
+        _mcScanRemaining--;
+        if (st) st.textContent = `${_mcScanRemaining}s`;
+        if (_mcScanRemaining <= 0) { clearInterval(_mcScanTimer); _mcScanTimer = null; }
+      }, 1000);
+      // Safety timeout: force-reset scan state if mc_scan_done never arrives (SSE drop etc.)
+      setTimeout(() => {
+        if (!_mcScanActive) return;
+        _mcScanActive = false;
+        if (_mcScanTimer) { clearInterval(_mcScanTimer); _mcScanTimer = null; }
+        const b = document.getElementById('mc-scan-btn');
+        const s = document.getElementById('mc-scan-status');
+        if (b) { b.textContent = 'Scan'; b.disabled = false; }
+        if (s) s.textContent = '';
+      }, (_mcScanWindow + 10) * 1000);
+      return;
+    }
+    if (data.type === 'mc_scan_done') {
+      _mcScanActive = false;
+      if (_mcScanTimer) { clearInterval(_mcScanTimer); _mcScanTimer = null; }
+      const btn = document.getElementById('mc-scan-btn');
+      const st  = document.getElementById('mc-scan-status');
+      if (btn) { btn.textContent = 'Scan'; btn.disabled = false; }
+      if (st)  {
+        st.textContent = `Done — ${_mcScanNewCount} new`;
+        setTimeout(() => { if (st) st.textContent = ''; }, 8000);
+      }
+      // Refresh contacts from device to pick up any updated coords (e.g. GPS set via phone)
+      const rid = _mcScanRadioId;
+      if (rid) {
+        fetch(`/api/mc/${encodeURIComponent(rid)}/contacts?refresh=1`)
+          .then(r => r.ok ? r.json() : null)
+          .then(cd => {
+            if (!cd) return;
+            if (!mcContacts[rid]) mcContacts[rid] = {};
+            (cd.contacts || []).forEach(c => {
+              const prev = mcContacts[rid][c.id] || {};
+              mcContacts[rid][c.id] = _mergeMcContactRecord(prev, c);
+            });
+            renderMcMapMarkers();
+          }).catch(() => {});
+      }
+      return;
+    }
+    if (data.type === 'mc_message') {
+      // If from_id is missing/unknown, try to touch the contact by name from embedded "Name: text"
+      if ((!data.from_id || data.from_id === '?') && data.text) {
+        const colon = data.text.indexOf(': ');
+        if (colon > 0 && colon < 50) {
+          const embName = data.text.slice(0, colon);
+          const fc = _mcFindContact(data.radio_id, null, embName);
+          if (fc) {
+            const now = Math.floor(Date.now() / 1000);
+            fc.last_heard_ts = now;
+            fc.last_seen_ts  = now;
+            fc.last_seen = 'just now';
+            if (data.path_len != null) fc.out_path_len = data.path_len;
+            if (data.path      != null) fc.out_path     = data.path;
+            if (data.path_hash_mode != null) fc.out_path_hash_mode = data.path_hash_mode;
+            if (data.path_hash_size != null) fc.out_path_hash_size = data.path_hash_size;
+            if (data.rx_snr    != null) fc.snr          = data.rx_snr;
+          }
+        }
+      }
+      _mcTouchContactActivity(data.radio_id, data.from_id, {
+        out_path_len: data.path_len,
+        out_path: data.path,
+        out_path_hash_mode: data.path_hash_mode,
+        out_path_hash_size: data.path_hash_size,
+        snr: data.rx_snr,
+        rssi: data.rx_rssi,
+      });
+      mcMessages.push(data);
+      if (mcMessages.length > 500) mcMessages.splice(0, mcMessages.length - 500);
+      _saveMcMessages();
+      // Backfill contact name from embedded "Name: message" format if still showing hex fallback
+      if (data.from_id && data.radio_id && data.text) {
+        const c = (mcContacts[data.radio_id] || {})[data.from_id];
+        if (c && (!c.long_name || /^[0-9a-f]{8,}$/i.test(c.long_name))) {
+          const colon = data.text.indexOf(': ');
+          if (colon > 0 && colon < 50) {
+            const extracted = data.text.slice(0, colon);
+            if (!mcContacts[data.radio_id]) mcContacts[data.radio_id] = {};
+            mcContacts[data.radio_id][data.from_id] = { ...c, long_name: extracted, short_name: extracted.slice(0,4).toUpperCase() };
+            _mcRefreshDmContactNames(data.radio_id);
+          }
+        }
+      }
+      // Register channel or DM contact, determine tab
+      let msgTab = null;
+      if (data.subtype === 'channel') {
+        const idx = data.channel ?? 0;
+        if (!mcKnownChannels[idx]) mcKnownChannels[idx] = `CH${idx}`;
+        msgTab = `chan:${idx}`;
+      } else if (data.subtype === 'dm' && !data.sent) {
+        if (!mcDmContacts[data.from_id]) {
+          // Reopen a previously closed DM tab when a new live message arrives
+          if (closedMcDmTabs.has(data.from_id)) { closedMcDmTabs.delete(data.from_id); saveMcClosedDmTabs(); }
+          const c = (mcContacts[data.radio_id] || {})[data.from_id];
+          mcDmContacts[data.from_id] = c?.long_name || data.from_id;
+        }
+        msgTab = `dm:${data.from_id}`;
+      }
+      // Mark unread if not on this tab or not in chat/MC view
+      if (msgTab && !data.sent && (currentTab !== 'chat' || chatNetwork !== 'mc' || mcChatTab !== msgTab)) {
+        mcUnreadTabs.add(msgTab);
+        _incrementUnreadCount(mcUnreadCounts, msgTab);
+        updateUnreadDots();
+      }
+      if (!data.sent) {
+        playNotificationSound('message');
+        const currentMcTab = (currentTab === 'chat' && chatNetwork === 'mc') ? mcChatTab : null;
+        if (document.hidden || currentMcTab !== msgTab) {
+          const title = data.subtype === 'dm'
+            ? `MC DM from ${mcDmContacts[data.from_id] || data.from_id || '?'}`
+            : `MC ${mcKnownChannels[data.channel ?? 0] || ('CH' + (data.channel ?? 0))}`;
+          maybeShowInAppMessage(title, escHtml(_mcMsgText(data, mcDmContacts[data.from_id] || '')), `toast-mc-msg-${data.radio_id}-${data.id || data.ts || Date.now()}`);
+          sendNotif(title, _mcMsgText(data, mcDmContacts[data.from_id] || ''), `mc-msg-${data.radio_id}-${data.id || data.ts || Date.now()}`, 'message');
+        }
+      }
+      renderMcMessages();
+      // Retain all heard MC activity, even if the Sense panel is not currently visible.
+      if (!data.sent && data.subtype !== 'system') {
+        try {
+          addMcSenseMessageEntry(data);
+        } catch (e) {
+          console.warn('MC activity message log failed:', e);
+        }
+      }
+      return;
+    }
+    if (data.type === 'mc_status_response') {
+      _mcStatusReqShowResult(data);
+      return;
+    }
+    if (data.type === 'mc_trace_data') {
+      _mcHandleTraceData(data);
+      return;
+    }
+    if (data.type === 'mc_radio_removed') {
+      delete mcLastStatus[data.radio_id];
+      delete mcContacts[data.radio_id];
+      mcMessages = mcMessages.filter(m => m.radio_id !== data.radio_id);
+      selectedRadioIds.delete(data.radio_id);
+      saveSelectedRadioIds();
+      if (activeMcRadioId === data.radio_id) {
+        activeMcRadioId = null;
+        localStorage.removeItem('activeMcRadioId');
+      }
+      _pruneMcDmState();
+      updateMcPills();
+      renderMcMessages();
+      renderMcMapMarkers();
+      loadMcSettingsNodes();
+      return;
+    }
+    if (data.type === 'mc_bot_reply') {
+      _mcAddBotReplyLogEntry(data);
+      return;
+    }
+  }
+
+  // -- MC map markers --
+  function mcTypeBadge(type) {
+    // MeshCore contact types: 0=NONE, 1=CLI/Companion, 2=REP/Repeater, 3=ROOM, 4=SENS
+    const b = (label, bg, color, border) =>
+      `<span style="font-size:10px;font-weight:600;background:${bg};color:${color};border:1px solid ${border};border-radius:3px;padding:1px 4px;margin-left:4px">${label}</span>`;
+    if (type === 1) return b('Node', 'rgba(100,116,139,0.15)', '#94a3b8', 'rgba(100,116,139,0.35)');
+    if (type === 2) return b('RPT',  'rgba(34,197,94,0.15)',   '#22c55e', 'rgba(34,197,94,0.35)');
+    if (type === 3) return b('Room', 'rgba(245,158,11,0.15)',  '#f59e0b', 'rgba(245,158,11,0.35)');
+    if (type === 4) return b('Sens', 'rgba(139,92,246,0.15)',  '#8b5cf6', 'rgba(139,92,246,0.35)');
+    return ''; // type 0 = unknown/not yet reported
+  }
+
+  function mcTypeLabel(type) {
+    if (type === 2) return 'Repeater';
+    if (type === 3) return 'Room';
+    if (type === 4) return 'Sensor';
+    return 'Companion';
+  }
+
+  function mcContactMetaLabel(contact, radioId = null) {
+    const typeLabel = mcTypeLabel(contact?.type ?? contact?.contact_type ?? 0);
+    const radioName = radioId ? (mcLastStatus[radioId]?.name || mcLastStatus[radioId]?.node_name || radioId) : '';
+    return radioName ? `${typeLabel} via ${radioName}` : typeLabel;
+  }
+
+  function mcCanRemoteManage(contact) {
+    const type = Number(contact?.type ?? contact?.contact_type ?? 0);
+    return type === 2 || type === 3;
+  }
+
+  function mcContactHashPrefix(contact, radioId = null) {
+    const key = String(contact?.full_key || contact?.id || '').toLowerCase();
+    if (!key) return '';
+    const resolvedRadioId = radioId || contact?._rid || contact?.radio_id || activeMcRadioId || null;
+    const mode = _mcPreferredPathHashMode(resolvedRadioId);
+    const chars = Math.max(2, (Number(mode) + 1) * 2);
+    return key.slice(0, chars);
+  }
+
+  function mcContactPrefixChip(contact, radioId = null) {
+    const prefix = mcContactHashPrefix(contact, radioId);
+    return prefix ? `<span class="mc-node-prefix">${escHtml(prefix)}</span>` : '';
+  }
+
+  function mcContactNameHtml(contact, fallback = '?', radioId = null) {
+    const raw = contact?.long_name || contact?.name || contact?.id || fallback || '?';
+    return `${mcContactPrefixChip(contact, radioId)}${escHtml(raw)}`;
+  }
+
+  function mcPathHopLabel(hopLen, compact = false) {
+    if (hopLen === 255) return compact ? 'route' : 'Route';
+    if (hopLen === 0) return compact ? 'direct' : 'Direct (0 hops)';
+    if (hopLen > 0) return `${hopLen} hop${hopLen !== 1 ? 's' : ''}`;
+    return compact ? 'flood' : 'Flood';
+  }
+
+  function mcPathHopColor(hopLen) {
+    if (hopLen === 255) return '#38bdf8';
+    if (hopLen === 0) return '#22c55e';
+    if (hopLen > 0) return '#3b82f6';
+    return 'rgba(148,163,184,0.6)';
+  }
+
+  function _mcPathHashChars(contact) {
+    const size = Number(contact?.out_path_hash_size);
+    if (Number.isFinite(size) && size >= 1 && size <= 3) return size * 2;
+    const mode = Number(contact?.out_path_hash_mode ?? 0);
+    return (Number.isFinite(mode) && mode >= 0 && mode <= 2 ? mode + 1 : 1) * 2;
+  }
+
+  function _mcPathHashSize(value, mode = null) {
+    const size = Number(value);
+    if (Number.isFinite(size) && size >= 1 && size <= 3) return size;
+    const m = Number(mode);
+    if (Number.isFinite(m) && m >= 0 && m <= 2) return m + 1;
+    return 1;
+  }
+
+  function _mcPreferredPathHashMode(radioId, contact = null) {
+    const contactMode = Number(contact?.out_path_hash_mode);
+    const contactPathLen = Number(contact?.out_path_len);
+    if (Number.isFinite(contactPathLen) && contactPathLen >= 0 && Number.isFinite(contactMode) && contactMode >= 0 && contactMode <= 2) return contactMode;
+    const radioMode = Number(mcLastStatus[radioId]?.path_hash_mode);
+    if (Number.isFinite(radioMode) && radioMode >= 0 && radioMode <= 2) return radioMode;
+    return 2;
+  }
+
+  function _mcPathHashModeLabel(mode) {
+    const m = Number(mode);
+    if (m === 0) return '1B/hop';
+    if (m === 1) return '2B/hop';
+    return '3B/hop';
+  }
+
+  function _mcExplicitPathHashSize(evt) {
+    const size = Number(evt?.path_hash_size);
+    if (Number.isFinite(size) && size >= 1 && size <= 3) return size;
+    const mode = Number(evt?.path_hash_mode);
+    if (Number.isFinite(mode) && mode >= 0 && mode <= 2) return mode + 1;
+    return null;
+  }
+
+  function _mcStoredRouteHopPrefixes(contact) {
+    if (!contact || (contact.out_path_len ?? -1) <= 0 || !contact.out_path) return [];
+    const hopCount = contact.out_path_len ?? 0;
+    const hashChars = _mcPathHashChars(contact);
+    const hops = [];
+    for (let i = 0; i < hopCount; i++) {
+      const hop = (contact.out_path || '').slice(i * hashChars, (i + 1) * hashChars);
+      if (hop) hops.push(hop);
+    }
+    return hops;
+  }
+
+  function _mcStoredRouteSummary(contact, radioId = null) {
+    if (!contact) return 'Automatic routing';
+    const hopCount = contact.out_path_len ?? -1;
+    if (hopCount < 0) return 'Automatic / flood routing';
+    if (hopCount === 0) return 'Direct only';
+    const labels = _mcStoredRouteHopPrefixes(contact).map(prefix => {
+      const hop = findMcContactByKeyPrefix(prefix, radioId);
+      return hop?.long_name || hop?.id || prefix;
+    });
+    return labels.length ? `Via ${labels.join(' → ')}` : `${hopCount} hop${hopCount !== 1 ? 's' : ''}`;
+  }
+
+  function mcRouteIndicator(contact, radioId = null) {
+    if (!contact || (contact.out_path_len ?? -1) < 0) return '';
+    return `<span class="mc-route-indicator" title="${escHtml(_mcStoredRouteSummary(contact, radioId))}">&#10148;</span>`;
+  }
+
+  function _mcRouteCandidateList(radioId, targetId, query = '') {
+    const q = (query || '').trim().toLowerCase();
+    return Object.values(mcContacts[radioId] || {})
+      .filter(c => (c.type ?? 0) === 2)
+      .filter(c => (c.id || '') !== (targetId || ''))
+      .filter(c => {
+        if (!q) return true;
+        return (c.long_name || '').toLowerCase().includes(q)
+          || (c.short_name || '').toLowerCase().includes(q)
+          || (c.id || '').toLowerCase().includes(q)
+          || (c.full_key || '').toLowerCase().includes(q);
+      })
+      .sort((a, b) => {
+        const ta = _mcContactSeenTs(a);
+        const tb = _mcContactSeenTs(b);
+        if (tb !== ta) return tb - ta;
+        return (a.long_name || a.id || '').localeCompare(b.long_name || b.id || '');
+      });
+  }
+
+  function _mcRouteHopResolved(prefix, radioId) {
+    return findMcContactByKeyPrefix(prefix, radioId);
+  }
+
+  function _mcRouteHopMeta(prefix, radioId) {
+    const hop = _mcRouteHopResolved(prefix, radioId);
+    if (!hop) return { label: prefix, meta: 'Unknown stored hash' };
+    const seen = _mcContactSeenLabel(hop);
+    return {
+      label: hop.long_name || hop.id || prefix,
+      meta: `${mcTypeLabel(hop.type ?? 0)}${seen && seen !== '—' ? ` · ${seen}` : ''}`,
+      prefix: hop.full_key || hop.id || prefix,
+    };
+  }
+
+  function openMcRouteEditor(contactId, radioId) {
+    const contact = mcContacts[radioId]?.[contactId];
+    if (!contact) {
+      showAlert('Contact not found.');
+      return;
+    }
+    _mcRouteEditor = {
+      radioId,
+      contactId,
+      contactName: contact.long_name || contact.id || contactId,
+      selected: _mcStoredRouteHopPrefixes(contact),
+      pathHashMode: _mcPreferredPathHashMode(radioId, contact),
+      query: '',
+      saving: false,
+      statusMessage: '',
+      statusKind: '',
+    };
+    openModal(`MC Route — ${_mcRouteEditor.contactName}`, '<div class="modal-loading">Loading route editor…</div>');
+    renderMcRouteEditor();
+    setTimeout(() => document.getElementById('mc-route-search')?.focus(), 40);
+  }
+
+  function renderMcRouteEditor() {
+    if (!_mcRouteEditor) return;
+    const body = document.getElementById('modal-body');
+    if (!body) return;
+    const { radioId, contactId, contactName, selected, query, saving, pathHashMode } = _mcRouteEditor;
+    const contact = mcContacts[radioId]?.[contactId];
+    const radioLabel = mcLastStatus[radioId]?.name || mcLastStatus[radioId]?.node_name || radioId;
+    const currentSummary = contact ? _mcStoredRouteSummary(contact, radioId) : 'Automatic / flood routing';
+    const hopHtml = selected.length
+      ? `<div class="mc-route-hops">${selected.map((prefix, idx) => {
+          const hop = _mcRouteHopMeta(prefix, radioId);
+          return `<div class="mc-route-hop">
+            <div class="mc-route-hop-label">
+              <div>${escHtml(hop.label)}</div>
+              <div class="mc-route-hop-meta">${escHtml(hop.meta)}</div>
+            </div>
+            <button class="mc-route-hop-btn" title="Move up" ${idx === 0 || saving ? 'disabled' : ''} onclick="mcRouteMoveHop(${idx}, -1)">&#8593;</button>
+            <button class="mc-route-hop-btn" title="Move down" ${idx === selected.length - 1 || saving ? 'disabled' : ''} onclick="mcRouteMoveHop(${idx}, 1)">&#8595;</button>
+            <button class="mc-route-hop-btn" title="Remove hop" ${saving ? 'disabled' : ''} onclick="mcRouteRemoveHop(${idx})">&#10005;</button>
+          </div>`;
+        }).join('')}</div>`
+      : `<div class="mc-route-summary" style="margin-top:10px">No repeaters selected. Click <b>Set Direct Only</b> to force direct delivery, or <b>Clear path</b> to use automatic/flood routing.</div>`;
+
+    const candidates = _mcRouteCandidateList(radioId, contactId, query)
+      .filter(c => !selected.some(prefix => (c.full_key || c.id || '').toLowerCase().startsWith(String(prefix).toLowerCase())))
+      .slice(0, 24);
+    const candidatesHtml = candidates.length
+      ? candidates.map(c => {
+          const label = c.long_name || c.id || '?';
+          const seen = _mcContactSeenLabel(c);
+          const meta = `${mcTypeLabel(c.type ?? 0)}${seen && seen !== '—' ? ` · ${seen}` : ''}`;
+          return `<div class="mc-route-candidate">
+            <div>
+              <div>${escHtml(label)}</div>
+              <div class="mc-route-hop-meta">${escHtml(meta)}</div>
+            </div>
+            <button ${saving ? 'disabled' : ''} onclick="mcRouteAddHop('${jsSafe(c.full_key || c.id || '')}')">Add</button>
+          </div>`;
+        }).join('')
+      : `<div style="padding:12px;color:var(--muted);font-size:12px">No known repeaters match this search on ${escHtml(radioLabel)}.</div>`;
+
+    const statusHtml = _mcRouteEditor.statusMessage
+      ? `<div class="modal-${_mcRouteEditor.statusKind === 'error' ? 'error' : _mcRouteEditor.statusKind === 'success' ? 'success' : 'loading'}">${escHtml(_mcRouteEditor.statusMessage)}</div>`
+      : '<div id="mc-route-status"></div>';
+    body.innerHTML = `
+      <div class="modal-node">${escHtml(contactName)} · ${escHtml(contactId)} · via ${escHtml(radioLabel)}</div>
+      <div class="mc-route-summary">
+        <div style="color:var(--muted);font-size:11px;margin-bottom:4px">Current stored route</div>
+        <div>${escHtml(currentSummary)}</div>
+      </div>
+      <div style="font-size:12px;color:var(--muted)">Selected repeaters</div>
+      ${hopHtml}
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin:10px 0">
+        <div>
+          <label class="settings-label">Path hash for this route</label>
+          <select class="settings-select" onchange="mcRouteSetPathHashMode(this.value)" ${saving ? 'disabled' : ''}>
+            <option value="0"${Number(pathHashMode) === 0 ? ' selected' : ''}>1B/hop - legacy compatible</option>
+            <option value="1"${Number(pathHashMode) === 1 ? ' selected' : ''}>2B/hop - balanced</option>
+            <option value="2"${Number(pathHashMode) === 2 ? ' selected' : ''}>3B/hop - most specific</option>
+          </select>
+        </div>
+        <div style="font-size:11px;color:var(--muted);max-width:300px">Uses ${escHtml(_mcPathHashModeLabel(pathHashMode))} when saving this stored route. Older radios may fall back.</div>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Search known repeaters</div>
+      <div class="mc-route-search-row">
+        <input id="mc-route-search" class="mc-route-search" value="${escHtml(query)}" placeholder="Search repeaters..." oninput="mcRouteSetQuery(this.value)" ${saving ? 'disabled' : ''}>
+      </div>
+      <div class="mc-route-candidates">${candidatesHtml}</div>
+      ${statusHtml}
+      <div class="mc-route-actions">
+        <button class="btn" ${saving ? 'disabled' : ''} onclick="saveMcRouteEditor(true)">Clear path</button>
+        <button class="btn btn-net-mc active" ${saving ? 'disabled' : ''} onclick="saveMcRouteEditor(false)">${saving ? 'Saving…' : selected.length === 0 ? 'Set Direct Only' : 'Save route'}</button>
+      </div>`;
+  }
+
+  function mcRouteSetQuery(value) {
+    if (!_mcRouteEditor) return;
+    _mcRouteEditor.query = value || '';
+    renderMcRouteEditor();
+    setTimeout(() => {
+      const input = document.getElementById('mc-route-search');
+      if (input) {
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      }
+    }, 0);
+  }
+
+  function mcRouteSetPathHashMode(value) {
+    if (!_mcRouteEditor) return;
+    const mode = Number(value);
+    _mcRouteEditor.pathHashMode = Number.isFinite(mode) ? Math.max(0, Math.min(2, mode)) : 2;
+    renderMcRouteEditor();
+  }
+
+  function mcRouteAddHop(prefix) {
+    if (!_mcRouteEditor || !prefix) return;
+    _mcRouteEditor.selected.push(prefix);
+    renderMcRouteEditor();
+  }
+
+  function mcRouteRemoveHop(idx) {
+    if (!_mcRouteEditor) return;
+    _mcRouteEditor.selected.splice(idx, 1);
+    renderMcRouteEditor();
+  }
+
+  function mcRouteMoveHop(idx, delta) {
+    if (!_mcRouteEditor) return;
+    const next = idx + delta;
+    if (next < 0 || next >= _mcRouteEditor.selected.length) return;
+    const hops = _mcRouteEditor.selected;
+    [hops[idx], hops[next]] = [hops[next], hops[idx]];
+    renderMcRouteEditor();
+  }
+
+  async function saveMcRouteEditor(clear = false) {
+    if (!_mcRouteEditor) return;
+    const state = _mcRouteEditor;
+    state.statusMessage = 'Saving route…';
+    state.statusKind = 'loading';
+    state.saving = true;
+    renderMcRouteEditor();
+    try {
+      const r = await fetch(`/api/mc/${encodeURIComponent(state.radioId)}/contacts/${encodeURIComponent(state.contactId)}/route`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({clear, hops: clear ? [] : state.selected, path_hash_mode: state.pathHashMode}),
+      });
+      const data = await r.json();
+      if (!r.ok || data.error) throw new Error(data.error || `HTTP ${r.status}`);
+      const contact = data.contact;
+      if (!mcContacts[state.radioId]) mcContacts[state.radioId] = {};
+      const prev = mcContacts[state.radioId][contact.id] || {};
+      mcContacts[state.radioId][contact.id] = Object.assign({}, prev, contact);
+      state.contactId = contact.id;
+      state.selected = clear ? [] : _mcStoredRouteHopPrefixes(contact);
+      state.pathHashMode = _mcPreferredPathHashMode(state.radioId, contact);
+      state.statusMessage = clear ? 'Stored path cleared.' : 'Stored route updated.';
+      state.statusKind = 'success';
+      renderMcMapMarkers();
+      if (currentTab === 'nodes') renderLive();
+      renderMcRouteEditor();
+    } catch(e) {
+      state.statusMessage = e.message || 'Request failed.';
+      state.statusKind = 'error';
+      renderMcRouteEditor();
+    } finally {
+      if (_mcRouteEditor) {
+        _mcRouteEditor.saving = false;
+        renderMcRouteEditor();
+      }
+    }
+  }
+
+  function _mcClusterIcon(count, hasRadio) {
+    return L.divIcon({
+      className: '',
+      html: `<div style="
+        background:${hasRadio ? '#10b981' : '#3b82f6'};
+        color:#f8fafc;border-radius:50%;
+        width:28px;height:28px;display:flex;align-items:center;justify-content:center;
+        font-weight:700;font-size:12px;border:2px solid rgba(255,255,255,0.35);
+        box-shadow:0 1px 4px rgba(0,0,0,0.5)">${count}</div>`,
+      iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -14]
+    });
+  }
+
+  function _mcClusterItemHtml(item) {
+    if (item._kind === 'radio') {
+      const radioDistance = _distanceLabel(_mcDistanceFromLocal(item, item._rid || item.id || ''));
+      return `
+        <div style="border-top:1px solid var(--border);padding-top:8px;margin-top:6px">
+          <div class="map-popup-name" style="margin-bottom:2px">${escHtml(item.name || item.id || '?')}<span class="map-popup-local" style="background:rgba(16,185,129,0.15);color:#10b981">MC Radio</span></div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">This radio node · ${escHtml(radioDistance)}</div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap">
+            <button class="map-popup-btn" title="Show in Nodes list" onclick="showMcNodeInList('${jsSafe(item.id || '')}')">List</button>
+          </div>
+        </div>`;
+    }
+    const label = item.long_name || item.name || item.id || '?';
+    const labelHtml = mcContactNameHtml(item, label, item._rid || item.radio_id || null);
+    const safePk = jsSafe(item.full_key || item.id || '');
+    const safeRid = jsSafe(item._rid || '');
+    const safeName = jsSafe(label);
+    const hops = item.out_path_len ?? null;
+    const bat = item.battery ?? item.bat_pct ?? item.bat;
+    const batStr = bat != null ? `${bat}%` : '—';
+    const snrText = item.snr != null ? `${item.snr} dB` : '—';
+    const tsText = item.last_heard_ts ? senseTimeAgo(item.last_heard_ts) : (item.last_seen ? escHtml(item.last_seen) : '—');
+    const keyStr = (item.full_key || item.id || '').slice(0, 12);
+    const distanceText = _mcNodeDistanceLabel(item, item._rid || item.radio_id || '');
+    return `
+      <div style="border-top:1px solid var(--border);padding-top:8px;margin-top:6px">
+        <div class="map-popup-name" style="margin-bottom:2px">${labelHtml}<span class="map-popup-local" style="background:rgba(59,130,246,0.15);color:#3b82f6">MC</span>${mcTypeBadge(item.type ?? 0)}</div>
+        ${keyStr ? `<div style="font-size:10px;color:var(--muted)">${escHtml(keyStr)}</div>` : ''}
+        <div style="font-size:10px;color:var(--muted);margin-top:2px">${escHtml(mcContactMetaLabel(item, item._rid))}</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">
+          <b>SNR:</b> ${snrText} &nbsp; <b>Path:</b> ${hops !== null ? escHtml(mcPathHopLabel(hops, true)) : '—'} &nbsp; <b>Dist:</b> ${escHtml(distanceText)} &nbsp; <b>Seen:</b> ${tsText}
+        </div>
+        <div style="display:flex;gap:4px;flex-wrap:wrap">
+          <button class="map-popup-btn" title="Show in Nodes list" onclick="leafletMap.closePopup();showMcNodeInList('${jsSafe(item.id || '')}')">List</button>
+          ${item.type !== 2 ? `<button class="map-popup-btn" title="Send direct message" onclick="leafletMap.closePopup();doMcDm('${safePk}','${safeRid}','${safeName}')">DM</button>` : ''}
+          <button class="map-popup-btn" title="Ping (request status)" onclick="leafletMap.closePopup();doMcPing('${safePk}','${safeRid}','${safeName}')">Ping</button>
+          ${mcCanRemoteManage(item) ? `<button class="map-popup-btn" title="Remote repeater/room management" onclick="leafletMap.closePopup();openMcRemoteManage('${safePk}','${safeRid}','${safeName}')">Manage</button>` : ''}
+          <button class="map-popup-btn" title="Select in Sense panel" onclick="leafletMap.closePopup();switchTab('map');toggleSensePanel(true);switchSenseNet('mc');selectMcSenseContact('${jsSafe(item.id || '')}','${safeRid}')">Sense</button>
+          ${item.latitude != null ? `<button class="map-popup-btn" title="GPS movement trail" onclick="openGpsTrail('${jsSafe(item.id || '')}','${safeName}')">Trail</button>` : ''}
+          <button class="map-popup-btn danger" title="Delete from device" onclick="deleteMcContact('${safePk}','${safeName}','${safeRid}')">Delete</button>
+        </div>
+      </div>`;
+  }
+
+  function _mcClusterPopupHtml(items, lat, lon) {
+    const contactCount = items.filter(item => item._kind !== 'radio').length;
+    const radioCount = items.filter(item => item._kind === 'radio').length;
+    const titleParts = [];
+    if (contactCount) titleParts.push(`${contactCount} contact${contactCount !== 1 ? 's' : ''}`);
+    if (radioCount) titleParts.push(`${radioCount} radio${radioCount !== 1 ? 's' : ''}`);
+    const distanceText = _distanceLabel(_mcDistanceFromLocal({latitude: lat, longitude: lon}, items[0]?._rid || ''));
+    return `
+      <div style="font-weight:700;margin-bottom:8px;color:#3b82f6">${escHtml(titleParts.join(' + ') || `${items.length} nodes`)} at this location</div>
+      <div style="color:var(--muted);font-size:11px;margin-bottom:10px">${Number(lat).toFixed(5)}, ${Number(lon).toFixed(5)} · ${escHtml(distanceText)}</div>
+      ${items.map(item => _mcClusterItemHtml(item)).join('')}`;
+  }
+
+  function makeMcIcon(highlighted, type) {
+    const outer = highlighted ? 10 : 7;
+    const inner = highlighted ? 6  : 4;
+    const isRptr = type === 2;
+    const isRoom = type === 3;
+    const color  = isRptr ? '#3b82f6' : isRoom ? '#fb923c' : '#60a5fa';
+    const glow   = highlighted
+      ? `drop-shadow(0 0 6px ${color}) drop-shadow(0 1px 4px rgba(0,0,0,0.8))`
+      : 'drop-shadow(0 1px 4px rgba(0,0,0,0.8))';
+    const sz = (outer + 5) * 2;
+    const c  = sz / 2;
+    const o  = c - outer;
+    const i  = c - inner;
+    let svg;
+    if (isRptr || isRoom) {
+      svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${sz}" height="${sz}" viewBox="0 0 ${sz} ${sz}" style="filter:${glow};overflow:visible">
+        <rect x="${o}" y="${o}" width="${outer*2}" height="${outer*2}" fill="white" rx="2"/>
+        <rect x="${i}" y="${i}" width="${inner*2}" height="${inner*2}" fill="${color}" rx="1"/>
+      </svg>`;
+    } else {
+      svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${sz}" height="${sz}" viewBox="0 0 ${sz} ${sz}" style="filter:${glow};overflow:visible">
+        <circle cx="${c}" cy="${c}" r="${outer}" fill="white"/>
+        <circle cx="${c}" cy="${c}" r="${inner}" fill="${color}"/>
+      </svg>`;
+    }
+    return L.divIcon({ html: svg, className: '', iconSize: [sz, sz], iconAnchor: [c, c], popupAnchor: [0, -(c+2)] });
+  }
+
+  function renderMcMapMarkers() {
+    updateHeaderMcCount();
+    if (!leafletMap) return;
+    mcMapMarkers.forEach(m => leafletMap.removeLayer(m));
+    mcMapMarkers = [];
+    mcMapMarkerById = {};
+    Object.values(mcClusterMarkers).forEach(m => leafletMap.removeLayer(m));
+    mcClusterMarkers = {};
+    if (!mapShowMc) return;
+
+    const items = [];
+    Object.entries(mcContacts).forEach(([rid, radioContacts]) => {
+      Object.values(radioContacts).forEach(c => {
+        if (mcLastStatus[rid]?.status !== 'connected' && !c.archived_only) return;
+        const lat = c.latitude ?? c.lat;
+        const lon = c.longitude ?? c.lon;
+        if (lat == null || lon == null) return;
+        items.push({...c, latitude: lat, longitude: lon, _rid: rid, _kind: 'contact'});
+      });
+    });
+    Object.entries(mcLastStatus).forEach(([rid, st]) => {
+      if (st?.status !== 'connected') return;
+      if (st.lat == null || st.lon == null) return;
+      items.push({...st, id: rid, latitude: st.lat, longitude: st.lon, _rid: rid, _kind: 'radio'});
+    });
+
+    const groups = {};
+    items.forEach(item => {
+      const key = _mcMapPosKey(item.latitude, item.longitude);
+      (groups[key] = groups[key] || []).push(item);
+    });
+
+    items.forEach(item => {
+      const key = _mcMapPosKey(item.latitude, item.longitude);
+      const group = groups[key] || [item];
+      if (group.length > 1) {
+        if (mcClusterMarkers[key]) return;
+        const clat = group.reduce((s, x) => s + x.latitude, 0) / group.length;
+        const clon = group.reduce((s, x) => s + x.longitude, 0) / group.length;
+        const marker = L.marker([clat, clon], {
+          icon: _mcClusterIcon(group.length, group.some(entry => entry._kind === 'radio'))
+        });
+        marker._omClusterItems = group;
+        marker.bindPopup(_mcClusterPopupHtml(group, clat, clon), { className: 'om-popup', maxWidth: 280, maxHeight: 400 });
+        marker.bindTooltip(`${group.length} nodes`, { permanent: true, direction: 'right', className: 'map-label', offset: [8, 0] });
+        marker.addTo(leafletMap);
+        if (!mapLabels) marker.closeTooltip();
+        mcClusterMarkers[key] = marker;
+        return;
+      }
+
+      if (item._kind === 'radio') {
+        const name = escHtml(item.name || item.id);
+        const radioDistance = _distanceLabel(_mcDistanceFromLocal(item, item._rid || item.id || ''));
+        const glow = 'drop-shadow(0 0 5px #10b981) drop-shadow(0 1px 4px rgba(0,0,0,0.8))';
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30" style="filter:${glow};overflow:visible"><rect x="7" y="7" width="16" height="16" fill="white" transform="rotate(45,15,15)" rx="1.5"/><rect x="10" y="10" width="10" height="10" fill="#10b981" transform="rotate(45,15,15)" rx="1"/></svg>`;
+        const icon = L.divIcon({ html: svg, className: '', iconSize: [30, 30], iconAnchor: [15, 15], popupAnchor: [0, -17] });
+        const marker = L.marker([item.latitude, item.longitude], { icon });
+        marker._omMcMapData = item;
+        marker.bindPopup(
+          `<div class="map-popup-name">${name}<span class="map-popup-local" style="background:rgba(16,185,129,0.15);color:#10b981">MC Radio</span></div>`
+          + `<div style="font-size:11px;color:var(--muted)">This radio node · ${escHtml(radioDistance)}</div>`
+          + `<div style="font-size:11px;color:var(--muted)">${item.latitude.toFixed(5)}, ${item.longitude.toFixed(5)}</div>`,
+          { className: 'om-popup', maxWidth: 200 }
+        );
+        marker.bindTooltip(item.name || item.id, { permanent: true, direction: 'right', className: 'map-label', offset: [8, 0] });
+        marker.addTo(leafletMap);
+        if (!mapLabels) marker.closeTooltip();
+        mcMapMarkers.push(marker);
+        return;
+      }
+
+      const c = item;
+      const label = mcContactNameHtml(c, c.long_name || c.name || c.id || '?', c._rid || c.radio_id || null);
+      const labelRaw = c.long_name || c.name || c.id || '?';
+      const safePk = jsSafe(c.full_key || c.id || '');
+      const safeRid = jsSafe(c._rid);
+      const safeName = jsSafe(labelRaw);
+      const hops = c.out_path_len ?? null;
+      const radioConnected = mcLastStatus[c._rid]?.status === 'connected';
+      const popupDmButton = c.type !== 2
+        ? (radioConnected
+          ? `<button class="map-popup-btn" title="Send direct message" onclick="leafletMap.closePopup();doMcDm('${safePk}','${safeRid}','${safeName}')">DM</button>`
+          : `<button class="map-popup-btn" title="MC radio disconnected" disabled style="opacity:0.35;cursor:default">DM</button>`)
+        : '';
+      const popupPingButton = radioConnected
+        ? `<button class="map-popup-btn" title="Ping (request status)" onclick="leafletMap.closePopup();doMcPing('${safePk}','${safeRid}','${safeName}')">Ping</button>`
+        : `<button class="map-popup-btn" title="MC radio disconnected" disabled style="opacity:0.35;cursor:default">Ping</button>`;
+      const popupManageButton = mcCanRemoteManage(c)
+        ? (radioConnected
+          ? `<button class="map-popup-btn" title="Remote repeater/room management" onclick="leafletMap.closePopup();openMcRemoteManage('${safePk}','${safeRid}','${safeName}')">Manage</button>`
+          : `<button class="map-popup-btn" title="MC radio disconnected" disabled style="opacity:0.35;cursor:default">Manage</button>`)
+        : '';
+      const marker = L.marker([c.latitude, c.longitude], { icon: makeMcIcon(false, c.type ?? 0) });
+      const bat = c.battery ?? c.bat_pct ?? c.bat;
+      const batStr = bat != null ? `${bat}%` : '—';
+      const snrText = c.snr != null ? `${c.snr} dB` : '—';
+      const tsText = c.last_heard_ts ? senseTimeAgo(c.last_heard_ts) : (c.last_seen ? escHtml(c.last_seen) : '—');
+      const keyStr = (c.full_key || c.id || '').slice(0, 12);
+      const distanceText = _mcNodeDistanceLabel(c, c._rid);
+      marker._omMcMapData = c;
+      marker.bindPopup(
+        `<div class="map-popup-name">${label}<span class="map-popup-local" style="background:rgba(59,130,246,0.15);color:#3b82f6">MC</span>${mcTypeBadge(c.type ?? 0)}</div>`
+        + (keyStr ? `<div style="font-size:10px;color:var(--muted)">${escHtml(keyStr)}</div>` : '')
+        + `<div style="font-size:10px;color:var(--muted);margin-top:2px">${escHtml(mcContactMetaLabel(c, c._rid))}</div>`
+        + `<div><b>SNR:</b> ${snrText} &nbsp; <b>Battery:</b> ${batStr}</div>`
+        + `<div><b>Path:</b> ${hops !== null ? escHtml(mcPathHopLabel(hops, true)) : '—'} &nbsp; <b>Distance:</b> ${escHtml(distanceText)}</div>`
+        + `<div><b>Last seen:</b> ${tsText}</div>`
+        + `<div style="font-size:11px;color:var(--muted)">${c.latitude.toFixed(5)}, ${c.longitude.toFixed(5)}</div>`
+        + `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">`
+        + `<button class="map-popup-btn" title="Show in Nodes list" onclick="leafletMap.closePopup();showMcNodeInList('${jsSafe(c.id || '')}')">List</button>`
+        + popupDmButton
+        + popupPingButton
+        + popupManageButton
+        + `<button class="map-popup-btn" title="Select in Sense panel" onclick="leafletMap.closePopup();switchTab('map');toggleSensePanel(true);switchSenseNet('mc');selectMcSenseContact('${jsSafe(c.id || '')}','${safeRid}')">Sense</button>`
+        + `<button class="map-popup-btn" title="GPS movement trail" onclick="openGpsTrail('${jsSafe(c.id || '')}','${safeName}')">Trail</button>`
+        + `<button class="map-popup-btn danger" title="Delete from device" onclick="deleteMcContact('${safePk}','${safeName}','${safeRid}')">Delete</button>`
+        + `</div>`,
+        { className: 'om-popup', maxWidth: 240 }
+      );
+      marker.bindTooltip(label, { permanent: true, direction: 'right', className: 'map-label mc-node-label', offset: [8, 0] });
+      marker.addTo(leafletMap);
+      if (!mapLabels) marker.closeTooltip();
+      mcMapMarkers.push(marker);
+      mcMapMarkerById[c.id || ''] = marker;
+    });
+
+    if (_senseNet === 'mc') renderMcPathLines();
+    updateHeaderMcCount();
+    _refreshAllGeofences();
+  }
+
+  // -- MC chat tabs --
+  function switchMcTab(tab) {
+    mcChatTab = tab;
+    localStorage.setItem('mcChatTab', tab);
+    mcUnreadTabs.delete(tab);
+    _clearUnreadCount(mcUnreadCounts, tab);
+    updateUnreadDots();
+    renderMcChatTabs();
+    renderMcMessages();
+    _updateMcInput();
+  }
+
+  function renderMcChatTabs() {
+    const el = document.getElementById('mc-chat-channels');
+    if (!el) return;
+    const chanTabs = Object.entries(mcKnownChannels).sort(([a],[b]) => +a - +b).map(([idx, name]) => {
+      const tab = `chan:${idx}`;
+      return `<button class="channel-tab net-mc ${mcChatTab === tab ? 'active' : ''} ${mcUnreadTabs.has(tab) ? 'has-unread' : ''}"
+        onclick="switchMcTab('${tab}')">${escHtml(name)}</button>`;
+    });
+    const dmTabs = Object.entries(mcDmContacts).map(([pre, name]) => {
+      const tab = `dm:${pre}`;
+      return `<button class="channel-tab net-mc ${mcChatTab === tab ? 'active' : ''} ${mcUnreadTabs.has(tab) ? 'has-unread' : ''}"
+        onclick="switchMcTab('${tab}')">${escHtml(name)}<span class="dm-tab-close" onclick="closeMcDmTab('${jsSafe(pre)}',event)" title="Close DM tab">✕</span></button>`;
+    });
+    el.innerHTML = [...chanTabs, ...dmTabs].join('');
+  }
+
+  function closeMcDmTab(pre, event) {
+    event.stopPropagation();
+    const name = mcDmContacts[pre] || pre;
+    document.getElementById('confirm-ok').textContent = 'Delete';
+    showConfirm(`Close DM tab with ${name}?`, () => {
+      closedMcDmTabs.add(pre);
+      saveMcClosedDmTabs();
+      delete mcDmContacts[pre];
+      mcUnreadTabs.delete(`dm:${pre}`);
+      _clearUnreadCount(mcUnreadCounts, `dm:${pre}`);
+      if (mcChatTab === `dm:${pre}`) switchMcTab('chan:0');
+      else {
+        updateUnreadDots();
+        renderMcChatTabs();
+      }
+    });
+  }
+
+  function _updateMcInput() {
+    const input   = document.getElementById('mc-chat-input');
+    const pathBar = document.getElementById('mc-dm-path-bar');
+    if (!input) return;
+    if (mcChatTab.startsWith('chan:')) {
+      const idx = parseInt(mcChatTab.slice(5));
+      input.placeholder = `${mcKnownChannels[idx] || ('CH' + idx)} channel…`;
+      if (pathBar) pathBar.style.display = 'none';
+    } else if (mcChatTab.startsWith('dm:')) {
+      const pre  = mcChatTab.slice(3);
+      const name = mcDmContacts[pre] || pre;
+      input.placeholder = `DM to ${name}…`;
+      if (pathBar) {
+        const c    = activeMcRadioId ? (mcContacts[activeMcRadioId] || {})[pre] : null;
+        const hops = c?.out_path_len ?? -1;
+        const path = c?.out_path || '';
+        if (hops >= 0 || hops === 255) {
+          const hopLabel = mcPathHopLabel(hops);
+          pathBar.innerHTML = `<span style="color:var(--mc-color)">${escHtml(hopLabel)}</span>${path ? ` · <span style="font-size:10px;opacity:0.7">${escHtml(path)}</span>` : ''}`;
+          pathBar.style.display = 'block';
+        } else {
+          pathBar.style.display = 'none';
+        }
+      }
+    }
+    _mcUpdateByteCount();
+  }
+
+  // MC sender name helpers
+  function _mcFindContact(radioId, fromId, fallbackName) {
+    // Search a single contacts dict: by pubkey prefix first, then by name
+    function _searchDict(dict, name) {
+      if (fromId && fromId !== '?') {
+        if (dict[fromId]) return dict[fromId];
+        const fromLow = fromId.toLowerCase();
+        for (const [key, contact] of Object.entries(dict)) {
+          const kl = key.toLowerCase();
+          if (kl === fromLow || fromLow.startsWith(kl) || kl.startsWith(fromLow)) return contact;
+        }
+      }
+      // Fall back to name match when pubkey is absent or useless
+      if (name) {
+        const nl = name.toLowerCase();
+        for (const contact of Object.values(dict)) {
+          if ((contact.long_name || '').toLowerCase() === nl) return contact;
+        }
+      }
+      return null;
+    }
+    const name = fallbackName || null;
+    // 1. Try the message's own radio first
+    if (radioId) {
+      const hit = _searchDict(mcContacts[radioId] || {}, name);
+      if (hit) return hit;
+    }
+    // 2. Fall back: search all radios (contact may be known via a different radio)
+    for (const [rid, dict] of Object.entries(mcContacts)) {
+      if (rid === radioId) continue;
+      const hit = _searchDict(dict, name);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  function _mcSenderInfo(m) {
+    // 1. Parse "Name: message" embedded format first (to get name for fallback lookup)
+    const text = m.text || '';
+    const colon = text.indexOf(': ');
+    const embeddedName = (colon > 0 && colon < 50) ? text.slice(0, colon) : null;
+    // 2. Look up from contacts dict — by pubkey or by embedded name
+    const c = _mcFindContact(m.radio_id, m.from_id, embeddedName);
+    if (c?.long_name) return { name: c.long_name, contact: c };
+    if (embeddedName) return { name: embeddedName, contact: null };
+    return { name: m.from_id && m.from_id !== '?' ? m.from_id.slice(0, 10) : '?', contact: null };
+  }
+
+  function _mcMsgText(m, senderName) {
+    const text = m.text || '';
+    if (senderName && text.startsWith(senderName + ': ')) return text.slice(senderName.length + 2);
+    return text;
+  }
+
+  function _mcFormatMessageBody(text) {
+    const raw = String(text || '');
+    const tagRe = /@\[([^\]\r\n]{1,40})\]/g;
+    let out = '';
+    let last = 0;
+    for (const match of raw.matchAll(tagRe)) {
+      out += escHtml(raw.slice(last, match.index));
+      out += `<span class="mc-mention">@${escHtml(match[1])}</span>`;
+      last = match.index + match[0].length;
+    }
+    out += escHtml(raw.slice(last));
+    return out;
+  }
+
+  function _mcContactSeenTs(contact) {
+    if (!contact) return 0;
+    return contact.last_heard_ts || contact.last_seen_ts || contact.last_advert || 0;
+  }
+
+  function _mergeMcContactRecord(prev, incoming) {
+    const source = incoming || {};
+    const merged = Object.assign({}, prev || {}, source);
+    if (!Object.prototype.hasOwnProperty.call(source, 'last_heard_ts')) delete merged.last_heard_ts;
+    return merged;
+  }
+
+  function _mcContactSeenLabel(contact) {
+    if (!contact) return '—';
+    const ts = _mcContactSeenTs(contact);
+    return ts ? senseTimeAgo(ts) : (contact.last_seen || '—');
+  }
+
+  function _mcRefreshDmContactNames(radioId = null) {
+    let changed = false;
+    Object.keys(mcDmContacts).forEach(pre => {
+      if (mcDmContacts[pre] !== pre) return;
+      const radios = radioId ? [radioId] : Object.keys(mcContacts);
+      for (const rid of radios) {
+        const c = (mcContacts[rid] || {})[pre];
+        if (c?.long_name) {
+          mcDmContacts[pre] = c.long_name;
+          changed = true;
+          break;
+        }
+      }
+    });
+    if (changed) renderMcChatTabs();
+  }
+
+  function _mcDmTabHasBackingData(pre) {
+    if (mcMessages.some(m => m.subtype === 'dm' && (m.from_id === pre || m.to_id === pre))) return true;
+    return Object.values(mcContacts).some(dict => !!(dict || {})[pre]);
+  }
+
+  function _pruneMcDmState() {
+    let tabsChanged = false;
+    let unreadChanged = false;
+    let closedChanged = false;
+    Object.keys(mcDmContacts).forEach(pre => {
+      if (_mcDmTabHasBackingData(pre)) return;
+      delete mcDmContacts[pre];
+      if (mcUnreadTabs.delete(`dm:${pre}`)) unreadChanged = true;
+      _clearUnreadCount(mcUnreadCounts, `dm:${pre}`);
+      if (closedMcDmTabs.delete(pre)) closedChanged = true;
+      tabsChanged = true;
+      if (mcChatTab === `dm:${pre}`) mcChatTab = 'chan:0';
+    });
+    if (closedChanged) saveMcClosedDmTabs();
+    if (tabsChanged) {
+      localStorage.setItem('mcChatTab', mcChatTab);
+      renderMcChatTabs();
+    }
+    if (unreadChanged) updateUnreadDots();
+    return tabsChanged || unreadChanged || closedChanged;
+  }
+
+  function showMcContactPopup(evt, fromId, radioId, overrideName) {
+    evt.stopPropagation();
+    const c      = _mcFindContact(radioId, fromId, overrideName);
+    const name   = c?.long_name || overrideName || fromId?.slice(0, 10) || '?';
+    const hops   = c?.out_path_len ?? -1;
+    const path   = c?.out_path || '';
+    const seen   = _mcContactSeenLabel(c);
+    const hopStr = c ? (hops >= 0 ? mcPathHopLabel(hops) : 'Path unknown') : 'Not in contacts';
+    const meta   = c ? mcContactMetaLabel(c, radioId) : '';
+    const markerId  = c?.id || (fromId !== '?' ? fromId.slice(0, 12) : '');
+    const hasMarker = !!mcMapMarkerById[markerId];
+
+    // Backfill contact data from cached messages when contact info is stale/incomplete
+    if (c) {
+      const nameLow = name.toLowerCase();
+      let bestMsg = null;
+      for (const m of mcMessages) {
+        if (!m.ts || m.sent) continue;
+        const { name: mName } = _mcSenderInfo(m);
+        if (mName.toLowerCase() === nameLow && (!bestMsg || m.ts > bestMsg.ts)) bestMsg = m;
+      }
+      if (bestMsg) {
+        if (bestMsg.ts > _mcContactSeenTs(c)) {
+          c.last_heard_ts = bestMsg.ts;
+          c.last_seen_ts  = bestMsg.ts;
+        }
+        if (c.out_path_len == null && bestMsg.path_len != null && bestMsg.path_len !== 255) c.out_path_len = bestMsg.path_len;
+        if (!c.out_path     && bestMsg.path)                    c.out_path     = bestMsg.path;
+      }
+    }
+
+    let panel = document.getElementById('mc-contact-popup');
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = 'mc-contact-popup';
+      panel.style.cssText = 'position:fixed;z-index:3000;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px;min-width:180px;max-width:280px;box-shadow:0 2px 12px rgba(0,0,0,.6)';
+      document.body.appendChild(panel);
+    }
+    // Use the resolved contact's id for actions (fromId may be "?" for pubkey-less messages)
+    const actionId  = c?.id || c?.full_key || (fromId !== '?' ? fromId : null);
+    const actionRid = radioId;
+    const hide = `document.getElementById('mc-contact-popup').style.display='none'`;
+    const btns = [];
+    if (c && actionId) {
+      if (c.id) btns.push(`<button class="map-popup-btn" onclick="showMcNodeInList('${jsSafe(c.id)}');${hide}">List</button>`);
+      btns.push(`<button class="map-popup-btn" onclick="doMcDm('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}">DM</button>`);
+      if (c.type !== 2) btns.push(`<button class="map-popup-btn" onclick="doMcPing('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}">Ping</button>`);
+      if (mcCanRemoteManage(c)) btns.push(`<button class="map-popup-btn" onclick="openMcRemoteManage('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}">Manage</button>`);
+    } else if (!c && actionId) {
+      btns.push(`<button class="map-popup-btn" onclick="doMcPing('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}" title="Request status from this node — may trigger it to send an advert">Ping</button>`);
+    } else if (!c && !actionId) {
+      btns.push(`<button class="map-popup-btn" style="opacity:0.4;cursor:default" disabled title="No pubkey in message — cannot send targeted ping. Sender's firmware may not include pubkey in channel messages.">Ping</button>`);
+    }
+    const cLat = c?.latitude, cLon = c?.longitude;
+    if (hasMarker) {
+      btns.push(`<button class="map-popup-btn" onclick="switchTab('map');${hide};setTimeout(()=>{const m=mcMapMarkerById['${jsSafe(markerId)}'];if(m&&leafletMap){leafletMap.setView(m.getLatLng(),Math.max(leafletMap.getZoom(),14));m.openPopup();}},100)">Map</button>`);
+    } else if (cLat != null && cLon != null) {
+      btns.push(`<button class="map-popup-btn" onclick="centerMcOnMap(${cLat},${cLon});${hide}">Map</button>`);
+    } else {
+      btns.push(`<button class="map-popup-btn" style="opacity:0.35;cursor:default" disabled title="No GPS position">Map</button>`);
+    }
+    const btnsHtml = btns.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${btns.join('')}</div>` : '';
+    panel.innerHTML = `
+      <div style="font-weight:600;color:var(--mc-color);margin-bottom:2px">${escHtml(name)}</div>
+      ${c?.id ? `<div style="color:var(--muted);font-size:10px;margin-bottom:6px">${escHtml(c.id)}</div>` : ''}
+      ${meta ? `<div style="color:var(--muted);font-size:10px;margin-bottom:6px">${escHtml(meta)}</div>` : ''}
+      <div style="color:var(--muted)">${escHtml(hopStr)}</div>
+      ${path ? `<div style="color:var(--muted);font-size:10px;margin-top:2px;word-break:break-all">${escHtml(path)}</div>` : ''}
+      ${seen ? `<div style="color:var(--muted);font-size:10px;margin-top:4px">Last seen: ${escHtml(seen)}</div>` : ''}
+      ${btnsHtml}
+    `;
+
+    // Position: right of click, flip above if in lower half of screen
+    panel.style.display = 'block';
+    const pw = panel.offsetWidth  || 290;
+    const ph = panel.offsetHeight || 160;
+    const margin = 8;
+    let x = Math.min(evt.clientX + margin, window.innerWidth  - pw - margin);
+    let y = evt.clientY > window.innerHeight / 2
+      ? Math.max(evt.clientY - ph - margin, margin)
+      : evt.clientY + margin;
+    y = Math.max(margin, Math.min(y, window.innerHeight - ph - margin));
+    panel.style.left = x + 'px';
+    panel.style.top  = y + 'px';
+
+    setTimeout(() => {
+      document.addEventListener('click', () => { if (panel) panel.style.display = 'none'; }, { once: true });
+    }, 0);
+  }
+
+  // -- MC chat tab rendering --
+  function renderMcMessages() {
+    const container = document.getElementById('mc-chat-messages');
+    if (!container) return;
+    renderMcChatTabs();
+    _updateMcInput();
+    let msgs = mcMessages.filter(m => !activeMcRadioId || m.radio_id === activeMcRadioId);
+    // Filter by active tab
+    if (mcChatTab.startsWith('chan:')) {
+      const idx = parseInt(mcChatTab.slice(5));
+      msgs = msgs.filter(m =>
+        (m.subtype === 'channel' && (m.channel ?? 0) === idx)
+        || (m.subtype === 'system' && m.from_id !== 'bot')
+        || (m.from_id === 'bot' && !m.to_id && (m.channel ?? 0) === idx)
+      );
+    } else if (mcChatTab.startsWith('dm:')) {
+      const pre = mcChatTab.slice(3);
+      msgs = msgs.filter(m =>
+        (m.subtype === 'dm' && (m.from_id === pre || m.to_id === pre || (m.sent && m.to_id === pre)))
+        || (m.subtype === 'system' && m.from_id !== 'bot')
+        || (m.from_id === 'bot' && m.to_id === pre)
+      );
+    } else {
+      msgs = msgs.filter(m => m.subtype !== 'system');
+    }
+    if (!msgs.length) {
+      container.innerHTML = '<div class="chat-empty">No messages yet.</div>';
+      return;
+    }
+    const hadNoContent = !container.children.length || !!container.querySelector('.chat-empty');
+    const wasAtBottom = hadNoContent || container.scrollHeight - container.scrollTop <= container.clientHeight + 40;
+    _mcChatRouteByKey = {};
+    container.innerHTML = msgs.map(m => {
+      let ts = '';
+      if (m.ts) {
+        const d = new Date(m.ts * 1000);
+        const now = new Date();
+        const pad = n => String(n).padStart(2, '0');
+        const isToday = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+        const datePrefix = isToday ? '' : `${pad(d.getDate())}.${pad(d.getMonth()+1)}. `;
+        ts = `${datePrefix}${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      }
+      if (m.subtype === 'system') {
+        if (m.from_id === 'bot') {
+          const radioLabel = mcLastStatus[m.radio_id]?.name || m.radio_id || '';
+          return `<div class="chat-msg sent" style="align-items:flex-end">
+            <div class="msg-meta"><span class="mc-msg-tag" style="background:rgba(167,139,250,0.18);color:#a78bfa;border-color:rgba(167,139,250,0.4)">Bot</span>${escHtml(radioLabel)} → ${escHtml(m.to_name || '?')} · ${ts}</div>
+            <div class="msg-bubble" style="background:rgba(167,139,250,0.15);border:1px solid rgba(167,139,250,0.3)">${escHtml(m.text)}</div>
+          </div>`;
+        }
+        return `<div style="text-align:center;font-size:11px;color:var(--muted);padding:4px 0;font-style:italic">${escHtml(m.text)} <span style="opacity:0.6">${ts}</span></div>`;
+      }
+      const sent = m.sent || m.from_id === 'me';
+      if (sent) {
+        const radioLabel = mcLastStatus[m.radio_id]?.name || m.radio_name || m.radio_id || '';
+        const statusHtml = `<div class="msg-status ${m.status || 'pending'}" data-msgid="${escHtml(m.id || '')}">${m.status === 'delivered' ? '✓' : m.status === 'failed' ? '✗' : '·'}</div>`;
+        return `<div class="chat-msg sent">
+          <div class="msg-meta">${escHtml(radioLabel)} · Me · ${ts}</div>
+          <div class="msg-bubble">${_mcFormatMessageBody(m.text)}</div>
+          ${statusHtml}
+        </div>`;
+      }
+      const { name, contact } = _mcSenderInfo(m);
+      const bodyText = _mcMsgText(m, name);
+      const obsSnr = m.rx_snr != null ? ` · SNR ${m.rx_snr} dB` : '';
+      const senderHtml = `<span class="msg-sender-link" onclick="showMcContactPopup(event,'${jsSafe(m.from_id || '')}','${jsSafe(m.radio_id || '')}','${jsSafe(name)}')" title="Contact info">${mcContactNameHtml(contact, name, m.radio_id || null)}</span>`;
+      const mcReplyBtn = `<button class="msg-reply-btn" onclick="replyToMc('${jsSafe(m.from_id || '')}','${jsSafe(name)}','${m.subtype || 'channel'}')">↩ Reply</button>`;
+      const routeMeta = _mcChatRouteMeta(m);
+      const routeKey = _mcChatRouteKey(m);
+      if (routeMeta) _mcChatRouteByKey[routeKey] = m;
+      const routeBtn = routeMeta
+        ? `<button class="mc-route-badge" title="${escHtml(routeMeta.detail)}" onclick="event.stopPropagation();showMcChatMessageRoute('${jsSafe(routeKey)}')">${escHtml(routeMeta.label)}</button>`
+        : '';
+      return `<div class="chat-msg received">
+        <div class="msg-meta">${escHtml(m.radio_name || '')} · ${senderHtml}${escHtml(obsSnr)} · ${ts}${routeBtn}${mcReplyBtn}</div>
+        <div class="msg-bubble">${_mcFormatMessageBody(bodyText)}</div>
+      </div>`;
+    }).join('');
+    if (wasAtBottom) {
+      container.scrollTop = container.scrollHeight;  // immediate — prevents race with SSE re-renders on page load
+      requestAnimationFrame(() => { container.scrollTop = container.scrollHeight; });  // deferred for any layout adjustments
+    }
+  }
+
+  // -- MC contacts in Nodes tab --
+  function renderMcContacts() { renderLive(); } // superseded — MC contacts now in main nodes table
+
+  // ---------------------------------------------------------------------------
+  // MC Sense
+  // ---------------------------------------------------------------------------
+
+  function switchSenseNet(net) {
+    _senseNet = net;
+    localStorage.setItem('senseNet', net);
+    document.getElementById('sense-net-mt').classList.toggle('active', net === 'mt');
+    document.getElementById('sense-net-mc').classList.toggle('active', net === 'mc');
+    _updateNetworkPillVisibility();
+    // Update toolbar counter immediately (without full re-render)
+    _updateMapNodeCount();
+    document.getElementById('sense-mt-wrap').style.display     = net === 'mt' ? 'flex' : 'none';
+    document.getElementById('sense-mc-wrap').style.display     = net === 'mc' ? 'flex' : 'none';
+    document.getElementById('sense-mt-log-wrap').style.display = net === 'mt' ? 'flex' : 'none';
+    document.getElementById('sense-mc-log-wrap').style.display = net === 'mc' ? 'flex' : 'none';
+
+    const legend   = document.querySelector('.map-legend');
+    const mcLegend = document.getElementById('map-legend-mc');
+    if (net === 'mc') {
+      _clearTraceLines();
+      _activeMtRouteKey = null;
+      _activeMtRouteEntryKey = null;
+      _mtRefreshSenseRouteSelection();
+      // Show MC markers, hide MT node markers
+      if (!mapShowMc) {
+        mapShowMc = true;
+        document.getElementById('map-mc-pill')?.classList.add('active');
+        document.getElementById('nodes-mc-pill')?.classList.add('active');
+      }
+      if (mapShowMt) {
+        mapShowMt = false;
+        document.getElementById('map-mt-pill')?.classList.remove('active');
+        document.getElementById('nodes-mt-pill')?.classList.remove('active');
+        updateMapMarkers(allNodes);
+      }
+      if (legend) legend.style.display = 'none';   // hide entire legend in MC Sense
+      renderMcMapMarkers();   // also calls renderMcPathLines()
+      renderMcSensePanel();
+    } else {
+      // MT mode: show legend but hide MC section (MC markers not shown in MT Sense)
+      if (legend)   legend.style.display   = '';
+      if (mcLegend) mcLegend.style.display = 'none';
+      clearMcPathLines();
+      _mcHoverLines.forEach(l => leafletMap && leafletMap.removeLayer(l));
+      _mcHoverLines = [];
+      if (!mapShowMt) {
+        mapShowMt = true;
+        document.getElementById('map-mt-pill')?.classList.add('active');
+        document.getElementById('nodes-mt-pill')?.classList.add('active');
+        updateMapMarkers(allNodes);
+      }
+      if (mapShowMc) {
+        mapShowMc = false;
+        document.getElementById('map-mc-pill')?.classList.remove('active');
+        document.getElementById('nodes-mc-pill')?.classList.remove('active');
+        renderMcMapMarkers();
+        _updateScanBtnVisibility?.();
+      }
+    }
+  }
+
+  // MeshCore CONTACT_TYPENAMES: 0=NONE, 1=CLI, 2=REP, 3=ROOM, 4=SENS
+  const _MC_TYPE_LABELS = ['?', 'CLI', 'RPT', 'ROOM', 'SENS'];
+  const _MC_TYPE_COLORS = ['var(--muted)', 'var(--muted)', '#f59e0b', '#818cf8', '#34d399'];
+
+  function renderMcSensePanel() {
+    const container = document.getElementById('sense-mc-nodes');
+    if (!container) return;
+    const filter = (document.getElementById('sense-mc-nodes-search')?.value || '').toLowerCase().trim();
+    const now = Math.floor(Date.now() / 1000);
+
+    const allContacts = [];
+    let totalGps = 0, totalRecent = 0;
+    Object.entries(mcContacts).forEach(([rid, radioContacts]) => {
+      if (mcLastStatus[rid]?.status !== 'connected') return;
+      Object.values(radioContacts).forEach(c => {
+        allContacts.push({...c, _rid: rid});
+        const lat = c.latitude ?? c.lat;
+        const lon = c.longitude ?? c.lon;
+        if (lat != null && lon != null) totalGps++;
+        const seenTs = _mcContactSeenTs(c);
+        if (seenTs && (now - seenTs) < 3600) totalRecent++;
+      });
+    });
+    allContacts.sort((a, b) => _mcContactSeenTs(b) - _mcContactSeenTs(a));
+
+    const statTotal  = document.getElementById('sense-mc-stat-total');
+    const statOnline = document.getElementById('sense-mc-stat-online');
+    const statGps    = document.getElementById('sense-mc-stat-gps');
+    if (statTotal)  statTotal.textContent  = `${allContacts.length} contact${allContacts.length !== 1 ? 's' : ''}`;
+    if (statOnline) { statOnline.textContent = `${totalRecent} heard recently`; statOnline.style.color = totalRecent > 0 ? '#22c55e' : 'var(--muted)'; }
+    if (statGps)    statGps.textContent    = `${totalGps} GPS`;
+    const statusEl = document.getElementById('sense-mc-status');
+    if (statusEl)   statusEl.textContent   = '';
+
+    const contacts = filter
+      ? allContacts.filter(c => (c.long_name || c.name || c.id || '').toLowerCase().includes(filter))
+      : allContacts;
+
+    if (!contacts.length) {
+      container.innerHTML = `<div style="font-size:12px;color:var(--muted);padding:8px 0">${filter ? 'No matches.' : 'No MC contacts.'}</div>`;
+      return;
+    }
+
+    container.innerHTML = contacts.map(c => {
+      const id      = c.id || '';
+      const _rawLabel = c.long_name || c.name || id || '?';
+      const displayLabel = _rawLabel.match(/^[0-9a-f]{6,}$/i) ? (id ? id.slice(0,4)+'…' : '?') : _rawLabel;
+      const name    = `${mcContactPrefixChip(c, c._rid || c.radio_id || null)}${escHtml(displayLabel)}`;
+      const hopLen  = c.out_path_len ?? -1;
+      const hopLabel = mcPathHopLabel(hopLen);
+      const hopColor = mcPathHopColor(hopLen);
+      const borderC  = hopLen === 255 ? '#38bdf8' : hopLen === 0 ? '#22c55e' : hopLen > 0 ? '#3b82f6' : 'rgba(148,163,184,0.35)';
+      const lat     = c.latitude ?? c.lat;
+      const lon     = c.longitude ?? c.lon;
+      const hasGps  = lat != null && lon != null;
+      const ts      = _mcContactSeenLabel(c);
+      const safeId  = jsSafe(id);
+      const typeIdx = (typeof c.type === 'number' ? c.type : parseInt(c.type)) || 0;
+      const typeLabel = _MC_TYPE_LABELS[typeIdx] || '?';
+      const typeColor = _MC_TYPE_COLORS[typeIdx] || 'var(--muted)';
+      const isSelected = _mcSenseSelectedId === id;
+      return `<div class="sense-node-card${isSelected ? ' selected' : ''}" data-id="${safeId}"
+        onmouseenter="highlightMcContact('${safeId}', true)"
+        onmouseleave="highlightMcContact('${safeId}', false)"
+        onclick="selectMcSenseContact('${safeId}','${jsSafe(c._rid)}')"
+        style="border-left:3px solid ${borderC}">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:4px">
+          <span class="sense-node-name" style="font-size:12px">${name}</span>
+          <span style="font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(255,255,255,0.06);color:${typeColor};flex-shrink:0">${typeLabel}</span>
+        </div>
+        <div class="sense-node-meta">
+          <span style="color:${hopColor}">${hopLabel}</span>
+          <span>${ts}</span>
+          ${hasGps ? '<span title="Has GPS position">📍</span>' : ''}
+        </div>
+      </div>`;
+    }).join('');
+    // Refresh detail panel if a card was selected before re-render
+    if (_mcSenseSelectedId && _mcSenseSelectedRid) {
+      selectMcSenseContact(_mcSenseSelectedId, _mcSenseSelectedRid);
+    }
+  }
+
+  function highlightMcContact(id, on) {
+    const marker = mcMapMarkerById[id];
+    if (!marker) return;
+    marker.setIcon(makeMcIcon(on, marker._omMcMapData?.type ?? 0));
+    marker.setZIndexOffset(on ? 1000 : 0);
+  }
+
+  function _closeMcSenseDetail() {
+    _mcSenseSelectedId  = null;
+    _mcSenseSelectedRid = null;
+    document.querySelectorAll('#sense-mc-nodes .sense-node-card').forEach(el => el.classList.remove('selected'));
+    const detail = document.getElementById('mc-sense-detail');
+    if (detail) detail.style.display = 'none';
+  }
+
+  function selectMcSenseContact(id, rid) {
+    _mcSenseSelectedId  = id;
+    _mcSenseSelectedRid = rid;
+    // Update card highlight
+    document.querySelectorAll('#sense-mc-nodes .sense-node-card').forEach(el => {
+      el.classList.toggle('selected', el.dataset.id === id);
+    });
+    const detail  = document.getElementById('mc-sense-detail');
+    const content = document.getElementById('mc-sense-detail-content');
+    if (!detail || !content) return;
+    const c = (mcContacts[rid] || {})[id];
+    if (!c) { detail.style.display = 'none'; return; }
+
+    const name      = c.long_name || c.name || id || '?';
+    const nameHtml  = mcContactNameHtml(c, name, rid);
+    const typeIdx   = (typeof c.type === 'number' ? c.type : parseInt(c.type)) || 0;
+    const typeLabel = _MC_TYPE_LABELS[typeIdx] || '?';
+    const typeColor = _MC_TYPE_COLORS[typeIdx] || 'var(--muted)';
+    const hopLen    = c.out_path_len ?? -1;
+    const hopLabel  = mcPathHopLabel(hopLen);
+    const hopColor  = mcPathHopColor(hopLen);
+    const hashBytes = c.out_path_hash_size ?? (c.out_path_hash_mode != null ? c.out_path_hash_mode + 1 : null);
+    const hashBadge = hashBytes != null ? `<span style="font-size:9px;padding:1px 4px;border-radius:3px;background:rgba(148,163,184,0.1);color:var(--muted);margin-left:6px;vertical-align:1px">${hashBytes}B/hop</span>` : '';
+    const lat       = c.latitude ?? c.lat;
+    const lon       = c.longitude ?? c.lon;
+    const hasGps    = lat != null && lon != null;
+    const ts        = _mcContactSeenLabel(c);
+    const pathHex   = c.out_path || '';
+    const safeId    = jsSafe(id);
+    const safeRid   = jsSafe(rid);
+    const safeName  = jsSafe(name);
+
+    const pathLine = pathHex
+      ? `<div style="font-size:10px;color:var(--muted);margin-top:1px;word-break:break-all;opacity:0.8">${escHtml(pathHex)}</div>`
+      : '';
+    const gpsLine = hasGps
+      ? `<div style="font-size:10px;color:var(--muted);margin-top:3px">GPS: ${lat.toFixed(5)}, ${lon.toFixed(5)}
+           <button onclick="centerMcOnMap(${lat},${lon})" style="font-size:10px;background:none;border:1px solid var(--border);border-radius:3px;padding:0 5px;cursor:pointer;color:var(--accent);margin-left:4px">Center</button>
+         </div>`
+      : '';
+    const bat = c.battery ?? c.bat_pct ?? c.bat;
+    const batLine = bat != null ? `<div style="font-size:10px;color:var(--muted);margin-top:2px">Battery: ${bat}%</div>` : '';
+    const snrLine = c.snr != null ? `<div style="font-size:10px;color:var(--muted);margin-top:2px">SNR: ${c.snr} dB</div>` : '';
+    const keyLine = id ? `<div style="font-size:10px;color:var(--muted);opacity:0.7;margin-top:1px;word-break:break-all">${escHtml(c.full_key || id)}</div>` : '';
+
+    content.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;margin-bottom:3px;padding-right:18px">
+        <span style="font-size:12px;font-weight:600;color:var(--mc-color)">${nameHtml}</span>
+        <span style="font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(255,255,255,0.06);color:${typeColor};flex-shrink:0">${typeLabel}</span>
+      </div>
+      ${keyLine}
+      <div style="font-size:11px;color:${hopColor};margin-top:3px">${hopLabel}${hashBadge}</div>
+      ${pathLine}
+      ${gpsLine}
+      ${batLine}
+      ${snrLine}
+      <div style="font-size:10px;color:var(--muted);margin-top:2px">Last seen: ${escHtml(ts)}</div>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button class="btn-sm" style="color:var(--mc-color);border-color:rgba(56,189,248,0.4)"
+          onclick="doMcDm('${safeId}','${safeRid}','${safeName}')">DM</button>
+        <button class="btn-sm"
+          onclick="doMcPing('${safeId}','${safeRid}','${safeName}')">Ping</button>
+        ${mcCanRemoteManage(c) ? `<button class="btn-sm" onclick="openMcRemoteManage('${safeId}','${safeRid}','${safeName}')">Manage</button>` : ''}
+      </div>`;
+    detail.style.display = 'block';
+  }
+
+  function findMcContactByKeyPrefix(prefix, radioId = null) {
+    if (!prefix) return null;
+    const lp = prefix.toLowerCase();
+    const findUniqueMatch = (contacts) => {
+      let match = null;
+      for (const c of Object.values(contacts || {})) {
+        // full_key = 64-char pubkey (from REST API); id = pubkey[:12] (from SSE events)
+        const fk = (c.full_key || c.id || '').toLowerCase();
+        if (!fk || !fk.startsWith(lp)) continue;
+        if (match) return null;
+        match = c;
+      }
+      return match;
+    }
+    if (radioId && mcContacts[radioId]) {
+      return findUniqueMatch(mcContacts[radioId]);
+    }
+    let match = null;
+    for (const contacts of Object.values(mcContacts)) {
+      const candidate = findUniqueMatch(contacts);
+      if (!candidate) continue;
+      if (match) return null;
+      match = candidate;
+    }
+    return match;
+  }
+
+  function findMcContactsByKeyPrefix(prefix, radioId = null) {
+    if (!prefix) return [];
+    const lp = String(prefix || '').toLowerCase();
+    const seen = new Set();
+    const matches = [];
+    const addMatches = (contacts) => {
+      for (const c of Object.values(contacts || {})) {
+        const fk = (c.full_key || c.id || '').toLowerCase();
+        if (!fk || !fk.startsWith(lp)) continue;
+        const key = c.full_key || c.id;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        matches.push(c);
+      }
+    };
+    if (radioId && mcContacts[radioId]) addMatches(mcContacts[radioId]);
+    else Object.values(mcContacts).forEach(addMatches);
+    return matches;
+  }
+
+  function _mcPathDistanceScore(candidate, expectedLat, expectedLon) {
+    const lat = candidate.latitude ?? candidate.lat;
+    const lon = candidate.longitude ?? candidate.lon;
+    if (lat == null || lon == null) return Number.POSITIVE_INFINITY;
+    const dLat = lat - expectedLat;
+    const dLon = (lon - expectedLon) * Math.cos((expectedLat || 0) * Math.PI / 180);
+    return dLat * dLat + dLon * dLon;
+  }
+
+  function _mcPathGeoKm(candidate, expectedLat, expectedLon) {
+    const score = _mcPathDistanceScore(candidate, expectedLat, expectedLon);
+    if (!Number.isFinite(score)) return Number.POSITIVE_INFINITY;
+    return Math.sqrt(score) * 111.32;
+  }
+
+  const MC_PATH_SOFT_DETOUR_KM = 45;
+  const MC_PATH_HARD_DETOUR_KM = 180;
+  const MC_PATH_IMPLAUSIBLE_SEGMENT_KM = 200;
+  const MC_PATH_RADIO_ONLY_MAX_KM = 200;
+  const MC_PATH_SOFT_BEARING_DELTA_DEG = 55;
+  const MC_PATH_HARD_BEARING_DELTA_DEG = 105;
+  const MC_PATH_STALE_REMOTE_KM = 120;
+
+  function _mcPathDirectKm(lat1, lon1, lat2, lon2) {
+    if (lat1 == null || lon1 == null || lat2 == null || lon2 == null) return Number.POSITIVE_INFINITY;
+    return _haversineMeters(lat1, lon1, lat2, lon2) / 1000;
+  }
+
+  function _mcPathDetourKm(candidate, radioLat, radioLon, endpointLat, endpointLon) {
+    const lat = candidate.latitude ?? candidate.lat;
+    const lon = candidate.longitude ?? candidate.lon;
+    if (lat == null || lon == null) return Number.POSITIVE_INFINITY;
+    const directKm = _mcPathDirectKm(radioLat, radioLon, endpointLat, endpointLon);
+    if (!Number.isFinite(directKm)) return Number.POSITIVE_INFINITY;
+    const viaKm = _mcPathDirectKm(radioLat, radioLon, lat, lon) + _mcPathDirectKm(lat, lon, endpointLat, endpointLon);
+    return Math.max(0, viaKm - directKm);
+  }
+
+  function _mcPathSegmentMaxKm(candidate, radioLat, radioLon, endpointLat, endpointLon) {
+    const lat = candidate.latitude ?? candidate.lat;
+    const lon = candidate.longitude ?? candidate.lon;
+    if (lat == null || lon == null) return Number.POSITIVE_INFINITY;
+    const a = _mcPathDirectKm(radioLat, radioLon, lat, lon);
+    const b = _mcPathDirectKm(lat, lon, endpointLat, endpointLon);
+    return Math.max(a, b);
+  }
+
+  function _mcPathBearingDeg(lat1, lon1, lat2, lon2) {
+    if (lat1 == null || lon1 == null || lat2 == null || lon2 == null) return null;
+    const toRad = d => d * Math.PI / 180;
+    const lat1r = toRad(lat1), lat2r = toRad(lat2);
+    const dLon = toRad(lon2 - lon1);
+    const y = Math.sin(dLon) * Math.cos(lat2r);
+    const x = Math.cos(lat1r) * Math.sin(lat2r) - Math.sin(lat1r) * Math.cos(lat2r) * Math.cos(dLon);
+    const deg = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+    return Number.isFinite(deg) ? deg : null;
+  }
+
+  function _mcPathBearingDeltaDeg(a, b) {
+    if (a == null || b == null) return null;
+    const diff = Math.abs(a - b) % 360;
+    return diff > 180 ? 360 - diff : diff;
+  }
+
+  function _mcPathCandidateScore(candidate, ctx = {}) {
+    const hashBytes = Number(ctx.hashBytes || 1);
+    let score = hashBytes >= 3 ? 46 : hashBytes === 2 ? 34 : 16;
+    const type = Number(candidate.type ?? 0);
+    if (type === 2) score += 24;       // MeshCore repeater/router
+    else if (type > 0) score += 3;
+
+    const lat = candidate.latitude ?? candidate.lat;
+    const lon = candidate.longitude ?? candidate.lon;
+    if (lat != null && lon != null) score += 8;
+
+    const seenTs = _mcContactSeenTs(candidate);
+    let age = null;
+    if (seenTs) {
+      age = Math.max(0, Math.floor(Date.now() / 1000) - seenTs);
+      if (age < 3600) score += 16;
+      else if (age < 6 * 3600) score += 11;
+      else if (age < 24 * 3600) score += 7;
+      else if (age < 7 * 24 * 3600) score += 3;
+    }
+
+    if (ctx.expectedLat != null && ctx.expectedLon != null && lat != null && lon != null) {
+      const km = _mcPathGeoKm(candidate, ctx.expectedLat, ctx.expectedLon);
+      score += Math.max(0, 42 - Math.min(42, km * 1.35));
+    }
+    if ((ctx.expectedLat == null || ctx.expectedLon == null) && ctx.radioLat != null && ctx.radioLon != null && lat != null && lon != null) {
+      const radioKm = _mcPathDirectKm(ctx.radioLat, ctx.radioLon, lat, lon);
+      if (Number.isFinite(radioKm)) {
+        score += Math.max(0, 26 - Math.min(26, radioKm * 0.22));
+        if (ctx.hashBytes <= 1 && radioKm > MC_PATH_RADIO_ONLY_MAX_KM) {
+          score -= Math.min(180, (radioKm - MC_PATH_RADIO_ONLY_MAX_KM) * 1.4 + 42);
+        }
+        if (ctx.hashBytes <= 1 && age != null && age > 24 * 3600 && radioKm > MC_PATH_STALE_REMOTE_KM) {
+          score -= Math.min(96, ((age - 24 * 3600) / 3600) * 0.35 + (radioKm - MC_PATH_STALE_REMOTE_KM) * 0.22 + 14);
+        }
+      }
+    }
+
+    if (ctx.radioLat != null && ctx.radioLon != null && ctx.endpointLat != null && ctx.endpointLon != null && lat != null && lon != null) {
+      const directKm = _mcPathDirectKm(ctx.radioLat, ctx.radioLon, ctx.endpointLat, ctx.endpointLon);
+      const radioKm = _mcPathDirectKm(ctx.radioLat, ctx.radioLon, lat, lon);
+      const detourKm = _mcPathDetourKm(candidate, ctx.radioLat, ctx.radioLon, ctx.endpointLat, ctx.endpointLon);
+      if (Number.isFinite(directKm) && Number.isFinite(detourKm)) {
+        const softLimit = Math.max(MC_PATH_SOFT_DETOUR_KM, directKm * 0.25);
+        const hardLimit = Math.max(MC_PATH_HARD_DETOUR_KM, directKm * 0.55);
+        if (detourKm > hardLimit) {
+          score -= Math.min(180, (detourKm - hardLimit) * 1.6 + 36);
+        } else if (detourKm > softLimit) {
+          score -= Math.min(48, (detourKm - softLimit) * 0.7 + 10);
+        }
+      }
+      const segmentMaxKm = _mcPathSegmentMaxKm(candidate, ctx.radioLat, ctx.radioLon, ctx.endpointLat, ctx.endpointLon);
+      if (Number.isFinite(segmentMaxKm) && segmentMaxKm > MC_PATH_IMPLAUSIBLE_SEGMENT_KM) {
+        score -= Math.min(160, (segmentMaxKm - MC_PATH_IMPLAUSIBLE_SEGMENT_KM) * 1.25 + 40);
+      }
+      if (Number.isFinite(directKm) && Number.isFinite(radioKm) && directKm > 20) {
+        const expectedFrac = Number.isFinite(ctx.expectedFrac) ? ctx.expectedFrac : null;
+        if (expectedFrac != null) {
+          const expectedKm = directKm * expectedFrac;
+          const fracTolKm = Math.max(20, directKm * 0.18);
+          const fracMiss = Math.abs(radioKm - expectedKm);
+          if (fracMiss > fracTolKm) {
+            const missScale = ctx.hashBytes <= 1 ? 0.65 : 0.4;
+            score -= Math.min(ctx.hashBytes <= 1 ? 80 : 48, (fracMiss - fracTolKm) * missScale + 8);
+          }
+        }
+        const endpointBearing = _mcPathBearingDeg(ctx.radioLat, ctx.radioLon, ctx.endpointLat, ctx.endpointLon);
+        const candidateBearing = _mcPathBearingDeg(ctx.radioLat, ctx.radioLon, lat, lon);
+        const bearingDelta = _mcPathBearingDeltaDeg(endpointBearing, candidateBearing);
+        if (bearingDelta != null && radioKm > 15) {
+          const soft = ctx.hashBytes <= 1 ? MC_PATH_SOFT_BEARING_DELTA_DEG : MC_PATH_SOFT_BEARING_DELTA_DEG + 15;
+          const hard = ctx.hashBytes <= 1 ? MC_PATH_HARD_BEARING_DELTA_DEG : MC_PATH_HARD_BEARING_DELTA_DEG + 20;
+          if (bearingDelta > hard) {
+            score -= Math.min(ctx.hashBytes <= 1 ? 130 : 84, (bearingDelta - hard) * 1.25 + 34);
+          } else if (bearingDelta > soft) {
+            score -= Math.min(ctx.hashBytes <= 1 ? 52 : 34, (bearingDelta - soft) * 0.75 + 8);
+          }
+        }
+      }
+    }
+
+    const outLen = Number(candidate.out_path_len);
+    if (Number.isFinite(outLen) && outLen >= 0) score += 2;
+    return score;
+  }
+
+  function _mcPathConfidence(hashBytes, matchCount, selectedCount, scoreGap, ambiguous) {
+    if (ambiguous) return 'ambiguous';
+    if (matchCount <= 1) {
+      if (hashBytes >= 3) return 'exact';
+      if (hashBytes === 2) return 'unique-2B';
+      return 'unique-1B';
+    }
+    if (hashBytes >= 3 && scoreGap >= 6) return 'likely';
+    if (hashBytes === 2 && scoreGap >= 10) return 'likely';
+    if (hashBytes === 1 && scoreGap >= 16) return 'estimated';
+    return selectedCount <= 1 ? 'likely' : 'estimated';
+  }
+
+  function _mcPickPathHopResolution(hashHex, radioId, radioLat, radioLon, endpointLat, endpointLon, hopIdx, hopCount, opts = {}) {
+    const hash = String(hashHex || '').toLowerCase();
+    if (!hash) return null;
+    const hashBytes = Math.max(1, Math.min(3, Math.ceil(hash.length / 2)));
+    const allMatches = findMcContactsByKeyPrefix(hash, radioId);
+    if (!allMatches.length) return null;
+
+    let candidates = opts.requireGps === false
+      ? [...allMatches]
+      : allMatches.filter(c => (c.latitude ?? c.lat) != null && (c.longitude ?? c.lon) != null);
+    if (!candidates.length) return null;
+
+    const repeaters = candidates.filter(c => (c.type ?? 0) === 2);
+    if (repeaters.length) candidates = repeaters;
+
+    let expectedLat = null;
+    let expectedLon = null;
+    if (radioLat != null && radioLon != null && endpointLat != null && endpointLon != null) {
+      const frac = (hopIdx + 1) / (hopCount + 1);
+      expectedLat = radioLat + (endpointLat - radioLat) * frac;
+      expectedLon = radioLon + (endpointLon - radioLon) * frac;
+    }
+
+    const ranked = candidates.map(contact => ({
+      contact,
+      score: _mcPathCandidateScore(contact, {
+        hashBytes,
+        expectedLat,
+        expectedLon,
+        radioLat,
+        radioLon,
+        endpointLat,
+        endpointLon,
+        expectedFrac: hopCount >= 0 ? ((hopIdx + 1) / (hopCount + 1)) : null,
+      }),
+    })).sort((a, b) => b.score - a.score);
+    const best = ranked[0];
+    if (!best) return null;
+
+    const second = ranked[1] || null;
+    const scoreGap = second ? best.score - second.score : Number.POSITIVE_INFINITY;
+    const gapNeeded = hashBytes >= 3 ? 4 : hashBytes === 2 ? 8 : 14;
+    const noGeometry = expectedLat == null || expectedLon == null;
+    const bestDetourKm = _mcPathDetourKm(best.contact, radioLat, radioLon, endpointLat, endpointLon);
+    const directKm = _mcPathDirectKm(radioLat, radioLon, endpointLat, endpointLon);
+    const bestSegmentMaxKm = _mcPathSegmentMaxKm(best.contact, radioLat, radioLon, endpointLat, endpointLon);
+    const bestRadioOnlyKm = _mcPathDirectKm(radioLat, radioLon, best.contact?.latitude ?? best.contact?.lat, best.contact?.longitude ?? best.contact?.lon);
+    const absurdDetour = Number.isFinite(bestDetourKm) && Number.isFinite(directKm)
+      && bestDetourKm > Math.max(MC_PATH_HARD_DETOUR_KM, directKm * 1.1);
+    const implausibleSegment = Number.isFinite(bestSegmentMaxKm) && bestSegmentMaxKm > MC_PATH_IMPLAUSIBLE_SEGMENT_KM;
+    const implausibleRadioOnly = noGeometry && hashBytes <= 1 && Number.isFinite(bestRadioOnlyKm)
+      && bestRadioOnlyKm > MC_PATH_RADIO_ONLY_MAX_KM;
+    const ambiguous = ranked.length > 1 && (
+      scoreGap < gapNeeded
+      || (noGeometry && hashBytes <= 1 && scoreGap < 22)
+      || ((absurdDetour || implausibleSegment || implausibleRadioOnly) && scoreGap < gapNeeded + 18)
+    );
+
+    if ((absurdDetour || implausibleSegment || implausibleRadioOnly) && (ranked.length > 1 || hashBytes <= 1) && scoreGap < gapNeeded + 18) return null;
+
+    return {
+      contact: best.contact,
+      hash,
+      hashBytes,
+      matchCount: allMatches.length,
+      selectedCount: candidates.length,
+      ambiguous,
+      confidence: _mcPathConfidence(hashBytes, allMatches.length, candidates.length, scoreGap, ambiguous),
+      scoreGap,
+      alternatives: ranked.slice(1, 4).map(r => ({
+        id: r.contact.id || r.contact.full_key || '',
+        name: r.contact.long_name || r.contact.name || r.contact.id || '',
+        score: r.score,
+      })),
+    };
+  }
+
+  function _mcPickPathHop(hashHex, radioId, radioLat, radioLon, endpointLat, endpointLon, hopIdx, hopCount) {
+    return _mcPickPathHopResolution(hashHex, radioId, radioLat, radioLon, endpointLat, endpointLon, hopIdx, hopCount)?.contact || null;
+  }
+
+  function _mcPathHopMeta(hashHex, contact, pointIndex, resolution = null) {
+    const name = contact ? (contact.long_name || contact.name || contact.id || hashHex) : (hashHex || '?');
+    return {
+      hash: String(hashHex || '').toLowerCase(),
+      name,
+      pointIndex,
+      contactId: contact?.id || contact?.full_key || null,
+      confidence: resolution?.confidence || null,
+      ambiguous: !!resolution?.ambiguous,
+      matchCount: resolution?.matchCount || null,
+      alternatives: resolution?.alternatives || [],
+    };
+  }
+
+  function _mcHopConfidenceLabel(hop) {
+    const confidence = hop?.ambiguous ? 'ambiguous' : (hop?.confidence || '');
+    return confidence && !['exact', 'unique-2B', 'unique-1B'].includes(confidence) ? confidence : '';
+  }
+
+  function _mcReversePathResult(pathResult) {
+    if (!pathResult?.points) return pathResult;
+    const lastIdx = pathResult.points.length - 1;
+    const hops = (pathResult.hops || []).map(h => ({ ...h, pointIndex: lastIdx - h.pointIndex }));
+    const segmentSnrs = Array.isArray(pathResult.segmentSnrs) ? [...pathResult.segmentSnrs].reverse() : pathResult.segmentSnrs;
+    return { ...pathResult, points: [...pathResult.points].reverse(), hops, segmentSnrs };
+  }
+
+  function _mcHopTooltipHtml(hop) {
+    const confidence = _mcHopConfidenceLabel(hop);
+    const suffix = confidence
+      ? `<span style="margin-left:4px;color:#f59e0b;font-size:9px">${escHtml(confidence)}</span>`
+      : '';
+    const title = hop.matchCount && hop.matchCount > 1 ? ` title="${escHtml(`${hop.matchCount} hash matches; ${confidence || 'resolved'}`)}"` : '';
+    return `<span class="mc-hop-prefix"${title}>${escHtml(hop.hash || '?')}</span>${escHtml(hop.name || '?')}${suffix}`;
+  }
+
+  function _mcPathLengthKm(points) {
+    if (!points || points.length < 2) return Number.POSITIVE_INFINITY;
+    let meters = 0;
+    for (let i = 0; i < points.length - 1; i++) {
+      const a = points[i], b = points[i + 1];
+      if (!a || !b) continue;
+      meters += _haversineMeters(a[0], a[1], b[0], b[1]);
+    }
+    return meters / 1000;
+  }
+
+  function _mcPathMonotonicPenalty(points) {
+    if (!points || points.length < 3) return 0;
+    const start = points[0];
+    const end = points[points.length - 1];
+    let penalty = 0;
+    const tolKm = 5;
+    for (let i = 1; i < points.length; i++) {
+      const prev = points[i - 1];
+      const cur = points[i];
+      const prevFromStart = _mcPathDirectKm(start[0], start[1], prev[0], prev[1]);
+      const curFromStart = _mcPathDirectKm(start[0], start[1], cur[0], cur[1]);
+      if (Number.isFinite(prevFromStart) && Number.isFinite(curFromStart) && curFromStart + tolKm < prevFromStart) {
+        penalty += (prevFromStart - curFromStart);
+      }
+      const prevToEnd = _mcPathDirectKm(prev[0], prev[1], end[0], end[1]);
+      const curToEnd = _mcPathDirectKm(cur[0], cur[1], end[0], end[1]);
+      if (Number.isFinite(prevToEnd) && Number.isFinite(curToEnd) && curToEnd > prevToEnd + tolKm) {
+        penalty += (curToEnd - prevToEnd);
+      }
+    }
+    return penalty;
+  }
+
+  function _mcRelayProgressPenalty(points) {
+    if (!points || points.length < 3) return 0;
+    const start = points[0];
+    let penalty = 0;
+    const tolKm = 5;
+    for (let i = 1; i < points.length; i++) {
+      const prev = points[i - 1];
+      const cur = points[i];
+      const prevDist = _mcPathDirectKm(start[0], start[1], prev[0], prev[1]);
+      const curDist = _mcPathDirectKm(start[0], start[1], cur[0], cur[1]);
+      if (Number.isFinite(prevDist) && Number.isFinite(curDist) && curDist + tolKm < prevDist) {
+        penalty += (prevDist - curDist);
+      }
+    }
+    return penalty;
+  }
+
+  function _mcDecodedPathScore(result, expectedHopCount) {
+    if (!result?.points || result.points.length < 2) return Number.POSITIVE_INFINITY;
+    const directKm = _mcPathLengthKm([result.points[0], result.points[result.points.length - 1]]);
+    const pathKm = _mcPathLengthKm(result.points);
+    const missing = Math.max(0, (expectedHopCount || 0) - (result.hops || []).length);
+    const ambiguity = (result.hops || []).filter(h => h.ambiguous || ['likely', 'estimated'].includes(h.confidence)).length;
+    const detourKm = Number.isFinite(directKm) ? Math.max(0, pathKm - directKm) : pathKm;
+    const monotonicPenalty = _mcPathMonotonicPenalty(result.points);
+    return pathKm + detourKm * 0.75 + missing * 250 + ambiguity * 60 + monotonicPenalty * 12;
+  }
+
+  function decodeMcPath(contact, radioLat, radioLon, radioId = null) {
+    const pathHex  = contact.out_path || '';
+    // Prefer observed hash size from events; fall back to configured mode from REST API
+    const hashBytes = _mcPathHashSize(contact.out_path_hash_size, contact.out_path_hash_mode);
+    const hashChars = hashBytes * 2;   // hex chars per hop hash
+    const hopCount  = contact.out_path_len ?? -1;
+    const cLat = contact.latitude ?? contact.lat;
+    const cLon = contact.longitude ?? contact.lon;
+    if (cLat == null || cLon == null) return null;
+
+    if (hopCount < 0) {
+      // Flood — no established routed path. Draw a dashed grey line if both ends have GPS.
+      if (radioLat != null && radioLon != null) {
+        return { points: [[radioLat, radioLon], [cLat, cLon]], partial: false, flood: true };
+      }
+      return null;
+    }
+    if (hopCount === 0) {
+      // Direct (0 hops): straight line from radio to contact
+      if (radioLat != null && radioLon != null) return { points: [[radioLat, radioLon], [cLat, cLon]], partial: false };
+      return null;
+    }
+
+    const points = [];
+    const hops = [];
+    let partial = false;
+    if (radioLat != null && radioLon != null) points.push([radioLat, radioLon]);
+
+    for (let i = 0; i < hopCount; i++) {
+      const hashHex = pathHex.slice(i * hashChars, (i + 1) * hashChars);
+      if (!hashHex || hashHex.replace(/0/g, '') === '') break;
+      const hopResolution = _mcPickPathHopResolution(hashHex, radioId, radioLat, radioLon, cLat, cLon, i, hopCount);
+      const hopContact = hopResolution?.contact || null;
+      if (!hopContact) { partial = true; continue; }  // unknown repeater — skip, draw partial
+      const hLat = hopContact.latitude ?? hopContact.lat;
+      const hLon = hopContact.longitude ?? hopContact.lon;
+      if (hLat == null || hLon == null) { partial = true; continue; }
+      points.push([hLat, hLon]);
+      hops.push(_mcPathHopMeta(hashHex, hopContact, points.length - 1, hopResolution));
+      if (hopResolution?.ambiguous) partial = true;
+    }
+    points.push([cLat, cLon]);
+    return points.length >= 2 ? { points, partial, hops } : null;
+  }
+
+  function decodeMcEventPath(evt, endpointLat, endpointLon, radioLat, radioLon, radioId = null) {
+    const pathHex = evt?.path || '';
+    const hopCount = evt?.path_len;
+    if (endpointLat == null || endpointLon == null) return null;
+    if (hopCount == null || hopCount < 0 || hopCount === 255) return null;  // 255 = direct-mode/no embedded hop list in message events
+    if (hopCount === 0) {
+      if (radioLat != null && radioLon != null) return { points: [[radioLat, radioLon], [endpointLat, endpointLon]], partial: false };
+      return null;
+    }
+    // hopCount > 0 but no path hashes — relay identities unavailable, let caller fall back to decodeMcPath
+    if (!pathHex) return null;
+    const explicitSize = _mcExplicitPathHashSize(evt);
+    const candidateSizes = explicitSize
+      ? [explicitSize]
+      : [1, 2, 3].filter(size => pathHex.length >= hopCount * size * 2 );
+    const build = (hashes, orderLabel, hashSize) => {
+      const points = [];
+      const hops = [];
+      let partial = false;
+      if (radioLat != null && radioLon != null) points.push([radioLat, radioLon]);
+      hashes.forEach((hashHex, i) => {
+        const hopResolution = _mcPickPathHopResolution(hashHex, radioId, radioLat, radioLon, endpointLat, endpointLon, i, hashes.length);
+        const hopContact = hopResolution?.contact || null;
+        if (!hopContact) { partial = true; return; }
+        const hLat = hopContact.latitude ?? hopContact.lat;
+        const hLon = hopContact.longitude ?? hopContact.lon;
+        if (hLat == null || hLon == null) { partial = true; return; }
+        points.push([hLat, hLon]);
+        hops.push(_mcPathHopMeta(hashHex, hopContact, points.length - 1, hopResolution));
+        if (hopResolution?.ambiguous) partial = true;
+      });
+      points.push([endpointLat, endpointLon]);
+      return points.length >= 2 ? { points, partial, hops, rawPathOrder: orderLabel, inferredPathHashSize: hashSize } : null;
+    };
+    let best = null;
+    candidateSizes.forEach(hashSize => {
+      const hashChars = hashSize * 2;
+      const hashList = [];
+      for (let i = 0; i < hopCount; i++) {
+        const hashHex = pathHex.slice(i * hashChars, (i + 1) * hashChars);
+        if (!hashHex || hashHex.replace(/0/g, '') === '') break;
+        hashList.push(hashHex);
+      }
+      const forward = build(hashList, 'as-received', hashSize);
+      const reverse = hashList.length > 1 ? build([...hashList].reverse(), 'reversed', hashSize) : null;
+      const chosen = (!forward)
+        ? reverse
+        : (!reverse)
+          ? forward
+          : ((_mcDecodedPathScore(reverse, hopCount) + 25 < _mcDecodedPathScore(forward, hopCount)) ? reverse : forward);
+      if (!chosen) return;
+      const score = _mcDecodedPathScore(chosen, hopCount);
+      if (!best || score < best.score) best = { score, result: chosen };
+    });
+    return best?.result || null;
+  }
+
+  function decodeMcRelayPath(evt, radioLat, radioLon, radioId = null) {
+    const pathHex = evt?.path || '';
+    if (radioLat == null || radioLon == null) return null;
+    if (!pathHex) return null;
+    const rawHopCount = evt?.path_len;
+    const explicitSize = _mcExplicitPathHashSize(evt);
+    const candidates = explicitSize ? [explicitSize] : [1, 2, 3].filter(size => pathHex.length >= size * 2 );
+    let best = null;
+    candidates.forEach(hashSize => {
+      const hashChars = hashSize * 2;
+      const hopCount = (rawHopCount != null && rawHopCount > 0 && rawHopCount !== 255)
+        ? rawHopCount
+        : Math.floor(pathHex.length / hashChars);
+      if (!hopCount) return;
+      const hashList = [];
+      for (let i = 0; i < hopCount; i++) {
+        const hashHex = pathHex.slice(i * hashChars, (i + 1) * hashChars);
+        if (!hashHex || hashHex.replace(/0/g, '') === '') break;
+        hashList.push(hashHex);
+      }
+      const build = (hashes, orderLabel) => {
+        const points = [[radioLat, radioLon]];
+        const hops = [];
+        let unresolved = 0;
+        hashes.forEach((hashHex, i) => {
+          const hopResolution = _mcPickPathHopResolution(hashHex, radioId, radioLat, radioLon, null, null, i, hashes.length);
+          const hopContact = hopResolution?.contact || null;
+          if (!hopContact) { unresolved++; return; }
+          const hLat = hopContact.latitude ?? hopContact.lat;
+          const hLon = hopContact.longitude ?? hopContact.lon;
+          if (hLat == null || hLon == null) { unresolved++; return; }
+          points.push([hLat, hLon]);
+          hops.push(_mcPathHopMeta(hashHex, hopContact, points.length - 1, hopResolution));
+          if (hopResolution?.ambiguous) unresolved += 0.5;
+        });
+        if (points.length < 2) return null;
+        const progressPenalty = _mcRelayProgressPenalty(points);
+        const score = (hops.length * 100) - (unresolved * 20) - (Math.abs(hopCount - hops.length) * 12) - (progressPenalty * 10);
+        return {
+          score,
+          result: {
+            points,
+            partial: true,
+            endpointUnknown: true,
+            hops,
+            unresolved,
+            inferredPathHashSize: hashSize,
+            inferredHopLen: hopCount,
+            rawPathOrder: orderLabel,
+          },
+        };
+      };
+      const forward = build(hashList, 'as-received');
+      const reverse = hashList.length > 1 ? build([...hashList].reverse(), 'reversed') : null;
+      const chosen = (!forward || (reverse && reverse.score > forward.score + 10)) ? reverse : forward;
+      if (chosen && (!best || chosen.score > best.score)) best = chosen;
+    });
+    return best?.result || null;
+  }
+
+  function renderMcPathLines() {
+    clearMcPathLines();
+    // Static path lines removed — lines only shown on hover/trace events
+    return;
+    if (!leafletMap) return;
+    Object.entries(mcContacts).forEach(([rid, radioContacts]) => {
+      if (mcLastStatus[rid]?.status !== 'connected') return;
+      const [radioLat, radioLon] = _mcSenseRadioPos(rid);
+      Object.values(radioContacts).forEach(c => {
+        const result = decodeMcPath(c, radioLat, radioLon, rid);
+        if (!result || result.points.length < 2) return;
+        // Style: flood = faint grey dashes (path unknown), partial = blue dashes (some hops missing GPS), routed = solid blue
+        const lineColor   = result.flood ? 'rgba(148,163,184,0.5)' : '#3b82f6';
+        const lineWeight  = result.flood ? 1 : 4;
+        const lineOpacity = result.flood ? 0.4 : (result.partial ? 0.5 : 0.85);
+        const lineDash    = result.flood ? '3,7' : (result.partial ? '6,4' : null);
+        if (!result.flood) {
+          const outline2 = L.polyline(result.points, {
+            color: '#000', weight: lineWeight + 3, opacity: 0.35,
+            dashArray: null, lineCap: 'round', lineJoin: 'round', interactive: false
+          }).addTo(leafletMap);
+          _mcPathLines.push(outline2);
+        }
+        const line = L.polyline(result.points, {
+          color: lineColor, weight: lineWeight,
+          opacity: lineOpacity, dashArray: lineDash,
+          lineCap: 'round', lineJoin: 'round', interactive: false
+        }).addTo(leafletMap);
+        _mcPathLines.push(line);
+        // Directional arrows only for routed paths (not flood — too many faint lines)
+        if (!result.flood) {
+          const arrowFill  = result.partial ? 'rgba(59,130,246,0.5)' : '#3b82f6';
+          for (let i = 0; i < result.points.length - 1; i++) {
+            const p1 = result.points[i], p2 = result.points[i + 1];
+            const mid = [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2];
+            const bearing = _mcBearing(p1, p2);
+            const arrowIcon = L.divIcon({
+              html: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="-8 -8 16 16" style="overflow:visible"><polygon points="0,-7 5,4 0,1 -5,4" fill="${arrowFill}" stroke="#000" stroke-width="1" stroke-linejoin="round" transform="rotate(${bearing + 180})"/></svg>`,
+              iconSize: [16, 16], iconAnchor: [8, 8], className: ''
+            });
+            _mcPathLines.push(L.marker(mid, {icon: arrowIcon, interactive: false}).addTo(leafletMap));
+          }
+          // Warning marker for partial paths (hops with no GPS were skipped)
+          if (result.partial) {
+            const warnPt = result.points[Math.floor(result.points.length / 2)];
+            const warnIcon = L.divIcon({
+              html: `<div style="background:rgba(245,158,11,0.85);color:#fff;font-size:9px;font-weight:700;border-radius:3px;padding:0 3px;line-height:14px;cursor:default" title="Incomplete path: some hops have no GPS position">?hop</div>`,
+              iconSize: null, iconAnchor: [14, 7], className: ''
+            });
+            _mcPathLines.push(L.marker(warnPt, {icon: warnIcon, interactive: false}).addTo(leafletMap));
+          }
+        }
+      });
+    });
+  }
+
+  function clearMcPathLines() {
+    _mcPathLines.forEach(l => leafletMap && leafletMap.removeLayer(l));
+    _mcPathLines = [];
+  }
+
+  function _mcBearing(p1, p2) {
+    const toRad = d => d * Math.PI / 180;
+    const lat1 = toRad(p1[0]), lat2 = toRad(p2[0]);
+    const dLon = toRad(p2[1] - p1[1]);
+    const y = Math.sin(dLon) * Math.cos(lat2);
+    const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+    return Math.atan2(y, x) * 180 / Math.PI;
+  }
+
+  function _mcWingArm(kind) {
+    const zoom = leafletMap ? leafletMap.getZoom() : 10;
+    const base = kind === 'trace' ? 12 : 9;
+    return Math.max(base, Math.min(base + 4, base + (zoom - 10) * 0.35));
+  }
+
+  function _mcSegmentPixelLength(p1, p2) {
+    if (!leafletMap) return 0;
+    const a = leafletMap.latLngToLayerPoint([p1[0], p1[1]]);
+    const b = leafletMap.latLngToLayerPoint([p2[0], p2[1]]);
+    return Math.hypot(b.x - a.x, b.y - a.y);
+  }
+
+  function _mcWingCount(p1, p2) {
+    const zoom = leafletMap ? leafletMap.getZoom() : 10;
+    const segPx = _mcSegmentPixelLength(p1, p2);
+    const spacing = Math.max(50, 180 - (zoom - 7) * 13);
+    return Math.max(1, Math.min(10, Math.floor(segPx / spacing)));
+  }
+
+  function _mcPathSegmentSnr(pathResult, idx) {
+    if (!pathResult || Array.isArray(pathResult)) return null;
+    const seg = Array.isArray(pathResult.segmentSnrs) ? pathResult.segmentSnrs[idx] : null;
+    if (seg != null && Number.isFinite(Number(seg))) return Number(seg);
+    const hop = (pathResult.hops || []).find(h => h.pointIndex === idx + 1);
+    if (hop?.snr != null && Number.isFinite(Number(hop.snr))) return Number(hop.snr);
+    const fallback = pathResult.snr;
+    return fallback != null && Number.isFinite(Number(fallback)) ? Number(fallback) : null;
+  }
+
+  function _mcPathPointSnr(pathResult, idx) {
+    return _mcPathSegmentSnr(pathResult, Math.max(0, idx - 1)) ?? _mcPathSegmentSnr(pathResult, idx);
+  }
+
+  function _mcWingLatLngs(p1, p2, t, arm, angleDeg = 14) {
+    if (!leafletMap) return [];
+    const start = leafletMap.latLngToLayerPoint([p1[0], p1[1]]);
+    const end   = leafletMap.latLngToLayerPoint([p2[0], p2[1]]);
+    const dx = end.x - start.x, dy = end.y - start.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 2) return [];
+    const ux = dx / len, uy = dy / len;   // forward unit vector
+    const px = -uy,       py =  ux;        // perpendicular (left)
+    const cx = start.x + dx * t, cy = start.y + dy * t;
+    const angle = angleDeg * Math.PI / 180;
+    const back = arm * Math.cos(angle);
+    const side = arm * Math.sin(angle);
+    const leftEnd  = leafletMap.layerPointToLatLng(L.point(cx - ux * back + px * side, cy - uy * back + py * side));
+    const tip      = leafletMap.layerPointToLatLng(L.point(cx, cy));
+    const rightEnd = leafletMap.layerPointToLatLng(L.point(cx - ux * back - px * side, cy - uy * back - py * side));
+    return [[leftEnd.lat, leftEnd.lng], [tip.lat, tip.lng], [rightEnd.lat, rightEnd.lng]];
+  }
+
+  function _mcPathWarningText(pathResult, kind = null) {
+    if (!pathResult) return '';
+    if (pathResult.endpointUnknown) return 'Known relay only - final sender/contact position unknown';
+    if (pathResult.partial) {
+      if (kind === 'trace') return 'Partial trace - only known hops are shown';
+      if (kind === 'message') return 'Partial message path - only known hops are shown';
+      if (kind === 'ping') return 'Partial path - only known hops are shown';
+      return 'Partial path - only known hops are shown';
+    }
+    return '';
+  }
+
+  function showMcHoverPath(pathResult, on) {
+    _mcHoverLines.forEach(l => leafletMap && leafletMap.removeLayer(l));
+    _mcHoverLines = [];
+    _mcActiveHoverPath = on && pathResult ? pathResult : null;
+    if (!on || !pathResult || !leafletMap) return;
+    // Accept both old array format and new {points, partial, flood, kind} format
+    const points  = Array.isArray(pathResult) ? pathResult : pathResult.points;
+    const partial = Array.isArray(pathResult) ? false : !!pathResult.partial;
+    const flood   = Array.isArray(pathResult) ? false : !!pathResult.flood;
+    const kind    = Array.isArray(pathResult) ? null   : (pathResult.kind || null);
+    if (!points || points.length < 2) return;
+
+    let lineColor, lineWeight, lineDash, lineOpacity, dotColor;
+    if (kind === 'trace') {
+      const trSnr = Array.isArray(pathResult) ? null : (pathResult.snr ?? null);
+      lineColor = (_showTrMap && trSnr != null) ? _snrLineColor(trSnr) : '#f97316';
+      dotColor  = lineColor;
+      lineWeight = 3; lineDash = null; lineOpacity = 1.0;
+    } else if (kind === 'ping') {
+      lineColor = '#22c55e'; lineWeight = 3; lineDash = '2,6'; lineOpacity = 1.0;
+      dotColor = '#22c55e';
+    } else if (kind === 'message') {
+      lineColor = '#8b5cf6'; lineWeight = 3; lineDash = '2,6'; lineOpacity = 1.0;
+      dotColor = '#8b5cf6';
+    } else if (flood) {
+      lineColor = '#94a3b8'; lineWeight = 3; lineDash = '6,5'; lineOpacity = 1.0;
+    } else {
+      // advert (default) — dotted blue, incoming
+      lineColor = '#3b82f6'; lineWeight = 3; lineDash = '2,6'; lineOpacity = 1.0;
+      dotColor = '#3b82f6';
+    }
+
+    if (dotColor) {
+      // Thin dark halo for contrast — always solid so it outlines dots cleanly
+      const halo = L.polyline(points, {
+        color: '#111', weight: lineWeight + 3, opacity: 0.4,
+        dashArray: null, lineCap: 'round', lineJoin: 'round', interactive: false
+      }).addTo(leafletMap);
+      _mcHoverLines.push(halo);
+    }
+
+    for (let i = 0; i < points.length - 1; i++) {
+      const segSnr = _mcPathSegmentSnr(pathResult, i);
+      const segColor = segSnr != null ? _snrLineColor(segSnr) : lineColor;
+      const line = L.polyline([points[i], points[i + 1]], {
+        color: segColor, weight: lineWeight, opacity: lineOpacity,
+        dashArray: lineDash, lineCap: 'round', lineJoin: 'round',
+        interactive: segSnr != null
+      });
+      if (segSnr != null) line.bindTooltip(`SNR ${segSnr.toFixed(1)} dB`, {sticky: true, direction: 'top'});
+      line.addTo(leafletMap);
+      _mcHoverLines.push(line);
+    }
+
+    if (dotColor) {
+      // Dot at each hop point
+      const hopByPoint = new Map(((pathResult && !Array.isArray(pathResult) && pathResult.hops) || []).map(h => [h.pointIndex, h]));
+      points.forEach(([lat, lon], idx) => {
+        const ptSnr = _mcPathPointSnr(pathResult, idx);
+        const c = L.circleMarker([lat, lon], {
+          radius: kind === 'trace' ? 8 : 6, color: '#000', fillColor: ptSnr != null ? _snrLineColor(ptSnr) : dotColor,
+          fillOpacity: 1.0, weight: 2, interactive: false
+        }).addTo(leafletMap);
+        const hop = hopByPoint.get(idx);
+        if (hop) {
+          c.bindTooltip(_mcHopTooltipHtml(hop), {
+            permanent: true,
+            direction: 'right',
+            className: 'map-label mc-hop-label',
+            offset: [9, 0],
+          }).openTooltip();
+        }
+        _mcHoverLines.push(c);
+      });
+      // Directional wings along each segment — V-shaped tick marks, same color/weight/dash as line
+      const arm = _mcWingArm(kind) * 1.28;
+      for (let i = 0; i < points.length - 1; i++) {
+        const p1 = points[i], p2 = points[i + 1];
+        const wCount = Math.min(12, _mcWingCount(p1, p2) + 1);
+        const segSnr = _mcPathSegmentSnr(pathResult, i);
+        const segColor = segSnr != null ? _snrLineColor(segSnr) : lineColor;
+        Array.from({length: wCount}, (_, idx) => (idx + 1) / (wCount + 1)).forEach(t => {
+          const wingPts = _mcWingLatLngs(p1, p2, t, arm, 19);
+          if (wingPts.length === 3) {
+            _mcHoverLines.push(L.polyline(wingPts, {
+              color: '#111', weight: lineWeight + 3, opacity: 0.52,
+              dashArray: null, lineCap: 'round', lineJoin: 'round', interactive: false
+            }).addTo(leafletMap));
+            const wing = L.polyline(wingPts, {
+              color: segColor, weight: lineWeight + 1, opacity: 1.0,
+              dashArray: null, lineCap: 'round', lineJoin: 'round', interactive: false
+            }).addTo(leafletMap);
+            _mcHoverLines.push(wing);
+          }
+        });
+      }
+      const warnText = _mcPathWarningText(pathResult, kind);
+      if (warnText && points.length) {
+        const warnIdx = pathResult?.endpointUnknown ? 0 : (points.length - 1);
+        const [warnLat, warnLon] = points[Math.max(0, Math.min(warnIdx, points.length - 1))];
+        const warn = L.marker([warnLat, warnLon], {
+          icon: L.divIcon({
+            className: 'mc-path-warn-icon',
+            html: '<div class="mc-path-warn">!</div>',
+            iconSize: [20, 20],
+            iconAnchor: [10, 10],
+          }),
+          interactive: true,
+        }).addTo(leafletMap);
+        warn.bindTooltip(warnText, {
+          direction: 'top',
+          className: 'map-label',
+          offset: [0, -10],
+        });
+        _mcHoverLines.push(warn);
+      }
+    }
+  }
+
+  function _mcSenseRadioPos(radioId = null) {
+    if (radioId) {
+      const st = mcLastStatus[radioId];
+      if (st?.status === 'connected' && st.lat != null && st.lat !== 0) return [st.lat, st.lon];
+    }
+    for (const [, st] of Object.entries(mcLastStatus)) {
+      if (st.status === 'connected' && st.lat != null && st.lat !== 0) return [st.lat, st.lon];
+    }
+    return [null, null];
+  }
+
+  function addMcSenseLogEntry(data) {
+    const hopLen  = data.out_path_len ?? -1;
+    const hopStr  = mcPathHopLabel(hopLen, true);
+    // Prefer name from contacts cache (may be richer than current advert payload)
+    const cached  = data.radio_id && data.id ? (mcContacts[data.radio_id] || {})[data.id] : null;
+    // Prefer a real name; fall back to first 4 chars of id as a short anonymous label
+    const candidateName = cached?.long_name || data.long_name || data.name;
+    const isHexFallback = !candidateName || !!candidateName.match(/^[0-9a-f]{6,}$/i);
+    const name = isHexFallback ? (data.id ? data.id.slice(0, 4) + '…' : '?') : candidateName;
+    const ts      = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
+    const typeRaw = cached?.type ?? data.contact_type;  // data.type is event type string "mc_node", not contact type
+    const typeIdx = (typeof typeRaw === 'number' ? typeRaw : parseInt(typeRaw)) || 0;
+    const contact = mcContacts[data.radio_id]?.[data.id] || data;
+    const lat = contact.latitude ?? contact.lat ?? null;
+    const lon = contact.longitude ?? contact.lon ?? null;
+    const [radioLat, radioLon] = _mcSenseRadioPos(data.radio_id);
+    let pathResult = decodeMcPath(contact, radioLat, radioLon, data.radio_id);
+    if (!pathResult && lat != null && lon != null && radioLat != null) {
+      pathResult = { points: [[radioLat, radioLon], [lat, lon]], flood: true };
+    }
+    // Reverse: advert is incoming (contact → relays → our radio), but decodeMcPath builds radio→contact
+    if (pathResult?.points) pathResult = _mcReversePathResult(pathResult);
+    const entry = { kind: 'advert', name, ts, hopStr, hopLen, typeIdx, pathResult, lat, lon, id: data.id, radioId: data.radio_id };
+    if (_mcLogPinnedIdx !== null) _mcLogPinnedIdx++;
+    _mcSenseLogEntries.unshift(entry);
+    if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
+    try { localStorage.setItem('mcSenseLog', JSON.stringify(_mcSenseLogEntries.slice(0, 100))); } catch(e) {}
+    renderMcSenseLog();
+  }
+
+  // Stable index: _mcSenseLogEntries[i].pathResult accessed by original array index
+  function _mcSenseLogEntrySearchText(entry) {
+    const parts = [
+      entry.kind,
+      entry.name,
+      entry.text,
+      entry.radioName,
+      entry.responderName,
+      entry.hopStr,
+      entry.snrLabel,
+      entry.id,
+      entry.radioId,
+      entry.fromId,
+      entry.chanName,
+    ];
+    if (entry.kind === 'self_advert') parts.push('self advert');
+    if (entry.kind === 'sent_message') parts.push('sent message');
+    if (entry.kind === 'message') parts.push('message');
+    if (entry.kind === 'ping') parts.push('ping');
+    if (entry.kind === 'trace') parts.push('trace');
+    if (entry.kind === 'scan') parts.push('scan');
+    if (entry.kind === 'bot_reply') parts.push('bot reply');
+    if (entry.kind === 'advert') parts.push('advert');
+    return parts.filter(Boolean).join(' ').toLowerCase();
+  }
+
+  function renderMcSenseLog() {
+    const el = document.getElementById('sense-mc-log');
+    if (!el) return;
+    const filter = (document.getElementById('sense-mc-log-search')?.value || '').toLowerCase().trim();
+    const indexed = _mcSenseLogEntries.map((e, i) => ({...e, _i: i}));
+    const entries = filter
+      ? indexed.filter(e => _mcSenseLogEntrySearchText(e).includes(filter))
+      : indexed;
+    if (!entries.length) {
+      el.innerHTML = `<span id="sense-mc-log-empty">${filter ? 'No matches.' : 'No MC activity yet.'}</span>`;
+      return;
+    }
+    const wasAtBottom = el.scrollHeight - el.scrollTop <= el.clientHeight + 20;
+    el.innerHTML = entries.map(e => {
+      if (e.kind === 'trace') {
+        const isPinned = _mcLogPinnedIdx === e._i;
+        const hopColor = mcPathHopColor(e.hopLen);
+        const rLabel = e.responderName ? escHtml(e.responderName) : '?';
+        const snrLabel = e.finalSnr != null ? ` · ${e.finalSnr.toFixed(1)}dB` : '';
+        const warnText = _mcPathWarningText(e.pathResult, 'trace');
+        const iconColor = e.ours ? '#a78bfa' : 'rgba(167,139,250,0.4)';
+        const rowOpacity = e.ours ? '' : 'opacity:0.6;';
+        return `<div class="${isPinned ? 'mc-route-selected' : ''}" style="padding:2px 0;border-bottom:1px solid var(--border);cursor:pointer;${rowOpacity}"
+          onclick="_mcLogClick(${e._i})"
+          onmouseenter="_mcLogHover(${e._i},true)"
+          onmouseleave="_mcLogHover(${e._i},false)">
+          <span style="color:var(--muted)">${e.ts}</span>
+          <span style="color:${iconColor};margin-left:4px">⟳</span>
+          <span style="margin-left:4px">${rLabel}</span>
+          <span style="color:${hopColor};margin-left:4px;font-size:10px">${e.hopStr}${snrLabel}</span>
+          ${warnText ? `<span title="${escHtml(warnText)}" style="color:#f59e0b;margin-left:4px;font-size:10px">!</span>` : ''}
+        </div>`;
+      }
+      if (e.kind === 'scan') {
+        return `<div style="padding:2px 0;border-bottom:1px solid var(--border)">
+          <span style="color:var(--muted)">${e.ts}</span>
+          <span style="margin-left:4px;color:#94a3b8;font-size:10px;font-style:italic">Scan started · ${escHtml(e.radioName)}</span>
+        </div>`;
+      }
+      if (e.kind === 'ping') {
+        const isPinned = _mcLogPinnedIdx === e._i;
+        const snr = e.snrLabel ? ` · ${e.snrLabel}` : '';
+        const warnText = e.pathWarn || _mcPathWarningText(e.pathResult, 'ping');
+        return `<div class="${isPinned ? 'mc-route-selected' : ''}" style="padding:2px 0;border-bottom:1px solid var(--border);cursor:pointer"
+          onclick="_mcLogClick(${e._i})"
+          onmouseenter="_mcLogHover(${e._i},true)"
+          onmouseleave="_mcLogHover(${e._i},false)">
+          <span style="color:var(--muted)">${e.ts}</span>
+          <span style="color:#22c55e;font-size:9px;font-weight:600;background:rgba(34,197,94,0.15);border:1px solid rgba(34,197,94,0.3);border-radius:3px;padding:0 3px;margin-left:4px">ping</span>
+          <span style="margin-left:4px;font-weight:600">${escHtml(e.name)}</span>
+          <span style="color:var(--muted);margin-left:4px;font-size:10px">${e.hopStr}${snr}</span>
+          ${warnText ? `<span title="${escHtml(warnText)}" style="color:#f59e0b;margin-left:4px;font-size:10px">!</span>` : ''}
+        </div>`;
+      }
+      if (e.kind === 'self_advert') {
+        return `<div style="padding:2px 0;border-bottom:1px solid var(--border)">
+          <span style="color:var(--muted)">${e.ts}</span>
+          <span style="color:#94a3b8;font-size:9px;font-weight:600;background:rgba(148,163,184,0.15);border:1px solid rgba(148,163,184,0.3);border-radius:3px;padding:0 3px;margin-left:4px">adv</span>
+          <span style="margin-left:4px">${escHtml(e.radioName)}</span>
+          <span style="color:#94a3b8;font-size:10px;margin-left:4px">(self)</span>
+        </div>`;
+      }
+      if (e.kind === 'bot_reply') {
+        return `<div style="padding:2px 0;border-bottom:1px solid var(--border)">
+          <span style="color:var(--muted)">${e.ts}</span>
+          <span style="color:#a78bfa;font-size:9px;font-weight:600;background:rgba(167,139,250,0.15);border:1px solid rgba(167,139,250,0.3);border-radius:3px;padding:0 3px;margin-left:4px">bot</span>
+          <span style="color:var(--muted);font-size:10px;margin-left:4px">→</span>
+          <span style="margin-left:4px;font-weight:600">${escHtml(e.name)}</span>
+          <span style="color:var(--muted);margin-left:4px;font-size:10px">${escHtml(e.text)}</span>
+        </div>`;
+      }
+      if (e.kind === 'message') {
+        const isPinned = _mcLogPinnedIdx === e._i;
+        const msgMeta = _mcResolveEntryPath(e);
+        const path = msgMeta.path;
+        const q = msgMeta.quality;
+        const warnText = _mcPathWarningText(path, 'message');
+        const hopMeta = _mcMessageHopMeta(e, path);
+        // Show quality badge only when it adds info (live/cached, not inferred)
+        const showQ = q && q !== 'inferred';
+        const qColor = q === 'live' ? '#22c55e' : '#38bdf8';
+        const qBg = q === 'live' ? 'rgba(34,197,94,0.12)' : 'rgba(56,189,248,0.12)';
+        const qBorder = q === 'live' ? 'rgba(34,197,94,0.28)' : 'rgba(56,189,248,0.28)';
+        return `<div class="${isPinned ? 'mc-route-selected' : ''}" style="padding:2px 0;border-bottom:1px solid var(--border);cursor:pointer"
+          onclick="_mcLogClick(${e._i})"
+          onmouseenter="_mcLogHover(${e._i},true)"
+          onmouseleave="_mcLogHover(${e._i},false)">
+          <span style="color:var(--muted)">${e.ts}</span>
+          <span style="margin-left:4px;font-weight:600">${escHtml(e.name)}</span>
+          ${hopMeta ? `<span style="margin-left:4px;font-size:10px;color:${hopMeta.color}">${escHtml(hopMeta.label)}</span>` : ''}
+          ${showQ ? `<span title="Route source" style="margin-left:4px;font-size:9px;color:${qColor};background:${qBg};border:1px solid ${qBorder};border-radius:3px;padding:0 3px">${q}</span>` : ''}
+          ${warnText ? `<span title="${escHtml(warnText)}" style="color:#f59e0b;margin-left:4px;font-size:10px">!</span>` : ''}
+          <span style="color:var(--muted);margin-left:4px;font-size:10px">${escHtml(e.text)}</span>
+          <a onclick="event.stopPropagation();jumpToMcChat(${e.msgTs},'${jsSafe(e.radioId)}',${e.channel},'${jsSafe(e.fromId || '')}')" style="margin-left:6px;font-size:10px;color:#3b82f6;cursor:pointer">→ Chat</a>
+        </div>`;
+      }
+      if (e.kind === 'sent_message') {
+        return `<div style="padding:2px 0;border-bottom:1px solid var(--border)">
+          <span style="color:var(--muted)">${e.ts}</span>
+          <span style="color:#3b82f6;font-size:9px;font-weight:600;background:rgba(59,130,246,0.12);border:1px solid rgba(59,130,246,0.3);border-radius:3px;padding:0 3px;margin-left:4px">→ msg</span>
+          <span style="margin-left:4px;font-weight:600">${escHtml(e.chanName)}</span>
+          <span style="color:var(--muted);margin-left:4px;font-size:10px">${escHtml(e.text)}</span>
+        </div>`;
+      }
+      // Advert entry
+      const hasPts    = e.pathResult?.points?.length >= 2;
+      const isPartial = e.pathResult?.partial;
+      const warnText = _mcPathWarningText(e.pathResult, 'advert');
+      const nameColor = _MC_TYPE_COLORS[e.typeIdx] || 'var(--muted)';
+      const hopLabel  = mcPathHopLabel(e.hopLen, true);
+      const hopColor  = mcPathHopColor(e.hopLen);
+      const isPinned  = _mcLogPinnedIdx === e._i;
+      return `<div class="${isPinned ? 'mc-route-selected' : ''}" style="padding:2px 0;border-bottom:1px solid var(--border);cursor:pointer"
+        data-idx="${e._i}"
+        onclick="_mcLogClick(${e._i})"
+        onmouseenter="_mcLogHover(${e._i},true)"
+        onmouseleave="_mcLogHover(${e._i},false)">
+        <span style="color:var(--muted)">${e.ts}</span>
+        <span style="color:#94a3b8;margin-left:4px;font-size:9px;vertical-align:middle">adv</span>
+        <span style="color:${nameColor};margin-left:3px;font-weight:600">${escHtml(e.name)}</span>
+        <span style="color:${hopColor};margin-left:4px;font-size:10px">${hopLabel}</span>
+        ${warnText ? `<span title="${escHtml(warnText)}" style="color:#f59e0b;margin-left:4px;font-size:10px">!</span>` : (isPartial ? '<span style="color:var(--muted);margin-left:4px;font-size:9px" title="Partial path">~</span>' : '')}
+      </div>`;
+    }).join('');
+    if (wasAtBottom) el.scrollTop = el.scrollHeight;
+  }
+
+  let _mcLogPinnedIdx = null;
+
+  function _mcResolveMessageContact(msgLike) {
+    if (!msgLike?.radioId && !msgLike?.radio_id) return null;
+    const radioId = msgLike.radioId || msgLike.radio_id;
+    const radioContacts = mcContacts[radioId] || {};
+    const fromId = msgLike.fromId || msgLike.from_id;
+    if (fromId && fromId !== '?' && radioContacts[fromId]) return radioContacts[fromId];
+    const rawText = msgLike.rawText || msgLike.fullText || msgLike.text || '';
+    const colon = rawText.indexOf(': ');
+    if (colon > 0 && colon < 60) {
+      const extractedName = rawText.slice(0, colon);
+      const byPrefix = Object.values(radioContacts).find(c =>
+        c.long_name === extractedName || c.adv_name === extractedName
+      );
+      if (byPrefix) return byPrefix;
+    }
+    const name = msgLike.name || '';
+    if (name && name !== '?') {
+      const byName = Object.values(radioContacts).find(c =>
+        c.long_name === name || c.adv_name === name
+      );
+      if (byName) return byName;
+    }
+    return null;
+  }
+
+  function _mcSamePath(a, b) {
+    if (!a?.points || !b?.points || a.points.length !== b.points.length) return false;
+    for (let i = 0; i < a.points.length; i++) {
+      const pa = a.points[i], pb = b.points[i];
+      if (!pa || !pb) return false;
+      if (Math.abs(pa[0] - pb[0]) > 1e-6 || Math.abs(pa[1] - pb[1]) > 1e-6) return false;
+    }
+    return !!a.flood === !!b.flood;
+  }
+
+  function _mcMessageHopMeta(entry, path) {
+    const routeType = String(entry?.routeType || '').toUpperCase();
+    const hopLen = entry?.hopLen;
+    const uncertain = (path?.hops || []).some(h => h.ambiguous || ['estimated', 'likely'].includes(h.confidence));
+    const suffix = uncertain ? ' · estimated' : '';
+    const labelSuffix = uncertain ? '?' : '';
+    const routeColor = uncertain ? '#f59e0b' : '#8b5cf6';
+    if (hopLen === 255) {
+      if (routeType === 'FLOOD') return { label: 'flood mode', detail: 'Flood mode', color: 'rgba(148,163,184,0.8)' };
+      return { label: 'direct route', detail: 'Direct route', color: '#38bdf8' };
+    }
+    if (path?.flood) return { label: 'flood mode', detail: 'Flood mode', color: 'rgba(148,163,184,0.8)' };
+    if (hopLen === 0) return { label: 'direct', detail: 'Direct', color: '#22c55e' };
+    if (hopLen > 0) return { label: `${hopLen} hop${hopLen !== 1 ? 's' : ''}${labelSuffix}`, detail: `${hopLen} hop${hopLen !== 1 ? 's' : ''}${suffix}`, color: routeColor };
+    return null;
+  }
+
+  function _mcResolveEntryPath(entry) {
+    if (!entry) return { path: null, quality: null, refreshed: false };
+    if (entry.kind !== 'message') return { path: entry.pathResult || null, quality: null, refreshed: false };
+    const stored = entry.pathResult || null;
+    let quality = entry.routeQuality || (stored?.flood ? 'inferred' : stored ? 'cached' : 'inferred');
+    if (entry.radioId) {
+      const [rLat, rLon] = _mcSenseRadioPos(entry.radioId);
+      // Prefer the original packet/RX-log path. Contact cache paths can be newer
+      // but unrelated to this exact received message.
+      if (entry.rawPath && entry.hopLen > 0) {
+        const fromEvent = decodeMcEventPath(
+          { path: entry.rawPath, path_len: entry.hopLen, path_hash_size: entry.pathHashSize, path_hash_mode: entry.pathHashMode },
+          entry.lat, entry.lon, rLat, rLon, entry.radioId
+        );
+        if (fromEvent) {
+          const resolved = _mcReversePathResult({ ...fromEvent, kind: 'message', snr: entry.snr ?? null });
+          return { path: resolved, quality: 'live', refreshed: !_mcSamePath(resolved, stored) };
+        }
+        const relayOnly = decodeMcRelayPath(
+          { path: entry.rawPath, path_len: entry.hopLen, path_hash_size: entry.pathHashSize, path_hash_mode: entry.pathHashMode },
+          rLat, rLon, entry.radioId
+        );
+        if (relayOnly) {
+          const resolved = _mcReversePathResult({ ...relayOnly, kind: 'message', snr: entry.snr ?? null });
+          return { path: resolved, quality: 'live', refreshed: !_mcSamePath(resolved, stored) };
+        }
+      }
+      const contact = _mcResolveMessageContact(entry);
+      if (contact) {
+        const fresh = decodeMcPath(contact, rLat, rLon, entry.radioId);
+        if (fresh) {
+          const resolved = _mcReversePathResult({ ...fresh, kind: 'message', snr: entry.snr ?? null });
+          return { path: resolved, quality: 'cached', refreshed: !_mcSamePath(resolved, stored) };
+        }
+      }
+    }
+    return { path: stored, quality, refreshed: false };
+  }
+
+  function _mcPathForLogEntry(entry) {
+    if (!entry) return null;
+    if (entry.kind === 'message') return _mcResolveEntryPath(entry).path;
+    if (entry.kind === 'advert') {
+      const contact = findMcContactByKeyPrefix(entry.id || '', entry.radioId);
+      const [rLat, rLon] = _mcSenseRadioPos(entry.radioId);
+      const fresh = contact ? decodeMcPath(contact, rLat, rLon, entry.radioId) : null;
+      if (fresh?.points) return _mcReversePathResult({ ...fresh, kind: 'advert' });
+    }
+    return entry.pathResult || null;
+  }
+
+  // Re-resolve path for an entry using the freshest contact data available.
+  // Message entries bake in path at arrival time (possibly before PATH_UPDATE fires).
+  // Re-resolving at hover/click time picks up any route updates that arrived since.
+  function _mcFreshPath(entry) {
+    return _mcPathForLogEntry(entry);
+  }
+
+  function _mcFindMessageLogEntry(msg) {
+    if (!msg) return null;
+    return _mcSenseLogEntries.find(e => {
+      if (e.kind !== 'message') return false;
+      if ((e.radioId || '') !== (msg.radio_id || '')) return false;
+      if (msg.id && e.msgId && e.msgId === msg.id) return true;
+      const sameTs = String(e.msgTs || '') === String(msg.ts || '');
+      const sameFrom = String(e.fromId || '') === String(msg.from_id || '');
+      const sameChan = Number(e.channel ?? 0) === Number(msg.channel ?? 0);
+      return sameTs && sameFrom && sameChan;
+    }) || null;
+  }
+
+  function _mcChatRouteMeta(msg) {
+    if (!msg || msg.sent || msg.from_id === 'bot' || msg.subtype === 'system') return null;
+    const entry = _mcFindMessageLogEntry(msg) || _mcBuildSenseMessageEntry(msg);
+    if (!entry) return null;
+    const resolved = _mcResolveEntryPath(entry);
+    const hopMeta = _mcMessageHopMeta(entry, resolved.path);
+    if (!hopMeta) return null;
+    const source = resolved.quality && resolved.quality !== 'inferred' ? ` · ${resolved.quality}` : '';
+    return {
+      label: hopMeta.label,
+      detail: `Show MC message path: ${hopMeta.detail}${source}`,
+      entry,
+    };
+  }
+
+  function showMcChatMessageRoute(routeKey) {
+    const msg = _mcChatRouteByKey[routeKey] || mcMessages.find(m => _mcChatRouteKey(m) === routeKey);
+    if (!msg) return;
+    let entry = _mcFindMessageLogEntry(msg);
+    if (!entry) {
+      entry = _mcBuildSenseMessageEntry(msg);
+      if (!entry) return;
+      if (_mcLogPinnedIdx !== null) _mcLogPinnedIdx++;
+      _mcSenseLogEntries.unshift(entry);
+      if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
+      try { localStorage.setItem('mcSenseLog', JSON.stringify(_mcSenseLogEntries.slice(0, 100))); } catch(e) {}
+    }
+    const idx = _mcSenseLogEntries.indexOf(entry);
+    if (idx < 0) return;
+    switchTab('map');
+    toggleSensePanel(true);
+    switchSenseNet('mc');
+    setTimeout(() => {
+      _mcLogClick(idx);
+      renderMcSenseLog();
+    }, 80);
+  }
+
+  function _mcLogHover(idx, on) {
+    if (_mcLogPinnedIdx !== null) return;  // don't override pinned path with hover
+    const entry = _mcSenseLogEntries[idx];
+    showMcHoverPath(_mcFreshPath(entry), on);
+  }
+
+  function _mcLogClick(idx) {
+    const entry = _mcSenseLogEntries[idx];
+    if (!entry) return;
+    // Toggle: click same entry again to unpin
+    if (_mcLogPinnedIdx === idx) {
+      _mcLogPinnedIdx = null;
+      showMcHoverPath(null, false);
+      const panel = document.getElementById('mc-statusreq-panel');
+      if (panel) panel.style.display = 'none';
+      renderMcSenseLog();
+      return;
+    }
+    _mcLogPinnedIdx = idx;
+    // Build path to show — re-resolve from fresh contact data, fall back to stored result
+    let pathToShow = _mcFreshPath(entry);
+    if (!pathToShow || pathToShow.points?.length < 2) pathToShow = null;
+    const [radioLat, radioLon] = _mcSenseRadioPos(entry.radioId);
+    if (!pathToShow && entry.lat != null && entry.lon != null) {
+      if (radioLat != null) {
+        pathToShow = { points: [[radioLat, radioLon], [entry.lat, entry.lon]], flood: true };
+      }
+    }
+    if (pathToShow) showMcHoverPath(pathToShow, true);
+    // Pan map to the contact node
+    if (entry.lat != null && entry.lon != null) {
+      if (leafletMap) leafletMap.panTo([entry.lat, entry.lon]);
+      else centerMcOnMap(entry.lat, entry.lon);
+    }
+    // Open detail panel
+    _showLogEntryDetail(entry);
+    renderMcSenseLog();
+  }
+
+  async function refreshMcEntryPath(idx) {
+    const entry = _mcSenseLogEntries[idx];
+    if (!entry?.radioId) return;
+    try {
+      const r = await fetch(`/api/mc/${encodeURIComponent(entry.radioId)}/contacts?refresh=1`);
+      if (!r.ok) throw new Error(await r.text());
+      const data = await r.json();
+      if (!mcContacts[entry.radioId]) mcContacts[entry.radioId] = {};
+      (data.contacts || []).forEach(c => {
+        const prev = mcContacts[entry.radioId][c.id] || {};
+        mcContacts[entry.radioId][c.id] = _mergeMcContactRecord(prev, c);
+      });
+      renderMcMapMarkers();
+      if (_mcLogPinnedIdx === idx) {
+        const refreshed = _mcSenseLogEntries[idx];
+        let pathToShow = _mcFreshPath(refreshed);
+        if (pathToShow?.points?.length >= 2) showMcHoverPath(pathToShow, true);
+        _showLogEntryDetail(refreshed);
+      }
+      renderMcSenseLog();
+    } catch(e) {
+      console.warn('refreshMcEntryPath failed:', e);
+    }
+  }
+
+  function _mcRawHopHashesForEntry(entry) {
+    if (!entry) return [];
+    if (entry.kind === 'trace') {
+      const count = Math.max(0, parseInt(entry.hopLen || 0, 10) || 0);
+      return (entry.path || []).slice(0, count).map(node => String(node?.hash || '').toLowerCase()).filter(Boolean);
+    }
+    if (entry.kind === 'advert') {
+      const contact = findMcContactByKeyPrefix(entry.id || '', entry.radioId);
+      if (!contact || !(contact.out_path_len > 0) || !contact.out_path) return [];
+      const hashChars = _mcPathHashChars(contact);
+      return Array.from({length: contact.out_path_len}, (_, i) =>
+        String(contact.out_path || '').slice(i * hashChars, (i + 1) * hashChars).toLowerCase()
+      ).filter(Boolean);
+    }
+    if (entry.kind === 'message') {
+      const hopCount = parseInt(entry.hopLen || 0, 10) || 0;
+      const pathHex = String(entry.rawPath || '').toLowerCase();
+      if (!(hopCount > 0) || !pathHex) return [];
+      const hashSize = entry.pathHashSize || (entry.pathHashMode != null ? Number(entry.pathHashMode) + 1 : null) || Math.max(1, Math.floor(pathHex.length / Math.max(1, hopCount) / 2));
+      const hashChars = Math.max(2, hashSize * 2);
+      return Array.from({length: hopCount}, (_, i) => pathHex.slice(i * hashChars, (i + 1) * hashChars)).filter(Boolean);
+    }
+    if (entry.kind === 'ping') {
+      const hopCount = parseInt(entry.hopLen || 0, 10) || 0;
+      const pathHex = String(entry.rawPath || '').toLowerCase();
+      if (!(hopCount > 0) || !pathHex) return [];
+      const hashSize = entry.pathHashSize || Math.max(1, Math.floor(pathHex.length / Math.max(1, hopCount) / 2));
+      const hashChars = Math.max(2, hashSize * 2);
+      return Array.from({length: hopCount}, (_, i) => pathHex.slice(i * hashChars, (i + 1) * hashChars)).filter(Boolean);
+    }
+    return [];
+  }
+
+  function _mcSortedPathHops(pathResult) {
+    return [...(pathResult?.hops || [])].sort((a, b) => (a.pointIndex ?? 0) - (b.pointIndex ?? 0));
+  }
+
+  function _mcHopGpsPoint(hop, pathResult, radioId) {
+    const point = pathResult?.points?.[hop?.pointIndex];
+    if (point && point[0] != null && point[1] != null) return point;
+    const contact = hop?.contactId ? findMcContactByKeyPrefix(String(hop.contactId), radioId) : null;
+    const lat = contact?.latitude ?? contact?.lat;
+    const lon = contact?.longitude ?? contact?.lon;
+    return lat != null && lon != null ? [lat, lon] : null;
+  }
+
+  function _mcFocusLogHop(entryIdx, hopIdx) {
+    const entry = _mcSenseLogEntries[entryIdx];
+    if (!entry) return;
+    const pathResult = _mcFreshPath(entry);
+    const hops = _mcSortedPathHops(pathResult);
+    const hop = hops[hopIdx];
+    if (!hop) return;
+    const point = _mcHopGpsPoint(hop, pathResult, entry.radioId);
+    if (!point) return;
+    _mcLogPinnedIdx = entryIdx;
+    if (pathResult) showMcHoverPath(pathResult, true);
+    const markerId = String(hop.contactId || '').slice(0, 12);
+    const marker = markerId ? mcMapMarkerById[markerId] : null;
+    if (marker && leafletMap) {
+      leafletMap.setView(marker.getLatLng(), Math.max(leafletMap.getZoom(), 14));
+      marker.openPopup();
+      highlightMcContact(markerId, true);
+      setTimeout(() => highlightMcContact(markerId, false), 1600);
+    } else if (leafletMap) {
+      leafletMap.setView(point, Math.max(leafletMap.getZoom(), 14));
+    } else {
+      centerMcOnMap(point[0], point[1]);
+    }
+    renderMcSenseLog();
+  }
+
+  function _mcLogHopListHtml(entry, pathResult, entryIdx) {
+    const resolvedHops = _mcSortedPathHops(pathResult);
+    const rawHashes = _mcRawHopHashesForEntry(entry);
+    if (!resolvedHops.length && !rawHashes.length) return '';
+
+    const rows = [];
+    resolvedHops.forEach((hop, idx) => {
+      const point = _mcHopGpsPoint(hop, pathResult, entry.radioId);
+      const contactId = String(hop.contactId || '').slice(0, 12);
+      const fullId = contactId || hop.hash || '';
+      const conf = _mcHopConfidenceLabel(hop);
+      const meta = [
+        fullId,
+        conf,
+        point ? `${Number(point[0]).toFixed(5)}, ${Number(point[1]).toFixed(5)}` : 'no GPS'
+      ].filter(Boolean).join(' · ');
+      rows.push(`<button class="mc-hop-focus" ${point ? '' : 'disabled'} title="${point ? 'Center map on this hop/RPTR' : 'This hop has no resolved GPS position'}"
+        onclick="event.stopPropagation();_mcFocusLogHop(${entryIdx},${idx})">
+        <span class="mc-hop-prefix">${escHtml(hop.hash || '?')}</span>
+        <span class="mc-hop-focus-main">
+          <span class="mc-hop-focus-name">${escHtml(hop.name || hop.hash || '?')}</span>
+          <span class="mc-hop-focus-id">${escHtml(meta)}</span>
+        </span>
+      </button>`);
+    });
+
+    rawHashes.forEach((hash, rawIdx) => {
+      if (resolvedHops.some(h => String(h.hash || '').toLowerCase() === hash)) return;
+      rows.push(`<button class="mc-hop-focus" disabled title="Hop ID is known, but no contact/GPS match is available yet">
+        <span class="mc-hop-prefix">${escHtml(hash)}</span>
+        <span class="mc-hop-focus-main">
+          <span class="mc-hop-focus-name">Unresolved hop ${rawIdx + 1}</span>
+          <span class="mc-hop-focus-id">${escHtml(hash)} · no GPS/contact match</span>
+        </span>
+      </button>`);
+    });
+
+    if (!rows.length) return '';
+    return `<details class="mc-hop-details">
+      <summary>Show all hops (${rows.length})</summary>
+      <div class="mc-hop-list">${rows.join('')}</div>
+    </details>`;
+  }
+
+  function _mcInlineHopPathHtml(entry, pathResult, entryIdx, fallbackText) {
+    const rawHashes = _mcRawHopHashesForEntry(entry);
+    if (!rawHashes.length) return fallbackText ? escHtml(fallbackText) : '—';
+    const resolvedHops = _mcSortedPathHops(pathResult);
+    return rawHashes.map((hash, rawIdx) => {
+      const hopIdx = resolvedHops.findIndex(h => String(h.hash || '').toLowerCase() === hash);
+      const hop = hopIdx >= 0 ? resolvedHops[hopIdx] : null;
+      const point = hop ? _mcHopGpsPoint(hop, pathResult, entry?.radioId) : null;
+      if (!point) return `<span class="mc-hop-prefix" title="No resolved GPS/contact match">${escHtml(hash)}</span>`;
+      const name = hop.name && hop.name !== hash ? ` ${escHtml(hop.name)}` : '';
+      return `<button class="mc-hop-focus" style="display:inline-flex;width:auto;padding:2px 6px;margin:0 3px 3px 0"
+        title="Center map on ${escHtml(hop.name || hash)}"
+        onclick="event.stopPropagation();_mcFocusLogHop(${entryIdx},${hopIdx})">
+        <span class="mc-hop-prefix">${escHtml(hash)}</span><span>${name}</span>
+      </button>`;
+    }).join('');
+  }
+
+  function _closeDetailPanel() {
+    const panel = document.getElementById('mc-statusreq-panel');
+    if (panel) panel.style.display = 'none';
+    if (_mcPingPathActive) { showMcHoverPath(null, false); _mcPingPathActive = false; }
+    if (_mcLogPinnedIdx !== null) {
+      _mcLogPinnedIdx = null;
+      showMcHoverPath(null, false);
+      renderMcSenseLog();
+    }
+  }
+
+  function _showLogEntryDetail(entry) {
+    const panel = document.getElementById('mc-statusreq-panel');
+    const title = document.getElementById('mc-statusreq-title');
+    const body  = document.getElementById('mc-statusreq-body');
+    if (!panel || !title || !body) return;
+    const entryIdx = _mcLogPinnedIdx !== null ? _mcLogPinnedIdx : _mcSenseLogEntries.indexOf(entry);
+
+    const td = (label, val) =>
+      `<tr><td style="padding:2px 10px 2px 0;color:var(--muted);white-space:nowrap">${label}</td><td>${val}</td></tr>`;
+    const th = (label) =>
+      `<tr><td colspan="2" style="padding:6px 0 3px;font-weight:600;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.5px">${label}</td></tr>`;
+
+    if (entry.kind === 'trace') {
+      const radioStatus = mcLastStatus[entry.radioId] || {};
+      const radioName = escHtml(radioStatus.name || radioStatus.node_name || entry.radioId || 'Our radio');
+      const path = entry.path || [];
+      const hops = entry.hopLen || 0;
+      title.textContent = entry.responderName ? `⟳ ${entry.responderName}` : '⟳ Broadcast Trace';
+      let rows = th('Path');
+      if (entry.ours) {
+        rows += td('From', radioName + ' (our radio)');
+      } else {
+        rows += td('Overheard by', radioName);
+        rows += td('Initiated by', 'Unknown node');
+      }
+      const resolvedHops = entry.pathResult?.hops || [];
+      if (resolvedHops.length) {
+        resolvedHops.forEach((hop, i) => {
+          const node = path[i] || {};
+          const snr = node.snr != null ? node.snr.toFixed(1) + ' dB' : '—';
+          const hashChip = `<span class="mc-hop-prefix">${escHtml(hop.hash || node.hash || '?')}</span>`;
+          const confLabel = _mcHopConfidenceLabel(hop);
+          const conf = confLabel ? ` · ${confLabel}` : '';
+          rows += td(`Hop ${i+1}`, `${hashChip}${escHtml(hop.name || node.hash || '?')}${escHtml(conf)} · received at ${snr}`);
+        });
+        const finalNode = path[hops];
+        if (finalNode?.snr != null) {
+          const snrLabel = entry.ours ? 'Response back to us' : 'Received by our radio';
+          rows += td(snrLabel, finalNode.snr.toFixed(1) + ' dB SNR');
+        }
+      } else {
+        path.forEach((node, i) => {
+          if (i < hops) {
+            const resolution = node.hash ? _mcPickPathHopResolution(node.hash, entry.radioId, null, null, null, null, i, hops, { requireGps: false }) : null;
+            const contact = resolution?.contact || (node.hash ? findMcContactByKeyPrefix(node.hash, entry.radioId) : null);
+            const label = contact ? escHtml(contact.long_name || contact.id || node.hash) : escHtml(node.hash || '?');
+            const snr = node.snr != null ? node.snr.toFixed(1) + ' dB' : '—';
+            const confLabel = _mcHopConfidenceLabel(resolution);
+            const conf = confLabel ? ` · ${confLabel}` : '';
+            rows += td(`Hop ${i+1}: ${label}`, `received at ${snr}${escHtml(conf)}`);
+          } else {
+            if (node.snr != null) {
+              const snrLabel = entry.ours ? 'Response back to us' : 'Received by our radio';
+              rows += td(snrLabel, node.snr.toFixed(1) + ' dB SNR');
+            }
+          }
+        });
+      }
+      if (!hops) rows += td('Result', 'Direct — no repeaters');
+      if (entry.pathHashSize != null) rows += td('Hash size', `${entry.pathHashSize}B/hop`);
+      body.innerHTML = `<table style="border-collapse:collapse;width:100%">${rows}</table>${_mcLogHopListHtml(entry, entry.pathResult, entryIdx)}`;
+
+    } else if (entry.kind === 'advert') {
+      title.textContent = entry.name || '?';
+      const contact = findMcContactByKeyPrefix(entry.id || '', entry.radioId);
+      const entryPath = _mcFreshPath(entry);
+      const typeLabel = (_MC_TYPE_LABELS || [])[contact?.type ?? entry.typeIdx] || '?';
+      const hopLabel = mcPathHopLabel(entry.hopLen);
+      const advHashBytes = contact?.out_path_hash_size ?? (contact?.out_path_hash_mode != null ? contact.out_path_hash_mode + 1 : null);
+      const advHashSuffix = advHashBytes != null ? ` · ${advHashBytes}B/hop` : '';
+      let rows = td('Type', escHtml(typeLabel));
+      rows += td('Path', hopLabel + escHtml(advHashSuffix));
+      rows += td('Last seen', escHtml(_mcContactSeenLabel(contact)));
+      if (entry.lat != null && entry.lon != null) rows += td('Position', `${entry.lat.toFixed(5)}, ${entry.lon.toFixed(5)}`);
+      if (contact && contact.out_path_len > 0 && contact.out_path) {
+        rows += th('Via');
+        const hashChars = _mcPathHashChars(contact);
+        for (let i = 0; i < contact.out_path_len; i++) {
+          const hashHex = contact.out_path.slice(i * hashChars, (i + 1) * hashChars);
+          const [rLat, rLon] = _mcSenseRadioPos(entry.radioId);
+          const hopR = hashHex ? _mcPickPathHopResolution(
+            hashHex, entry.radioId, rLat, rLon,
+            contact.latitude ?? contact.lat, contact.longitude ?? contact.lon,
+            i, contact.out_path_len
+          ) : null;
+          const hopC = hopR?.contact || null;
+          const hopName = hopC ? escHtml(hopC.long_name || hopC.id || hashHex) : escHtml(hashHex || '?');
+          const hashChip = `<span class="mc-hop-prefix">${escHtml(hashHex || '?')}</span>`;
+          const confLabel = _mcHopConfidenceLabel(hopR);
+          const conf = confLabel ? ` · ${confLabel}` : '';
+          rows += td(`Hop ${i+1}`, `${hashChip}${hopName}${escHtml(conf)}`);
+        }
+      }
+      body.innerHTML = `<table style="border-collapse:collapse;width:100%">${rows}</table>
+        ${_mcLogHopListHtml(entry, entryPath, entryIdx)}
+        <div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn" onclick="refreshMcEntryPath(${_mcLogPinnedIdx})" title="Refresh contact/path data for this node">Path refresh</button>
+        </div>`;
+
+    } else if (entry.kind === 'message') {
+      const msgMeta = _mcResolveEntryPath(entry);
+      title.textContent = entry.name || '?';
+      const chanLabel = mcKnownChannels[entry.channel] || (entry.channel === 0 ? 'Public channel' : `Channel ${entry.channel}`);
+      const hopLabel = _mcMessageHopMeta(entry, msgMeta.path)?.detail || 'Unknown';
+      const msgHashBytes = entry.pathHashSize ?? (entry.pathHashMode != null ? Number(entry.pathHashMode) + 1 : null) ?? (() => { const c = (mcContacts[entry.radioId] || {})[entry.fromId]; return c?.out_path_hash_size ?? (c?.out_path_hash_mode != null ? c.out_path_hash_mode + 1 : null); })();
+      const msgHashSuffix = msgHashBytes != null ? ` · ${msgHashBytes}B/hop` : '';
+      let rows = td('Via', escHtml(chanLabel));
+      rows += td('Path', hopLabel + escHtml(msgHashSuffix));
+      rows += td('Route source', escHtml(msgMeta.quality || 'unknown') + (msgMeta.refreshed ? ' · refreshed' : ''));
+      if (entry.text) rows += td('Message', escHtml(entry.text.length > 100 ? entry.text.slice(0, 100) + '…' : entry.text));
+      body.innerHTML = `<table style="border-collapse:collapse;width:100%">${rows}</table>
+        ${_mcLogHopListHtml(entry, msgMeta.path, entryIdx)}
+        <div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn" onclick="refreshMcEntryPath(${_mcLogPinnedIdx})" title="Refresh contact/path data for this message">Path refresh</button>
+        </div>`;
+    }
+
+    panel.style.display = '';
+  }
+
+  function clearMcSenseLog() {
+    _mcSenseLogEntries = [];
+    _mcLogPinnedIdx = null;
+    showMcHoverPath(null, false);
+    const panel = document.getElementById('mc-statusreq-panel');
+    if (panel) panel.style.display = 'none';
+    try { localStorage.removeItem('mcSenseLog'); } catch(e) {}
+    renderMcSenseLog();
+  }
+
+  function _mcBuildSenseMessageEntry(data) {
+    // Channel messages (from_id='?') don't carry a sender pubkey in the MC protocol.
+    // Try a name-based fallback: extract "Name: message" prefix and match against known contacts.
+    const isChanAnon = !data.from_id || data.from_id === '?';
+    const cached = !isChanAnon && data.radio_id ? (mcContacts[data.radio_id] || {})[data.from_id] : null;
+    let realContact = _mcResolveMessageContact(data);
+    if (realContact && realContact.latitude == null && realContact.lat == null) realContact = cached || realContact;
+    const rawName = realContact?.long_name || cached?.long_name || data.name || data.from_id;
+    const isHex   = !rawName || !!rawName.match(/^[0-9a-f]{6,}$/i);
+    const name    = isHex ? (data.from_id ? data.from_id.slice(0, 4) + '…' : '?') : rawName;
+    const full    = _mcMsgText(data, name);
+    const text    = full.length > 60 ? full.slice(0, 60) + '…' : full;
+    const ts      = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
+    const msgSnr  = data.rx_snr ?? data.snr ?? data.last_snr ?? data.observed_snr ?? null;
+    // Capture sender's path at message time so clicking the row shows it on the map
+    const contact = realContact || cached;
+    const lat = contact?.latitude ?? contact?.lat ?? null;
+    const lon = contact?.longitude ?? contact?.lon ?? null;
+    let hopLen = data.path_len ?? contact?.out_path_len ?? -1;
+    const [radioLat, radioLon] = _mcSenseRadioPos(data.radio_id);
+    let routeQuality = 'inferred';
+    let pathResult = decodeMcEventPath(data, lat, lon, radioLat, radioLon, data.radio_id);
+    if (pathResult) routeQuality = 'live';
+    if (!pathResult) {
+      pathResult = decodeMcRelayPath(data, radioLat, radioLon, data.radio_id);
+      if (pathResult) routeQuality = 'live';
+    }
+    if (pathResult?.inferredHopLen != null && (hopLen == null || hopLen < 0 || hopLen === 255)) hopLen = pathResult.inferredHopLen;
+    if (!pathResult && contact) {
+      pathResult = decodeMcPath(contact, radioLat, radioLon, data.radio_id);
+      if (pathResult) routeQuality = 'cached';
+    }
+    if (!pathResult && lat != null && lon != null && radioLat != null) {
+      pathResult = { points: [[radioLat, radioLon], [lat, lon]], flood: true };
+      routeQuality = 'inferred';
+    }
+    if (pathResult && !pathResult.flood) pathResult = { ...pathResult, kind: 'message', snr: msgSnr };
+    // Reverse: message is incoming (sender → relays → our radio), but decodeMcPath builds radio→contact
+    if (pathResult?.points) pathResult = _mcReversePathResult(pathResult);
+    return { kind: 'message', name, text, rawText: full, ts, msgTs: data.ts, msgId: data.id || null, radioId: data.radio_id, channel: data.channel ?? 0, fromId: data.from_id, lat, lon, hopLen, pathResult, routeQuality, pathHashSize: data.path_hash_size ?? pathResult?.inferredPathHashSize ?? null, pathHashMode: data.path_hash_mode ?? null, routeType: data.route_type ?? null, rawPath: data.path ?? null, snr: msgSnr };
+  }
+
+  function addMcSenseMessageEntry(data) {
+    const entry = _mcBuildSenseMessageEntry(data);
+    if (!entry) return;
+    if (_mcLogPinnedIdx !== null) _mcLogPinnedIdx++;
+    _mcSenseLogEntries.unshift(entry);
+    if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
+    try { localStorage.setItem('mcSenseLog', JSON.stringify(_mcSenseLogEntries.slice(0, 100))); } catch(e) {}
+    renderMcSenseLog();
+  }
+
+  function jumpToMcChat(msgTs, radioId, channel, fromId) {
+    setChatNetwork('mc');
+    switchTab('chat');
+    const tab = fromId ? `dm:${fromId}` : `chan:${channel}`;
+    setTimeout(() => {
+      switchMcTab(tab);
+      setTimeout(() => {
+        const c = document.getElementById('mc-chat-messages');
+        if (c) c.scrollTop = c.scrollHeight;
+      }, 80);
+    }, 80);
+  }
+
+  function centerMcOnMap(lat, lon) {
+    switchTab('map');
+    setTimeout(() => {
+      if (leafletMap) leafletMap.setView([lat, lon], Math.max(leafletMap.getZoom(), 12));
+    }, 80);
+  }
+
+  // -- Fetch MC status on startup --
+  function initMc() {
+    fetch('/api/mc/status')
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(data => {
+        (data.mc_nodes || []).forEach(n => {
+          mcLastStatus[n.id] = n;
+          const shouldLoadContacts = n.status === 'connected' || (n.stored_contacts || n.archived_contacts || 0) > 0;
+          if (shouldLoadContacts) {
+            fetch(`/api/mc/${encodeURIComponent(n.id)}/contacts`)
+              .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+              .then(cd => {
+                if (!mcContacts[n.id]) mcContacts[n.id] = {};
+                (cd.contacts || []).forEach(c => { mcContacts[n.id][c.id] = c; });
+                _mcRefreshDmContactNames(n.id);
+                renderMcMapMarkers();
+                renderMcSensePanel();
+                if (currentTab === 'nodes') renderLive();
+              }).catch(() => {});
+          }
+          if (n.status === 'connected') {
+            // Fetch channel names for this radio
+            fetch(`/api/mc/${encodeURIComponent(n.id)}/channels`)
+              .then(r => r.ok ? r.json() : null)
+              .then(cd => {
+                if (!cd) return;
+                (cd.channels || []).forEach(ch => { if (ch.name) mcKnownChannels[ch.idx] = ch.name; });
+                renderMcChatTabs();
+              }).catch(() => {});
+          }
+        });
+        updateMcPills();
+        _mcStatusSoundPrimed = true;
+      }).catch(() => {});
+  }
+
+  // -- Settings: MC radios --
+  function loadMcSettingsNodes() {
+    fetch('/api/settings/mc_nodes').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
+      const list = document.getElementById('settings-mc-nodes-list');
+      if (!list) return;
+      (data.mc_nodes || []).forEach(n => {
+        if (!mcLastStatus[n.id]) mcLastStatus[n.id] = {};
+        mcLastStatus[n.id].path_hash_mode = n.path_hash_mode ?? mcLastStatus[n.id].path_hash_mode ?? 2;
+        mcLastStatus[n.id].force_flood = !!n.force_flood;
+      });
+      if (!data.mc_nodes.length) {
+        list.innerHTML = '<p style="color:var(--muted);font-size:12px;margin:0">No MC radios configured.</p>';
+        return;
+      }
+      list.innerHTML = data.mc_nodes.map(n => {
+        const dot = n.status === 'connected' ? 'dot-connected' : n.status === 'connecting' ? 'dot-connecting' : 'dot-disconnected';
+        const transport = (n.type || 'serial').toUpperCase();
+        const endpoint = n.type === 'tcp'
+          ? `${n.host || ''}:${n.tcp_port || 4403}`
+          : n.type === 'ble'
+            ? (n.bt_address || n.port || '')
+            : (n.usb_serial ? `${n.port} ⬡` : n.port);
+        return `<div class="radio-row">
+          <span class="status-dot ${dot}"></span>
+          <span class="radio-row-name"><span class="mc-badge">MC</span>${escHtml(n.name)}</span>
+          <span class="radio-row-port" title="${escHtml(endpoint)}">${escHtml(endpoint)}</span>
+          <span class="radio-row-status">${escHtml(transport)}</span>
+          <span class="radio-row-status" title="Preferred MC path hash size">${escHtml(_mcPathHashModeLabel(n.path_hash_mode ?? 2))}</span>
+          ${n.force_flood ? '<span class="radio-row-status" title="MC DMs and pings force flood routing" style="color:var(--yellow)">Flood</span>' : ''}
+          <span class="radio-row-status" style="${!n.enabled ? 'color:var(--muted)' : ''}">${n.enabled ? n.status : 'disabled'}</span>
+          <button class="btn-secondary" style="font-size:11px;padding:3px 8px;${n.enabled ? '' : 'color:var(--accent);border-color:var(--accent)'}"
+            title="${n.enabled ? 'Pause scanning for this radio — keeps config and message history intact' : 'Resume scanning and connecting to this radio'}"
+            onclick="settingsMcToggleNode('${jsSafe(n.id)}',${!n.enabled})">${n.enabled ? 'Disable' : 'Enable'}</button>
+          <button class="btn-secondary" style="font-size:11px;padding:3px 8px;color:var(--red);border-color:var(--red);margin-left:4px"
+            title="Remove this MeshCore radio from OverMesh"
+            onclick="settingsMcRemoveNode('${jsSafe(n.id)}','${jsSafe(n.name)}')">Remove</button>
+        </div>`;
+      }).join('');
+    }).catch(e => console.error('loadMcSettingsNodes failed:', e));
+  }
+
+  function settingsMcScanPorts() {
+    const sel = document.getElementById('settings-mc-port-select');
+    if (sel) sel.innerHTML = '<option value="">Scanning…</option>';
+    fetch('/api/settings/ports').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
+      // Show all ports not already in use by MT nodes
+      const available = (data.ports || []).filter(p => !p.in_use);
+      const options = available.map(p => {
+        const label = p.description && p.description !== p.device ? `${p.device} — ${p.description}` : p.device;
+        return `<option value="${escHtml(p.usb_serial || p.device)}" data-port="${escHtml(p.device)}">${escHtml(label)}</option>`;
+      }).join('');
+      const html = available.length ? options : '<option value="">No available devices found</option>';
+      if (sel) sel.innerHTML = html;
+    }).catch(e => {
+      if (sel) sel.innerHTML = '<option value="">Scan failed</option>';
+      console.error('MC port scan failed:', e);
+    });
+  }
+
+  let _addMcNodeType = 'serial';
+
+  function settingsMcSetAddType(type) {
+    _addMcNodeType = type;
+    document.getElementById('mc-add-type-serial').classList.toggle('active', type === 'serial');
+    document.getElementById('mc-add-type-tcp').classList.toggle('active', type === 'tcp');
+    document.getElementById('mc-add-type-ble').classList.toggle('active', type === 'ble');
+    document.getElementById('mc-add-serial-fields').style.display = type === 'serial' ? 'flex' : 'none';
+    document.getElementById('mc-add-tcp-fields').style.display    = type === 'tcp'    ? 'flex' : 'none';
+    document.getElementById('mc-add-ble-fields').style.display    = type === 'ble'    ? 'flex' : 'none';
+  }
+
+  function settingsMcAddNode() {
+    const name = document.getElementById('settings-mc-node-name').value.trim();
+    const err  = document.getElementById('settings-mc-add-error');
+    err.textContent = '';
+    if (!name) { err.textContent = 'Name is required.'; return; }
+    const body = {name, type: _addMcNodeType};
+    if (_addMcNodeType === 'tcp') {
+      const host = document.getElementById('settings-mc-tcp-host').value.trim();
+      const tcp_port = parseInt(document.getElementById('settings-mc-tcp-port').value.trim()) || 4403;
+      if (!host) { err.textContent = 'Enter an IP address or hostname.'; return; }
+      body.host = host;
+      body.tcp_port = tcp_port;
+    } else if (_addMcNodeType === 'ble') {
+      const bt_address = document.getElementById('settings-mc-bt-address').value.trim();
+      const bt_pin = document.getElementById('settings-mc-bt-pin').value.trim();
+      if (!bt_address) { err.textContent = 'Enter a Bluetooth address.'; return; }
+      body.bt_address = bt_address;
+      if (bt_pin) body.bt_pin = bt_pin;
+    } else {
+      const sel  = document.getElementById('settings-mc-port-select');
+      const selectedOpt = sel.options[sel.selectedIndex];
+      const val = sel.value;
+      const port        = selectedOpt?.dataset?.port || sel.value;
+      if (!val && !port) { err.textContent = 'Select a device.'; return; }
+      body.usb_serial = val && val !== port ? val : '';
+      body.port = port;
+    }
+    err.textContent = 'Adding…';
+    fetch('/api/settings/mc_nodes/add', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    }).then(r => r.json().then(data => { if (!r.ok || data.error) throw new Error(data.error || `HTTP ${r.status}`); return data; }))
+    .then(() => {
+      err.textContent = '';
+      document.getElementById('settings-mc-node-name').value = '';
+      if (_addMcNodeType === 'tcp') document.getElementById('settings-mc-tcp-host').value = '';
+      if (_addMcNodeType === 'ble') {
+        document.getElementById('settings-mc-bt-address').value = '';
+        document.getElementById('settings-mc-bt-pin').value = '';
+      }
+      loadMcSettingsNodes();
+      settingsMcScanPorts();
+    }).catch(e => { err.textContent = e.message || 'Request failed.'; });
+  }
+
+  const MC_MAX_DM_BYTES = 160;
+  const MC_CHANNEL_NAME_OVERHEAD_BYTES = 2;
+  const MC_CHANNEL_SCOPE_HEADROOM_BYTES = 10;
+  const MC_MAX_AUTO_SPLIT_PARTS = 6;
+  const MC_SPLIT_SEND_DELAY_MS = 1800;
+
+  function _sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  function _mcByteLen(str) {
+    return new TextEncoder().encode(str).length;
+  }
+
+  function _mcActiveMsgLimit() {
+    if (mcChatTab.startsWith('dm:')) return MC_MAX_DM_BYTES;
+    const radio = activeMcRadioId ? (mcLastStatus[activeMcRadioId] || {}) : {};
+    const advertName = radio.node_name || radio.name || '';
+    return Math.max(0, MC_MAX_DM_BYTES - _mcByteLen(advertName) - MC_CHANNEL_NAME_OVERHEAD_BYTES - MC_CHANNEL_SCOPE_HEADROOM_BYTES);
+  }
+
+  function _mcTargetMsgLimit(kind, radioId) {
+    if (kind === 'dm') return MC_MAX_DM_BYTES;
+    const radio = radioId ? (mcLastStatus[radioId] || {}) : {};
+    const advertName = radio.node_name || radio.name || '';
+    return Math.max(0, MC_MAX_DM_BYTES - _mcByteLen(advertName) - MC_CHANNEL_NAME_OVERHEAD_BYTES - MC_CHANNEL_SCOPE_HEADROOM_BYTES);
+  }
+
+  function _mcTakeByteChunk(text, limit) {
+    let out = '';
+    for (const ch of String(text || '')) {
+      if (_mcByteLen(out + ch) > limit) break;
+      out += ch;
+    }
+    return out;
+  }
+
+  function _mcSplitPlainText(text, limit) {
+    if (limit <= 0) throw new Error('MC message limit is too small to send safely.');
+    const chunks = [];
+    let rest = String(text || '').trim();
+    while (rest) {
+      if (_mcByteLen(rest) <= limit) {
+        chunks.push(rest);
+        break;
+      }
+      let chunk = _mcTakeByteChunk(rest, limit);
+      const ws = chunk.search(/\s+\S*$/);
+      if (ws > 0 && _mcByteLen(chunk.slice(0, ws)) >= Math.floor(limit * 0.5)) {
+        chunk = chunk.slice(0, ws).trimEnd();
+      }
+      if (!chunk) throw new Error('MC message contains a character that is too large for the available byte limit.');
+      chunks.push(chunk);
+      rest = rest.slice(chunk.length).trimStart();
+      if (chunks.length > MC_MAX_AUTO_SPLIT_PARTS) break;
+    }
+    return chunks;
+  }
+
+  function _mcSplitTextByBytes(text, limit) {
+    if (limit <= 0) throw new Error('MC message limit is too small to send safely.');
+    if (_mcByteLen(text) <= limit) return [text];
+    let chunks = _mcSplitPlainText(text, limit);
+    if (chunks.length <= 1) return chunks;
+    for (let i = 0; i < 4; i++) {
+      const total = chunks.length;
+      if (total > MC_MAX_AUTO_SPLIT_PARTS) throw new Error(`MC message too long to auto-split (max ${MC_MAX_AUTO_SPLIT_PARTS} parts).`);
+      const widestPrefix = `[${total}/${total}] `;
+      const bodyLimit = limit - _mcByteLen(widestPrefix);
+      if (bodyLimit < 40) throw new Error('MC message limit is too small to auto-split safely.');
+      const next = _mcSplitPlainText(text, bodyLimit);
+      if (next.length === total) {
+        return next.map((part, idx) => `[${idx + 1}/${total}] ${part}`);
+      }
+      chunks = next;
+    }
+    throw new Error('MC message could not be split into safe chunks.');
+  }
+
+  function _mcUpdateByteCount() {
+    const input = document.getElementById('mc-chat-input');
+    const counter = document.getElementById('mc-byte-counter');
+    const btn = document.getElementById('mc-send-btn');
+    if (!input || !counter) return;
+    const limit = _mcActiveMsgLimit();
+    const remaining = limit - _mcByteLen(input.value);
+    if (remaining >= 0) {
+      counter.textContent = remaining;
+      counter.style.color = remaining <= 20 ? 'var(--warn, #fbbf24)' : 'var(--muted)';
+      if (btn) btn.disabled = false;
+      return;
+    }
+    try {
+      const parts = _mcSplitTextByBytes(input.value, limit);
+      counter.textContent = `${parts.length} msgs`;
+      counter.style.color = 'var(--warn, #fbbf24)';
+      if (btn) btn.disabled = false;
+    } catch (_e) {
+      counter.textContent = 'too long';
+      counter.style.color = 'var(--danger, #f87171)';
+      if (btn) btn.disabled = true;
+    }
+  }
+
+  async function _sendMcChatChunk(kind, chunk, opts) {
+    const msgId = _mcLocalMsgId();
+    mcMessages.push({
+      id: msgId,
+      type: 'mc_message', radio_id: activeMcRadioId,
+      radio_name: mcLastStatus[activeMcRadioId]?.name || '',
+      network: 'mc', subtype: kind,
+      channel: kind === 'channel' ? opts.channel : undefined,
+      from_id: 'me', to_id: kind === 'dm' ? opts.target : undefined,
+      text: chunk, ts: Math.floor(Date.now()/1000), sent: true,
+      status: 'pending',
+    });
+    _saveMcMessages();
+    renderMcMessages();
+
+    const endpoint = kind === 'dm'
+      ? `/api/mc/${encodeURIComponent(activeMcRadioId)}/send_dm`
+      : `/api/mc/${encodeURIComponent(activeMcRadioId)}/send_chan`;
+    const body = kind === 'dm'
+      ? { target: opts.target, text: chunk }
+      : { text: chunk, channel: opts.channel };
+    try {
+      const r = await fetch(endpoint, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.error) throw new Error(data.error || r.status);
+      _setMcMsgStatus(msgId, 'delivered');
+      if (kind === 'channel') {
+        const ts = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
+        const chanName = mcKnownChannels[opts.channel] || (opts.channel === 0 ? 'Public' : `CH${opts.channel}`);
+        const entry = { kind: 'sent_message', name: mcLastStatus[activeMcRadioId]?.name || 'You', text: chunk.length > 60 ? chunk.slice(0,60)+'…' : chunk, ts, radioId: activeMcRadioId, channel: opts.channel, chanName };
+        _mcSenseLogEntries.unshift(entry);
+        if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
+        try { localStorage.setItem('mcSenseLog', JSON.stringify(_mcSenseLogEntries.slice(0,100))); } catch(_e) {}
+        renderMcSenseLog();
+      }
+      return true;
+    } catch (e) {
+      _setMcMsgStatus(msgId, 'failed');
+      throw e;
+    }
+  }
+
+  function sendMcChan() {
+    if (!activeMcRadioId) return;
+    const input = document.getElementById('mc-chat-input');
+    const text  = (input?.value || '').trim();
+    if (!text) return;
+
+    const doSend = async () => {
+      let chunks;
+      try {
+        chunks = _mcSplitTextByBytes(text, _mcActiveMsgLimit());
+      } catch (e) {
+        showAlert(String(e?.message || e || 'MC message is too long.'));
+        return;
+      }
+
+      input.value = '';
+      _mcUpdateByteCount();
+      let sentAny = false;
+      try {
+        if (await handleCrossCommand(text)) return;
+        if (mcChatTab.startsWith('dm:')) {
+          const pre = mcChatTab.slice(3);
+          for (let i = 0; i < chunks.length; i++) {
+            const chunk = chunks[i];
+            sentAny = true;
+            await _sendMcChatChunk('dm', chunk, {target: pre});
+            if (chunks.length > 1 && i < chunks.length - 1) await _sleep(MC_SPLIT_SEND_DELAY_MS);
+          }
+        } else {
+          const chan = parseInt(mcChatTab.slice(5)) || 0;
+          for (let i = 0; i < chunks.length; i++) {
+            const chunk = chunks[i];
+            sentAny = true;
+            await _sendMcChatChunk('channel', chunk, {channel: chan});
+            if (chunks.length > 1 && i < chunks.length - 1) await _sleep(MC_SPLIT_SEND_DELAY_MS);
+          }
+        }
+      } catch (e) {
+        if (!sentAny && input) {
+          input.value = text;
+          _mcUpdateByteCount();
+        }
+        showAlert(String(e?.message || e || 'MC send failed.'));
+        console.warn('MC send failed:', e);
+      }
+    };
+    if (_silentMode) { showSilentConfirm('Sending is not possible while Silent Running is enabled.'); return; }
+    doSend();
+  }
+
+  function mcSendAdvert() {
+    if (!activeMcRadioId) return;
+    const doSend = () => {
+      const btn = document.querySelector('button[onclick="mcSendAdvert()"]');
+      if (btn) { btn.disabled = true; btn.textContent = '…'; }
+      fetch(`/api/mc/${encodeURIComponent(activeMcRadioId)}/advert`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({flood: true}),
+      }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+        if (btn) { btn.disabled = false; btn.textContent = 'Advert'; }
+        if (!d.error) {
+          const ts = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
+          const radioName = mcLastStatus[activeMcRadioId]?.name || activeMcRadioId;
+          const entry = { kind: 'self_advert', name: radioName, ts, radioId: activeMcRadioId, radioName };
+          _mcSenseLogEntries.unshift(entry);
+          if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
+          try { localStorage.setItem('mcSenseLog', JSON.stringify(_mcSenseLogEntries.slice(0, 100))); } catch(e) {}
+          renderMcSenseLog();
+        }
+        const statusText = d.error ? `Advert failed: ${d.error}` : 'Advert sent (flood).';
+        mcMessages.push({
+          type: 'mc_message', radio_id: activeMcRadioId,
+          radio_name: mcLastStatus[activeMcRadioId]?.node_name || mcLastStatus[activeMcRadioId]?.name || '',
+          network: 'mc', subtype: 'system',
+          from_id: 'system', text: statusText,
+          ts: Math.floor(Date.now()/1000), sent: true,
+        });
+        _saveMcMessages();
+        renderMcMessages();
+      }).catch(e => {
+        if (btn) { btn.disabled = false; btn.textContent = 'Advert'; }
+        mcMessages.push({
+          type: 'mc_message', radio_id: activeMcRadioId,
+          radio_name: '', network: 'mc', subtype: 'system',
+          from_id: 'system', text: `Advert failed: ${e.message}`,
+          ts: Math.floor(Date.now()/1000), sent: true,
+        });
+        _saveMcMessages();
+        renderMcMessages();
+      });
+    };
+    if (_silentMode) { showSilentConfirm('Transmitting is not possible while Silent Running is enabled.'); return; }
+    doSend();
+  }
+
+  function replyToMt(name) {
+    const input = document.getElementById('chat-input');
+    if (!input) return;
+    if (name) input.value = `@${name}: `;
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
+
+  function replyToMc(fromId, name, subtype) {
+    if (subtype === 'dm') { doMcDm(fromId, activeMcRadioId, name); return; }
+    const input = document.getElementById('mc-chat-input');
+    if (!input) return;
+    if (name) {
+      const tagName = String(name).replace(/[\[\]\r\n]/g, '').trim();
+      input.value = tagName ? `@[${tagName}] ` : '';
+      _mcUpdateByteCount();
+    }
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
+
+  function doMcDm(pubkeyPrefix, radioId, name) {
+    // Open a DM tab in MC chat instead of a modal
+    if (radioId && radioId !== activeMcRadioId) toggleRadioSelection(radioId);
+    mcDmContacts[pubkeyPrefix] = name || pubkeyPrefix;
+    setChatNetwork('mc');
+    switchTab('chat');
+    switchMcTab(`dm:${pubkeyPrefix}`);
+    setTimeout(() => document.getElementById('mc-chat-input')?.focus(), 80);
+  }
+
+  let _mcRemoteManage = null;
+
+  function _mcRemoteJson(value) {
+    if (value == null) return '—';
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return escHtml(String(value));
+    return `<pre style="white-space:pre-wrap;word-break:break-word;margin:0;font-size:11px;color:var(--text)">${escHtml(JSON.stringify(value, null, 2))}</pre>`;
+  }
+
+  function _mcRemoteSection(title, block) {
+    if (!block) return '';
+    if (!block.ok) {
+      return `<details style="border-top:1px solid var(--border);padding-top:7px;margin-top:7px">
+        <summary style="cursor:pointer;color:var(--muted)">${escHtml(title)} <span style="color:var(--red)">failed</span></summary>
+        <div style="margin-top:6px;color:var(--red);font-size:12px">${escHtml(block.error || 'Request failed')}</div>
+      </details>`;
+    }
+    return `<details open style="border-top:1px solid var(--border);padding-top:7px;margin-top:7px">
+      <summary style="cursor:pointer;color:var(--muted)">${escHtml(title)}</summary>
+      <div style="margin-top:6px">${_mcRemoteJson(block.data)}</div>
+    </details>`;
+  }
+
+  function _mcRemoteRenderResult(data) {
+    const el = document.getElementById('mc-remote-result');
+    if (!el) return;
+    if (!data || data.error) {
+      el.innerHTML = `<div class="modal-error">${escHtml(data?.error || 'Request failed')}</div>`;
+      return;
+    }
+    const login = data.login
+      ? `<div style="margin-bottom:8px;color:${data.login.ok ? 'var(--green)' : 'var(--red)'}">
+          Login ${data.login.ok ? 'accepted' : 'failed'}${data.login.ok ? (data.login.is_admin ? ' · admin' : ' · guest/read-only') : ''}
+        </div>`
+      : '';
+    el.innerHTML = `${login}
+      ${_mcRemoteSection('Basic', data.basic)}
+      ${_mcRemoteSection('Owner', data.owner)}
+      ${_mcRemoteSection('Status', data.status)}
+      ${_mcRemoteSection('Telemetry', data.telemetry)}
+      ${_mcRemoteSection('Neighbours', data.neighbours)}
+      ${_mcRemoteSection('Regions', data.regions)}
+      ${_mcRemoteSection('ACL', data.acl)}`;
+  }
+
+  function openMcRemoteManage(pubkeyPrefix, radioId, name) {
+    _mcRemoteManage = { pubkeyPrefix, radioId, name: name || pubkeyPrefix };
+    const title = document.getElementById('modal-title');
+    const body = document.getElementById('modal-body');
+    if (!title || !body) return;
+    title.textContent = `Manage ${name || pubkeyPrefix}`;
+    const radioName = mcLastStatus[radioId]?.name || mcLastStatus[radioId]?.node_name || radioId;
+    body.innerHTML = `
+      <div class="modal-node">${escHtml(pubkeyPrefix.slice(0, 12))} via ${escHtml(radioName || 'MC radio')}</div>
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px">
+        <div>
+          <label class="settings-label">Login mode</label>
+          <select id="mc-remote-mode" class="settings-select">
+            <option value="guest">Guest / read-only</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+        <div>
+          <label class="settings-label">Password</label>
+          <input id="mc-remote-password" class="settings-input" type="password" style="width:150px" autocomplete="new-password" placeholder="blank if allowed">
+        </div>
+        <button class="btn btn-net-mc" onclick="mcRemoteRead(true)">Login + Read</button>
+        <button class="btn" onclick="mcRemoteRead(false)">Read Only</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px">
+        Guest access is read-only when the repeater allows it. Admin unlocks remote CLI commands after the repeater accepts the password.
+      </div>
+      <div id="mc-remote-result" style="font-size:12px;color:var(--muted);margin-bottom:14px">Not connected.</div>
+      <div style="border-top:1px solid var(--border);padding-top:10px">
+        <h3 class="settings-subtitle" style="margin-top:0">Admin command</h3>
+        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+          <select id="mc-remote-command-preset" class="settings-select" onchange="document.getElementById('mc-remote-command').value=this.value">
+            <option value="get name">get name</option>
+            <option value="get radio">get radio</option>
+            <option value="get tx">get tx</option>
+            <option value="get repeat">get repeat</option>
+            <option value="get owner.info">get owner.info</option>
+            <option value="neighbors">neighbors</option>
+            <option value="clock">clock</option>
+            <option value="advert">advert</option>
+            <option value="set repeat on">set repeat on</option>
+            <option value="set repeat off">set repeat off</option>
+          </select>
+          <input id="mc-remote-command" class="settings-input" style="width:240px" value="get name">
+          <button class="btn" onclick="mcRemoteCommand()">Run</button>
+        </div>
+        <div id="mc-remote-command-result" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
+      </div>`;
+    document.getElementById('action-modal').classList.add('open');
+  }
+
+  async function mcRemoteRead(login) {
+    if (!_mcRemoteManage) return;
+    const out = document.getElementById('mc-remote-result');
+    if (out) out.textContent = login ? 'Logging in…' : 'Reading…';
+    const password = document.getElementById('mc-remote-password')?.value || '';
+    try {
+      const r = await fetch(`/api/mc/${encodeURIComponent(_mcRemoteManage.radioId)}/remote/${encodeURIComponent(_mcRemoteManage.pubkeyPrefix)}/read`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({login, password}),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || r.status);
+      _mcRemoteRenderResult(d);
+    } catch (e) {
+      if (out) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
+    }
+  }
+
+  async function mcRemoteCommand() {
+    if (!_mcRemoteManage) return;
+    const out = document.getElementById('mc-remote-command-result');
+    const command = document.getElementById('mc-remote-command')?.value || '';
+    if (out) out.textContent = 'Sending…';
+    try {
+      const r = await fetch(`/api/mc/${encodeURIComponent(_mcRemoteManage.radioId)}/remote/${encodeURIComponent(_mcRemoteManage.pubkeyPrefix)}/command`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({command}),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || r.status);
+      const reply = d.reply?.text ? `<div style="margin-top:6px;color:var(--text)">${escHtml(d.reply.text)}</div>` : '';
+      if (out) out.innerHTML = `<span style="color:var(--green)">Sent: ${escHtml(d.command || command)}</span>${reply}${d.note ? `<div style="margin-top:4px">${escHtml(d.note)}</div>` : ''}`;
+    } catch (e) {
+      if (out) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
+    }
+  }
+
+  let _mcStatusReqPending = null;   // {pubkey_pre, timer, onResult?}
+  let _mcPingPathActive   = false;  // true while ping-response path is drawn on map
+
+  async function doMcPing(pubkeyPrefix, radioId, name) {
+    const panel = document.getElementById('mc-statusreq-panel');
+    const title = document.getElementById('mc-statusreq-title');
+    const body  = document.getElementById('mc-statusreq-body');
+    if (!panel) return;
+    // Show panel with pending state
+    title.textContent = name;
+    body.innerHTML = '<span style="color:var(--muted)">Pinging…</span>';
+    panel.style.display = '';
+    // Clear any previous timeout and path
+    if (_mcStatusReqPending?.timer) clearTimeout(_mcStatusReqPending.timer);
+    if (_mcPingPathActive) { showMcHoverPath(null, false); _mcPingPathActive = false; }
+    _mcStatusReqPending = {
+      pubkey_pre: pubkeyPrefix.slice(0, 12),
+      radioId,
+      timer: setTimeout(() => {
+        if (document.getElementById('mc-statusreq-body')?.innerHTML.includes('Pinging'))
+          document.getElementById('mc-statusreq-body').innerHTML = '<span style="color:var(--red)">No status reply or reachability signal arrived. This USB companion firmware may not support remote status responses on this path.</span>';
+        _mcStatusReqPending = null;
+      }, 30000)
+    };
+    try {
+      const r = await fetch(`/api/mc/${encodeURIComponent(radioId)}/statusreq/${encodeURIComponent(pubkeyPrefix)}`, {method: 'POST'});
+      const d = await r.json();
+      if (!r.ok) {
+        body.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Request failed.')}</span>`;
+        if (_mcStatusReqPending?.timer) clearTimeout(_mcStatusReqPending.timer);
+        _mcStatusReqPending = null;
+      } else if (!d.response) {
+        // Backend returned without a response — node didn't reply within timeout
+        if (_mcStatusReqPending?.timer) clearTimeout(_mcStatusReqPending.timer);
+        _mcStatusReqPending = null;
+        body.innerHTML = '<span style="color:var(--red)">No response from node. It may be out of range, or our pubkey is missing from its NVS (try Advert first).</span>';
+      }
+      // else: response was pushed via SSE before HTTP returned — _mcStatusReqShowResult already handled it
+    } catch(e) {
+      body.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
+      if (_mcStatusReqPending?.timer) clearTimeout(_mcStatusReqPending.timer);
+      _mcStatusReqPending = null;
+    }
+  }
+
+  function doMcStatus(pk, rid, name) { return doMcPing(pk, rid, name); }  // backward compat
+
+  function _mcStatusReqShowResult(data) {
+    if (!_mcStatusReqPending) return;
+    // Match by pubkey prefix (full 12-char prefix)
+    if (!data.pubkey_pre?.startsWith(_mcStatusReqPending.pubkey_pre)) return;
+    clearTimeout(_mcStatusReqPending.timer);
+    const cb = _mcStatusReqPending.onResult;
+    _mcStatusReqPending = null;
+    if (cb) { cb(data); return; }
+    // Default: update floating panel
+    const body = document.getElementById('mc-statusreq-body');
+    if (!body) return;
+    if (data.mode === 'reachability' || data.reachable) {
+      const td = (label, val) => `<tr><td style="padding:2px 10px 2px 0;color:var(--muted);white-space:nowrap">${label}</td><td>${val}</td></tr>`;
+      const th = (label) => `<tr><td colspan="2" style="padding:6px 0 3px;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:0.5px;text-transform:uppercase">${label}</td></tr>`;
+      const pingContact = findMcContactByKeyPrefix(data.pubkey_pre || '', data.radio_id);
+      const [radioLat, radioLon] = _mcSenseRadioPos(data.radio_id);
+      const cLat = pingContact?.latitude ?? pingContact?.lat ?? null;
+      const cLon = pingContact?.longitude ?? pingContact?.lon ?? null;
+      let pathResult = decodeMcEventPath({
+        path: data.observed_path,
+        path_len: data.observed_path_len,
+        path_hash_size: data.observed_path_hash_size,
+      }, cLat, cLon, radioLat, radioLon, data.radio_id);
+      if (!pathResult && pingContact) {
+        pathResult = decodeMcPath(pingContact, radioLat, radioLon, data.radio_id);
+      }
+      if (!pathResult) {
+        pathResult = decodeMcRelayPath({
+          path: data.observed_path,
+          path_len: data.observed_path_len,
+          path_hash_size: data.observed_path_hash_size,
+        }, radioLat, radioLon, data.radio_id);
+      }
+      if (!pathResult && cLat != null && cLon != null && radioLat != null) {
+        pathResult = { points: [[radioLat, radioLon], [cLat, cLon]], flood: true };
+      }
+      const pathWarn = _mcPathWarningText(pathResult, 'ping');
+      const pingEntryIdx = _mcAddPingLogEntry(data, pingContact, pathResult);
+      const pingEntry = _mcSenseLogEntries[pingEntryIdx] || null;
+      const pingPath = pingEntry?.pathResult || (pathResult ? { ...pathResult, kind: 'ping', snr: data.observed_snr ?? data.last_snr ?? null } : null);
+      const observedPathHtml = _mcInlineHopPathHtml(pingEntry, pingPath, pingEntryIdx, data.observed_path || '');
+      body.innerHTML = `<table style="border-collapse:collapse;width:100%">
+        ${th('Result')}
+        ${td('Status', '<span style="color:var(--accent)">Reachable</span>')}
+        ${td('Mode', 'Fallback reachability')}
+        ${td('Note', '<span style="color:var(--muted);font-size:11px">No STATUS_RESPONSE — local RX only.</span>')}
+        ${pathWarn ? td('Path note', `<span style="color:#f59e0b;font-size:11px">${escHtml(pathWarn)}</span>`) : ''}
+        ${th('Observed RF')}
+        ${td('Path', observedPathHtml)}
+        ${td('Path hops', data.observed_path_len != null ? data.observed_path_len : '—')}
+        ${td('Observed RSSI', data.observed_rssi != null ? data.observed_rssi + ' dBm' : '—')}
+        ${td('Observed SNR', data.observed_snr != null ? data.observed_snr.toFixed(1) + ' dB' : '—')}
+        ${td('Payload type', data.observed_payload_type ? escHtml(data.observed_payload_type) : '—')}
+        ${td('Route type', data.observed_route_type ? escHtml(data.observed_route_type) : '—')}
+      </table>${_mcLogHopListHtml(pingEntry, pingPath, pingEntryIdx)}`;
+      // Update contact's last_seen in local cache so map popup reflects the ping
+      _mcUpdateContactLastSeen(data.radio_id, data.pubkey_pre || data.target_pubkey_pre, {
+        out_path_len: data.observed_path_len,
+        out_path: data.observed_path,
+        out_path_hash_size: data.observed_path_hash_size,
+        snr: data.observed_snr,
+        rssi: data.observed_rssi,
+      });
+      if (pathResult) {
+        switchTab('map'); toggleSensePanel(true); switchSenseNet('mc');
+        showMcHoverPath({ ...pathResult, kind: 'ping', snr: data.observed_snr ?? data.last_snr ?? null }, true);
+        _mcPingPathActive = true;
+        if (cLat != null) setTimeout(() => leafletMap && leafletMap.panTo([cLat, cLon]), 80);
+      }
+      return;
+    }
+    function _fmtUptime(s) { if (!s) return '—'; const h=Math.floor(s/3600),m=Math.floor((s%3600)/60); return h?`${h}h ${m}m`:`${m}m`; }
+    function _fmtBat(mv)   { return mv != null ? `${(mv/1000).toFixed(2)} V` : '—'; }
+    function _fmtAt(s)     { return s != null ? `${s}s` : '—'; }
+    const td = (label, val) => `<tr><td style="padding:2px 10px 2px 0;color:var(--muted);white-space:nowrap">${label}</td><td>${val}</td></tr>`;
+    const th = (label) => `<tr><td colspan="2" style="padding:6px 0 3px;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:0.5px;text-transform:uppercase">${label}</td></tr>`;
+    body.innerHTML = `<table style="border-collapse:collapse;width:100%">
+      ${th('General')}
+      ${td('Battery', _fmtBat(data.bat))}
+      ${td('Uptime', _fmtUptime(data.uptime))}
+      ${th('Radio')}
+      ${td('Noise floor', data.noise_floor != null ? data.noise_floor + ' dBm' : '—')}
+      ${td('Last RSSI', data.last_rssi != null ? data.last_rssi + ' dBm' : '—')}
+      ${td('Last SNR', data.last_snr != null ? data.last_snr.toFixed(1) + ' dB' : '—')}
+      ${th('Traffic')}
+      ${td('Received', data.nb_recv ?? '—')}
+      ${td('Sent', data.nb_sent ?? '—')}
+      ${td('TX queue', data.tx_queue_len ?? '—')}
+      ${td('Airtime TX', _fmtAt(data.airtime))}
+      ${td('Airtime RX', _fmtAt(data.rx_airtime))}
+      ${th('Routing')}
+      ${td('Sent flood', data.sent_flood ?? '—')}
+      ${td('Sent direct', data.sent_direct ?? '—')}
+      ${td('Recv flood', data.recv_flood ?? '—')}
+      ${td('Recv direct', data.recv_direct ?? '—')}
+      ${td('Flood dups', data.flood_dups ?? '—')}
+      ${td('Direct dups', data.direct_dups ?? '—')}
+    </table>`;
+    // Draw path to pinged node on Sense map
+    const pingContact = findMcContactByKeyPrefix(data.pubkey_pre || '', data.radio_id);
+    if (pingContact) {
+      const [radioLat, radioLon] = _mcSenseRadioPos(data.radio_id);
+      let pathResult = decodeMcPath(pingContact, radioLat, radioLon, data.radio_id);
+      if (!pathResult && pingContact.latitude != null && radioLat != null) {
+        pathResult = { points: [[radioLat, radioLon], [pingContact.latitude, pingContact.longitude]], flood: true };
+      }
+      if (pathResult) {
+        switchTab('map'); toggleSensePanel(true); switchSenseNet('mc');
+        showMcHoverPath({ ...pathResult, kind: 'ping', snr: data.observed_snr ?? data.last_snr ?? null }, true);
+        _mcPingPathActive = true;
+        if (pingContact.latitude != null) setTimeout(() => leafletMap && leafletMap.panTo([pingContact.latitude, pingContact.longitude]), 80);
+      }
+    }
+    // Update contact's last_seen in local cache so map popup reflects the ping
+    _mcUpdateContactLastSeen(data.radio_id, data.pubkey_pre, {
+      out_path_len: data.observed_path_len,
+      out_path: data.observed_path,
+      out_path_hash_size: data.observed_path_hash_size,
+      snr: data.observed_snr ?? data.last_snr,
+      rssi: data.observed_rssi ?? data.last_rssi,
+    });
+    _mcAddPingLogEntry(data, pingContact, pingContact ? (() => {
+      const [rLat, rLon] = _mcSenseRadioPos(data.radio_id);
+      return decodeMcPath(pingContact, rLat, rLon, data.radio_id)
+          || (pingContact.latitude != null && rLat != null ? { points: [[rLat, rLon], [pingContact.latitude, pingContact.longitude]], flood: true } : null);
+    })() : null);
+  }
+
+  function _mcAddBotReplyLogEntry(data) {
+    const ts = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
+    const text = data.text || '';
+    const short = text.length > 60 ? text.slice(0, 60) + '…' : text;
+    const entry = { kind: 'bot_reply', name: data.to_name || '?', cmd: data.cmd || '', text: short, ts, radioId: data.radio_id };
+    if (_mcLogPinnedIdx !== null) _mcLogPinnedIdx++;
+    _mcSenseLogEntries.unshift(entry);
+    if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
+    try { localStorage.setItem('mcSenseLog', JSON.stringify(_mcSenseLogEntries.slice(0, 100))); } catch(e) {}
+    renderMcSenseLog();
+    mcMessages.push({
+      network: 'mc', subtype: 'system', from_id: 'bot',
+      radio_id: data.radio_id, channel: data.channel ?? 0,
+      to_id: data.to_id || null,
+      to_name: data.to_name || '?', cmd: data.cmd || '',
+      text: text,
+      ts: Math.floor(Date.now() / 1000), sent: true,
+    });
+    _saveMcMessages();
+    renderMcMessages();
+  }
+
+  function _mcAddPingLogEntry(data, contact, pathResult) {
+    const ts = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
+    const name = contact ? (contact.long_name || contact.name || data.pubkey_pre || '?') : (data.pubkey_pre || '?');
+    const snr  = data.last_snr ?? data.observed_snr ?? null;
+    const snrLabel = snr != null ? snr.toFixed(1) + 'dB' : null;
+    const hopLen = data.observed_path_len ?? 0;
+    const hopStr = hopLen === 0 ? 'direct' : `${hopLen} hop${hopLen !== 1 ? 's' : ''}`;
+    const lat = contact?.latitude ?? null;
+    const lon = contact?.longitude ?? null;
+    if (!pathResult && contact && lat != null) {
+      const [rLat, rLon] = _mcSenseRadioPos(data.radio_id);
+      pathResult = decodeMcEventPath({
+        path: data.observed_path,
+        path_len: data.observed_path_len,
+        path_hash_size: data.observed_path_hash_size,
+      }, lat, lon, rLat, rLon, data.radio_id) || decodeMcPath(contact, rLat, rLon, data.radio_id);
+      if (!pathResult && rLat != null) pathResult = { points: [[rLat, rLon], [lat, lon]] };
+    }
+    if (!pathResult) {
+      const [rLat, rLon] = _mcSenseRadioPos(data.radio_id);
+      pathResult = decodeMcRelayPath({
+        path: data.observed_path,
+        path_len: data.observed_path_len,
+        path_hash_size: data.observed_path_hash_size,
+      }, rLat, rLon, data.radio_id);
+    }
+    // Tag with kind:'ping' so showMcHoverPath uses green ping styling (overrides flood style)
+    if (pathResult) pathResult = { ...pathResult, kind: 'ping', snr };
+    const entry = {
+      kind: 'ping',
+      name,
+      ts,
+      hopStr,
+      hopLen,
+      snrLabel,
+      pathResult,
+      lat,
+      lon,
+      radioId: data.radio_id,
+      rawPath: data.observed_path || '',
+      pathHashSize: data.observed_path_hash_size || null,
+      pathWarn: _mcPathWarningText(pathResult, 'ping')
+    };
+    _mcSenseLogEntries.unshift(entry);
+    if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
+    try { localStorage.setItem('mcSenseLog', JSON.stringify(_mcSenseLogEntries.slice(0, 100))); } catch(e) {}
+    renderMcSenseLog();
+    return 0;
+  }
+
+  function _mcTouchContactActivity(radioId, pubkeyPre, extra = {}) {
+    if (!radioId || !pubkeyPre) return;
+    const pre = pubkeyPre.slice(0, 12);
+    if (!mcContacts[radioId]?.[pre]) return;
+    const now = Math.floor(Date.now() / 1000);
+    const contact = mcContacts[radioId][pre];
+    contact.last_seen_ts = now;
+    contact.last_heard_ts = now;
+    if (!contact.last_advert && extra.markAdvert) contact.last_advert = now;
+    contact.last_seen = 'just now';
+    if (extra.out_path_len != null) contact.out_path_len = extra.out_path_len;
+    if (extra.out_path != null) contact.out_path = extra.out_path;
+    if (extra.out_path_hash_mode != null) contact.out_path_hash_mode = extra.out_path_hash_mode;
+    if (extra.out_path_hash_size != null) contact.out_path_hash_size = extra.out_path_hash_size;
+    if (extra.snr != null) contact.snr = extra.snr;
+    if (extra.rssi != null) contact.rssi = extra.rssi;
+    renderMcMapMarkers();
+    if (currentTab === 'nodes') renderLive();
+    if (_senseNet === 'mc' && document.getElementById('sense-panel')?.style.display !== 'none') {
+      renderMcSensePanel();
+    }
+  }
+
+  function _mcUpdateContactLastSeen(radioId, pubkeyPre, extra = {}) {
+    _mcTouchContactActivity(radioId, pubkeyPre, extra);
+  }
+
+  // ---------------------------------------------------------------------------
+  // MC Trace — broadcast trace packet, show hop/SNR results, draw on map
+  // ---------------------------------------------------------------------------
+
+  let _mcPendingTraceTag = null;   // tag of last sent trace, for correlation
+
+  async function doMcTrace() {
+    // Use first connected MC radio
+    const radioId = Object.keys(mcLastStatus).find(id => mcLastStatus[id]?.status === 'connected');
+    if (!radioId) return;
+    const panel = document.getElementById('mc-statusreq-panel');
+    const title = document.getElementById('mc-statusreq-title');
+    const body  = document.getElementById('mc-statusreq-body');
+    if (!panel) return;
+    title.textContent = 'Broadcast Trace';
+    body.innerHTML = '<span style="color:var(--muted)">Sending trace…</span>';
+    panel.style.display = '';
+    _mcPendingTraceTag = null;
+    try {
+      const r = await fetch(`/api/mc/${encodeURIComponent(radioId)}/trace`, {method: 'POST'});
+      const d = await r.json();
+      if (!r.ok) {
+        body.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Trace failed.')}</span>`;
+        return;
+      }
+      _mcPendingTraceTag = d.tag;
+      body.innerHTML = '<span style="color:var(--muted)">Waiting for trace response…</span>';
+      // Timeout if no TRACE_DATA arrives within 20s
+      setTimeout(() => {
+        if (_mcPendingTraceTag === d.tag) {
+          body.innerHTML = '<span style="color:var(--red)">No trace response. Firmware may not support send_trace.</span>';
+          _mcPendingTraceTag = null;
+        }
+      }, 20000);
+    } catch(e) {
+      body.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
+    }
+  }
+
+  function _mcHandleTraceData(data) {
+    const isOurs = _mcPendingTraceTag !== null && data.tag === _mcPendingTraceTag;
+    if (isOurs) _mcPendingTraceTag = null;
+    _drawMcTracePath(data);
+    _addMcTraceLogEntry(data, isOurs);
+  }
+
+  function _mcTracePathData(data) {
+    const path = data.path || [];
+    const hops = data.path_len || 0;
+    const [radioLat, radioLon] = _mcSenseRadioPos(data.radio_id);
+    const authHex = (data.auth_hex && data.auth_hex !== '00000000') ? data.auth_hex : null;
+    const responderContact = authHex ? findMcContactByKeyPrefix(authHex, data.radio_id) : null;
+    const endpointLat = responderContact?.latitude ?? responderContact?.lat ?? null;
+    const endpointLon = responderContact?.longitude ?? responderContact?.lon ?? null;
+
+    // Start from radio position if known; omit it if no GPS (don't abort entirely)
+    const points = (radioLat != null) ? [[radioLat, radioLon]] : [];
+    const hopMeta = [];
+    const segmentSnrs = [];
+    // Add intermediate relay nodes (path[0..hops-1])
+    let relayResolved = 0;
+    path.slice(0, hops).forEach((node, idx) => {
+      if (!node.hash) return;
+      const resolution = _mcPickPathHopResolution(
+        node.hash, data.radio_id, radioLat, radioLon, endpointLat, endpointLon, idx, hops
+      );
+      const contact = resolution?.contact || findMcContactByKeyPrefix(node.hash, data.radio_id);
+      if (!contact) return;
+      const lat = contact.latitude ?? contact.lat;
+      const lon = contact.longitude ?? contact.lon;
+      if (lat != null && lon != null) {
+        if (points.length > 0) segmentSnrs.push(node.snr ?? null);
+        points.push([lat, lon]);
+        hopMeta.push({ ..._mcPathHopMeta(node.hash, contact, points.length - 1, resolution), snr: node.snr ?? null });
+        relayResolved++;
+      }
+    });
+    // partial = radio GPS missing, some relay hops unresolved, or a short hash was ambiguous
+    const partial = (radioLat == null) || (relayResolved < hops) || hopMeta.some(h => h.ambiguous);
+    // Add the responding node as the final endpoint (identified via auth_hex)
+    if (endpointLat != null && endpointLon != null) {
+      points.push([endpointLat, endpointLon]);
+    }
+    const finalEntry = path[hops];
+    const finalSnr = (finalEntry?.snr != null) ? finalEntry.snr : null;
+    if (endpointLat != null && endpointLon != null && points.length >= 2) segmentSnrs.push(finalSnr);
+    const pathResult = points.length >= 2 ? { points, partial, kind: 'trace', snr: finalSnr, segmentSnrs, hops: hopMeta } : null;
+    return { pathResult, responderContact, finalSnr };
+  }
+
+  function _drawMcTracePath(data) {
+    if (!leafletMap) return;
+    const trace = _mcTracePathData(data);
+    if (trace.pathResult) showMcHoverPath(trace.pathResult, true);
+  }
+
+  function _addMcTraceLogEntry(data, ours = false) {
+    const path = data.path || [];
+    const hops = data.path_len || 0;
+    const hopStr = hops === 0 ? 'direct' : `${hops} hop${hops !== 1 ? 's' : ''}`;
+    const ts = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
+
+    // Identify the actual responding node via auth_hex (4-byte hash from TRACE_DATA packet)
+    const authHex = (data.auth_hex && data.auth_hex !== '00000000') ? data.auth_hex : null;
+    const trace = _mcTracePathData(data);
+    const responderContact = trace.responderContact || (authHex ? findMcContactByKeyPrefix(authHex, data.radio_id) : null);
+    const responderName = responderContact
+      ? (responderContact.long_name || responderContact.id || authHex)
+      : (authHex ? authHex + '…' : null);
+
+    const finalSnr = trace.finalSnr;
+    const pathResult = trace.pathResult;
+    const entry = { kind: 'trace', name: 'Broadcast Trace', ts, hopStr, hopLen: hops, typeIdx: 0, pathResult, lat: responderContact?.latitude ?? null, lon: responderContact?.longitude ?? null, radioId: data.radio_id, responderName, finalSnr, path, ours, pathHashSize: data.path_hash_size ?? null };
+    if (_mcLogPinnedIdx !== null) _mcLogPinnedIdx++;
+    _mcSenseLogEntries.unshift(entry);
+    if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
+    try { localStorage.setItem('mcSenseLog', JSON.stringify(_mcSenseLogEntries.slice(0, 100))); } catch(e) {}
+    renderMcSenseLog();
+  }
+
+
+  async function sendMcDm(pubkeyPrefix, radioId) {
+    const input = document.getElementById('mc-dm-input');
+    const text = input?.value.trim();
+    if (!text) return;
+    const status = document.getElementById('mc-dm-status');
+    status.innerHTML = '<div class="modal-loading">Sending...</div>';
+    try {
+      const chunks = _mcSplitTextByBytes(text, _mcTargetMsgLimit('dm', radioId));
+      for (let i = 0; i < chunks.length; i++) {
+        const r = await fetch(`/api/mc/${encodeURIComponent(radioId)}/send_dm`, {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({text: chunks[i], target: pubkeyPrefix}),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || d.error) throw new Error(d.error || `HTTP ${r.status}`);
+        if (chunks.length > 1 && i < chunks.length - 1) await _sleep(MC_SPLIT_SEND_DELAY_MS);
+      }
+      status.innerHTML = `<div class="modal-success">Sent${chunks.length > 1 ? ` as ${chunks.length} messages` : ''}.</div>`;
+      input.value = '';
+    } catch(e) {
+      status.innerHTML = `<div class="modal-error">Failed: ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  async function startMcScan() {
+    const radioId = activeMcRadioId;
+    if (!radioId) { showAlert('No MC radio selected.'); return; }
+    if (_mcScanActive) return;
+    // Immediate feedback — SSE mc_scan_started will take over with countdown
+    const btn = document.getElementById('mc-scan-btn');
+    if (btn) { btn.textContent = '…'; btn.disabled = true; }
+    try {
+      const r = await fetch(`/api/mc/${encodeURIComponent(radioId)}/scan`, {method: 'POST'});
+      const d = await r.json();
+      if (!r.ok) {
+        if (btn) { btn.textContent = 'Scan'; btn.disabled = false; }
+        showAlert(d.error || 'Scan failed.');
+        return;
+      }
+      // Also fire a trace after a brief pause — EDC-3 serial state needs to settle after advert TX
+      await new Promise(r => setTimeout(r, 800));
+      try {
+        const tr = await fetch(`/api/mc/${encodeURIComponent(radioId)}/trace`, {method: 'POST'});
+        if (tr.ok) { const td = await tr.json(); _mcPendingTraceTag = td.tag; }
+      } catch(e) {}
+    } catch(e) {
+      if (btn) { btn.textContent = 'Scan'; btn.disabled = false; }
+      showAlert('Scan failed: ' + e.message);
+    }
+  }
+
+async function doMcStatusReq(pubkeyPrefix, radioId, name) {
+    return doMcPing(pubkeyPrefix, radioId, name);
+  }
+
+  function settingsMcToggleNode(id, enable) {
+    fetch(`/api/settings/mc_nodes/${encodeURIComponent(id)}/set_enabled`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enabled: enable})
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(data => { if (data.error) { showAlert(data.error); return; } loadMcSettingsNodes(); })
+      .catch(e => console.error('settingsMcToggleNode failed:', e));
+  }
+
+  function settingsMcRemoveNode(id, name) {
+    document.getElementById('confirm-ok').textContent = 'Remove';
+    showConfirm(`Remove MC radio "${escHtml(name)}"?`, () => {
+      fetch(`/api/settings/mc_nodes/${encodeURIComponent(id)}/remove`, {method: 'POST'})
+        .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
+          if (data.error) { showAlert(data.error); return; }
+          loadMcSettingsNodes();
+        }).catch(e => console.error('removeMcNode failed:', e));
+    });
+  }
+
+  // ---- MC Node Settings ----
+
+  let mcSettingsRadioId = null;
+
+  function loadMcNodeSettings(radioId) {
+    radioId = radioId || activeMcRadioId;
+    if (!radioId) return;
+    mcSettingsRadioId = radioId;
+    // Populate radio selector with connected MC radios
+    const sel = document.getElementById('mc-settings-radio-select');
+    if (sel) {
+      sel.innerHTML = Object.entries(mcLastStatus)
+        .map(([id, s]) => `<option value="${escHtml(id)}"${id === radioId ? ' selected' : ''}>${escHtml(s.name || id)}</option>`)
+        .join('');
+    }
+    // Populate radio params from cached status (comes from SELF_INFO on connect)
+    const s = mcLastStatus[radioId] || {};
+    const freqEl = document.getElementById('mc-radio-freq');
+    const bwSel  = document.getElementById('mc-radio-bw');
+    const sfSel  = document.getElementById('mc-radio-sf');
+    const crSel  = document.getElementById('mc-radio-cr');
+    const txEl   = document.getElementById('mc-tx-power');
+    const maxEl  = document.getElementById('mc-tx-power-max');
+    const hashSel = document.getElementById('mc-path-hash-mode');
+    const forceFloodEl = document.getElementById('mc-force-flood');
+    if (freqEl && s.freq != null) freqEl.value = s.freq;
+    if (bwSel  && s.bw   != null) bwSel.value  = String(s.bw);
+    if (sfSel  && s.sf   != null) sfSel.value  = String(s.sf);
+    if (crSel  && s.cr   != null) crSel.value  = String(s.cr);
+    if (txEl   && s.tx_power   != null) txEl.value = s.tx_power;
+    if (hashSel) hashSel.value = String(_mcPreferredPathHashMode(radioId));
+    if (forceFloodEl) forceFloodEl.checked = !!s.force_flood;
+    if (maxEl  && s.max_tx_power != null) maxEl.textContent = `max ${s.max_tx_power} dBm`;
+    if (maxEl  && s.max_tx_power != null && txEl) txEl.max = s.max_tx_power;
+    const latEl = document.getElementById('mc-coords-lat');
+    const lonEl = document.getElementById('mc-coords-lon');
+    if (latEl && s.lat != null && !(s.lat === 0 && s.lon === 0)) latEl.value = s.lat;
+    if (lonEl && s.lon != null && !(s.lat === 0 && s.lon === 0)) lonEl.value = s.lon;
+    // Only query device if connected
+    if (s.status === 'connected') {
+      loadMcDeviceInfo(radioId);
+      loadMcChannelsList(radioId);
+    } else {
+      const di = document.getElementById('mc-device-info-content');
+      const cl = document.getElementById('mc-channels-list');
+      if (di) di.textContent = 'Not connected.';
+      if (cl) cl.textContent = 'Not connected.';
+    }
+  }
+
+  function switchMcSettingsRadio(radioId) {
+    loadMcNodeSettings(radioId);
+  }
+
+  function loadMcDeviceInfo(radioId) {
+    radioId = radioId || mcSettingsRadioId || activeMcRadioId;
+    if (!radioId) return;
+    const el = document.getElementById('mc-device-info-content');
+    if (!el) return;
+    el.textContent = 'Loading…';
+    fetch(`/api/mc/${encodeURIComponent(radioId)}/device_info`)
+      .then(r => r.json().then(d => ({ok: r.ok, d})))
+      .then(({ok, d}) => {
+        if (!ok || d.error) { el.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Request failed.')}</span>`; return; }
+        const data = d;
+        const dev = data.device || {};
+        const bat = data.battery || {};
+        const batV   = bat.level     != null ? (bat.level / 1000).toFixed(2) + ' V' : '—';
+        const used   = bat.used_kb   != null ? bat.used_kb  + ' KB' : '—';
+        const total  = bat.total_kb  != null ? bat.total_kb + ' KB' : '—';
+        const fwVer  = dev["fw ver"] != null ? dev["fw ver"] : '—';
+        const fwBld  = dev.fw_build  || dev.ver || '—';
+        const maxCon = dev.max_contacts != null ? dev.max_contacts : '—';
+        const maxCh  = dev.max_channels != null ? dev.max_channels : '—';
+        const rep    = dev.repeat    != null ? (dev.repeat ? 'Yes' : 'No') : '—';
+        el.innerHTML = `<table style="border-collapse:collapse;font-size:12px">
+          <tr><td style="color:var(--muted);padding:2px 16px 2px 0">Firmware</td><td>${escHtml(String(fwVer))}</td></tr>
+          <tr><td style="color:var(--muted);padding:2px 16px 2px 0">Build</td><td style="font-family:monospace">${escHtml(String(fwBld))}</td></tr>
+          <tr><td style="color:var(--muted);padding:2px 16px 2px 0">Battery</td><td>${escHtml(batV)}</td></tr>
+          <tr><td style="color:var(--muted);padding:2px 16px 2px 0">Storage</td><td>${escHtml(used)} / ${escHtml(total)}</td></tr>
+          <tr><td style="color:var(--muted);padding:2px 16px 2px 0">Max Contacts</td><td>${escHtml(String(maxCon))}</td></tr>
+          <tr><td style="color:var(--muted);padding:2px 16px 2px 0">Max Channels</td><td>${escHtml(String(maxCh))}</td></tr>
+          <tr><td style="color:var(--muted);padding:2px 16px 2px 0">Repeater Mode</td><td>${escHtml(String(rep))}</td></tr>
+        </table>`;
+      }).catch(e => { if (el) el.innerHTML = `<span style="color:var(--red)">Failed: ${escHtml(e.message)}</span>`; });
+  }
+
+  function loadMcStats(radioId) {
+    radioId = radioId || mcSettingsRadioId || activeMcRadioId;
+    if (!radioId) return;
+    const el = document.getElementById('mc-stats-content');
+    if (!el) return;
+    el.textContent = 'Loading…';
+    fetch(`/api/mc/${encodeURIComponent(radioId)}/stats`)
+      .then(r => r.json().then(d => ({ok: r.ok, d})))
+      .then(({ok, d}) => {
+        if (!ok || d.error) { el.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Request failed.')}</span>`; return; }
+        const data = d;
+        const core = data.core || {}, radio = data.radio || {}, pkts = data.packets || {};
+        function fmtUptime(s) { if (!s) return '—'; const h=Math.floor(s/3600),m=Math.floor((s%3600)/60); return h?`${h}h ${m}m`:`${m}m`; }
+        function fmtBat(mv) { return mv ? `${(mv/1000).toFixed(2)} V` : '—'; }
+        function fmtAir(s) { return s != null ? `${s}s` : '—'; }
+        el.innerHTML = `<table style="border-collapse:collapse;font-size:12px">
+          <tr><td colspan="2" style="padding:2px 0 4px;font-weight:600;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">Core</td></tr>
+          <tr><td style="color:var(--muted);padding:2px 16px 2px 0">Battery</td><td>${fmtBat(core.battery_mv)}</td></tr>
+          <tr><td style="color:var(--muted);padding:2px 16px 2px 0">Uptime</td><td>${fmtUptime(core.uptime_secs)}</td></tr>
+          <tr><td style="color:var(--muted);padding:2px 16px 2px 0">Errors</td><td>${core.errors ?? '—'}</td></tr>
+          <tr><td style="color:var(--muted);padding:2px 16px 2px 0">TX queue</td><td>${core.queue_len ?? '—'}</td></tr>
+          <tr><td colspan="2" style="padding:8px 0 4px;font-weight:600;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">Radio</td></tr>
+          <tr><td style="color:var(--muted);padding:2px 16px 2px 0">Noise floor</td><td>${radio.noise_floor ?? '—'} dBm</td></tr>
+          <tr><td style="color:var(--muted);padding:2px 16px 2px 0">Last RSSI</td><td>${radio.last_rssi ?? '—'} dBm</td></tr>
+          <tr><td style="color:var(--muted);padding:2px 16px 2px 0">Last SNR</td><td>${radio.last_snr != null ? radio.last_snr.toFixed(1) : '—'} dB</td></tr>
+          <tr><td style="color:var(--muted);padding:2px 16px 2px 0">TX airtime</td><td>${fmtAir(radio.tx_air_secs)}</td></tr>
+          <tr><td style="color:var(--muted);padding:2px 16px 2px 0">RX airtime</td><td>${fmtAir(radio.rx_air_secs)}</td></tr>
+          <tr><td colspan="2" style="padding:8px 0 4px;font-weight:600;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">Packets</td></tr>
+          <tr><td style="color:var(--muted);padding:2px 16px 2px 0">Received</td><td>${pkts.recv ?? '—'}</td></tr>
+          <tr><td style="color:var(--muted);padding:2px 16px 2px 0">Sent</td><td>${pkts.sent ?? '—'}</td></tr>
+          <tr><td style="color:var(--muted);padding:2px 16px 2px 0">Flood TX</td><td>${pkts.flood_tx ?? '—'}</td></tr>
+          <tr><td style="color:var(--muted);padding:2px 16px 2px 0">Direct TX</td><td>${pkts.direct_tx ?? '—'}</td></tr>
+          <tr><td style="color:var(--muted);padding:2px 16px 2px 0">Flood RX</td><td>${pkts.flood_rx ?? '—'}</td></tr>
+          <tr><td style="color:var(--muted);padding:2px 16px 2px 0">Direct RX</td><td>${pkts.direct_rx ?? '—'}</td></tr>
+          <tr><td style="color:var(--muted);padding:2px 16px 2px 0">RX errors</td><td>${pkts.recv_errors ?? '—'}</td></tr>
+        </table>`;
+      }).catch(e => { if (el) el.innerHTML = `<span style="color:var(--red)">Failed: ${escHtml(e.message)}</span>`; });
+  }
+
+  function loadMcChannelsList(radioId) {
+    radioId = radioId || mcSettingsRadioId || activeMcRadioId;
+    if (!radioId) return;
+    const el = document.getElementById('mc-channels-list');
+    if (!el) return;
+    el.textContent = 'Loading…';
+    fetch(`/api/mc/${encodeURIComponent(radioId)}/channels`)
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(data => {
+        if (data.error) { el.innerHTML = `<span style="color:var(--red)">${escHtml(data.error)}</span>`; return; }
+        const chs = data.channels || [];
+        if (!chs.length) { el.innerHTML = '<span style="color:var(--muted)">No channels found.</span>'; return; }
+        el.innerHTML = `<table style="border-collapse:collapse;font-size:12px;width:100%;max-width:560px">
+          <tr style="color:var(--muted)">
+            <th style="text-align:left;padding:2px 12px 4px 0;font-weight:normal">Slot</th>
+            <th style="text-align:left;padding:2px 12px 4px 0;font-weight:normal">Name</th>
+            <th style="text-align:left;padding:2px 0 4px;font-weight:normal">Key hash</th>
+            <th style="text-align:right;padding:2px 0 4px;font-weight:normal"></th>
+          </tr>
+          ${chs.map((ch, i) => `<tr style="${i < chs.length-1 ? 'border-bottom:1px solid var(--border)' : ''}">
+            <td style="padding:4px 12px 4px 0;font-size:11px;color:var(--muted);width:14px;text-align:right">${escHtml(String(ch.idx))}</td>
+            <td style="padding:4px 12px 4px 0">${escHtml(ch.name || '(empty)')}</td>
+            <td style="padding:4px 0;color:var(--muted);font-family:monospace">${escHtml(ch.hash || '—')}</td>
+            <td style="padding:4px 0;text-align:right;white-space:nowrap">
+              ${ch.name
+                ? `<button class="btn" style="padding:2px 8px;font-size:11px" onclick="shareMcChannel('${jsSafe(radioId)}',${parseInt(ch.idx) || 0},'${jsSafe(ch.name || '')}','${jsSafe(ch.hash || '')}')">Info/Share</button>`
+                : `<button class="btn" style="padding:2px 8px;font-size:11px;opacity:.45;cursor:default" disabled>Info/Share</button>`}
+              <button class="btn" style="padding:2px 8px;font-size:11px;margin-left:4px" onclick="openMcChEdit('${jsSafe(radioId)}',${parseInt(ch.idx) || 0},'${jsSafe(ch.name || '')}','${jsSafe(ch.hash || '')}')">Edit</button>
+            </td>
+          </tr>`).join('')}
+        </table>`;
+      }).catch(e => { if (el) el.innerHTML = `<span style="color:var(--red)">Failed: ${escHtml(e.message)}</span>`; });
+  }
+
+
+  function shareMcChannel(radioId, idx, name, hash) {
+    openChannelShareModal('MC Channel Share', `/api/mc/${encodeURIComponent(radioId)}/channels/${encodeURIComponent(idx)}/share`, [
+      ['Network', 'MeshCore'],
+      ['Radio', radioId],
+      ['Slot', idx],
+      ['Name', name || '(empty)'],
+      ['Key hash', hash || '—'],
+    ]);
+  }
+
+  function saveMcRadioParams(btn) {
+    const radioId = mcSettingsRadioId || activeMcRadioId;
+    if (!radioId) return;
+    const freq = parseFloat(document.getElementById('mc-radio-freq').value);
+    const bw   = parseFloat(document.getElementById('mc-radio-bw').value);
+    const sf   = parseInt(document.getElementById('mc-radio-sf').value);
+    const cr   = parseInt(document.getElementById('mc-radio-cr').value);
+    const statusEl = document.getElementById('mc-radio-status');
+    if (!freq || isNaN(freq) || isNaN(bw) || isNaN(sf) || isNaN(cr)) {
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Invalid values.</span>'; return;
+    }
+    if (statusEl) statusEl.textContent = 'Saving…';
+    fetch(`/api/mc/${encodeURIComponent(radioId)}/radio`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({freq, bw, sf, cr}),
+    }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || 'HTTP ' + r.status); }))
+      .then(d => {
+        if (d.ok) {
+          if (!mcLastStatus[radioId]) mcLastStatus[radioId] = {};
+          Object.assign(mcLastStatus[radioId], {freq, bw, sf, cr});
+          if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent)">Saved — reboot may be needed.</span>';
+          btnFeedback(btn, '✓ Saved');
+        } else {
+          if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Failed')}</span>`;
+        }
+        setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 4000);
+      }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
+  }
+
+  function saveMcTxPower(btn) {
+    const radioId = mcSettingsRadioId || activeMcRadioId;
+    if (!radioId) return;
+    const val = parseInt(document.getElementById('mc-tx-power').value);
+    const statusEl = document.getElementById('mc-radio-status');
+    if (isNaN(val) || val < 1) {
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Invalid TX power.</span>'; return;
+    }
+    if (statusEl) statusEl.textContent = 'Saving…';
+    fetch(`/api/mc/${encodeURIComponent(radioId)}/tx_power`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({tx_power: val}),
+    }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || 'HTTP ' + r.status); }))
+      .then(d => {
+        if (d.ok) {
+          if (!mcLastStatus[radioId]) mcLastStatus[radioId] = {};
+          mcLastStatus[radioId].tx_power = val;
+          if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent)">Saved.</span>';
+          btnFeedback(btn, '✓ Saved');
+        } else {
+          if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Failed')}</span>`;
+        }
+        setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
+      }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
+  }
+
+  function saveMcPathHashMode(btn) {
+    const radioId = mcSettingsRadioId || activeMcRadioId;
+    const sel = document.getElementById('mc-path-hash-mode');
+    const statusEl = document.getElementById('mc-path-hash-status');
+    if (!radioId || !sel) return;
+    const requested = parseInt(sel.value);
+    if (!Number.isFinite(requested) || requested < 0 || requested > 2) {
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Invalid path mode.</span>';
+      return;
+    }
+    if (statusEl) statusEl.textContent = 'Saving...';
+    fetch(`/api/settings/mc_nodes/${encodeURIComponent(radioId)}/path_hash_mode`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({path_hash_mode: requested}),
+    }).then(r => r.json().then(d => ({ok: r.ok, d})))
+      .then(({ok, d}) => {
+        if (!ok || d.error) throw new Error(d.error || 'Request failed.');
+        const applied = Number(d.applied ?? requested);
+        if (!mcLastStatus[radioId]) mcLastStatus[radioId] = {};
+        mcLastStatus[radioId].path_hash_mode = applied;
+        sel.value = String(applied);
+        loadMcSettingsNodes();
+        const label = _mcPathHashModeLabel(applied);
+        const suffix = d.fallback
+          ? ` ${d.warning || `Selected mode unavailable; using ${label}.`}`
+          : ` Saved ${label}.`;
+        if (statusEl) statusEl.innerHTML = `<span style="color:var(--accent)">${escHtml(suffix)}</span>`;
+        btnFeedback(btn, '✓ Saved');
+        setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 5000);
+      }).catch(e => {
+        if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`;
+      });
+  }
+
+  function saveMcForceFlood(enabled) {
+    const radioId = mcSettingsRadioId || activeMcRadioId;
+    const statusEl = document.getElementById('mc-force-flood-status');
+    if (!radioId) return;
+    if (statusEl) statusEl.textContent = 'Saving...';
+    fetch(`/api/settings/mc_nodes/${encodeURIComponent(radioId)}/force_flood`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({force_flood: !!enabled}),
+    }).then(r => r.json().then(d => ({ok: r.ok, d})))
+      .then(({ok, d}) => {
+        if (!ok || d.error) throw new Error(d.error || 'Request failed.');
+        if (!mcLastStatus[radioId]) mcLastStatus[radioId] = {};
+        mcLastStatus[radioId].force_flood = !!d.force_flood;
+        loadMcSettingsNodes();
+        if (statusEl) {
+          statusEl.innerHTML = `<span style="color:var(--accent)">${d.force_flood ? 'Flood routing forced for MC DMs and pings.' : 'Stored/learned MC routes allowed again.'}</span>`;
+          setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 5000);
+        }
+      }).catch(e => {
+        const cb = document.getElementById('mc-force-flood');
+        if (cb) cb.checked = !enabled;
+        if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`;
+      });
+  }
+
+  function saveMcDeviceName(btn) {
+    const radioId = mcSettingsRadioId || activeMcRadioId;
+    if (!radioId) return;
+    const name = (document.getElementById('mc-device-name-input').value || '').trim();
+    const statusEl = document.getElementById('mc-actions-status');
+    if (!name) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Name required.</span>'; return; }
+    if (statusEl) statusEl.textContent = 'Saving…';
+    fetch(`/api/mc/${encodeURIComponent(radioId)}/device_name`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({name}),
+    }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || 'HTTP ' + r.status); }))
+      .then(d => {
+        if (d.ok) {
+          if (!mcLastStatus[radioId]) mcLastStatus[radioId] = {};
+          mcLastStatus[radioId].node_name = name;
+          if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent)">Renamed.</span>';
+          btnFeedback(btn, '✓ Saved');
+        } else {
+          if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Failed')}</span>`;
+        }
+        setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
+      }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
+  }
+
+  function saveMcCoords(btn) {
+    const radioId = mcSettingsRadioId || activeMcRadioId;
+    if (!radioId) return;
+    let lat = parseFloat(document.getElementById('mc-coords-lat').value);
+    let lon = parseFloat(document.getElementById('mc-coords-lon').value);
+    const statusEl = document.getElementById('mc-actions-status');
+    if (isNaN(lat) || isNaN(lon)) {
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Valid lat/lon required.</span>'; return;
+    }
+    // Apply privacy blur before sending
+    const precMeters = parseInt(document.getElementById('mc-coords-precision')?.value || 0);
+    if (precMeters > 0) {
+      const step = precMeters / 111320;
+      lat = Math.round(lat / step) * step;
+      lon = Math.round(lon / step) * step;
+    }
+    if (statusEl) statusEl.textContent = 'Setting…';
+    fetch(`/api/mc/${encodeURIComponent(radioId)}/coords`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({lat, lon}),
+    }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || 'HTTP ' + r.status); }))
+      .then(d => {
+        if (statusEl) statusEl.innerHTML = d.ok
+          ? '<span style="color:var(--accent)">Coords set.</span>'
+          : `<span style="color:var(--red)">${escHtml(d.error || 'Failed')}</span>`;
+        if (d.ok) btnFeedback(btn, '✓ Saved');
+        setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
+      }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
+  }
+
+  function rebootMcNode(btn) {
+    const radioId = mcSettingsRadioId || activeMcRadioId;
+    if (!radioId) return;
+    const name = mcLastStatus[radioId]?.name || radioId;
+    document.getElementById('confirm-ok').textContent = 'Reboot';
+    showConfirm(`Reboot MC device "${escHtml(name)}"?`, () => {
+      const statusEl = document.getElementById('mc-actions-status');
+      if (statusEl) statusEl.textContent = 'Rebooting…';
+      fetch(`/api/mc/${encodeURIComponent(radioId)}/reboot`, {method: 'POST'})
+        .then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || 'HTTP ' + r.status); }))
+        .then(d => {
+          if (statusEl) statusEl.innerHTML = d.ok
+            ? '<span style="color:var(--accent)">Reboot sent.</span>'
+            : `<span style="color:var(--red)">${escHtml(d.error || 'Failed')}</span>`;
+          if (d.ok) btnFeedback(btn, '✓ Rebooting…', 3000);
+          setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 4000);
+        }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
+    });
+  }
+
+  let _editingMcChIdx = null;
+  let _editingMcRadioId = null;
+
+  function openMcChEdit(radioId, idx, name, hash) {
+    _editingMcChIdx   = idx;
+    _editingMcRadioId = radioId;
+    document.getElementById('mc-ch-edit-title').textContent = `Edit Channel ${idx}`;
+    document.getElementById('mc-ch-name').value    = name || '';
+    document.getElementById('mc-ch-key-type').value = 'keep';
+    document.getElementById('mc-ch-key-hex').style.display = 'none';
+    document.getElementById('mc-ch-key-hex').value = '';
+    document.getElementById('mc-channels-status').textContent = '';
+    const panel = document.getElementById('mc-channel-edit');
+    panel.style.display = '';
+    panel.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  }
+
+  function closeMcChEdit() {
+    _editingMcChIdx   = null;
+    _editingMcRadioId = null;
+    document.getElementById('mc-channel-edit').style.display = 'none';
+  }
+
+  function mcChKeyTypeChange() {
+    const type = document.getElementById('mc-ch-key-type').value;
+    document.getElementById('mc-ch-key-hex').style.display = type === 'custom' ? '' : 'none';
+  }
+
+  function saveMcChannel(btn) {
+    const radioId = _editingMcRadioId || mcSettingsRadioId || activeMcRadioId;
+    if (radioId === null || _editingMcChIdx === null) return;
+    const idx      = _editingMcChIdx;
+    const name     = (document.getElementById('mc-ch-name').value || '').trim();
+    const keyType  = document.getElementById('mc-ch-key-type').value;
+    const keyHex   = (document.getElementById('mc-ch-key-hex').value || '').trim().toLowerCase();
+    const statusEl = document.getElementById('mc-channels-status');
+    if (!name) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Channel name required.</span>'; return; }
+    if (keyType === 'custom' && (keyHex.length !== 32 || !/^[0-9a-f]+$/.test(keyHex))) {
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Key must be exactly 32 hex characters.</span>'; return;
+    }
+    if (statusEl) statusEl.textContent = 'Saving…';
+    const body = {name, key_type: keyType};
+    if (keyType === 'custom') body.key = keyHex;
+    fetch(`/api/mc/${encodeURIComponent(radioId)}/channels/${idx}`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    }).then(r => r.json().then(d => ({ok: r.ok, d}))).then(({ok, d}) => {
+      if (!ok || d.error) { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Save failed.')}</span>`; return; }
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent)">Saved.</span>';
+      btnFeedback(btn, '✓ Saved');
+      loadMcChannelsList(radioId);
+      closeMcChEdit();
+    }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
+  }
+
+  function removeMcChannel(btn) {
+    const radioId = _editingMcRadioId || mcSettingsRadioId || activeMcRadioId;
+    if (radioId === null || _editingMcChIdx === null) return;
+    const idx  = _editingMcChIdx;
+    const name = (document.getElementById('mc-ch-name').value || '').trim() || `CH${idx}`;
+    document.getElementById('confirm-ok').textContent = 'Remove';
+    showConfirm(`Remove channel "${name}"? This clears the slot on the device and removes its chat history.`, () => {
+      const statusEl = document.getElementById('mc-channels-remove-status');
+      if (statusEl) { statusEl.textContent = `Removing channel ${idx}…`; statusEl.style.color = 'var(--muted)'; }
+      fetch(`/api/mc/${encodeURIComponent(radioId)}/channels/${idx}`, {method: 'DELETE'})
+        .then(r => r.json())
+        .then(d => {
+          if (statusEl) {
+            statusEl.textContent = d.error ? `✗ ${escHtml(d.error)}` : `✓ Channel ${idx} removed.`;
+            statusEl.style.color = d.error ? 'var(--red)' : 'var(--accent)';
+            setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 4000);
+          }
+          if (!d.error) { btnFeedback(btn, '✓ Removed'); closeMcChEdit(); loadMcChannelsList(radioId); }
+        }).catch(e => { if (statusEl) { statusEl.textContent = `✗ ${escHtml(String(e))}`; statusEl.style.color = 'var(--red)'; } });
+    });
+  }
+
+  function clearMcChannelHistory(btn) {
+    const radioId = _editingMcRadioId || mcSettingsRadioId || activeMcRadioId;
+    if (!radioId || _editingMcChIdx === null) return;
+    const idx  = _editingMcChIdx;
+    const name = (document.getElementById('mc-ch-name').value || '').trim() || `CH${idx}`;
+    const statusEl = document.getElementById('mc-channels-status');
+    document.getElementById('confirm-ok').textContent = 'Delete';
+    showConfirm(`Delete saved MC chat history for "${name}"?`, () => {
+      const before = mcMessages.length;
+      mcMessages = mcMessages.filter(m => !(
+        m.radio_id === radioId && (
+          m.subtype === 'system' ||
+          (parseInt(m.channel ?? 0) === idx && m.subtype !== 'dm')
+        )
+      ));
+      const removed = before - mcMessages.length;
+      _saveMcMessages();
+      mcUnreadTabs.delete(`chan:${idx}`);
+      _clearUnreadCount(mcUnreadCounts, `chan:${idx}`);
+      if (activeMcRadioId === radioId) renderMcMessages();
+      updateUnreadDots();
+      if (statusEl) statusEl.innerHTML = `<span style="color:var(--accent)">Deleted ${removed} saved message${removed === 1 ? '' : 's'}.</span>`;
+      btnFeedback(btn, '✓ Cleared');
+      setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 4000);
+      document.getElementById('confirm-ok').textContent = 'OK';
+    });
+  }
+
+  function startMcDebugEvents() {
+    const radioId = mcSettingsRadioId || activeMcRadioId;
+    const statusEl = document.getElementById('mc-actions-status');
+    const btn = document.getElementById('mc-debug-btn');
+    if (!radioId) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">No MC radio selected.</span>'; return; }
+    fetch(`/api/mc/${encodeURIComponent(radioId)}/debug_events`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({duration: 60}),
+    }).then(r => r.json()).then(d => {
+      if (!d.ok) { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(d.error||'Failed')}</span>`; return; }
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent)">Debug logging ON — watch the server log, then send a Ping. Auto-stops in 60s.</span>';
+      if (btn) btn.disabled = true;
+      let remaining = 60;
+      const t = setInterval(() => {
+        remaining--;
+        if (btn) btn.textContent = `Debug Events (${remaining}s)`;
+        if (remaining <= 0) {
+          clearInterval(t);
+          if (btn) { btn.disabled = false; btn.textContent = 'Debug Events'; }
+          if (statusEl) statusEl.textContent = '';
+        }
+      }, 1000);
+    }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
+  }
+
+  function importMcContact(btn) {
+    const radioId = mcSettingsRadioId || activeMcRadioId;
+    const statusEl = document.getElementById('mc-import-status');
+    if (!radioId) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">No MC radio selected.</span>'; return; }
+    const link = (document.getElementById('mc-import-link').value || '').trim();
+    if (!link) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Paste a meshcore:// share link first.</span>'; return; }
+    if (statusEl) statusEl.textContent = 'Importing…';
+    fetch(`/api/mc/${encodeURIComponent(radioId)}/import_contact`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({link}),
+    }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || 'HTTP ' + r.status); }))
+      .then(d => {
+        if (d.ok) {
+          if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent)">Contact imported.</span>';
+          btnFeedback(btn, '✓ Imported');
+          document.getElementById('mc-import-link').value = '';
+          setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 15000);
+        } else {
+          if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Failed')}</span>`;
+        }
+      }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
+  }
+
+  function parseMcChannelLink() {
+    const link    = (document.getElementById('mc-import-channel-link').value || '').trim();
+    const preview = document.getElementById('mc-import-channel-preview');
+    const statusEl = document.getElementById('mc-import-channel-status');
+    if (statusEl) statusEl.textContent = '';
+    if (!link) { preview.style.display = 'none'; return; }
+    try {
+      const url    = new URL(link.replace(/^meshcore:\/\//, 'https://meshcore/'));
+      const name   = url.searchParams.get('name')   || '';
+      const secret = url.searchParams.get('secret') || '';
+      if (!name) { preview.style.display = 'none'; if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">No channel name found in link.</span>'; return; }
+      document.getElementById('mc-import-ch-name-preview').textContent   = name;
+      document.getElementById('mc-import-ch-secret-preview').textContent = secret ? secret.slice(0, 8) + '…' : '(auto-derive from name)';
+      preview.style.display = '';
+    } catch(e) {
+      preview.style.display = 'none';
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Invalid link format.</span>';
+    }
+  }
+
+  function importMcChannel() {
+    const radioId  = mcSettingsRadioId || activeMcRadioId;
+    const statusEl = document.getElementById('mc-import-channel-status');
+    if (!radioId) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">No MC radio selected.</span>'; return; }
+    const link = (document.getElementById('mc-import-channel-link').value || '').trim();
+    const slot = parseInt(document.getElementById('mc-import-ch-slot').value);
+    if (isNaN(slot) || slot < 0 || slot > 15) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Slot must be 0–15.</span>'; return; }
+    let name, secret;
+    try {
+      const url = new URL(link.replace(/^meshcore:\/\//, 'https://meshcore/'));
+      name   = url.searchParams.get('name')   || '';
+      secret = url.searchParams.get('secret') || '';
+    } catch(e) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Invalid link.</span>'; return; }
+    if (!name) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">No channel name in link.</span>'; return; }
+    if (statusEl) statusEl.textContent = 'Importing…';
+    const body = {name, key_type: secret ? 'custom' : 'auto'};
+    if (secret) body.key = secret;
+    fetch(`/api/mc/${encodeURIComponent(radioId)}/channels/${slot}`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    }).then(r => r.json().then(d => ({ok: r.ok, d}))).then(({ok, d}) => {
+      if (!ok || d.error) { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Failed')}</span>`; return; }
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent)">Channel imported.</span>';
+      document.getElementById('mc-import-channel-link').value = '';
+      document.getElementById('mc-import-channel-preview').style.display = 'none';
+      loadMcChannelsList(radioId);
+      setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 4000);
+    }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
+  }
+
+  // ---- Map container height (Leaflet needs explicit pixel height) ----
+  function resizeMapView() {
+    // Defer measurement until after flex layout has settled
+    requestAnimationFrame(() => {
+      const panel   = document.getElementById('panel-map');
+      const toolbar = document.getElementById('map-toolbar');
+      const body    = document.getElementById('map-body');
+      const mvm     = document.getElementById('map-view-map');
+      const sp      = document.getElementById('sense-panel');
+      const lp      = document.getElementById('sense-log-panel');
+      if (!panel || !toolbar) return;
+      const h = panel.offsetHeight - toolbar.offsetHeight;
+      const maxH = window.innerHeight - (toolbar ? toolbar.getBoundingClientRect().bottom : 48);
+      const clampedH = Math.min(h, maxH);
+      if (clampedH > 0) {
+        if (body) body.style.height = clampedH + 'px';
+        if (mvm)  mvm.style.height  = clampedH + 'px';
+        if (sp)   sp.style.height   = clampedH + 'px';
+        if (lp)   lp.style.height   = clampedH + 'px';
+      }
+      leafletMap && leafletMap.invalidateSize();
+    });
+  }
+
+  // ---- Sense panel toggle ----
+  function toggleSensePanel(open) {
+    const panel    = document.getElementById('sense-panel');
+    const logPanel = document.getElementById('sense-log-panel');
+    const overlayPanel = document.getElementById('overlay-panel');
+    const isOpen = open !== undefined ? open : panel.style.display === 'none';
+    panel.style.display    = isOpen ? 'flex' : 'none';
+    logPanel.style.display = isOpen ? 'flex' : 'none';
+    const mpr = document.getElementById('map-panels-right');
+    if (mpr) mpr.style.display = isOpen ? 'none' : '';
+    if (overlayPanel) overlayPanel.style.display = isOpen ? 'none' : '';
+    document.getElementById('map-btn-map').classList.toggle('active', !isOpen);
+    document.getElementById('map-btn-sense').classList.toggle('active', isOpen);
+    const netFilter     = document.getElementById('map-net-filter');
+    const senseNetFilter = document.getElementById('sense-net-filter');
+    if (netFilter)      netFilter.style.display      = isOpen ? 'none' : '';
+    if (senseNetFilter) senseNetFilter.style.display = isOpen ? ''     : 'none';
+    localStorage.setItem('sensePanelOpen', isOpen ? '1' : '0');
+    _updateNetworkPillVisibility();
+    resizeMapView();
+    if (isOpen) {
+      if (_mapLayerDraft) cancelMapLayerDraft();
+      // Apply current network mode (MT or MC)
+      switchSenseNet(_senseNet);
+      _updateMapNodeCount();
+      if (_senseNet === 'mt') senseInit();
+    } else {
+      // Clean up MC sense state — restore legend
+      const _leg   = document.querySelector('.map-legend');
+      const _mcLeg = document.getElementById('map-legend-mc');
+      if (_leg) _leg.style.display = '';
+      if (_mcLeg) {
+        const mcVisible = Object.keys(mcLastStatus).length > 0 && localStorage.getItem('mcHide') !== '1';
+        _mcLeg.style.display = mcVisible ? '' : 'none';
+      }
+      clearMcPathLines();
+      _mcHoverLines.forEach(l => leafletMap && leafletMap.removeLayer(l));
+      _mcHoverLines = [];
+      // Restore MT and MC map filters to user's saved preferences
+      const savedMt = localStorage.getItem('mapShowMt') !== '0';
+      const savedMc = localStorage.getItem('mapShowMc') !== '0';
+      mapShowMt = savedMt;
+      mapShowMc = savedMc;
+      document.getElementById('map-mt-pill')?.classList.toggle('active', mapShowMt);
+      document.getElementById('nodes-mt-pill')?.classList.toggle('active', mapShowMt);
+      document.getElementById('map-mc-pill')?.classList.toggle('active', mapShowMc);
+      document.getElementById('nodes-mc-pill')?.classList.toggle('active', mapShowMc);
+      updateMapMarkers(allNodes);
+      renderMcMapMarkers();
+      _updateScanBtnVisibility?.();
+      _updateMapNodeCount();
+    }
+  }
+
+  function senseMapAddMarker(n) {
+    if (!leafletMap || n.lat == null || n.lon == null) return;
+    // Skip if a regular node marker already exists — avoids double-marker visual conflicts
+    if (mapMarkers[n.from_id]) return;
+    // Color by age (matches legend), not SNR — SNR is visible in the popup
+    const color = markerColor({ last_heard_ts: n.ts || 0, is_local: false });
+    const icon = L.divIcon({
+      className: '',
+      html: `<div style="width:12px;height:12px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 0 6px ${color}"></div>`,
+      iconSize: [12, 12], iconAnchor: [6, 6]
+    });
+    const sensePopupContent = () => {
+      const lbl = n.name && n.name !== 'null' ? n.name : n.from_id;
+      const safeName = jsSafe(lbl);
+      const rows = [
+        `<div class="map-popup-name">${escHtml(lbl)}</div>`,
+        n.snr     != null ? `<div><b>SNR:</b> ${n.snr.toFixed ? n.snr.toFixed(1) : n.snr} dB</div>` : null,
+        n.hops    != null ? `<div><b>Hops:</b> ${n.hops === 0 ? 'Direct' : `${n.hops} hop${n.hops !== 1 ? 's' : ''} away`}</div>` : null,
+        n.ts      != null ? `<div><b>Last heard:</b> <span class="map-popup-lh" data-ts="${n.ts}">${senseTimeAgo(n.ts)}</span></div>` : null,
+        n.battery != null ? `<div><b>Battery:</b> ${n.battery}%</div>` : null,
+        n.voltage != null ? `<div><b>Voltage:</b> ${n.voltage.toFixed ? n.voltage.toFixed(2) : n.voltage}V</div>` : null,
+        n.alt     != null ? `<div><b>Alt:</b> ${n.alt}m</div>` : null,
+        n.sats    != null ? `<div><b>Sats:</b> ${n.sats}</div>` : null,
+        n.hw_model ? `<div><b>HW:</b> ${escHtml(n.hw_model)}</div>` : null,
+        n.role     ? `<div><b>Role:</b> ${escHtml(n.role)}</div>` : null,
+        `<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+          <button class="map-popup-btn" title="Show in Nodes list" onclick="showNodeInList('${jsSafe(n.from_id)}')">List</button>
+          <button class="map-popup-btn" title="Send direct message" onclick="openMapDM('${jsSafe(n.from_id)}','${safeName}')">DM</button>
+          <button class="map-popup-btn" title="Traceroute to this node" onclick="openMapTR('${jsSafe(n.from_id)}','${safeName}','${jsSafe(n.radio_id || activeRadioId || '')}')">TR</button>
+          <button class="map-popup-btn" title="Set position" onclick="openMapPos('${jsSafe(n.from_id)}','${safeName}')">Pos</button>
+          <button class="map-popup-btn" title="Node info &amp; settings" onclick="openMapInfo('${jsSafe(n.from_id)}','${safeName}')">Info</button>
+          <button class="map-popup-btn danger" title="Delete from device" onclick="deleteNode('${jsSafe(n.from_id)}','${safeName}')">Delete</button>
+        </div>`,
+      ].filter(Boolean).join('');
+      return rows;
+    };
+    const nodeLabel = n.name && n.name !== 'null' ? n.name : n.from_id;
+    if (senseMarkers[n.from_id]) {
+      senseMarkers[n.from_id].setLatLng([n.lat, n.lon]).setIcon(icon).setPopupContent(sensePopupContent());
+      senseMarkers[n.from_id].setTooltipContent(nodeLabel);
+    } else {
+      const m = L.marker([n.lat, n.lon], { icon })
+        .bindPopup(sensePopupContent())
+        .bindTooltip(nodeLabel, { permanent: true, direction: 'right', className: 'map-label', offset: [8, 0] })
+        .addTo(leafletMap);
+      if (!mapLabels) m.closeTooltip();
+      senseMarkers[n.from_id] = m;
+    }
+  }
+
+  // ---- Sense ----
+  let _senseTimer       = null;
+  let _senseWindowTimer = null;
+  let _senseCooldownVal = 180;
+  let _senseResponses   = {};
+  let _senseRunId       = 0;
+  let senseMarkers      = {};
+  let _senseStateByRadio = {};  // radio_id → {responses}
+  const SENSE_PASSIVE_TTL = 7200; // 2 hours in seconds
+
+  function _saveSenseState(radioId) {
+    if (!radioId) return;
+    _senseStateByRadio[radioId] = {
+      responses: Object.assign({}, _senseResponses),
+    };
+  }
+
+  function _restoreSenseState(radioId) {
+    const nodesEl = document.getElementById('sense-nodes');
+    const logEl   = document.getElementById('sense-log');
+    // Clear map markers
+    Object.values(senseMarkers).forEach(m => { try { leafletMap && leafletMap.removeLayer(m); } catch(e){} });
+    senseMarkers = {};
+    const saved = _senseStateByRadio[radioId];
+
+    // Helper: rebuild log from current _senseResponses, sorted oldest→newest (prepend = newest on top)
+    function _rebuildLog() {
+      if (!logEl) return;
+      logEl.innerHTML = '<span id="sense-log-empty" style="color:var(--muted)">No sense run yet.</span>';
+      Object.values(_senseResponses)
+        .sort((a, b) => (a.ts || 0) - (b.ts || 0))
+        .forEach(n => _senseAddLogEntry(n));
+    }
+
+    if (saved && Object.keys(saved.responses).length) {
+      _senseResponses = Object.assign({}, saved.responses);
+      // Rebuild cards and log from responses (background updates only touch responses, not HTML)
+      if (nodesEl) {
+        nodesEl.replaceChildren();
+        Object.values(_senseResponses)
+          .sort((a, b) => (b.ts || 0) - (a.ts || 0))
+          .forEach(n => senseAddNodeCard(n));
+      }
+      _rebuildLog();
+      // Re-attach map markers
+      Object.values(_senseResponses).forEach(n => { if (n.lat != null && n.lon != null) senseMapAddMarker(n); });
+      senseSummaryUpdate();
+    } else {
+      // No saved state for this radio — seed from another radio's saved state (same mesh = same nodes)
+      // then merge with backend to catch any nodes the other radio may have missed
+      const seedState = Object.values(_senseStateByRadio).find(s => Object.keys(s.responses).length > 0);
+      _senseResponses = seedState ? Object.assign({}, seedState.responses) : {};
+      if (nodesEl) {
+        nodesEl.replaceChildren();
+        Object.values(_senseResponses)
+          .sort((a, b) => (b.ts || 0) - (a.ts || 0))
+          .forEach(n => senseAddNodeCard(n));
+      }
+      _rebuildLog();
+      Object.values(_senseResponses).forEach(n => { if (n.lat != null && n.lon != null) senseMapAddMarker(n); });
+      senseSummaryUpdate();
+      // Also fetch from backend to merge any nodes not yet in saved state
+      const _fetchRadioId = radioId;
+      fetch('/api/mesh/sense/status').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+        if (activeRadioId !== _fetchRadioId) return; // radio switched while fetch was in flight
+        if (d.responses && d.responses.length) {
+          let changed = false;
+          d.responses.forEach(n => {
+            if (!_senseResponses[n.from_id]) {
+              _senseResponses[n.from_id] = n;
+              senseAddNodeCard(n);
+              _senseAddLogEntry(n);
+              if (n.lat != null && n.lon != null) senseMapAddMarker(n);
+              changed = true;
+            }
+          });
+          if (changed) { senseSummaryUpdate(); updateHeaderNodeCount(allNodes); }
+        }
+      }).catch(() => {});
+    }
+  }
+
+  function _evictStaleSenseNodes() {
+    const now = Math.floor(Date.now() / 1000);
+    let evicted = false;
+    // Evict from active radio
+    Object.keys(_senseResponses).forEach(id => {
+      if ((now - (_senseResponses[id].ts || 0)) > SENSE_PASSIVE_TTL) {
+        delete _senseResponses[id];
+        const card = document.getElementById('sense-node-' + id);
+        if (card) card.remove();
+        if (senseMarkers[id]) { try { leafletMap && leafletMap.removeLayer(senseMarkers[id]); } catch(e){} delete senseMarkers[id]; }
+        evicted = true;
+      }
+    });
+    // Evict from saved radio states
+    Object.keys(_senseStateByRadio).forEach(rid => {
+      const state = _senseStateByRadio[rid];
+      Object.keys(state.responses).forEach(id => {
+        if ((now - (state.responses[id].ts || 0)) > SENSE_PASSIVE_TTL) {
+          delete state.responses[id];
+        }
+      });
+    });
+    if (evicted) {
+      if (!Object.keys(_senseResponses).length) {
+        const summary = document.getElementById('sense-summary');
+        if (summary) summary.style.display = 'none';
+      } else {
+        senseSummaryUpdate();
+      }
+      updateHeaderNodeCount(allNodes);
+    }
+  }
+
+  function senseCooldownLabel(s) {
+    if (s <= 0)    return 'ready';
+    if (s < 60)    return `${s}s`;
+    if (s < 3600)  return `${Math.floor(s/60)}m ${s%60}s`;
+    return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m`;
+  }
+
+  function senseCooldownSettingLabel(s) {
+    s = parseInt(s);
+    if (s < 60)   return `(${s}s)`;
+    if (s < 3600) return `(${Math.floor(s/60)} min)`;
+    return `(${(s/3600).toFixed(1)} h)`;
+  }
+
+  function senseInit() {
+    // Pre-load both buttons from localStorage so the UI is never blank before the fetch.
+    // If sensePassive has never been stored (first run), default to true (app default).
+    // The fetch below confirms the real backend state and corrects any mismatch.
+    const lsPassiveRaw = localStorage.getItem('sensePassive');
+    const lsPassive    = lsPassiveRaw !== null ? lsPassiveRaw === '1' : true;
+    const lsActive     = localStorage.getItem('senseActiveAuto') === '1';
+    const pBtn = document.getElementById('sense-passive-btn');
+    const aBtn = document.getElementById('sense-active-btn');
+    if (pBtn) pBtn.classList.toggle('active', lsPassive);
+    if (aBtn) aBtn.classList.toggle('active', lsActive);
+    const status = document.getElementById('sense-status');
+    if (lsActive)       status.textContent = 'Active scanning…';
+    else if (lsPassive) status.textContent = 'Passive listening…';
+
+    fetch('/api/mesh/sense/status').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+      _senseCooldownVal = d.cooldown;
+      if (d.response_count > 0) {
+        const _now = Math.floor(Date.now() / 1000);
+        d.responses.filter(n => !n.ts || (_now - n.ts) <= SENSE_PASSIVE_TTL).forEach(n => senseAddNode(n));
+        senseSummaryUpdate();
+      }
+      // Confirm mode toggle states from backend (source of truth) + sync localStorage
+      const pBtnEl = document.getElementById('sense-passive-btn');
+      const aBtnEl = document.getElementById('sense-active-btn');
+      if (pBtnEl) pBtnEl.classList.toggle('active', !!d.passive);
+      if (aBtnEl) aBtnEl.classList.toggle('active', !!d.active_auto);
+      localStorage.setItem('sensePassive',    d.passive    ? '1' : '0');
+      localStorage.setItem('senseActiveAuto', d.active_auto ? '1' : '0');
+      if (d.passive && !d.active) {
+        document.getElementById('sense-status').textContent = 'Passive listening…';
+      }
+      if (d.active_auto && !d.active) {
+        document.getElementById('sense-status').textContent = 'Active scanning…';
+      }
+      senseCooldownTick(d.cooldown_remaining);
+      if (d.active) {
+        document.getElementById('sense-status').textContent = `Sensing… ${d.window_remaining}s remaining`;
+        senseStartWindowCountdown(d.window_remaining);
+      }
+    }).catch(e => console.error('senseInit status fetch failed:', e));
+  }
+
+  function toggleSensePassive() {
+    fetch('/api/mesh/sense/passive', {method: 'POST'}).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+      document.getElementById('sense-passive-btn').classList.toggle('active', d.passive);
+      localStorage.setItem('sensePassive', d.passive ? '1' : '0');
+      const status = document.getElementById('sense-status');
+      if (d.passive) status.textContent = 'Passive listening…';
+      else if (!document.getElementById('sense-active-btn').classList.contains('active')) status.textContent = '';
+    }).catch(e => console.error('toggleSensePassive failed:', e));
+  }
+
+  function toggleSenseActive() {
+    fetch('/api/mesh/sense/active_auto', {method: 'POST'}).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+      document.getElementById('sense-active-btn').classList.toggle('active', d.active_auto);
+      localStorage.setItem('senseActiveAuto', d.active_auto ? '1' : '0');
+      const status = document.getElementById('sense-status');
+      if (d.active_auto) status.textContent = 'Active scanning…';
+      else if (!document.getElementById('sense-passive-btn').classList.contains('active')) status.textContent = '';
+    }).catch(e => console.error('toggleSenseActive failed:', e));
+  }
+
+  function senseCooldownTick(remaining) {
+    if (_senseTimer) clearInterval(_senseTimer);
+    const btn  = document.getElementById('sense-btn');
+    const bar  = document.getElementById('sense-cooldown-bar');
+    const val  = document.getElementById('sense-cooldown-val');
+    if (remaining <= 0) {
+      btn.disabled = false;
+      btn.textContent = 'Sense Mesh';
+      bar.style.display = 'none';
+      return;
+    }
+    btn.disabled = true;
+    bar.style.display = '';
+    let r = remaining;
+    val.textContent = senseCooldownLabel(r);
+    _senseTimer = setInterval(() => {
+      r--;
+      val.textContent = senseCooldownLabel(r);
+      if (r <= 0) {
+        clearInterval(_senseTimer);
+        btn.disabled = false;
+        btn.textContent = 'Sense Mesh';
+        bar.style.display = 'none';
+      }
+    }, 1000);
+  }
+
+  function senseStartWindowCountdown(sec) {
+    if (_senseWindowTimer) clearInterval(_senseWindowTimer);
+    const status = document.getElementById('sense-status');
+    const btn    = document.getElementById('sense-btn');
+    let w = sec;
+    _senseWindowTimer = setInterval(() => {
+      w--;
+      if (w <= 0) {
+        clearInterval(_senseWindowTimer);
+        _senseWindowTimer = null;
+        if (btn) btn.textContent = 'Sense Mesh';
+        // sense_done SSE will overwrite status with final count
+        if (status) status.textContent = '';
+      } else {
+        if (status) status.textContent = `Sensing… ${w}s remaining`;
+      }
+    }, 1000);
+  }
+
+  function triggerSense() {
+    // Pre-increment run ID and clear responses BEFORE fetch so SSE events arriving
+    // during the request are associated with the new run and not wiped by the .then()
+    const _prevRunId = _senseRunId;
+    _senseRunId++;
+    _senseResponses = {};
+    delete _senseStateByRadio[activeRadioId];
+    const body = activeRadioId ? JSON.stringify({radio_id: activeRadioId}) : '{}';
+    fetch('/api/mesh/sense', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+      if (!d.ok) {
+        // Sense didn't start — restore previous run state
+        _senseRunId = _prevRunId;
+        document.getElementById('sense-status').textContent =
+          `Cooldown: ${senseCooldownLabel(d.cooldown_remaining)} remaining`;
+        senseCooldownTick(d.cooldown_remaining);
+        return;
+      }
+      // Dim existing nodes — they'll be un-dimmed if they respond, removed if they don't
+      document.querySelectorAll('#sense-nodes .sense-node-card').forEach(c => {
+        c.style.opacity = '0.6';
+        c.dataset.run = _senseRunId - 1;
+      });
+      document.getElementById('sense-log').innerHTML = '<span id="sense-log-empty" style="color:var(--muted)">Listening…</span>';
+      document.getElementById('sense-summary').style.display = 'none';
+      document.getElementById('sense-stat-responses').textContent = '0';
+      document.getElementById('sense-stat-gps').textContent = '0';
+      document.getElementById('sense-stat-snr').textContent = '—';
+      document.getElementById('sense-btn').textContent = 'Sensing…';
+      senseStartWindowCountdown(d.window);
+      senseCooldownTick(d.cooldown);
+    }).catch(e => console.error('Sense trigger failed:', e));
+  }
+
+  function senseSnrClass(snr) {
+    if (snr == null) return '';
+    if (snr >= -5)   return 'snr-good';
+    if (snr >= -15)  return 'snr-ok';
+    return 'snr-weak';
+  }
+
+  function senseTimeAgo(ts) {
+    if (!ts) return '';
+    const diff = Math.floor(Date.now() / 1000) - ts;
+    if (diff < 0)      return '—';
+    if (diff < 60)   return diff + 's ago';
+    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+    return Math.floor(diff / 86400) + 'd ago';
+  }
+
+  function _senseNodeMeta(n) {
+    const hasGps = n.lat != null && n.lon != null;
+    const meta = [
+      n.snr      != null ? `SNR ${n.snr.toFixed ? n.snr.toFixed(1) : n.snr} dB` : null,
+      n.hops     != null ? `${n.hops} hop${n.hops !== 1 ? 's' : ''}` : null,
+      n.battery  != null ? (n.battery === 101 ? '🔌' : `🔋 ${n.battery}%`) : null,
+      n.voltage  != null ? `${n.voltage.toFixed ? n.voltage.toFixed(2) : n.voltage}V` : null,
+      n.alt      != null ? `Alt ${n.alt}m` : null,
+      n.sats     != null ? `${n.sats} sats` : null,
+      hasGps ? '📍 GPS' : null,
+      n.hw_model  ? `[${n.hw_model}]` : null,
+      n.role      ? n.role : null,
+      n.ch_util  != null ? `CH ${n.ch_util.toFixed ? n.ch_util.toFixed(1) : n.ch_util}%` : null,
+      n.air_util != null ? `Air ${n.air_util.toFixed ? n.air_util.toFixed(1) : n.air_util}%` : null,
+    ].filter(Boolean).join(' · ');
+    return meta;
+  }
+
+  // Render/update node card only — no log entry. Used by senseAddNode and _restoreSenseState.
+  function senseAddNodeCard(n) {
+    if (!n || !n.from_id) return;
+    const label = n.name && n.name !== 'null' ? n.name : n.from_id;
+    const hasGps = n.lat != null && n.lon != null;
+    const meta = _senseNodeMeta(n);
+    const html = `
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px">
+        <div class="sense-node-name">${escHtml(label)}</div>
+        <div class="sense-node-time">${senseTimeAgo(n.ts)}</div>
+      </div>
+      <div class="sense-node-meta">${escHtml(meta) || 'No data'}</div>`;
+    const clickPos = hasGps
+      ? [n.lat, n.lon]
+      : (() => { const mn = allNodes.find(nd => nd.id === n.from_id); return mn && mn.latitude != null ? [mn.latitude, mn.longitude] : null; })();
+    const existing = document.getElementById(`sense-node-${n.from_id}`);
+    if (existing) {
+      existing.className = `sense-node-card ${senseSnrClass(n.snr)}`;
+      existing.innerHTML = html;
+      existing.style.opacity = '1';
+      existing.dataset.run = _senseRunId;
+      existing.dataset.ts = n.ts || '';
+      if (clickPos) existing.onclick = () => { setMapLock(false); leafletMap && leafletMap.setView(clickPos, leafletMap.getZoom()); };
+      else existing.onclick = null;
+    } else {
+      const card = document.createElement('div');
+      card.className = `sense-node-card ${senseSnrClass(n.snr)}`;
+      card.id = `sense-node-${n.from_id}`;
+      card.dataset.run = _senseRunId;
+      card.dataset.ts = n.ts || '';
+      card.innerHTML = html;
+      if (clickPos) card.onclick = () => { setMapLock(false); leafletMap && leafletMap.setView(clickPos, leafletMap.getZoom()); };
+      const _nodesContainer = document.getElementById('sense-nodes');
+      if (_nodesContainer) _nodesContainer.prepend(card);
+    }
+  }
+
+  // Add a log entry for node n. Used by senseAddNode (live) and _restoreSenseState (rebuild).
+  // Uses n.ts for timestamp when available (accurate on restore), else current time (live).
+  function _senseAddLogEntry(n) {
+    if (!n || !n.from_id) return;
+    const log = document.getElementById('sense-log');
+    if (!log) return;
+    const pktKey = _mtSensePacketKey(n);
+    if (pktKey && document.getElementById(pktKey)) return;
+    const label = n.name && n.name !== 'null' ? n.name : n.from_id;
+    const hasGps = n.lat != null && n.lon != null;
+    const pktType = {
+      POSITION_APP: 'Position', NODEINFO_APP: 'Node Info', TELEMETRY_APP: 'Telemetry',
+      TEXT_MESSAGE_APP: 'Text', ROUTING_APP: 'Routing', ADMIN_APP: 'Admin',
+      TRACEROUTE_APP: 'Traceroute', NEIGHBORINFO_APP: 'Neighbor Info',
+      WAYPOINT_APP: 'Waypoint', PAXCOUNTER_APP: 'Pax Counter',
+      STORE_FORWARD_APP: 'Store & Fwd', RANGE_TEST_APP: 'Range Test',
+      DETECTION_SENSOR_APP: 'Detection', MAP_REPORT_APP: 'Map Report',
+      ATAK_PLUGIN: 'ATAK', SERIAL_APP: 'Serial', AUDIO_APP: 'Audio',
+      REMOTE_HARDWARE_APP: 'Remote HW', IP_TUNNEL_APP: 'IP Tunnel',
+    }[n.portnum] || (n.portnum ? n.portnum.replace(/_APP$/,'').replace(/_/g,' ') : '—');
+    const clickPos = hasGps
+      ? [n.lat, n.lon]
+      : (() => { const mn = allNodes.find(nd => nd.id === n.from_id); return mn && mn.latitude != null ? [mn.latitude, mn.longitude] : null; })();
+    const empty = document.getElementById('sense-log-empty');
+    if (empty) empty.remove();
+    const ts = n.ts
+      ? new Date(n.ts * 1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit', hour12: false})
+      : new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit', hour12: false});
+    const shortName = (n.short_name && n.short_name !== 'null') ? n.short_name : label;
+    let dataRow = '';
+    dataRow += (n.snr     != null ? ` · SNR ${n.snr.toFixed ? n.snr.toFixed(1) : n.snr}` : '');
+    dataRow += (n.battery != null ? ` · ${n.battery === 101 ? '🔌' : `🔋${n.battery}%`}` : '');
+    dataRow += (n.voltage != null ? ` · ${n.voltage.toFixed ? n.voltage.toFixed(2) : n.voltage}V` : '');
+    dataRow += (hasGps ? ' · 📍' : '');
+    dataRow += (n.route ? ` · route: ${n.route.map(escHtml).join(' → ')}` : '');
+    dataRow += (n.text ? ` · "${escHtml(String(n.text).slice(0, 70))}${String(n.text).length > 70 ? '…' : ''}"` : '');
+    dataRow += (n.neighbor_count != null ? ` · ${n.neighbor_count} neighbors` : '');
+    dataRow = dataRow.replace(/^ · /, '');
+    const routeMeta = _mtSenseRouteMeta(n);
+    const routeKey = routeMeta ? _mtRouteKey(routeMeta.targetId || n.from_id, n.radio_id || activeRadioId) : '';
+    const routeEntryKey = pktKey || (n.msg_id ? `sense-msg-${n.msg_id}` : `sense-mt-entry-${String(n.radio_id || activeRadioId || 'mt').replace(/[^A-Za-z0-9_-]/g, '_')}-${String(n.from_id || '').replace(/[^A-Za-z0-9_-]/g, '_')}-${n.ts || Date.now()}`);
+    const routeChip = routeMeta
+      ? (routeMeta.cached
+        ? `<button class="mt-route-badge cached" title="${escHtml(routeMeta.detail)}" onclick="event.stopPropagation();showMtSenseRoute('${jsSafe(n.from_id)}','${jsSafe(n.radio_id || '')}','${jsSafe(routeEntryKey)}')">${escHtml(routeMeta.label)}</button>`
+        : `<span class="mt-route-badge info" title="${escHtml(routeMeta.detail)}">${escHtml(routeMeta.label)}</span>`)
+      : '';
+    const line = document.createElement('div');
+    if (pktKey) line.id = pktKey;
+    else if (n.msg_id) line.id = `sense-msg-${n.msg_id}`;
+    if (routeKey) line.dataset.mtRouteKey = routeKey;
+    if (routeMeta?.cached) line.dataset.mtEntryKey = routeEntryKey;
+    if (routeMeta?.cached && routeEntryKey === _activeMtRouteEntryKey) line.classList.add('mt-route-selected');
+    line.style.cssText = 'border-bottom:1px solid var(--border);padding:3px 0' + ((routeMeta?.cached || clickPos) ? ';cursor:pointer' : '');
+    line.innerHTML =
+      `<div style="display:flex;gap:6px;align-items:baseline">` +
+        `<span style="color:var(--accent);flex-shrink:0">${ts}</span>` +
+        `<span style="color:#e6edf3;font-weight:600">${escHtml(shortName)}</span>` +
+        `<span style="color:var(--muted);font-style:italic">${pktType}</span>` +
+        routeChip +
+      `</div>` +
+      (dataRow ? `<div style="color:var(--muted);padding-left:4px">${dataRow}</div>` : '');
+    if (routeMeta?.cached) {
+      line.onclick = () => showMtSenseRoute(n.from_id, n.radio_id || '', routeEntryKey);
+    } else if (clickPos) {
+      line.onclick = () => { setMapLock(false); leafletMap && leafletMap.setView(clickPos, leafletMap.getZoom()); };
+    }
+    line.onmouseenter = function() {
+      if (routeMeta?.cached) previewMtSenseRoute(n.from_id, n.radio_id || '', true);
+      if (routeMeta?.cached || clickPos) this.style.background = 'rgba(255,255,255,0.04)';
+    };
+    line.onmouseleave = function() {
+      if (routeMeta?.cached) previewMtSenseRoute(n.from_id, n.radio_id || '', false);
+      this.style.background = '';
+    };
+    log.prepend(line);
+    const logEntries = log.querySelectorAll('div');
+    if (logEntries.length > 200) {
+      for (let i = 200; i < logEntries.length; i++) logEntries[i].remove();
+    }
+  }
+
+  function senseAddNode(n) {
+    if (!n || !n.from_id) return;
+    _senseResponses[n.from_id] = n;
+    senseAddNodeCard(n);
+    _senseAddLogEntry(n);
+    senseMapAddMarker(n);
+    senseSummaryUpdate();
+    updateHeaderNodeCount(allNodes);
+  }
+
+  function addMtMessageSenseEntry(m) {
+    if (!m || m.sent || m.is_history || m.is_emoji) return;
+    if (_senseNet !== 'mt') return;
+    if (document.getElementById('sense-panel')?.style.display === 'none') return;
+    if (m.id && document.getElementById(`sense-msg-${m.id}`)) return;
+    const pktKey = _mtSensePacketKey({pkt_id: m.pkt_id, radio_id: m.radio_id, from_id: m.from_id});
+    if (pktKey && document.getElementById(pktKey)) return;
+    const node = allNodes.find(n => n.id === m.from_id) || {};
+    _senseAddLogEntry({
+      from_id: m.from_id,
+      name: m.from_name,
+      short_name: node.short_name,
+      portnum: 'TEXT_MESSAGE_APP',
+      snr: m.snr,
+      hops: m.hops,
+      lat: node.latitude,
+      lon: node.longitude,
+      text: m.text,
+      ts: m.ts || Math.floor(Date.now() / 1000),
+      radio_id: m.radio_id,
+      msg_id: m.id,
+      pkt_id: m.pkt_id,
+    });
+  }
+
+  function filterSenseNodes() {
+    const q = (document.getElementById('sense-nodes-search').value || '').toLowerCase();
+    document.querySelectorAll('#sense-nodes .sense-node-card').forEach(c => {
+      const matches = !q || c.textContent.toLowerCase().includes(q);
+      c.style.display = matches ? '' : 'none';
+      if (!leafletMap) return;
+      const fromId = c.id.replace('sense-node-', '');
+      const marker = senseMarkers[fromId];
+      if (marker) { if (matches) marker.addTo(leafletMap); else leafletMap.removeLayer(marker); }
+    });
+  }
+
+  function clearSenseList() {
+    _senseResponses = {};
+    delete _senseStateByRadio[activeRadioId];
+    document.getElementById('sense-nodes')?.replaceChildren();
+    Object.values(senseMarkers).forEach(m => { try { leafletMap && leafletMap.removeLayer(m); } catch(e){} });
+    senseMarkers = {};
+    const summary = document.getElementById('sense-summary');
+    if (summary) summary.style.display = 'none';
+    updateHeaderNodeCount(allNodes);
+  }
+
+  function filterSenseLog() {
+    const q = (document.getElementById('sense-log-search').value || '').toLowerCase();
+    document.querySelectorAll('#sense-log > div').forEach(c => {
+      c.style.display = c.textContent.toLowerCase().includes(q) ? '' : 'none';
+    });
+  }
+
+  function senseSummaryUpdate() {
+    const nodes = Object.values(_senseResponses);
+    const summary = document.getElementById('sense-summary');
+    if (!nodes.length) { if (summary) summary.style.display = 'none'; return; }
+    if (!summary) return;
+    summary.style.display = 'grid';
+    document.getElementById('sense-stat-responses').textContent = nodes.length;
+    document.getElementById('sense-stat-gps').textContent = nodes.filter(n => n.lat != null).length;
+    const snrs = nodes.map(n => n.snr).filter(s => s != null);
+    document.getElementById('sense-stat-snr').textContent =
+      snrs.length ? (snrs.reduce((a,b) => a+b, 0) / snrs.length).toFixed(1) + ' dB' : '—';
+  }
+
+  // ---- Sense cooldown setting ----
+  function settingsSetSenseCooldown(val) {
+    val = parseInt(val);
+    document.getElementById('settings-sense-cooldown-display').textContent = senseCooldownSettingLabel(val);
+    fetch('/api/settings/app', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({sense_cooldown: val})
+    }).catch(e => console.error('settingsSetSenseCooldown failed:', e));
+  }
+
+  // ── Accent colour ──────────────────────────────────────────────────────────
+  function _hexToHsl(hex) {
+    const r = parseInt(hex.slice(1,3),16)/255, g = parseInt(hex.slice(3,5),16)/255, b = parseInt(hex.slice(5,7),16)/255;
+    const max = Math.max(r,g,b), min = Math.min(r,g,b);
+    let h=0, s=0, l=(max+min)/2;
+    if (max !== min) {
+      const d = max - min;
+      s = l > 0.5 ? d/(2-max-min) : d/(max+min);
+      switch(max) {
+        case r: h=((g-b)/d+(g<b?6:0))/6; break;
+        case g: h=((b-r)/d+2)/6; break;
+        case b: h=((r-g)/d+4)/6; break;
+      }
+    }
+    return [Math.round(h*360), Math.round(s*100), Math.round(l*100)];
+  }
+
+  function _hslToHex(h, s, l) {
+    s/=100; l/=100;
+    const a = s*Math.min(l,1-l);
+    const f = n => { const k=(n+h/30)%12, c=l-a*Math.max(Math.min(k-3,9-k,1),-1); return Math.round(255*c).toString(16).padStart(2,'0'); };
+    return `#${f(0)}${f(8)}${f(4)}`;
+  }
+
+  function applyAccentColor(hex) {
+    if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return;
+    const [h, s, l] = _hexToHsl(hex);
+    // Accent: ensure lightness ≥45% so it stays readable as text on dark bg
+    const accentL   = Math.max(l, 45);
+    const accentHex = _hslToHex(h, s, accentL);
+    // Dim: same hue, heavily darkened — used as active-state button background
+    const dimHex    = _hslToHex(h, Math.min(s * 0.5, 35), Math.max(l * 0.25, 12));
+    // Fresh: same hue/sat but lightness bumped to ≥80% — clearly brighter than accent on dark map
+    const freshHex  = _hslToHex(h, s, Math.min(Math.max(accentL, 80), 93));
+    document.documentElement.style.setProperty('--accent',       accentHex);
+    document.documentElement.style.setProperty('--accent-dim',   dimHex);
+    document.documentElement.style.setProperty('--accent-text',  accentHex);
+    document.documentElement.style.setProperty('--accent-fresh', freshHex);
+    _accentColor      = accentHex;
+    _accentFreshColor = freshHex;
+    // Refresh any live map markers whose color was already baked in
+    if (typeof updateMapMarkers === 'function') updateMapMarkers(allNodes);
+    // Recolour favicon via canvas tinting
+    _tintFavicon(accentHex);
+  }
+
+  function _tintFavicon(accentHex) {
+    const img = new Image();
+    img.src = '/static/favicon.png';
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width; canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      // Fill with accent colour, then clip to favicon's alpha channel
+      ctx.fillStyle = accentHex;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.globalCompositeOperation = 'destination-in';
+      ctx.drawImage(img, 0, 0);
+      const link = document.querySelector("link[rel='icon']");
+      if (link) link.href = canvas.toDataURL('image/png');
+    };
+  }
+
+  function settingsSetAccentColor(hex) {
+    applyAccentColor(hex);
+    _syncAccentSwatch();
+    fetch('/api/settings/app', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({accent_color: hex})
+    }).catch(e => console.error('settingsSetAccentColor failed:', e));
+  }
+
+  function settingsResetAccentColor(btn) {
+    const def = '#4ade80';
+    settingsSetAccentColor(def);
+    btnFeedback(btn, '✓ Reset');
+  }
+
+  function _syncAccentSwatch() {
+    const swatch = document.getElementById('settings-accent-swatch');
+    if (swatch) {
+      swatch.style.background = _accentColor;
+      swatch.title = `Choose colour (${_accentColor})`;
+    }
+  }
+
+  function settingsSetZoom(val) {
+    settingsApplyZoom(val);
+    fetch('/api/settings/app', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({zoom: parseInt(val)})
+    }).catch(e => console.error('settingsSetZoom failed:', e));
+  }
+
+  function settingsApplyZoom(val) {
+    val = Math.min(170, Math.max(70, parseInt(val) || 100));
+    document.body.style.zoom = val + '%';
+    // compensate body height so zoomed layout fills viewport exactly
+    // at zoom 120%: CSS height = 100vh/1.2 = 83.33vh → after zoom renders as 100vh
+    document.body.style.height = (10000 / val).toFixed(2) + 'vh';
+    const slider = document.getElementById('settings-zoom-slider');
+    if (slider) slider.value = val;
+    const display = document.getElementById('settings-zoom-display');
+    if (display) display.textContent = val + '%';
+  }
+
+  // ── Node Settings ──────────────────────────────────────────────────────────
+  let _nodeCfgData    = null;
+  let _selectedNodeId = '';
+
+  function _renderNodeCfgTabs(data) {
+    const tabsDiv   = document.getElementById('node-cfg-tabs');
+    const connected = data.nodes.filter(n => n.status === 'connected');
+    if (!connected.length) {
+      tabsDiv.innerHTML = '<span style="color:var(--muted);font-size:12px">No radios connected</span>';
+      _selectedNodeId = '';
+      return;
+    }
+    if (!_selectedNodeId || !connected.find(n => n.id === _selectedNodeId)) {
+      _selectedNodeId = connected[0].id;
+    }
+    tabsDiv.innerHTML = connected.map(n =>
+      `<div class="btn${n.id === _selectedNodeId ? ' active' : ''}"
+            onclick="selectNodeTab('${jsSafe(n.id)}')"
+            title="${escHtml(n.usb_serial || n.port)}"
+            style="cursor:pointer">${escHtml(n.name)}</div>`
+    ).join('');
+    if (!_nodeCfgData) loadNodeConfig();
+  }
+
+  function loadNodeCfgRadios() { settingsRefresh(); }
+
+  function selectNodeTab(id) {
+    _selectedNodeId = id;
+    _nodeCfgData    = null;
+    loadNodeCfgRadios();  // re-render tabs to update active state
+    loadNodeConfig();
+  }
+
+  function loadNodeConfig() {
+    const radioId = _selectedNodeId;
+    if (!radioId) return;
+    const err     = document.getElementById('node-cfg-error');
+    const content = document.getElementById('node-cfg-content');
+    err.textContent = '';
+    err.innerHTML   = '<span style="color:var(--muted)">Loading…</span>';
+    content.style.display = 'none';
+    fetch(`/api/radio/${encodeURIComponent(radioId)}/config`)
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(d => {
+        if (d.error) { err.innerHTML = `<span style="color:var(--red)">${escHtml(d.error)} — Press ↻ Reload to retry.</span>`; return; }
+        err.innerHTML = '';
+        _nodeCfgData = d;
+
+        const lnEl = document.getElementById('node-cfg-long-name');
+        const snEl = document.getElementById('node-cfg-short-name');
+        if (lnEl) { lnEl.value = ''; lnEl.placeholder = d.long_name  || ''; }
+        if (snEl) { snEl.value = ''; snEl.placeholder = d.short_name || ''; }
+        document.getElementById('node-cfg-txpower').value    = d.tx_power   || 0;
+        document.getElementById('node-cfg-hoplimit').value   = d.hop_limit  || 3;
+
+        // Populate role dropdown
+        const roleSel = document.getElementById('node-cfg-role');
+        roleSel.innerHTML = Object.entries(d.device_roles)
+          .sort((a,b) => parseInt(a[0]) - parseInt(b[0]))
+          .map(([v,n]) => `<option value="${escHtml(v)}">${escHtml(_formatMtDeviceRoleLabel(n))}</option>`).join('');
+        roleSel.value = d.role;
+
+        // Populate region dropdown
+        const regionSel = document.getElementById('node-cfg-region');
+        regionSel.innerHTML = Object.entries(d.lora_regions)
+          .sort((a,b) => parseInt(a[0]) - parseInt(b[0]))
+          .map(([v,n]) => `<option value="${escHtml(v)}">${escHtml(n)}</option>`).join('');
+        regionSel.value = d.region;
+
+        // Populate preset dropdown
+        const presetSel = document.getElementById('node-cfg-preset');
+        presetSel.innerHTML = Object.entries(d.modem_presets)
+          .sort((a,b) => parseInt(a[0]) - parseInt(b[0]))
+          .map(([v,n]) => `<option value="${escHtml(v)}">${escHtml(n)}</option>`).join('');
+        presetSel.value = d.modem_preset;
+
+        // Show hw_model in the identity subtitle if available
+        const hw = d.hw_model ? ` — ${d.hw_model}` : '';
+        document.querySelector('#node-cfg-content h3').textContent = 'Identity' + hw;
+
+        content.style.display = '';
+        ['owner','device','lora','channels','position','power','display','telemetry','mqtt','bluetooth','network'].forEach(k => {
+          const el = document.getElementById(`node-cfg-${k}-status`);
+          if (el) el.textContent = '';
+        });
+        loadNodeChannels();
+
+        // Position
+        document.getElementById('node-cfg-gps-mode').value        = d.gps_mode ?? 1;
+        document.getElementById('node-cfg-pos-broadcast').value   = d.pos_broadcast_secs ?? 0;
+        document.getElementById('node-cfg-smart-pos').checked     = !!d.smart_position;
+        const precMeters = bitToSliderMeters(d.pos_precision ?? 13);
+        document.getElementById('node-cfg-pos-precision').value   = precMeters;
+        document.getElementById('node-cfg-pos-prec-val').textContent = precMeterLabel(precMeters);
+        const fixedPos = !!d.fixed_position;
+        document.getElementById('node-cfg-fixed-pos').checked     = fixedPos;
+        document.getElementById('node-cfg-fixed-coords').style.display = fixedPos ? 'flex' : 'none';
+        document.getElementById('node-cfg-fixed-lat').value       = d.fixed_lat  || '';
+        document.getElementById('node-cfg-fixed-lon').value       = d.fixed_lon  || '';
+        document.getElementById('node-cfg-fixed-alt').value       = d.fixed_alt  || 0;
+
+        // Power
+        document.getElementById('node-cfg-power-saving').checked  = !!d.power_saving;
+        document.getElementById('node-cfg-shutdown-secs').value   = d.shutdown_after_secs ?? 0;
+
+        // Display
+        document.getElementById('node-cfg-screen-secs').value     = d.screen_on_secs ?? 0;
+        document.getElementById('node-cfg-flip-screen').checked   = !!d.flip_screen;
+        document.getElementById('node-cfg-display-units').value   = d.display_units ?? 0;
+
+        // Telemetry
+        document.getElementById('node-cfg-tel-device').value      = d.tel_device ?? 0;
+        document.getElementById('node-cfg-tel-env').value         = d.tel_env    ?? 0;
+
+        // MQTT
+        document.getElementById('node-cfg-mqtt-enabled').checked    = !!d.mqtt_enabled;
+        document.getElementById('node-cfg-mqtt-address').value      = d.mqtt_address   || '';
+        document.getElementById('node-cfg-mqtt-username').value     = d.mqtt_username  || '';
+        document.getElementById('node-cfg-mqtt-password').value     = '';
+        document.getElementById('node-cfg-mqtt-password').placeholder = d.mqtt_pwd_set ? '(set — leave blank to keep)' : '(not set)';
+        document.getElementById('node-cfg-mqtt-encryption').checked = !!d.mqtt_encryption;
+        document.getElementById('node-cfg-mqtt-json').checked       = !!d.mqtt_json;
+        document.getElementById('node-cfg-mqtt-tls').checked        = !!d.mqtt_tls;
+        document.getElementById('node-cfg-mqtt-map').checked        = !!d.mqtt_map;
+
+        // Bluetooth
+        document.getElementById('node-cfg-bt-enabled').checked = !!d.bt_enabled;
+        document.getElementById('node-cfg-bt-mode').value      = d.bt_mode ?? 0;
+        document.getElementById('node-cfg-bt-pin').value       = d.bt_fixed_pin ?? 0;
+        btModeChange();
+
+        // Network
+        document.getElementById('node-cfg-wifi-enabled').checked  = !!d.wifi_enabled;
+        document.getElementById('node-cfg-wifi-ap-mode').checked  = !!d.wifi_ap_mode;
+        document.getElementById('node-cfg-wifi-ssid').value       = d.wifi_ssid || '';
+        const pskEl = document.getElementById('node-cfg-wifi-psk');
+        pskEl.value       = '';
+        pskEl.type        = 'password';
+        pskEl.placeholder = d.wifi_psk_set ? '(set — enter new to change)' : 'password';
+        const eye = document.getElementById('node-cfg-wifi-psk-eye');
+        if (eye) eye.style.opacity = '0.5';
+      })
+      .catch(e => {
+        err.innerHTML = `<span style="color:var(--red)">Load failed: ${escHtml(String(e))}. Press ↻ Reload to retry.</span>`;
+      });
+  }
+
+  function _formatMtDeviceRoleLabel(name) {
+    const raw = String(name || '').trim();
+    if (!raw) return 'Unknown';
+    return raw.split('_').map(part => {
+      if (part === 'TAK') return 'TAK';
+      return part.charAt(0) + part.slice(1).toLowerCase();
+    }).join(' ');
+  }
+
+  function nodeCfgStatus(key, msg, ok) {
+    const el = document.getElementById(`node-cfg-${key}-status`);
+    if (!el) return;
+    el.textContent = msg;
+    el.style.color = ok ? 'var(--accent)' : 'var(--red)';
+    setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 4000);
+  }
+
+  function saveNodeOwner(btn) {
+    const radioId   = _selectedNodeId;
+    const lnEl = document.getElementById('node-cfg-long-name');
+    const snEl = document.getElementById('node-cfg-short-name');
+    const long_name  = lnEl.value.trim()  || lnEl.placeholder;
+    const short_name = snEl.value.trim()  || snEl.placeholder;
+    if (!long_name || !short_name) {
+      nodeCfgStatus('owner', 'Long name and short name required.', false); return;
+    }
+    nodeCfgStatus('owner', 'Saving…', true);
+    fetch(`/api/radio/${encodeURIComponent(radioId)}/owner`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({long_name, short_name})
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+      nodeCfgStatus('owner', d.error || 'Saved.', !d.error);
+      if (!d.error) btnFeedback(btn, '✓ Saved');
+    }).catch(e => nodeCfgStatus('owner', 'Error: ' + escHtml(String(e)), false));
+  }
+
+  function saveNodeDevice(btn) {
+    const radioId = _selectedNodeId;
+    const role    = parseInt(document.getElementById('node-cfg-role').value);
+    nodeCfgStatus('device', 'Saving…', true);
+    fetch(`/api/radio/${encodeURIComponent(radioId)}/config/device`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({role})
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+      nodeCfgStatus('device', d.error || 'Saved. Reboot may be needed.', !d.error);
+      if (!d.error) btnFeedback(btn, '✓ Saved');
+    }).catch(e => nodeCfgStatus('device', 'Error: ' + escHtml(String(e)), false));
+  }
+
+  function saveNodeLora(btn) {
+    const radioId = _selectedNodeId;
+    const region      = parseInt(document.getElementById('node-cfg-region').value);
+    const modem_preset = parseInt(document.getElementById('node-cfg-preset').value);
+    const tx_power    = parseInt(document.getElementById('node-cfg-txpower').value) || 0;
+    const hop_limit   = parseInt(document.getElementById('node-cfg-hoplimit').value) || 3;
+    nodeCfgStatus('lora', 'Saving… (may take a few seconds)', true);
+    fetch(`/api/radio/${encodeURIComponent(radioId)}/config/lora`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({region, modem_preset, tx_power, hop_limit})
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+      nodeCfgStatus('lora', d.error || 'Saved. Reboot node to apply region/preset.', !d.error);
+      if (!d.error) btnFeedback(btn, '✓ Saved');
+    }).catch(e => nodeCfgStatus('lora', 'Error: ' + escHtml(String(e)), false));
+  }
+
+  async function rebootNode(btn) {
+    const radioId = _selectedNodeId;
+    const st = document.getElementById('node-cfg-actions-status');
+    if (st) st.innerHTML = '<span style="color:var(--muted)">Rebooting in 5s…</span>';
+    try {
+      const r = await fetch(`/api/radio/${encodeURIComponent(radioId)}/reboot`, {method:'POST'});
+      const d = await r.json();
+      if (st) st.innerHTML = r.ok
+        ? '<span style="color:var(--green)">Reboot command sent.</span>'
+        : `<span style="color:#f87171">${escHtml(d.error)}</span>`;
+      if (r.ok) btnFeedback(btn, '✓ Rebooting…', 3000);
+    } catch(e) {
+      if (st) st.innerHTML = `<span style="color:#f87171">Error: ${escHtml(e.message)}</span>`;
+    }
+  }
+
+  function shutdownNode(btn) {
+    const radioId = _selectedNodeId;
+    document.getElementById('confirm-ok').textContent = 'Shut down';
+    showConfirm('Shutdown the node? It will go offline until power-cycled.', async () => {
+      const st = document.getElementById('node-cfg-actions-status');
+      if (st) st.innerHTML = '<span style="color:var(--muted)">Shutting down in 5s…</span>';
+      try {
+        const r = await fetch(`/api/radio/${encodeURIComponent(radioId)}/shutdown`, {method:'POST'});
+        const d = await r.json();
+        if (st) st.innerHTML = r.ok
+          ? '<span style="color:var(--green)">Shutdown command sent.</span>'
+          : `<span style="color:#f87171">${escHtml(d.error)}</span>`;
+        if (r.ok) btnFeedback(btn, '✓ Shutting down…', 3000);
+      } catch(e) {
+        if (st) st.innerHTML = `<span style="color:#f87171">Error: ${escHtml(e.message)}</span>`;
+      }
+    });
+  }
+
+  function resetKnownNodesDb(btn) {
+    const radioId = _selectedNodeId;
+    if (!radioId) return;
+    const label = document.querySelector('#node-cfg-tabs .btn.active')?.textContent || radioId;
+    document.getElementById('confirm-ok').textContent = 'Clear';
+    showConfirm(`Clear all remembered remote nodes for "${label}"? The selected radio itself stays intact.`, async () => {
+      const st = document.getElementById('node-cfg-actions-status');
+      if (st) st.innerHTML = '<span style="color:var(--muted)">Clearing known nodes…</span>';
+      try {
+        const r = await fetch(`/api/db/radio/${encodeURIComponent(radioId)}/nodes/reset`, {method:'POST'});
+        const d = await r.json();
+        if (st) st.innerHTML = r.ok
+          ? `<span style="color:var(--green)">Cleared ${escHtml(String(d.removed_db ?? 0))} saved node${(d.removed_db ?? 0) !== 1 ? 's' : ''}.</span>`
+          : `<span style="color:#f87171">${escHtml(d.error || 'Reset failed.')}</span>`;
+        if (r.ok) {
+          btnFeedback(btn, '✓ Reset');
+          loadLive();
+          loadHistory();
+        }
+      } catch(e) {
+        if (st) st.innerHTML = `<span style="color:#f87171">Error: ${escHtml(e.message)}</span>`;
+      } finally {
+        document.getElementById('confirm-ok').textContent = 'OK';
+      }
+    });
+  }
+
+  function clearGpsHistory(btn) {
+    document.getElementById('confirm-ok').textContent = 'Clear';
+    showConfirm('Delete all GPS movement history for all nodes? This cannot be undone.', async () => {
+      const st = document.getElementById('gps-clear-status');
+      if (st) st.innerHTML = '<span style="color:var(--muted)">Clearing…</span>';
+      try {
+        const r = await fetch('/api/db/gps_history/clear', {method:'POST'});
+        const d = await r.json();
+        if (r.ok) btnFeedback(btn, '✓ Cleared');
+        if (st) st.innerHTML = r.ok
+          ? '<span style="color:var(--green)">GPS history cleared.</span>'
+          : `<span style="color:#f87171">${escHtml(d.error || 'Failed.')}</span>`;
+      } catch(e) {
+        if (st) st.innerHTML = `<span style="color:#f87171">Error: ${escHtml(e.message)}</span>`;
+      } finally {
+        document.getElementById('confirm-ok').textContent = 'OK';
+      }
+    });
+  }
+
+  // ── Channels ────────────────────────────────────────────────────────────────
+  let _editingChIndex = null;
+  let _chCache = [];
+
+  const CH_ROLES      = {0: 'Disabled', 1: 'Primary', 2: 'Secondary'};
+  const CH_ROLE_COLOR = {0: 'var(--muted)', 1: 'var(--green)', 2: 'var(--accent)'};
+
+  function loadNodeChannels() {
+    const radioId = _selectedNodeId;
+    if (!radioId) return;
+    fetch(`/api/radio/${encodeURIComponent(radioId)}/channels`)
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(data => {
+        if (data.error) return;
+        _chCache = data;
+        const list = document.getElementById('node-cfg-channels-list');
+        list.innerHTML = data.map((ch, i) => {
+          const roleLabel = CH_ROLES[ch.role] || '?';
+          const roleColor = CH_ROLE_COLOR[ch.role] || 'var(--muted)';
+          const nameLabel = ch.name || (ch.role === 0 ? '—' : `CH${ch.index}`);
+          const pskBadge  = ch.role !== 0 ? `<span style="font-size:10px;color:var(--muted);margin-right:4px">${ch.psk_set ? '🔒' : '🔓'}</span>` : '';
+          return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;${i < data.length-1 ? 'border-bottom:1px solid var(--border)' : ''}">
+            <span style="font-size:11px;color:var(--muted);width:14px;flex-shrink:0;text-align:right">${ch.index}</span>
+            <span style="flex:1;font-size:12px;color:${ch.role===0?'var(--muted)':'var(--text)'}">${escHtml(nameLabel)}</span>
+            ${pskBadge}
+            <span style="font-size:11px;color:${roleColor};width:68px;text-align:right;flex-shrink:0">${roleLabel}</span>
+            ${ch.role !== 0
+              ? `<button class="btn" style="padding:2px 8px;font-size:11px;flex-shrink:0" onclick="shareMtChannel(${ch.index})" title="Show channel share data">Info/Share</button>`
+              : `<button class="btn" style="padding:2px 8px;font-size:11px;flex-shrink:0;opacity:.45;cursor:default" disabled>Info/Share</button>`}
+            <button class="btn" style="padding:2px 8px;font-size:11px;flex-shrink:0" onclick="openChEdit(${ch.index})" title="Edit channel settings">Edit</button>
+          </div>`;
+        }).join('');
+      })
+      .catch(() => {});
+  }
+
+  function openChEdit(index) {
+    _editingChIndex = index;
+    const ch = _chCache.find(c => c.index === index);
+    if (!ch) return;
+    document.getElementById('node-cfg-ch-edit-title').textContent = `Edit Channel ${index}`;
+    document.getElementById('node-cfg-ch-name').value = ch.name || '';
+    document.getElementById('node-cfg-ch-role').value = ch.role;
+    document.getElementById('node-cfg-ch-psk-type').value = 'keep';
+    document.getElementById('node-cfg-ch-psk-hex').style.display = 'none';
+    document.getElementById('node-cfg-channels-status').textContent = '';
+    const removeBtn = document.getElementById('btn-ch-remove');
+    if (removeBtn) removeBtn.style.display = index > 0 ? '' : 'none';
+    document.getElementById('node-cfg-channel-edit').style.display = '';
+    document.getElementById('node-cfg-channel-edit').scrollIntoView({behavior:'smooth', block:'nearest'});
+  }
+
+  function closeChEdit() {
+    _editingChIndex = null;
+    document.getElementById('node-cfg-channel-edit').style.display = 'none';
+  }
+
+  function openChannelShareModal(title, fetchUrl, detailsRows) {
+    openModal(title, `
+      <div id="channel-share-detail-grid" class="contact-detail-grid">${detailsRows.map(([k, v]) =>
+        `<div class="k">${escHtml(k)}</div><div class="v">${escHtml(v == null || v === '' ? '—' : String(v))}</div>`
+      ).join('')}</div>
+      <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Channel share data</div>
+        <div id="channel-share-qr-area" class="modal-loading" style="padding:10px 0;text-align:left">Preparing channel share…</div>
+      </div>
+    `);
+    const area = document.getElementById('channel-share-qr-area');
+    fetch(fetchUrl)
+      .then(r => r.json().then(d => ({ok: r.ok, d})))
+      .then(({ok, d}) => {
+        if (!area) return;
+        if (!ok || d.error) {
+          area.innerHTML = `<div class="modal-error" style="padding:0;text-align:left">${escHtml(d.error || 'Share data unavailable.')}</div>`;
+          return;
+        }
+        area.className = '';
+        const secretHex = d.details && d.details.secret_hex;
+        if (secretHex) {
+          const detailGrid = document.getElementById('channel-share-detail-grid');
+          if (detailGrid) {
+            const k = document.createElement('div'); k.className = 'k'; k.textContent = 'Secret';
+            const v = document.createElement('div'); v.className = 'v';
+            v.innerHTML = `<span id="channel-share-secret" style="font-family:monospace;font-size:11px;word-break:break-all">${escHtml(secretHex)}</span> <button class="btn" style="padding:1px 7px;font-size:11px;margin-left:4px" onclick="copyTextById('channel-share-secret',this)">Copy</button>`;
+            detailGrid.appendChild(k);
+            detailGrid.appendChild(v);
+          }
+        }
+        area.innerHTML = `
+          ${d.qr_svg ? `<div style="margin-bottom:12px;width:160px;height:160px;flex-shrink:0">${d.qr_svg.replace('<svg ', '<svg style="width:100%;height:100%" ')}</div>` : ''}
+          <div id="channel-share-link" class="share-link-box">${escHtml(d.uri || '')}</div>
+          <div id="channel-share-json" class="share-link-box" style="margin-top:8px">${escHtml(d.json || JSON.stringify(d.details || {}))}</div>
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+            <button class="btn" onclick="copyTextById('channel-share-link',this)">Copy share data</button>
+            <button class="btn" onclick="copyTextById('channel-share-json',this)">Copy JSON</button>
+          </div>`;
+      })
+      .catch(e => {
+        if (area) area.innerHTML = `<div class="modal-error" style="padding:0;text-align:left">Share data export failed: ${escHtml(e.message)}</div>`;
+      });
+  }
+
+  function shareMtChannel(index) {
+    const radioId = _selectedNodeId;
+    const ch = _chCache.find(c => c.index === index) || {};
+    if (!radioId) return;
+    openChannelShareModal('MT Channel Share', `/api/radio/${encodeURIComponent(radioId)}/channels/${encodeURIComponent(index)}/share`, [
+      ['Network', 'Meshtastic'],
+      ['Radio', radioId],
+      ['Index', index],
+      ['Name', ch.name || (ch.role === 0 ? '' : `CH${index}`)],
+      ['Role', CH_ROLES[ch.role] || ch.role],
+      ['Key', ch.psk_set ? 'Included in QR' : 'Default/empty'],
+    ]);
+  }
+
+  function chPskTypeChange() {
+    const type = document.getElementById('node-cfg-ch-psk-type').value;
+    document.getElementById('node-cfg-ch-psk-hex').style.display = type === 'custom' ? '' : 'none';
+  }
+
+  function saveNodeChannel(btn) {
+    if (_editingChIndex === null) return;
+    const radioId  = _selectedNodeId;
+    const name     = document.getElementById('node-cfg-ch-name').value.trim();
+    const role     = parseInt(document.getElementById('node-cfg-ch-role').value);
+    const psk_type = document.getElementById('node-cfg-ch-psk-type').value;
+    const psk_hex  = document.getElementById('node-cfg-ch-psk-hex').value.trim();
+    if (psk_type === 'custom' && !psk_hex) {
+      nodeCfgStatus('channels', 'Enter a custom PSK hex string.', false); return;
+    }
+    nodeCfgStatus('channels', 'Saving…', true);
+    fetch(`/api/radio/${encodeURIComponent(radioId)}/channels/${_editingChIndex}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({role, name, psk_type, psk_hex})
+    }).then(r => r.json().then(d => ({ok: r.ok, d}))).then(({ok, d}) => {
+      if (!ok || d.error) { nodeCfgStatus('channels', d.error || 'Save failed.', false); return; }
+      nodeCfgStatus('channels', 'Saved.', true);
+      btnFeedback(btn, '✓ Saved');
+      loadNodeChannels();
+      closeChEdit();
+      initChat();   // refresh chat tab tabs too
+    }).catch(e => nodeCfgStatus('channels', 'Error: ' + escHtml(String(e)), false));
+  }
+
+  function removeNodeChannel(index, btn) {
+    document.getElementById('confirm-ok').textContent = 'Remove';
+    showConfirm(`Remove channel ${index}? This disables the channel and clears its name and key.`, () => _doRemoveNodeChannel(index, btn));
+  }
+  function _doRemoveNodeChannel(index, btn) {
+    const radioId  = _selectedNodeId;
+    const statusEl = document.getElementById('node-cfg-channels-remove-status');
+    if (statusEl) { statusEl.textContent = `Removing channel ${index}…`; statusEl.style.color = 'var(--muted)'; }
+    fetch(`/api/radio/${encodeURIComponent(radioId)}/channels/${index}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({role: 0})
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(d => {
+        if (statusEl) {
+          statusEl.textContent = d.error ? `✗ ${escHtml(d.error)}` : `✓ Channel ${index} removed.`;
+          statusEl.style.color = d.error ? 'var(--red)' : 'var(--accent)';
+          setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 4000);
+        }
+        if (!d.error) { btnFeedback(btn, '✓ Removed'); loadNodeChannels(); initChat(); }
+      })
+      .catch(e => {
+        if (statusEl) { statusEl.textContent = `✗ ${escHtml(String(e))}`; statusEl.style.color = 'var(--red)'; }
+      });
+  }
+
+  function clearNodeChannelHistory(index, btn) {
+    if (index == null || index < 0) return;
+    const radioId = _selectedNodeId;
+    const ch = _chCache.find(c => c.index === index);
+    const label = ch?.name || `CH${index}`;
+    document.getElementById('confirm-ok').textContent = 'Delete';
+    showConfirm(`Delete saved MT chat history for "${label}"?`, async () => {
+      nodeCfgStatus('channels', 'Deleting history…', true);
+      try {
+        const r = await fetch(`/api/radio/${encodeURIComponent(radioId)}/channels/${index}/history`, {method: 'POST'});
+        const d = await r.json();
+        if (!r.ok || d.error) throw new Error(d.error || r.status);
+        chatMsgs = chatMsgs.filter(m => !(m.radio_id === radioId && !m.is_dm && (m.channel ?? 0) === index));
+        unreadChannels.delete(index);
+        _clearUnreadCount(unreadChannelCounts, index);
+        renderMessages();
+        renderChannelTabs();
+        updateUnreadDots();
+        nodeCfgStatus('channels', `Deleted ${d.removed_db ?? 0} saved message${(d.removed_db ?? 0) === 1 ? '' : 's'}.`, true);
+        btnFeedback(btn, '✓ Cleared');
+      } catch (e) {
+        nodeCfgStatus('channels', 'Error: ' + escHtml(String(e)), false);
+      } finally {
+        document.getElementById('confirm-ok').textContent = 'OK';
+      }
+    });
+  }
+
+  // ── Position ────────────────────────────────────────────────────────────────
+  function precMeterLabel(m) {
+    return m === 0 ? 'Actual position' : `~${m} m radius`;
+  }
+  function metersToBit(m) {
+    if (m === 0) return 32;
+    return Math.max(15, Math.min(32, Math.round(32 - Math.log2(m / (1e-7 * 111320)))));
+  }
+  function bitToSliderMeters(p) {
+    const m = Math.round(1e-7 * Math.pow(2, 32 - p) * 111320);
+    if (m <= 100) return 0;
+    return Math.min(1000, Math.round(m / 100) * 100);
+  }
+
+  let _mapPickMode = false;
+
+  let _mapPickEscHandler = null;
+
+  function startMapPick(btn) {
+    _mapPickMode = 'mt';
+    switchTab('map');
+    document.getElementById('map-pick-banner').textContent = 'Click on the map to set node position';
+    document.getElementById('map-pick-banner').style.display = 'block';
+    document.getElementById('map-pick-cancel').style.display = 'block';
+    document.body.classList.add('map-pick-mode');
+    _mapPickEscHandler = e => { if (e.key === 'Escape') cancelMapPick(); };
+    document.addEventListener('keydown', _mapPickEscHandler);
+    btnFeedback(btn, '✓ Picking…', 3000);
+  }
+
+  function startMcMapPick() {
+    _mapPickMode = 'mc';
+    switchTab('map');
+    document.getElementById('map-pick-banner').textContent = 'Click on the map to set MC node position';
+    document.getElementById('map-pick-banner').style.display = 'block';
+    document.getElementById('map-pick-cancel').style.display = 'block';
+    document.body.classList.add('map-pick-mode');
+    _mapPickEscHandler = e => { if (e.key === 'Escape') cancelMapPick(); };
+    document.addEventListener('keydown', _mapPickEscHandler);
+  }
+
+  function startOmMapPick() {
+    _mapPickMode = 'om';
+    switchTab('map');
+    document.getElementById('map-pick-banner').textContent = 'Click on the map to set OM position';
+    document.getElementById('map-pick-banner').style.display = 'block';
+    document.getElementById('map-pick-cancel').style.display = 'block';
+    document.body.classList.add('map-pick-mode');
+    _mapPickEscHandler = e => { if (e.key === 'Escape') cancelMapPick(); };
+    document.addEventListener('keydown', _mapPickEscHandler);
+  }
+
+  function cancelMapPick() {
+    _mapPickMode = false;
+    document.getElementById('map-pick-banner').style.display = 'none';
+    document.getElementById('map-pick-cancel').style.display = 'none';
+    document.body.classList.remove('map-pick-mode');
+    if (_mapPickEscHandler) { document.removeEventListener('keydown', _mapPickEscHandler); _mapPickEscHandler = null; }
+    switchTab('settings');
+  }
+
+  function toggleFixedCoords() {
+    const checked = document.getElementById('node-cfg-fixed-pos').checked;
+    document.getElementById('node-cfg-fixed-coords').style.display = checked ? 'flex' : 'none';
+  }
+
+  function saveNodePosition(btn) {
+    const radioId = _selectedNodeId;
+    const gps_mode            = parseInt(document.getElementById('node-cfg-gps-mode').value);
+    const position_broadcast_secs = parseInt(document.getElementById('node-cfg-pos-broadcast').value) || 0;
+    const smart_position_enabled  = document.getElementById('node-cfg-smart-pos').checked;
+    const position_precision      = metersToBit(parseInt(document.getElementById('node-cfg-pos-precision').value));
+    const fixed_position = document.getElementById('node-cfg-fixed-pos').checked;
+    const fixed_lat      = parseFloat(document.getElementById('node-cfg-fixed-lat').value);
+    const fixed_lon      = parseFloat(document.getElementById('node-cfg-fixed-lon').value);
+    const fixed_alt      = parseInt(document.getElementById('node-cfg-fixed-alt').value) || 0;
+    if (fixed_position) {
+      if (isNaN(fixed_lat) || isNaN(fixed_lon) ||
+          fixed_lat < -90 || fixed_lat > 90 || fixed_lon < -180 || fixed_lon > 180) {
+        nodeCfgStatus('position', 'Invalid coordinates. Use "Select on map" or enter a valid lat/lon.', false);
+        return;
+      }
+    }
+    nodeCfgStatus('position', 'Saving…', true);
+    fetch(`/api/radio/${encodeURIComponent(radioId)}/config/position`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({gps_mode,
+                            pos_broadcast_secs: position_broadcast_secs,
+                            smart_position: smart_position_enabled,
+                            pos_precision: position_precision,
+                            fixed_position,
+                            lat: fixed_position ? fixed_lat : null,
+                            lon: fixed_position ? fixed_lon : null,
+                            alt: fixed_alt})
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+      nodeCfgStatus('position', d.error || 'Saved.', !d.error);
+      if (!d.error) btnFeedback(btn, '✓ Saved');
+    }).catch(e => nodeCfgStatus('position', 'Error: ' + escHtml(String(e)), false));
+  }
+
+  function removeNodePosition(btn) {
+    const radioId = _selectedNodeId;
+    if (!radioId) return;
+    nodeCfgStatus('position', 'Removing…', true);
+    fetch(`/api/radio/${encodeURIComponent(radioId)}/config/position`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({fixed_position: false})
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+      nodeCfgStatus('position', d.error || 'Position removed. GPS will resume.', !d.error);
+      if (!d.error) {
+        btnFeedback(btn, '✓ Removed');
+        document.getElementById('node-cfg-fixed-pos').checked = false;
+        document.getElementById('node-cfg-fixed-coords').style.display = 'none';
+        document.getElementById('node-cfg-fixed-lat').value = '';
+        document.getElementById('node-cfg-fixed-lon').value = '';
+      }
+    }).catch(e => nodeCfgStatus('position', 'Error: ' + escHtml(String(e)), false));
+  }
+
+  // ── Power ───────────────────────────────────────────────────────────────────
+  function saveNodePower(btn) {
+    const radioId = _selectedNodeId;
+    const is_power_saving         = document.getElementById('node-cfg-power-saving').checked;
+    const on_battery_shutdown_after_secs = parseInt(document.getElementById('node-cfg-shutdown-secs').value) || 0;
+    nodeCfgStatus('power', 'Saving…', true);
+    fetch(`/api/radio/${encodeURIComponent(radioId)}/config/power`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({power_saving: is_power_saving, shutdown_after_secs: on_battery_shutdown_after_secs})
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+      nodeCfgStatus('power', d.error || 'Saved.', !d.error);
+      if (!d.error) btnFeedback(btn, '✓ Saved');
+    }).catch(e => nodeCfgStatus('power', 'Error: ' + escHtml(String(e)), false));
+  }
+
+  // ── Display ─────────────────────────────────────────────────────────────────
+  function quickScreenOff(btn) {
+    document.getElementById('node-cfg-screen-secs').value = 10;
+    saveNodeDisplay(btn);
+  }
+  function quickScreenOn(btn) {
+    document.getElementById('node-cfg-screen-secs').value = 0;
+    saveNodeDisplay(btn);
+  }
+  function saveNodeDisplay(btn) {
+    const radioId = _selectedNodeId;
+    const screen_on_secs = parseInt(document.getElementById('node-cfg-screen-secs').value) || 0;
+    const flip_screen    = document.getElementById('node-cfg-flip-screen').checked;
+    const units          = parseInt(document.getElementById('node-cfg-display-units').value);
+    nodeCfgStatus('display', 'Saving…', true);
+    fetch(`/api/radio/${encodeURIComponent(radioId)}/config/display`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({screen_on_secs, flip_screen, display_units: units})
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+      nodeCfgStatus('display', d.error || 'Saved.', !d.error);
+      if (!d.error) btnFeedback(btn, '✓ Done');
+    }).catch(e => nodeCfgStatus('display', 'Error: ' + escHtml(String(e)), false));
+  }
+
+  // ── Telemetry ───────────────────────────────────────────────────────────────
+  function saveNodeTelemetry(btn) {
+    const radioId = _selectedNodeId;
+    const device_update_interval      = parseInt(document.getElementById('node-cfg-tel-device').value) || 0;
+    const environment_update_interval = parseInt(document.getElementById('node-cfg-tel-env').value)    || 0;
+    nodeCfgStatus('telemetry', 'Saving…', true);
+    fetch(`/api/radio/${encodeURIComponent(radioId)}/config/telemetry`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({tel_device: device_update_interval, tel_env: environment_update_interval})
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+      nodeCfgStatus('telemetry', d.error || 'Saved.', !d.error);
+      if (!d.error) btnFeedback(btn, '✓ Saved');
+    }).catch(e => nodeCfgStatus('telemetry', 'Error: ' + escHtml(String(e)), false));
+  }
+
+  // ── MQTT ────────────────────────────────────────────────────────────────────
+  function saveNodeMqtt(btn) {
+    const radioId = _selectedNodeId;
+    const enabled    = document.getElementById('node-cfg-mqtt-enabled').checked;
+    const address    = document.getElementById('node-cfg-mqtt-address').value.trim();
+    const username   = document.getElementById('node-cfg-mqtt-username').value.trim();
+    const password   = document.getElementById('node-cfg-mqtt-password').value;   // may be empty = keep
+    const encryption = document.getElementById('node-cfg-mqtt-encryption').checked;
+    const json_enabled = document.getElementById('node-cfg-mqtt-json').checked;
+    const tls        = document.getElementById('node-cfg-mqtt-tls').checked;
+    const map_reporting = document.getElementById('node-cfg-mqtt-map').checked;
+    nodeCfgStatus('mqtt', 'Saving…', true);
+    fetch(`/api/radio/${encodeURIComponent(radioId)}/config/mqtt`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({mqtt_enabled: enabled, mqtt_address: address, mqtt_username: username,
+                            mqtt_password: password, mqtt_encryption: encryption, mqtt_json: json_enabled,
+                            mqtt_tls: tls, mqtt_map: map_reporting})
+    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+      nodeCfgStatus('mqtt', d.error || 'Saved.', !d.error);
+      if (!d.error) btnFeedback(btn, '✓ Saved');
+      if (!d.error && password) {
+        document.getElementById('node-cfg-mqtt-password').value = '';
+        document.getElementById('node-cfg-mqtt-password').placeholder = '(set — leave blank to keep)';
+      }
+    }).catch(e => nodeCfgStatus('mqtt', 'Error: ' + escHtml(String(e)), false));
+  }
+
+  function togglePwdVis(inputId, btnId) {
+    const inp = document.getElementById(inputId);
+    const btn = document.getElementById(btnId);
+    if (!inp) return;
+    inp.type = inp.type === 'password' ? 'text' : 'password';
+    if (btn) btn.style.opacity = inp.type === 'text' ? '1' : '0.5';
+  }
+
+  function btModeChange() {
+    const modeEl = document.getElementById('node-cfg-bt-mode');
+    const pinWrap = document.getElementById('node-cfg-bt-pin-wrap');
+    if (!modeEl || !pinWrap) return;
+    pinWrap.style.display = parseInt(modeEl.value) === 1 ? '' : 'none';
+  }
+
+  function saveNodeBluetooth(btn) {
+    if (!_nodeCfgData) { nodeCfgStatus('bluetooth', 'Reload config first.', false); return; }
+    const radioId     = _selectedNodeId;
+    const bt_enabled  = document.getElementById('node-cfg-bt-enabled').checked;
+    const bt_mode     = parseInt(document.getElementById('node-cfg-bt-mode').value);
+    const bt_fixed_pin = parseInt(document.getElementById('node-cfg-bt-pin').value) || 0;
+    nodeCfgStatus('bluetooth', 'Saving…', true);
+    fetch(`/api/radio/${encodeURIComponent(radioId)}/config/bluetooth`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({bt_enabled, bt_mode, bt_fixed_pin})
+    }).then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    }).then(d => {
+      nodeCfgStatus('bluetooth', d.error || 'Saved. Reboot to apply.', !d.error);
+      if (!d.error) btnFeedback(btn, '✓ Saved');
+    }).catch(e => nodeCfgStatus('bluetooth', 'Error: ' + escHtml(String(e)), false));
+  }
+
+  function saveNodeNetwork(btn) {
+    if (!_nodeCfgData) { nodeCfgStatus('network', 'Reload config first.', false); return; }
+    const radioId    = _selectedNodeId;
+    const wifi_enabled = document.getElementById('node-cfg-wifi-enabled').checked;
+    const wifi_ap_mode = document.getElementById('node-cfg-wifi-ap-mode').checked;
+    const wifi_ssid    = document.getElementById('node-cfg-wifi-ssid').value.trim();
+    const wifi_psk     = document.getElementById('node-cfg-wifi-psk').value;
+    const payload      = {wifi_enabled, wifi_ap_mode, wifi_ssid};
+    if (wifi_psk.trim()) payload.wifi_psk = wifi_psk;
+    nodeCfgStatus('network', 'Saving…', true);
+    fetch(`/api/radio/${encodeURIComponent(radioId)}/config/network`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    }).then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    }).then(d => {
+      nodeCfgStatus('network', d.error || 'Saved. Reboot to apply.', !d.error);
+      if (!d.error) {
+        btnFeedback(btn, '✓ Saved');
+        const pskEl = document.getElementById('node-cfg-wifi-psk');
+        pskEl.value = '';
+        pskEl.type  = 'password';
+        if (wifi_psk.trim()) pskEl.placeholder = '(set — enter new to change)';
+        const eye = document.getElementById('node-cfg-wifi-psk-eye');
+        if (eye) eye.style.opacity = '0.5';
+      }
+    }).catch(e => nodeCfgStatus('network', 'Error: ' + escHtml(String(e)), false));
+  }
+
+  function pipLocateMe() {
+    if (!pipMap) return;
+    const local = _mtLocalPosition();
+    if (local) pipMap.setView([local.lat, local.lon], pipMap.getZoom());
+  }
+
+  // ── Init ───────────────────────────────────────────────────────────────────
+  // Apply saved font size immediately
+  fetch('/api/settings/app').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(cfg => {
+    applyAppSettings(cfg);
+  }).catch(() => {});
+
+  updateLiveSortArrows();
+  initNodesFilterPills();
+  initMapFilterPills();
+  requestNotifPermission();
+  installNotificationSoundArm();
+  loadLive();
+  showOmIntroIfNeeded();
+  setInterval(loadLive, 15000);
+  setInterval(() => { if (currentTab === 'settings') settingsRefresh(); }, 4000);
+  // Keep sense card timers ticking
+  setInterval(() => {
+    document.querySelectorAll('.sense-node-card[data-ts]').forEach(card => {
+      const el = card.querySelector('.sense-node-time');
+      if (el) el.textContent = senseTimeAgo(parseInt(card.dataset.ts));
+    });
+    document.querySelectorAll('.map-popup-lh[data-ts]').forEach(el => {
+      const ts = parseInt(el.dataset.ts);
+      if (ts) el.textContent = senseTimeAgo(ts);
+    });
+    const _ageEl = document.getElementById('sense-status-age');
+    if (_ageEl) _ageEl.textContent = '(' + senseTimeAgo(parseInt(_ageEl.dataset.ts)) + ')';
+    _evictStaleSenseNodes();
+    updateHeaderNodeCount(allNodes);
+  }, 30000);
+  // Init MC support
+  initMc();
+  // Restore persisted MC sense log from localStorage
+  if (_mcSenseLogEntries.length) renderMcSenseLog();
+  // Prime currentTab before early chat init so the first channel render doesn't get
+  // discarded when the saved tab is Chat and startup restores it a moment later.
+  const savedTab = localStorage.getItem('activeTab');
+  if (savedTab) currentTab = savedTab;
+  // Start SSE connection early so ACKs aren't lost before user opens Chat
+  initChat();
+  // Restore last active tab
+  if (savedTab && savedTab !== 'nodes') switchTab(savedTab);
+  else updatePipVisibility();
+  updateUnreadDots();
+  // Recalculate map height on browser resize so attribution stays visible
+  window.addEventListener('resize', resizeMapView);
+
+  // ── Colour Picker ───────────────────────────────────────────────────────────
+  const CPICKER_PALETTE = [
+    '#f5f5f5','#d4f7d4','#d4f7f7','#d4e4f7','#e4d4f7','#f7d4f4','#f7d4e4','#f7e8d4','#f7f7d4',
+    '#c8c8c8','#80e880','#80e8e8','#80b4e8','#b480e8','#e880e8','#e880b4','#e8b480','#e8e880',
+    '#a0a0a0','#4ade80','#22d3ee','#60a5fa','#a78bfa','#e879f9','#f472b6','#fb923c','#facc15',
+    '#707070','#16a34a','#0891b2','#2563eb','#7c3aed','#a21caf','#be185d','#c2410c','#a16207',
+    '#404040','#166534','#155e75','#1d4ed8','#5b21b6','#701a75','#9d174d','#9a3412','#713f12',
+    '#000000','#052e16','#083344','#1e3a5f','#2e1065','#4a044e','#500724','#431407','#1a1200',
+  ];
+  const CPICKER_MAX_RECENT = 6;
+  const PG_PALETTE = [
+    '#f9fafb','#4ade80','#22d3ee','#60a5fa','#facc15','#fb923c','#f87171',
+    '#9ca3af','#16a34a','#0891b2','#2563eb','#ca8a04','#c2410c','#7c3aed',
+  ];
+  let _cpickerSelected = '#4ade80';
+  let _cpickerCallback = null;
+  let _cpickerRecent = JSON.parse(localStorage.getItem('cp_recent') || '[]');
+  let _cpickerMode = 'hex';
+  let _cpH = 0, _cpS = 100, _cpV = 100; // HSV state
+
+  // ── Colour conversions ──
+  function _hexToRgb(hex) {
+    hex = hex.replace('#','');
+    if (hex.length === 3) hex = hex.split('').map(c=>c+c).join('');
+    const n = parseInt(hex,16);
+    return [(n>>16)&255,(n>>8)&255,n&255];
+  }
+  function _rgbToHex(r,g,b) {
+    return '#'+[r,g,b].map(v=>Math.max(0,Math.min(255,Math.round(v))).toString(16).padStart(2,'0')).join('');
+  }
+  function _rgbToHsl(r,g,b) {
+    r/=255;g/=255;b/=255;
+    const mx=Math.max(r,g,b),mn=Math.min(r,g,b);
+    let h,s,l=(mx+mn)/2;
+    if(mx===mn){h=s=0;}
+    else{const d=mx-mn;s=l>0.5?d/(2-mx-mn):d/(mx+mn);
+      switch(mx){case r:h=((g-b)/d+(g<b?6:0))/6;break;case g:h=((b-r)/d+2)/6;break;default:h=((r-g)/d+4)/6;}}
+    return[Math.round(h*360),Math.round(s*100),Math.round(l*100)];
+  }
+  function _hslToRgb(h,s,l) {
+    s/=100;l/=100;h/=360;let r,g,b;
+    if(s===0){r=g=b=l;}
+    else{const q=l<0.5?l*(1+s):l+s-l*s,p=2*l-q;
+      const h2=(p,q,t)=>{if(t<0)t+=1;if(t>1)t-=1;if(t<1/6)return p+(q-p)*6*t;if(t<1/2)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p;};
+      r=h2(p,q,h+1/3);g=h2(p,q,h);b=h2(p,q,h-1/3);}
+    return[Math.round(r*255),Math.round(g*255),Math.round(b*255)];
+  }
+  function _rgbToHsv(r,g,b) {
+    r/=255;g/=255;b/=255;
+    const mx=Math.max(r,g,b),mn=Math.min(r,g,b),d=mx-mn;
+    let h=0,s=mx===0?0:d/mx,v=mx;
+    if(d!==0){switch(mx){case r:h=((g-b)/d+(g<b?6:0))/6;break;case g:h=((b-r)/d+2)/6;break;default:h=((r-g)/d+4)/6;}}
+    return[Math.round(h*360),Math.round(s*100),Math.round(v*100)];
+  }
+  function _hsvToRgb(h,s,v) {
+    s/=100;v/=100;const i=Math.floor(h/60)%6,f=h/60-Math.floor(h/60);
+    const p=v*(1-s),q=v*(1-f*s),t=v*(1-(1-f)*s);
+    let r,g,b;
+    switch(i){case 0:r=v;g=t;b=p;break;case 1:r=q;g=v;b=p;break;case 2:r=p;g=v;b=t;break;
+              case 3:r=p;g=q;b=v;break;case 4:r=t;g=p;b=v;break;default:r=v;g=p;b=q;}
+    return[Math.round(r*255),Math.round(g*255),Math.round(b*255)];
+  }
+
+  // ── Picker core ──
+  function openCPicker() {
+    _cpickerCallback = null;
+    _cpickerSelected = _accentColor;
+    const [r,g,b] = _hexToRgb(_cpickerSelected);
+    [_cpH,_cpS,_cpV] = _rgbToHsv(r,g,b);
+    _cpickerBuildGrid();
+    _cpickerBuildRecent();
+    _cpickerUpdateSquare();
+    _cpickerSyncFields(_cpickerSelected);
+    document.getElementById('cpicker-overlay').classList.add('open');
+  }
+
+  function openCPickerFor(initialColor, onSelect) {
+    _cpickerCallback = onSelect;
+    _cpickerSelected = initialColor || '#4ade80';
+    const [r,g,b] = _hexToRgb(_cpickerSelected);
+    [_cpH,_cpS,_cpV] = _rgbToHsv(r,g,b);
+    _cpickerBuildGrid();
+    _cpickerBuildRecent();
+    _cpickerUpdateSquare();
+    _cpickerSyncFields(_cpickerSelected);
+    document.getElementById('cpicker-overlay').classList.add('open');
+  }
+
+  function closeCPicker() {
+    _cpickerCallback = null;
+    document.getElementById('cpicker-overlay').classList.remove('open');
+  }
+
+  function cpickerSelect() {
+    const hex = _cpickerSelected;
+    _cpickerRecent = [hex,..._cpickerRecent.filter(c=>c!==hex)].slice(0,CPICKER_MAX_RECENT);
+    localStorage.setItem('cp_recent',JSON.stringify(_cpickerRecent));
+    if (_cpickerCallback) {
+      const cb = _cpickerCallback;
+      _cpickerCallback = null;
+      closeCPicker();
+      cb(hex);
+    } else {
+      applyAccentColor(hex);
+      settingsSetAccentColor(hex);
+      _syncAccentSwatch();
+      closeCPicker();
+    }
+  }
+
+  function _cpickerSetHex(hex) {
+    _cpickerSelected = hex;
+    const [r,g,b] = _hexToRgb(hex);
+    [_cpH,_cpS,_cpV] = _rgbToHsv(r,g,b);
+    document.querySelectorAll('.cpicker-sw,.cpicker-recent-sw').forEach(el=>{
+      el.classList.toggle('selected', el.dataset.color === hex);
+    });
+    _cpickerUpdateSquare();
+    _cpickerSyncFields(hex);
+  }
+
+  function _cpickerUpdateFromHsv() {
+    const [r,g,b] = _hsvToRgb(_cpH,_cpS,_cpV);
+    const hex = _rgbToHex(r,g,b);
+    _cpickerSelected = hex;
+    document.querySelectorAll('.cpicker-sw,.cpicker-recent-sw').forEach(el=>{
+      el.classList.toggle('selected', el.dataset.color === hex);
+    });
+    _cpickerUpdateSquare();
+    _cpickerSyncFields(hex);
+  }
+
+  function _cpickerUpdateSquare() {
+    const sq = document.getElementById('cpicker-sv-square');
+    if (!sq) return;
+    sq.style.background = `hsl(${_cpH},100%,50%)`;
+    // position cursors
+    const sw = sq.offsetWidth||220, sh = sq.offsetHeight||160;
+    const cur = document.getElementById('cpicker-sv-cursor');
+    if (cur) { cur.style.left=(_cpS/100*sw)+'px'; cur.style.top=((1-_cpV/100)*sh)+'px'; }
+    const hbar = document.getElementById('cpicker-hue-bar');
+    const hcur = document.getElementById('cpicker-hue-cursor');
+    if (hbar && hcur) { hcur.style.top=(_cpH/360*(hbar.offsetHeight||160))+'px'; }
+    const prev = document.getElementById('cpicker-preview');
+    if (prev) prev.style.background = _cpickerSelected;
+  }
+
+  function _cpickerSyncFields(hex) {
+    const [r,g,b] = _hexToRgb(hex);
+    const [hl,sl,ll] = _rgbToHsl(r,g,b);
+    const g2 = id => document.getElementById(id);
+    if(g2('cpicker-preview')) g2('cpicker-preview').style.background = hex;
+    if(g2('cp-hex'))  g2('cp-hex').value  = hex;
+    if(g2('cp-r'))    g2('cp-r').value    = r;
+    if(g2('cp-g'))    g2('cp-g').value    = g;
+    if(g2('cp-b'))    g2('cp-b').value    = b;
+    if(g2('cp-h'))    g2('cp-h').value    = hl;
+    if(g2('cp-s'))    g2('cp-s').value    = sl;
+    if(g2('cp-l'))    g2('cp-l').value    = ll;
+  }
+
+  function cpickerSetMode(m) {
+    _cpickerMode = m;
+    ['hex','rgb','hsl'].forEach(x=>{
+      document.getElementById('cpicker-field-'+x).style.display = x===m?'flex':'none';
+      document.getElementById('cpm-'+x).classList.toggle('active', x===m);
+    });
+  }
+
+  function cpickerFromHex() {
+    let v = document.getElementById('cp-hex').value.trim();
+    if (!v.startsWith('#')) v='#'+v;
+    if (/^#[0-9a-fA-F]{6}$/.test(v)) _cpickerSetHex(v);
+  }
+  function cpickerFromRgb() {
+    const r=parseInt(document.getElementById('cp-r').value)||0;
+    const g=parseInt(document.getElementById('cp-g').value)||0;
+    const b=parseInt(document.getElementById('cp-b').value)||0;
+    _cpickerSetHex(_rgbToHex(r,g,b));
+  }
+  function cpickerFromHsl() {
+    const h=parseInt(document.getElementById('cp-h').value)||0;
+    const s=parseInt(document.getElementById('cp-s').value)||0;
+    const l=parseInt(document.getElementById('cp-l').value)||0;
+    const [r,g,b]=_hslToRgb(h,s,l);
+    _cpickerSetHex(_rgbToHex(r,g,b));
+  }
+
+  function _cpickerBuildGrid() {
+    const grid = document.getElementById('cpicker-grid');
+    grid.innerHTML='';
+    CPICKER_PALETTE.forEach(c=>{
+      const d=document.createElement('div');
+      d.className='cpicker-sw'+(c===_cpickerSelected?' selected':'');
+      d.style.background=c; d.dataset.color=c;
+      d.onclick=()=>_cpickerSetHex(c);
+      grid.appendChild(d);
+    });
+  }
+
+  function _cpickerBuildRecent() {
+    const row=document.getElementById('cpicker-recent-row');
+    row.querySelectorAll('.cpicker-recent-sw').forEach(e=>e.remove());
+    const plus=document.getElementById('cpicker-plus');
+    _cpickerRecent.forEach(c=>{
+      const d=document.createElement('div');
+      d.className='cpicker-recent-sw'+(c===_cpickerSelected?' selected':'');
+      d.style.background=c; d.dataset.color=c; d.title=c;
+      d.onclick=()=>_cpickerSetHex(c);
+      row.insertBefore(d,plus);
+    });
+  }
+
+  function cpickerToggleAdvanced() {
+    const el=document.getElementById('cpicker-advanced');
+    const btn=document.getElementById('cpicker-plus');
+    const open=el.style.display==='none';
+    el.style.display=open?'block':'none';
+    btn.textContent=open?'−':'+';
+    if(open) setTimeout(()=>_cpickerUpdateSquare(),10);
+  }
+
+  // ── SV square drag ──
+  function _cpickerSvPos(e, sq) {
+    const r=sq.getBoundingClientRect();
+    const x=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));
+    const y=Math.max(0,Math.min(1,(e.clientY-r.top)/r.height));
+    _cpS=Math.round(x*100); _cpV=Math.round((1-y)*100);
+    _cpickerUpdateFromHsv();
+  }
+  (function(){
+    let _draggingSv=false, _draggingHue=false;
+    function _onMouseMove(e){
+      if(_draggingSv){const sq=document.getElementById('cpicker-sv-square');if(sq)_cpickerSvPos(e,sq);}
+      if(_draggingHue){const hb=document.getElementById('cpicker-hue-bar');if(hb)_cpickerHuePos(e,hb);}
+    }
+    function _onMouseUp(){
+      _draggingSv=false;_draggingHue=false;
+      document.removeEventListener('mousemove',_onMouseMove);
+      document.removeEventListener('mouseup',_onMouseUp);
+    }
+    function _onTouchMove(e){
+      if(_draggingSv){const sq=document.getElementById('cpicker-sv-square');if(sq)_cpickerSvPos(e.touches[0],sq);}
+      if(_draggingHue){const hb=document.getElementById('cpicker-hue-bar');if(hb)_cpickerHuePos(e.touches[0],hb);}
+    }
+    function _onTouchEnd(){
+      _draggingSv=false;_draggingHue=false;
+      document.removeEventListener('touchmove',_onTouchMove);
+      document.removeEventListener('touchend',_onTouchEnd);
+    }
+    document.addEventListener('mousedown',e=>{
+      const sq=document.getElementById('cpicker-sv-square');
+      const hb=document.getElementById('cpicker-hue-bar');
+      if(sq&&sq.contains(e.target)){_draggingSv=true;_cpickerSvPos(e,sq);e.preventDefault();
+        document.addEventListener('mousemove',_onMouseMove);
+        document.addEventListener('mouseup',_onMouseUp);
+      }
+      if(hb&&hb.contains(e.target)){_draggingHue=true;_cpickerHuePos(e,hb);e.preventDefault();
+        document.addEventListener('mousemove',_onMouseMove);
+        document.addEventListener('mouseup',_onMouseUp);
+      }
+    });
+    // Touch support
+    document.addEventListener('touchstart',e=>{
+      const sq=document.getElementById('cpicker-sv-square');
+      const hb=document.getElementById('cpicker-hue-bar');
+      if(sq&&sq.contains(e.target)){_draggingSv=true;_cpickerSvPos(e.touches[0],sq);
+        document.addEventListener('touchmove',_onTouchMove,{passive:true});
+        document.addEventListener('touchend',_onTouchEnd);
+      }
+      if(hb&&hb.contains(e.target)){_draggingHue=true;_cpickerHuePos(e.touches[0],hb);
+        document.addEventListener('touchmove',_onTouchMove,{passive:true});
+        document.addEventListener('touchend',_onTouchEnd);
+      }
+    },{passive:true});
+  })();
+
+  function _cpickerHuePos(e, hb) {
+    const r=hb.getBoundingClientRect();
+    const y=Math.max(0,Math.min(1,(e.clientY-r.top)/r.height));
+    _cpH=Math.round(y*360);
+    _cpickerUpdateFromHsv();
+  }
+
+  // ── Emoji Picker ──────────────────────────────────────────────────────────
+  const _EC = {
+    '😊':['😀','😃','😄','😁','😆','😅','😂','🤣','😊','😇','🙂','🙃','😉','😌','😍','🥰','😘','😗','😙','😚','😋','😛','😝','😜','🤪','🤨','🧐','🤓','😎','🤩','🥳','😏','😒','😞','😔','😟','😕','🙁','☹️','😣','😖','😫','😩','🥺','😢','😭','😤','😠','😡','🤬','😈','👿','💀','☠️','💩','🤡','👹','👺','👻','👽','👾','🤖','😺','😸','😹','😻','😼','😽','🙀','😿','😾'],
+    '👋':['👋','🤚','🖐️','✋','🖖','👌','🤌','🤏','✌️','🤞','🤟','🤘','🤙','👈','👉','👆','🖕','👇','☝️','👍','👎','✊','👊','🤛','🤜','👏','🙌','👐','🤲','🤝','🙏','✍️','💅','💪','🫶','🧑','👦','👧','👨','👩','🧓','👴','👵','👶','🧒','👫','👬','👭','👨‍👩‍👦','👨‍👩‍👧','💆','💇','🚶','🏃','💃','🕺','🧘','🧗','🤸','⛹️','🏋️','🤼','🤾','🤺','🏊','🚴','🛀'],
+    '🐶':['🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🙈','🙉','🙊','🐒','🦆','🐧','🦅','🦉','🦇','🐺','🐴','🦄','🐝','🦋','🐌','🐞','🐜','🦟','🦗','🦂','🐢','🐍','🦎','🐙','🦑','🦐','🦞','🦀','🐡','🐠','🐟','🐬','🐳','🦈','🦭','🐊','🦒','🦘','🦏','🐘','🦛','🦍','🦧','🦮','🐕','🐩','🐈','🐓','🦚','🦜','🦢','🦩','🕊️','🐇','🦝','🦨','🦡','🦦','🦥','🐁','🐀','🐿️','🦔'],
+    '🍕':['🍎','🍊','🍋','🍇','🍓','🫐','🍒','🍑','🥭','🍍','🥥','🥝','🍅','🍆','🥑','🥦','🥬','🥒','🌶️','🌽','🥕','🧅','🧄','🥔','🍠','🥐','🥖','🍞','🧀','🥚','🍳','🧈','🥞','🧇','🥓','🥩','🍗','🍖','🌭','🍔','🍟','🍕','🌮','🌯','🥙','🧆','🍜','🍝','🍲','🍛','🍣','🍱','🥟','🦪','🍤','🍙','🍚','🍘','🧁','🍰','🎂','🍮','🍭','🍬','🍫','🍿','🍩','🍪','🌰','🥜','🍯','🧃','🥤','🧋','☕','🍵','🧉','🍺','🍻','🥂','🍷','🥃','🍸','🍹','🧊','🥄','🍴','🫙'],
+    '✈️':['🚗','🚕','🚙','🚌','🏎️','🚓','🚑','🚒','🚜','🏍️','🛵','🚲','🛴','🛹','🛼','🚁','🛸','🚀','✈️','🛩️','🚂','🚃','⛵','🚢','🛥️','⛽','🏠','🏡','🏢','🏥','🏦','🏨','🏪','🏫','🏬','🏭','🏯','🏰','🗼','🗽','⛩️','🌁','🌃','🌆','🌇','🌉','🌌','⛲','⛺','🏕️','🏖️','🏗️','🏝️','🏜️','🌎','🌍','🌏','🗾','🌋','⛰️','🏔️','🧭','🌅','🌄','🌠','🗺️'],
+    '⚽':['⚽','🏀','🏈','⚾','🥎','🏐','🏉','🎾','🥏','🎱','🏓','🏸','⛳','🎣','🤿','🎿','🛷','🥌','🎯','🎮','🕹️','🎲','♟️','🎭','🎨','🖌️','🎬','🎤','🎧','🎼','🎵','🎶','🎷','🎸','🎹','🎺','🎻','🥁','🪘','🎪','🎠','🎡','🎢','🎟️','🎫','🏆','🥇','🥈','🥉','🏅','🎗️','🎖️','🚵','🏇','🤸','🏋️','⛹️','🤺','🏊','🚴','🧗','🤼','🤾','🧘'],
+    '💡':['📱','💻','🖥️','🖨️','⌨️','🖱️','💾','💿','📀','📷','📸','📹','🎥','📞','☎️','📺','📻','⏱️','⏰','⌚','📡','🔋','🔌','💡','🔦','🕯️','💰','💳','💎','⚖️','🔧','🪛','🔨','⚒️','🛠️','🔩','🧲','🔐','🔑','🗝️','🧳','🧰','🪣','🚪','📦','📫','✏️','✒️','📝','📁','📂','📋','📌','📍','📎','✂️','🔒','🔓','🧪','🔬','🔭','💊','🩺','🩹','🧬','🏥','💉','🩸','🧫','⚗️','🪄','🎩','🪞','🛏️','🛋️','🚿','🛁','🪥','🧴','🪒','🧹','🧺','🧻','🧼'],
+    '❤️':['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💟','✅','❌','⭕','🛑','⚠️','🔰','♻️','💯','🔥','💧','⚡','🌊','✨','💫','⭐','🌟','🌈','☀️','🌙','❄️','🎉','🎊','🎈','🎁','🏳️','🏴','🚩','🏁','🚫','⛔','❓','❗','💬','💭','🔔','🔕','📣','📢','🔇','🔈','🔉','🔊','▶️','⏸️','⏹️','⏺️','⏭️','⏮️','🔀','🔁','🔂','🆕','🆓','🆒','🆙','🆗','🆖','🅰️','🅱️','🆎','🆑','🅾️','🆘','⛔','🚷','🚯','🚳','🚱'],
+  };
+
+  const _emojiKw = {
+    '😀':'grin happy smile laugh','😂':'laugh cry lol funny','😊':'smile happy blush','😍':'love heart eyes','😭':'sob cry sad','😤':'triumph angry','😎':'cool sunglasses','🥺':'pleading puppy eyes','🤔':'thinking hmm','😴':'sleep tired zzz','🤗':'hug happy','😱':'scream shocked','🤣':'rofl laugh rolling','😘':'kiss love','😏':'smirk','😢':'cry sad tear','😡':'angry mad rage','🤯':'mind blown explode','😷':'mask sick ill','🤒':'sick fever ill','😇':'angel halo','🥰':'love smiling hearts','🤩':'star struck wow','😤':'angry frustrated','😬':'grimace nervous','🙈':'see no evil monkey','🙉':'hear no evil','🙊':'speak no evil',
+    '👍':'thumbs up good yes ok','👎':'thumbs down no bad','👋':'wave hello hi bye','🙏':'pray thanks please','💪':'muscle strong flex','👏':'clap applause','🤝':'handshake deal','✌️':'peace victory','👌':'ok perfect','🤞':'fingers crossed luck','🫶':'heart hands love','🤙':'shaka call me','👈':'point left','👉':'point right','👆':'point up','👇':'point down',
+    '🐶':'dog puppy','🐱':'cat kitten','🐭':'mouse','🐹':'hamster','🐰':'rabbit bunny','🦊':'fox','🐻':'bear','🐼':'panda','🐯':'tiger','🦁':'lion','🐮':'cow','🐷':'pig','🐸':'frog','🐵':'monkey','🦆':'duck','🐧':'penguin','🦅':'eagle','🦋':'butterfly','🐌':'snail','🐝':'bee','🐢':'turtle','🐍':'snake','🐙':'octopus','🐬':'dolphin','🐳':'whale','🦈':'shark','🐊':'crocodile','🦒':'giraffe','🐘':'elephant',
+    '🍎':'apple red fruit','🍊':'orange fruit','🍋':'lemon yellow','🍇':'grapes purple','🍓':'strawberry red','🍕':'pizza food','🍔':'burger hamburger','🍟':'fries chips','🌮':'taco mexican','🍣':'sushi japanese','🍺':'beer drink alcohol','🍷':'wine drink','☕':'coffee hot drink','🍵':'tea hot','🧋':'bubble tea boba','🍰':'cake slice sweet','🎂':'birthday cake','🍩':'donut sweet','🍪':'cookie sweet','🍫':'chocolate','🍬':'candy sweet',
+    '🚗':'car vehicle','🚀':'rocket space','✈️':'airplane fly travel','🚂':'train','⛵':'sailboat','🏠':'house home','🏰':'castle','🌎':'earth world globe','🌍':'earth world europe','🌋':'volcano','⛺':'tent camping','🗺️':'map',
+    '⚽':'soccer ball sport','🏀':'basketball sport','🏈':'football sport','🎮':'game controller','🎲':'dice game','🎵':'music note','🎶':'music notes','🎸':'guitar music','🎹':'piano keyboard music','🎤':'microphone sing','🏆':'trophy win champion','🥇':'gold medal first','🎉':'party celebration','🎊':'confetti party','🎈':'balloon party',
+    '💡':'light idea bulb','📱':'phone mobile','💻':'laptop computer','📷':'camera photo','⌚':'watch clock time','🔑':'key','🔒':'lock secure','🔧':'wrench tool','📝':'memo note write','📦':'box package','✂️':'scissors cut',
+    '❤️':'heart love red','💔':'broken heart','💯':'hundred percent perfect','🔥':'fire hot flame','💧':'water drop','⚡':'lightning bolt electric','✨':'sparkle shine glitter','⭐':'star','🌟':'star glowing','🌈':'rainbow','❄️':'snowflake cold ice','🎁':'gift present','🏆':'trophy win','🚫':'no prohibited ban','⚠️':'warning caution','❓':'question','❗':'exclamation','💬':'speech bubble chat','🔔':'bell notification','🎉':'party celebrate',
+  };
+
+  let _emojiInput = null;
+  let _emojiCat = null;
+  let _emojiBuilt = false;
+
+  function _emojiGrid(emojis) {
+    const grid = document.getElementById('emoji-grid');
+    grid.innerHTML = '';
+    emojis.forEach(e => {
+      const s = document.createElement('span');
+      s.className = 'emoji-item';
+      s.textContent = e;
+      s.title = (_emojiKw[e] || '').split(' ')[0] || '';
+      s.onclick = () => { _insertEmoji(e); };
+      grid.appendChild(s);
+    });
+  }
+
+  function _emojiBuild() {
+    if (_emojiBuilt) return;
+    _emojiBuilt = true;
+    const cats = Object.keys(_EC);
+    const tabs = document.getElementById('emoji-cat-tabs');
+    cats.forEach((icon, i) => {
+      const btn = document.createElement('button');
+      btn.className = 'emoji-cat-tab' + (i === 0 ? ' active' : '');
+      btn.textContent = icon;
+      btn.onclick = () => {
+        document.querySelectorAll('.emoji-cat-tab').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        _emojiCat = icon;
+        _emojiGrid(_EC[icon]);
+        document.getElementById('emoji-search').value = '';
+      };
+      tabs.appendChild(btn);
+    });
+    _emojiCat = cats[0];
+    _emojiGrid(_EC[cats[0]]);
+  }
+
+  function _emojiFilter(q) {
+    if (!q.trim()) {
+      _emojiGrid(_EC[_emojiCat] || Object.values(_EC)[0]);
+      return;
+    }
+    const lq = q.toLowerCase();
+    const all = Object.values(_EC).flat();
+    const hits = all.filter(e => {
+      if (e.toLowerCase().includes(lq)) return true;
+      const kw = _emojiKw[e] || '';
+      return kw.toLowerCase().includes(lq);
+    });
+    _emojiGrid(hits.length ? hits : all.filter(e => (_emojiKw[e]||'').toLowerCase().includes(lq.slice(0,3))));
+  }
+
+  function _insertEmoji(e) {
+    const input = document.getElementById(_emojiInput);
+    if (!input) return;
+    const s = input.selectionStart || 0;
+    const end = input.selectionEnd || s;
+    input.value = input.value.slice(0, s) + e + input.value.slice(end);
+    input.selectionStart = input.selectionEnd = s + [...e].length;
+    input.focus();
+    if (_emojiInput === 'mc-chat-input') _mcUpdateByteCount();
+  }
+
+  function toggleEmojiPicker(inputId, btn) {
+    const picker = document.getElementById('emoji-picker');
+    const open = picker.style.display !== 'none';
+    if (open && _emojiInput === inputId) { picker.style.display = 'none'; return; }
+    _emojiInput = inputId;
+    _emojiBuild();
+    picker.style.display = 'flex';
+    picker.style.left = 'auto';
+    picker.style.right = '8px';
+    picker.style.top = 'auto';
+    // Anchor bottom of picker just above the input bar — works at any zoom level
+    const inputEl = document.getElementById(inputId);
+    const rect = (inputEl || btn).getBoundingClientRect();
+    const vH = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+    picker.style.bottom = Math.round(vH - rect.top + 6) + 'px';
+    setTimeout(() => document.getElementById('emoji-search').focus(), 50);
+  }
+
+  document.addEventListener('pointerdown', e => {
+    const picker = document.getElementById('emoji-picker');
+    if (!picker || picker.style.display === 'none') return;
+    if (picker.contains(e.target)) return;
+    if (e.target.classList.contains('emoji-btn')) return;
+    picker.style.display = 'none';
+  }, true);
+

@@ -77,7 +77,7 @@ app.register_blueprint(bridge_bp)
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", version=__version__)
 
 
 @app.route("/api/shutdown", methods=["POST"])

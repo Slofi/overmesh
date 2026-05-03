@@ -5922,7 +5922,7 @@ if (targetEl) {
     ).join('')}</div>`;
   }
 
-  function copyTextById(id) {
+  function copyTextById(id, btn) {
     const el = document.getElementById(id);
     const text = el ? (el.textContent || el.value || '') : '';
     if (!text) return;
@@ -5930,6 +5930,12 @@ if (targetEl) {
       navigator.clipboard.writeText(text).catch(() => showAlert('Copy failed.'));
     } else {
       showAlert(text);
+    }
+    if (btn) {
+      const orig = btn.textContent;
+      btn.textContent = '✓ Copied';
+      btn.disabled = true;
+      setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500);
     }
   }
 
@@ -13105,7 +13111,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       }
       const { name, contact } = _mcSenderInfo(m);
       const bodyText = _mcMsgText(m, name);
-      const obsSnr = m.rx_snr != null ? ` · obs ${m.rx_snr} dB` : '';
+      const obsSnr = m.rx_snr != null ? ` · SNR ${m.rx_snr} dB` : '';
       const senderHtml = `<span class="msg-sender-link" onclick="showMcContactPopup(event,'${jsSafe(m.from_id || '')}','${jsSafe(m.radio_id || '')}','${jsSafe(name)}')" title="Contact info">${mcContactNameHtml(contact, name, m.radio_id || null)}</span>`;
       const mcReplyBtn = `<button class="msg-reply-btn" onclick="replyToMc('${jsSafe(m.from_id || '')}','${jsSafe(name)}','${m.subtype || 'channel'}')">↩ Reply</button>`;
       const routeMeta = _mcChatRouteMeta(m);
@@ -17636,13 +17642,15 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
           return;
         }
         area.className = '';
+        const secretHex = d.details && d.details.secret_hex;
         area.innerHTML = `
           ${d.qr_svg ? `<div style="margin-bottom:12px;width:160px;height:160px;flex-shrink:0">${d.qr_svg.replace('<svg ', '<svg style="width:100%;height:100%" ')}</div>` : ''}
+          ${secretHex ? `<div style="margin-bottom:10px"><span style="font-size:12px;color:var(--muted)">Secret key: </span><span id="channel-share-secret" style="font-family:monospace;font-size:12px;word-break:break-all">${escHtml(secretHex)}</span> <button class="btn" style="padding:1px 7px;font-size:11px;margin-left:6px" onclick="copyTextById('channel-share-secret',this)">Copy</button></div>` : ''}
           <div id="channel-share-link" class="share-link-box">${escHtml(d.uri || '')}</div>
           <div id="channel-share-json" class="share-link-box" style="margin-top:8px">${escHtml(d.json || JSON.stringify(d.details || {}))}</div>
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-            <button class="btn" onclick="copyTextById('channel-share-link')">Copy share data</button>
-            <button class="btn" onclick="copyTextById('channel-share-json')">Copy JSON</button>
+            <button class="btn" onclick="copyTextById('channel-share-link',this)">Copy share data</button>
+            <button class="btn" onclick="copyTextById('channel-share-json',this)">Copy JSON</button>
           </div>`;
       })
       .catch(e => {

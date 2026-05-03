@@ -2613,6 +2613,30 @@
       <div id="mc-import-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-top:6px"></div>
     </div><!-- /mc-import-contact-section -->
 
+    <!-- Import Channel via Share Link -->
+    <div class="settings-section" id="mc-import-channel-section" style="display:none">
+      <h2 class="settings-title">Import Channel</h2>
+      <p class="network-section-note mc" style="margin:0 0 10px">Paste a <code class="net-mc">meshcore://channel/add?…</code> share link to add a channel to the radio.</p>
+      <div style="flex:1;min-width:200px">
+        <label class="settings-label">Share Link</label>
+        <input id="mc-import-channel-link" class="settings-input" style="width:100%;font-family:monospace;font-size:11px;box-sizing:border-box" placeholder="meshcore://channel/add?name=…&secret=…" oninput="parseMcChannelLink()">
+      </div>
+      <div id="mc-import-channel-preview" style="display:none;margin-top:10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px">
+        <div style="font-size:12px;margin-bottom:10px">
+          <span style="color:var(--muted)">Name:</span> <strong id="mc-import-ch-name-preview"></strong>
+          <span style="color:var(--muted);margin-left:14px">Secret:</span> <span id="mc-import-ch-secret-preview" style="font-family:monospace;font-size:11px;color:var(--muted)"></span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+          <div>
+            <label class="settings-label">Save to slot</label>
+            <input id="mc-import-ch-slot" class="settings-input" type="number" min="0" max="15" value="0" style="width:60px">
+          </div>
+          <button class="btn" onclick="importMcChannel()" title="Save this channel to the selected slot">Import</button>
+        </div>
+      </div>
+      <div id="mc-import-channel-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-top:6px"></div>
+    </div><!-- /mc-import-channel-section -->
+
     </div><!-- /st-mc -->
 
     <div id="st-app" style="display:none">
@@ -11804,10 +11828,12 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     // MC Node Settings + Channels sections
     const mcNS = document.getElementById('mc-node-settings-section');
     const mcCh = document.getElementById('mc-channels-section');
-    const mcImp = document.getElementById('mc-import-contact-section');
-    if (mcNS) mcNS.style.display = show ? '' : 'none';
-    if (mcCh) mcCh.style.display = show ? '' : 'none';
-    if (mcImp) mcImp.style.display = show ? '' : 'none';
+    const mcImp  = document.getElementById('mc-import-contact-section');
+    const mcImpCh = document.getElementById('mc-import-channel-section');
+    if (mcNS)    mcNS.style.display    = show ? '' : 'none';
+    if (mcCh)    mcCh.style.display    = show ? '' : 'none';
+    if (mcImp)   mcImp.style.display   = show ? '' : 'none';
+    if (mcImpCh) mcImpCh.style.display = show ? '' : 'none';
     // Force-hide header pills + chat toggle when MC UI is suppressed
     if (!show) {
       const sep = document.getElementById('mc-pill-sep');
@@ -16444,6 +16470,56 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
   }
 
+  function parseMcChannelLink() {
+    const link    = (document.getElementById('mc-import-channel-link').value || '').trim();
+    const preview = document.getElementById('mc-import-channel-preview');
+    const statusEl = document.getElementById('mc-import-channel-status');
+    if (statusEl) statusEl.textContent = '';
+    if (!link) { preview.style.display = 'none'; return; }
+    try {
+      const url    = new URL(link.replace(/^meshcore:\/\//, 'https://meshcore/'));
+      const name   = url.searchParams.get('name')   || '';
+      const secret = url.searchParams.get('secret') || '';
+      if (!name) { preview.style.display = 'none'; if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">No channel name found in link.</span>'; return; }
+      document.getElementById('mc-import-ch-name-preview').textContent   = name;
+      document.getElementById('mc-import-ch-secret-preview').textContent = secret ? secret.slice(0, 8) + '…' : '(auto-derive from name)';
+      preview.style.display = '';
+    } catch(e) {
+      preview.style.display = 'none';
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Invalid link format.</span>';
+    }
+  }
+
+  function importMcChannel() {
+    const radioId  = mcSettingsRadioId || activeMcRadioId;
+    const statusEl = document.getElementById('mc-import-channel-status');
+    if (!radioId) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">No MC radio selected.</span>'; return; }
+    const link = (document.getElementById('mc-import-channel-link').value || '').trim();
+    const slot = parseInt(document.getElementById('mc-import-ch-slot').value);
+    if (isNaN(slot) || slot < 0 || slot > 15) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Slot must be 0–15.</span>'; return; }
+    let name, secret;
+    try {
+      const url = new URL(link.replace(/^meshcore:\/\//, 'https://meshcore/'));
+      name   = url.searchParams.get('name')   || '';
+      secret = url.searchParams.get('secret') || '';
+    } catch(e) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Invalid link.</span>'; return; }
+    if (!name) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">No channel name in link.</span>'; return; }
+    if (statusEl) statusEl.textContent = 'Importing…';
+    const body = {name, key_type: secret ? 'custom' : 'auto'};
+    if (secret) body.key = secret;
+    fetch(`/api/mc/${encodeURIComponent(radioId)}/channels/${slot}`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    }).then(r => r.json().then(d => ({ok: r.ok, d}))).then(({ok, d}) => {
+      if (!ok || d.error) { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Failed')}</span>`; return; }
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent)">Channel imported.</span>';
+      document.getElementById('mc-import-channel-link').value = '';
+      document.getElementById('mc-import-channel-preview').style.display = 'none';
+      loadMcChannelsList(radioId);
+      setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 4000);
+    }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
+  }
+
   // ---- Map container height (Leaflet needs explicit pixel height) ----
   function resizeMapView() {
     // Defer measurement until after flex layout has settled
@@ -17561,7 +17637,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         }
         area.className = '';
         area.innerHTML = `
-          ${d.qr_svg ? `<div style="margin-bottom:12px">${d.qr_svg}</div>` : ''}
+          ${d.qr_svg ? `<div style="margin-bottom:12px;width:160px;height:160px;flex-shrink:0">${d.qr_svg.replace('<svg ', '<svg style="width:100%;height:100%" ')}</div>` : ''}
           <div id="channel-share-link" class="share-link-box">${escHtml(d.uri || '')}</div>
           <div id="channel-share-json" class="share-link-box" style="margin-top:8px">${escHtml(d.json || JSON.stringify(d.details || {}))}</div>
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">

@@ -12629,19 +12629,31 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       ${items.map(item => _mcClusterItemHtml(item)).join('')}`;
   }
 
-  function makeMcIcon(highlighted) {
+  function makeMcIcon(highlighted, type) {
     const outer = highlighted ? 10 : 7;
     const inner = highlighted ? 6  : 4;
-    const color = '#3b82f6';
-    const glow  = highlighted ? 'drop-shadow(0 0 6px #3b82f6) drop-shadow(0 1px 4px rgba(0,0,0,0.8))' : 'drop-shadow(0 1px 4px rgba(0,0,0,0.8))';
-    const sz    = (outer + 5) * 2;
-    const c     = sz / 2;
-    const o     = c - outer;
-    const i     = c - inner;
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${sz}" height="${sz}" viewBox="0 0 ${sz} ${sz}" style="filter:${glow};overflow:visible">
-      <rect x="${o}" y="${o}" width="${outer*2}" height="${outer*2}" fill="white" rx="2"/>
-      <rect x="${i}" y="${i}" width="${inner*2}" height="${inner*2}" fill="${color}" rx="1"/>
-    </svg>`;
+    const isRptr = type === 2;
+    const isRoom = type === 3;
+    const color  = isRptr ? '#1d4ed8' : isRoom ? '#fb923c' : '#60a5fa';
+    const glow   = highlighted
+      ? `drop-shadow(0 0 6px ${color}) drop-shadow(0 1px 4px rgba(0,0,0,0.8))`
+      : 'drop-shadow(0 1px 4px rgba(0,0,0,0.8))';
+    const sz = (outer + 5) * 2;
+    const c  = sz / 2;
+    const o  = c - outer;
+    const i  = c - inner;
+    let svg;
+    if (isRptr || isRoom) {
+      svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${sz}" height="${sz}" viewBox="0 0 ${sz} ${sz}" style="filter:${glow};overflow:visible">
+        <rect x="${o}" y="${o}" width="${outer*2}" height="${outer*2}" fill="white" rx="2"/>
+        <rect x="${i}" y="${i}" width="${inner*2}" height="${inner*2}" fill="${color}" rx="1"/>
+      </svg>`;
+    } else {
+      svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${sz}" height="${sz}" viewBox="0 0 ${sz} ${sz}" style="filter:${glow};overflow:visible">
+        <circle cx="${c}" cy="${c}" r="${outer}" fill="white"/>
+        <circle cx="${c}" cy="${c}" r="${inner}" fill="${color}"/>
+      </svg>`;
+    }
     return L.divIcon({ html: svg, className: '', iconSize: [sz, sz], iconAnchor: [c, c], popupAnchor: [0, -(c+2)] });
   }
 
@@ -12738,7 +12750,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
           ? `<button class="map-popup-btn" title="Remote repeater/room management" onclick="leafletMap.closePopup();openMcRemoteManage('${safePk}','${safeRid}','${safeName}')">Manage</button>`
           : `<button class="map-popup-btn" title="MC radio disconnected" disabled style="opacity:0.35;cursor:default">Manage</button>`)
         : '';
-      const marker = L.marker([c.latitude, c.longitude], { icon: makeMcIcon() });
+      const marker = L.marker([c.latitude, c.longitude], { icon: makeMcIcon(false, c.type ?? 0) });
       const bat = c.battery ?? c.bat_pct ?? c.bat;
       const batStr = bat != null ? `${bat}%` : '—';
       const snrText = c.snr != null ? `${c.snr} dB` : '—';
@@ -13306,7 +13318,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
   function highlightMcContact(id, on) {
     const marker = mcMapMarkerById[id];
     if (!marker) return;
-    marker.setIcon(makeMcIcon(on));
+    marker.setIcon(makeMcIcon(on, marker._omMcMapData?.type ?? 0));
     marker.setZIndexOffset(on ? 1000 : 0);
   }
 

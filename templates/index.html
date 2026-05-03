@@ -6081,7 +6081,7 @@ if (targetEl) {
           ${qrHtml}
           <div id="mc-share-link" class="share-link-box">${escHtml(d.uri || '')}</div>
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-            <button class="btn" onclick="copyTextById('mc-share-link')">Copy share link</button>
+            <button class="btn" onclick="copyTextById('mc-share-link',this)">Copy share link</button>
           </div>`;
       })
       .catch(e => {

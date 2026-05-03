@@ -1710,12 +1710,33 @@ def import_mc_contact(config_id, share_link_or_hex, timeout=15):
     """Parse a meshcore:// share link (or raw hex) and import it into the radio's contact list."""
     _ensure_mc_tx_allowed("MC contact import")
     raw = share_link_or_hex.strip()
-    if raw.lower().startswith("meshcore://"):
-        raw = raw[len("meshcore://"):]
-    try:
-        card_data = bytes.fromhex(raw)
-    except ValueError:
-        raise ValueError("Invalid share link — could not hex-decode the payload")
+    # New URI format: meshcore://contact/add?name=X&public_key=Y&type=Z
+    if raw.lower().startswith("meshcore://contact/add"):
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(raw.replace("meshcore://", "https://meshcore/", 1))
+        params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+        pubkey_hex = params.get("public_key", "").strip().lower()
+        name       = params.get("name", "").strip()
+        type_val   = params.get("type", "0").strip()
+        if not pubkey_hex:
+            raise ValueError("Share link missing public_key parameter")
+        if len(pubkey_hex) != 64 or not all(c in "0123456789abcdef" for c in pubkey_hex):
+            raise ValueError("public_key must be exactly 64 hex characters (32 bytes)")
+        if not name:
+            raise ValueError("Share link missing name parameter")
+        try:
+            type_byte = int(type_val) & 0xFF
+        except ValueError:
+            type_byte = 0
+        card_data = bytes.fromhex(pubkey_hex) + bytes([type_byte]) + name.encode("utf-8")
+    else:
+        # Legacy format: meshcore:// + raw hex blob
+        if raw.lower().startswith("meshcore://"):
+            raw = raw[len("meshcore://"):]
+        try:
+            card_data = bytes.fromhex(raw)
+        except ValueError:
+            raise ValueError("Invalid share link — could not hex-decode the payload")
     if len(card_data) < 33:
         raise ValueError("Share link payload too short to be a valid contact card")
     return run_mc(_import_contact_async(config_id, card_data), timeout=timeout)

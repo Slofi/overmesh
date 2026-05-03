@@ -15630,12 +15630,10 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         rssi: data.observed_rssi,
       });
       if (pathResult) {
+        switchTab('map'); toggleSensePanel(true); switchSenseNet('mc');
         showMcHoverPath({ ...pathResult, kind: 'ping', snr: data.observed_snr ?? data.last_snr ?? null }, true);
         _mcPingPathActive = true;
-        if (cLat != null) {
-          if (leafletMap) leafletMap.panTo([cLat, cLon]);
-          else centerMcOnMap(cLat, cLon);
-        }
+        if (cLat != null) setTimeout(() => leafletMap && leafletMap.panTo([cLat, cLon]), 80);
       }
       return;
     }
@@ -15675,12 +15673,10 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         pathResult = { points: [[radioLat, radioLon], [pingContact.latitude, pingContact.longitude]], flood: true };
       }
       if (pathResult) {
+        switchTab('map'); toggleSensePanel(true); switchSenseNet('mc');
         showMcHoverPath({ ...pathResult, kind: 'ping', snr: data.observed_snr ?? data.last_snr ?? null }, true);
         _mcPingPathActive = true;
-        if (pingContact.latitude != null) {
-          if (leafletMap) leafletMap.panTo([pingContact.latitude, pingContact.longitude]);
-          else centerMcOnMap(pingContact.latitude, pingContact.longitude);
-        }
+        if (pingContact.latitude != null) setTimeout(() => leafletMap && leafletMap.panTo([pingContact.latitude, pingContact.longitude]), 80);
       }
     }
     // Update contact's last_seen in local cache so map popup reflects the ping

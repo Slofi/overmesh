@@ -17561,6 +17561,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         }
         area.className = '';
         area.innerHTML = `
+          ${d.qr_svg ? `<div style="margin-bottom:12px">${d.qr_svg}</div>` : ''}
           <div id="channel-share-link" class="share-link-box">${escHtml(d.uri || '')}</div>
           <div id="channel-share-json" class="share-link-box" style="margin-top:8px">${escHtml(d.json || JSON.stringify(d.details || {}))}</div>
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">

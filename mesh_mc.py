@@ -1675,10 +1675,17 @@ def enable_mc_debug(config_id, duration=60):
     threading.Thread(target=_stop, daemon=True).start()
 
 
-async def _import_contact_async(config_id, card_data):
-    """Import a contact from raw card bytes (decoded from a meshcore:// share link)."""
+async def _import_contact_async(config_id, card_data=None, contact_dict=None):
+    """Import a contact — either from raw card bytes or a parsed contact dict.
+
+    card_data path: uses import_contact (0x12), requires newer firmware.
+    contact_dict path: uses add_contact (0x09), works on all firmware versions.
+    """
     mc, _ = _get_mc(config_id)
-    result = await mc.commands.import_contact(card_data)
+    if contact_dict is not None:
+        result = await mc.commands.add_contact(contact_dict)
+    else:
+        result = await mc.commands.import_contact(card_data)
     if result is None or result.type.name not in ("OK",):
         raise RuntimeError(f"import_contact returned: {result.type if result else 'None'} {getattr(result, 'payload', '')}")
     # Refresh contacts so the new entry shows up in our in-memory list
@@ -1728,18 +1735,31 @@ def import_mc_contact(config_id, share_link_or_hex, timeout=15):
             type_byte = int(type_val) & 0xFF
         except ValueError:
             type_byte = 0
-        card_data = bytes.fromhex(pubkey_hex) + bytes([type_byte]) + name.encode("utf-8")
+        # Use add_contact (0x09) — works on all firmware versions
+        contact_dict = {
+            "public_key":        pubkey_hex,
+            "type":              type_byte,
+            "flags":             0,
+            "out_path":          "",
+            "out_path_len":      -1,
+            "out_path_hash_mode": 0,
+            "adv_name":          name,
+            "last_advert":       0,
+            "adv_lat":           0.0,
+            "adv_lon":           0.0,
+        }
+        return run_mc(_import_contact_async(config_id, contact_dict=contact_dict), timeout=timeout)
     else:
-        # Legacy format: meshcore:// + raw hex blob
+        # Legacy format: meshcore:// + raw hex blob → import_contact (0x12)
         if raw.lower().startswith("meshcore://"):
             raw = raw[len("meshcore://"):]
         try:
             card_data = bytes.fromhex(raw)
         except ValueError:
             raise ValueError("Invalid share link — could not hex-decode the payload")
-    if len(card_data) < 33:
-        raise ValueError("Share link payload too short to be a valid contact card")
-    return run_mc(_import_contact_async(config_id, card_data), timeout=timeout)
+        if len(card_data) < 33:
+            raise ValueError("Share link payload too short to be a valid contact card")
+        return run_mc(_import_contact_async(config_id, card_data=card_data), timeout=timeout)
 
 
 def export_mc_contact_uri(config_id, pubkey_prefix, timeout=15):

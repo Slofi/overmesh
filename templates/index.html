@@ -13029,6 +13029,8 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       btns.push(`<button class="map-popup-btn" onclick="doMcDm('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}">DM</button>`);
       if (c.type !== 2) btns.push(`<button class="map-popup-btn" onclick="doMcPing('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}">Ping</button>`);
       if (mcCanRemoteManage(c)) btns.push(`<button class="map-popup-btn" onclick="openMcRemoteManage('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}">Manage</button>`);
+    } else if (!c && actionId) {
+      btns.push(`<button class="map-popup-btn" onclick="doMcPing('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}" title="Request status from this node — may trigger it to send an advert">Ping</button>`);
     }
     const cLat = c?.latitude, cLon = c?.longitude;
     if (hasMarker) {

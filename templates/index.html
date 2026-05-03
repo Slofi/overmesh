@@ -2129,7 +2129,7 @@
             <label class="settings-label">Short Name <span style="font-weight:400">(max 4 chars)</span></label>
             <input id="node-cfg-short-name" class="settings-input" maxlength="4" style="width:80px">
           </div>
-          <button class="btn" onclick="saveNodeOwner()" title="Save long name and short name to the node">Save</button>
+          <button class="btn" onclick="saveNodeOwner(this)" title="Save long name and short name to the node">Save</button>
         </div>
         <div id="node-cfg-owner-status" style="font-size:12px;min-height:16px;margin-top:6px"></div>
 
@@ -2140,7 +2140,7 @@
             <label class="settings-label">Role</label>
             <select id="node-cfg-role" class="settings-select" style="min-width:180px"></select>
           </div>
-          <button class="btn" onclick="saveNodeDevice()" title="Save device role to the node">Save</button>
+          <button class="btn" onclick="saveNodeDevice(this)" title="Save device role to the node">Save</button>
         </div>
         <div id="node-cfg-device-status" style="font-size:12px;min-height:16px;margin-top:6px"></div>
 
@@ -2163,7 +2163,7 @@
             <label class="settings-label">Hop Limit <span style="font-weight:400">(1–7)</span></label>
             <input id="node-cfg-hoplimit" type="number" class="settings-input" min="1" max="7" style="width:55px">
           </div>
-          <button class="btn" onclick="saveNodeLora()" title="Save LoRa region, modem preset and hop limit to the node">Save</button>
+          <button class="btn" onclick="saveNodeLora(this)" title="Save LoRa region, modem preset and hop limit to the node">Save</button>
         </div>
         <p style="font-size:11px;color:var(--muted);margin:8px 0 0">Region and preset changes take effect after node reboot. Hop limit applies immediately (also used for Traceroute).</p>
         <div id="node-cfg-lora-status" style="font-size:12px;min-height:16px;margin-top:4px"></div>
@@ -2204,10 +2204,10 @@
                    style="width:100%;margin-top:6px;display:none;font-family:monospace;font-size:11px">
           </div>
           <div style="display:flex;gap:8px;margin-top:12px">
-            <button class="btn" onclick="saveNodeChannel()" title="Save channel settings to node">Save</button>
+            <button class="btn" onclick="saveNodeChannel(this)" title="Save channel settings to node">Save</button>
             <button class="btn" onclick="closeChEdit()" style="background:var(--bg3)" title="Discard changes">Cancel</button>
-            <button class="btn" onclick="clearNodeChannelHistory(_editingChIndex)" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted)" title="Delete saved chat history for this MT channel">Delete History</button>
-            <button id="btn-ch-remove" class="btn" onclick="removeNodeChannel(_editingChIndex)" style="margin-left:auto;background:var(--bg3);border:1px solid var(--border);color:var(--muted)" title="Disable this channel and clear its name and key">Remove</button>
+            <button class="btn" onclick="clearNodeChannelHistory(_editingChIndex, this)" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted)" title="Delete saved chat history for this MT channel">Delete History</button>
+            <button id="btn-ch-remove" class="btn" onclick="removeNodeChannel(_editingChIndex, this)" style="margin-left:auto;background:var(--bg3);border:1px solid var(--border);color:var(--muted)" title="Disable this channel and clear its name and key">Remove</button>
           </div>
           <div id="node-cfg-channels-status" style="font-size:12px;min-height:16px;margin-top:6px"></div>
         </div>
@@ -2253,12 +2253,12 @@
           <div><label class="settings-label">Latitude</label><input id="node-cfg-fixed-lat" class="settings-input" style="width:110px" placeholder="46.05870"></div>
           <div><label class="settings-label">Longitude</label><input id="node-cfg-fixed-lon" class="settings-input" style="width:110px" placeholder="14.49656"></div>
           <div><label class="settings-label">Altitude (m)</label><input id="node-cfg-fixed-alt" type="number" class="settings-input" style="width:70px" value="0"></div>
-          <div style="align-self:flex-end"><button class="btn" onclick="startMapPick()" title="Click on the map to set position">Pick on map</button></div>
-          <div style="align-self:flex-end"><button id="btn-from-gps" class="btn" onclick="fillPositionFromGps()" title="Fill from USB GPS dongle (configure dongle in App tab)" disabled>Fill from GPS dongle</button></div>
+          <div style="align-self:flex-end"><button class="btn" onclick="startMapPick(this)" title="Click on the map to set position">Pick on map</button></div>
+          <div style="align-self:flex-end"><button id="btn-from-gps" class="btn" onclick="fillPositionFromGps(this)" title="Fill from USB GPS dongle (configure dongle in App tab)" disabled>Fill from GPS dongle</button></div>
         </div>
         <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
-          <button class="btn" onclick="saveNodePosition()" title="Save position settings to the node">Save</button>
-          <button class="btn" onclick="removeNodePosition()" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted)" title="Clear fixed position — onboard GPS resumes">Clear fixed position</button>
+          <button class="btn" onclick="saveNodePosition(this)" title="Save position settings to the node">Save</button>
+          <button class="btn" onclick="removeNodePosition(this)" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted)" title="Clear fixed position — onboard GPS resumes">Clear fixed position</button>
         </div>
         <div id="node-cfg-position-status" style="font-size:12px;min-height:16px;margin-top:4px"></div>
 
@@ -2273,7 +2273,7 @@
             <label class="settings-label">Auto-shutdown after (s) <span style="font-weight:400">(0 = never)</span></label>
             <input id="node-cfg-shutdown-secs" type="number" class="settings-input" min="0" style="width:90px">
           </div>
-          <button class="btn" onclick="saveNodePower()" title="Save power management settings to the node">Save</button>
+          <button class="btn" onclick="saveNodePower(this)" title="Save power management settings to the node">Save</button>
         </div>
         <div id="node-cfg-power-status" style="font-size:12px;min-height:16px;margin-top:4px"></div>
 
@@ -2284,8 +2284,8 @@
             <label class="settings-label">Screen timeout (s) <span style="font-weight:400">(0 = always on)</span></label>
             <input id="node-cfg-screen-secs" type="number" class="settings-input" min="0" style="width:80px">
           </div>
-          <button class="btn" onclick="quickScreenOff()" title="Set to 10s — effectively always off">Turn off</button>
-          <button class="btn" onclick="quickScreenOn()" title="Set to 0 — never sleep">Always on</button>
+          <button class="btn" onclick="quickScreenOff(this)" title="Set to 10s — effectively always off">Turn off</button>
+          <button class="btn" onclick="quickScreenOn(this)" title="Set to 0 — never sleep">Always on</button>
           <div>
             <label class="settings-label">Units</label>
             <select id="node-cfg-display-units" class="settings-select">
@@ -2297,7 +2297,7 @@
             <input type="checkbox" id="node-cfg-flip-screen">
             <label for="node-cfg-flip-screen" class="settings-label" style="margin:0">Flip screen</label>
           </div>
-          <button class="btn" onclick="saveNodeDisplay()" title="Save display settings to the node">Save</button>
+          <button class="btn" onclick="saveNodeDisplay(this)" title="Save display settings to the node">Save</button>
         </div>
         <div id="node-cfg-display-status" style="font-size:12px;min-height:16px;margin-top:4px"></div>
 
@@ -2312,7 +2312,7 @@
             <label class="settings-label">Environment metrics every (s)</label>
             <input id="node-cfg-tel-env" type="number" class="settings-input" min="0" style="width:90px">
           </div>
-          <button class="btn" onclick="saveNodeTelemetry()" title="Save telemetry broadcast intervals to the node">Save</button>
+          <button class="btn" onclick="saveNodeTelemetry(this)" title="Save telemetry broadcast intervals to the node">Save</button>
         </div>
         <div id="node-cfg-telemetry-status" style="font-size:12px;min-height:16px;margin-top:4px"></div>
 
@@ -2342,7 +2342,7 @@
           <label style="display:flex;align-items:center;gap:5px;font-size:12px"><input type="checkbox" id="node-cfg-mqtt-tls"> TLS</label>
           <label style="display:flex;align-items:center;gap:5px;font-size:12px"><input type="checkbox" id="node-cfg-mqtt-map"> Map reporting</label>
         </div>
-        <button class="btn" onclick="saveNodeMqtt()" title="Save MQTT settings to the node">Save</button>
+        <button class="btn" onclick="saveNodeMqtt(this)" title="Save MQTT settings to the node">Save</button>
         <div id="node-cfg-mqtt-status" style="font-size:12px;min-height:16px;margin-top:4px"></div>
 
         <!-- Bluetooth -->
@@ -2364,7 +2364,7 @@
             <input id="node-cfg-bt-pin" type="number" class="settings-input" min="0" max="999999" style="width:100px">
           </div>
         </div>
-        <button class="btn" onclick="saveNodeBluetooth()" style="margin-top:8px" title="Save Bluetooth settings to the node">Save</button>
+        <button class="btn" onclick="saveNodeBluetooth(this)" style="margin-top:8px" title="Save Bluetooth settings to the node">Save</button>
         <div id="node-cfg-bluetooth-status" style="font-size:12px;min-height:16px;margin-top:4px"></div>
 
         <!-- Network / WiFi -->
@@ -2389,15 +2389,15 @@
           </div>
         </div>
         <p style="font-size:11px;color:var(--muted);margin:6px 0 0">Note: enabling WiFi disables Bluetooth on ESP32 nodes. Reboot required after saving.</p>
-        <button class="btn" onclick="saveNodeNetwork()" style="margin-top:8px" title="Save WiFi/network settings to the node — reboot required">Save</button>
+        <button class="btn" onclick="saveNodeNetwork(this)" style="margin-top:8px" title="Save WiFi/network settings to the node — reboot required">Save</button>
         <div id="node-cfg-network-status" style="font-size:12px;min-height:16px;margin-top:4px"></div>
 
         <!-- Node actions -->
         <h3 class="settings-subtitle">Node Actions</h3>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          <button class="btn" onclick="rebootNode()" style="background:var(--bg3);border:1px solid var(--border)" title="Remotely reboot this Meshtastic node">↺ Reboot node</button>
-          <button class="btn" onclick="shutdownNode()" style="background:var(--bg3);border:1px solid #f87171;color:#f87171" title="Remotely shut down this node — requires physical power cycle to restart">⏻ Shutdown node</button>
-          <button class="btn" onclick="resetKnownNodesDb()" style="background:var(--bg3);border:1px solid #f59e0b;color:#f59e0b" title="Clear all remembered remote nodes for this selected radio from OverMesh history and live cache">⌫ Clear known nodes</button>
+          <button class="btn" onclick="rebootNode(this)" style="background:var(--bg3);border:1px solid var(--border)" title="Remotely reboot this Meshtastic node">↺ Reboot node</button>
+          <button class="btn" onclick="shutdownNode(this)" style="background:var(--bg3);border:1px solid #f87171;color:#f87171" title="Remotely shut down this node — requires physical power cycle to restart">⏻ Shutdown node</button>
+          <button class="btn" onclick="resetKnownNodesDb(this)" style="background:var(--bg3);border:1px solid #f59e0b;color:#f59e0b" title="Clear all remembered remote nodes for this selected radio from OverMesh history and live cache">⌫ Clear known nodes</button>
         </div>
         <div id="node-cfg-actions-status" style="font-size:12px;min-height:16px;margin-top:6px"></div>
 
@@ -2493,8 +2493,8 @@
         </div>
       </div>
       <div style="display:flex;gap:8px;margin-bottom:4px">
-        <button class="btn" onclick="saveMcRadioParams()" title="Save freq/BW/SF/CR">Save Radio Params</button>
-        <button class="btn" onclick="saveMcTxPower()" title="Save TX power only">Save TX Power</button>
+        <button class="btn" onclick="saveMcRadioParams(this)" title="Save freq/BW/SF/CR">Save Radio Params</button>
+        <button class="btn" onclick="saveMcTxPower(this)" title="Save TX power only">Save TX Power</button>
       </div>
       <div id="mc-radio-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-bottom:14px"></div>
 
@@ -2508,7 +2508,7 @@
             <option value="2">3B/hop - most specific</option>
           </select>
         </div>
-        <button class="btn btn-net-mc" onclick="saveMcPathHashMode()" title="Save preferred MeshCore path hash mode">Save Path Mode</button>
+        <button class="btn btn-net-mc" onclick="saveMcPathHashMode(this)" title="Save preferred MeshCore path hash mode">Save Path Mode</button>
       </div>
       <div style="font-size:11px;color:var(--muted);max-width:560px;margin-bottom:4px">OM applies this to the radio when supported and uses it when saving MC contact routes. If the radio rejects the selected mode, OM falls back to the highest mode it can apply.</div>
       <div id="mc-path-hash-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-bottom:14px"></div>
@@ -2532,7 +2532,7 @@
           <label class="settings-label">New Name</label>
           <input id="mc-device-name-input" class="settings-input" maxlength="32" style="width:160px" placeholder="Device name">
         </div>
-        <button class="btn" onclick="saveMcDeviceName()" title="Rename device">Rename</button>
+        <button class="btn" onclick="saveMcDeviceName(this)" title="Rename device">Rename</button>
       </div>
       <div style="margin-bottom:8px">
         <label class="settings-label">Precision: <span id="mc-coords-prec-val" style="color:var(--accent)">Actual position</span> <span style="font-weight:400;color:var(--muted)">(slide right = more private)</span></label>
@@ -2549,10 +2549,10 @@
           <input id="mc-coords-lon" class="settings-input" type="number" step="0.000001" style="width:120px" placeholder="14.50">
         </div>
         <button class="btn" onclick="startMcMapPick()" title="Click on the map to set position">Select on map</button>
-        <button class="btn" onclick="saveMcCoords()" title="Set GPS coordinates on MC device">Set Coords</button>
+        <button class="btn" onclick="saveMcCoords(this)" title="Set GPS coordinates on MC device">Set Coords</button>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" style="color:var(--red);border-color:var(--red)" onclick="rebootMcNode()" title="Send reboot command — may not be supported by all firmware versions">Reboot Device</button>
+        <button class="btn" style="color:var(--red);border-color:var(--red)" onclick="rebootMcNode(this)" title="Send reboot command — may not be supported by all firmware versions">Reboot Device</button>
         <button class="btn" id="mc-debug-btn" onclick="startMcDebugEvents()" title="Log all serial events for 60s — check the server log to diagnose ping/status issues">Debug Events</button>
       </div>
       <div id="mc-actions-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-top:6px"></div>
@@ -2590,10 +2590,10 @@
                  style="width:100%;margin-top:6px;display:none;font-family:monospace;font-size:11px" maxlength="32">
         </div>
         <div style="display:flex;gap:8px;margin-top:12px">
-          <button class="btn" onclick="saveMcChannel()" title="Save channel settings to device">Save</button>
+          <button class="btn" onclick="saveMcChannel(this)" title="Save channel settings to device">Save</button>
           <button class="btn" onclick="closeMcChEdit()" style="background:var(--bg3)" title="Discard changes">Cancel</button>
-          <button class="btn" onclick="clearMcChannelHistory()" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted)" title="Delete saved chat history for this MC channel">Delete History</button>
-          <button class="btn" onclick="removeMcChannel()" style="margin-left:auto;background:var(--bg3);border:1px solid var(--border);color:var(--muted)" title="Clear this channel slot on the device">Remove</button>
+          <button class="btn" onclick="clearMcChannelHistory(this)" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted)" title="Delete saved chat history for this MC channel">Delete History</button>
+          <button class="btn" onclick="removeMcChannel(this)" style="margin-left:auto;background:var(--bg3);border:1px solid var(--border);color:var(--muted)" title="Clear this channel slot on the device">Remove</button>
         </div>
         <div id="mc-channels-status" style="font-size:12px;min-height:16px;margin-top:6px"></div>
       </div>
@@ -2608,7 +2608,7 @@
           <label class="settings-label">Share Link</label>
           <input id="mc-import-link" class="settings-input" style="width:100%;font-family:monospace;font-size:11px;box-sizing:border-box" placeholder="meshcore://...">
         </div>
-        <button class="btn" onclick="importMcContact()" title="Import contact from share link">Import</button>
+        <button class="btn" onclick="importMcContact(this)" title="Import contact from share link">Import</button>
       </div>
       <div id="mc-import-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-top:6px"></div>
     </div><!-- /mc-import-contact-section -->
@@ -2660,7 +2660,7 @@
              title="Choose colour"
              style="width:32px;height:24px;border-radius:6px;background:var(--accent);cursor:pointer;border:1px solid var(--border);flex-shrink:0;transition:border-color 0.15s"
              onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'"></div>
-        <button class="btn" onclick="settingsResetAccentColor()" style="font-size:12px;padding:3px 10px" title="Reset to default accent colour">Reset</button>
+        <button class="btn" onclick="settingsResetAccentColor(this)" style="font-size:12px;padding:3px 10px" title="Reset to default accent colour">Reset</button>
         <span style="font-size:11px;color:var(--muted)">Pick any hue — shades auto-derive</span>
       </div>
     </div>
@@ -2675,9 +2675,9 @@
           <div id="settings-update-log" style="display:none;margin-top:8px;max-height:120px;overflow:auto;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px;font-family:monospace;font-size:11px;color:var(--muted);white-space:pre-wrap"></div>
         </div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
-          <button class="btn" id="settings-update-check-btn" onclick="settingsLoadUpdateStatus(true)" title="Check GitHub for a newer OverMesh commit">Check</button>
+          <button class="btn" id="settings-update-check-btn" onclick="settingsLoadUpdateStatus(true, this)" title="Check GitHub for a newer OverMesh commit">Check</button>
           <button class="btn" id="settings-update-run-btn" onclick="runOverMeshUpdate()" disabled title="Pull the latest OverMesh code">Update</button>
-          <button class="btn" id="settings-update-restart-btn" onclick="restartOverMeshNow()" style="display:none" title="Restart OverMesh after an update">Restart</button>
+          <button class="btn" id="settings-update-restart-btn" onclick="restartOverMeshNow(this)" style="display:none" title="Restart OverMesh after an update">Restart</button>
         </div>
       </div>
       <div style="border-top:1px solid var(--border);margin:14px 0 10px 0"></div>
@@ -2944,11 +2944,11 @@
                  placeholder="14.505751">
         </div>
         <button class="btn btn-sm" onclick="startOmMapPick()">Select on map</button>
-        <button class="btn btn-sm" onclick="saveOmManualPosition()">Save</button>
+        <button class="btn btn-sm" onclick="saveOmManualPosition(this)">Save</button>
         <button class="btn btn-sm" style="color:var(--red);border-color:var(--red)"
                 onmouseenter="this.style.background='rgba(248,81,73,0.12)'"
                 onmouseleave="this.style.background=''"
-                onclick="clearOmManualPosition()">Clear</button>
+                onclick="clearOmManualPosition(this)">Clear</button>
       </div>
       <div id="om-pos-status" style="font-size:12px;min-height:16px;margin-top:8px;color:var(--muted)"></div>
     </div>
@@ -2970,7 +2970,7 @@
       <div class="settings-row" style="align-items:center;gap:8px">
         <span class="settings-label">Cached tiles</span>
         <span id="tile-cache-count" style="color:var(--muted);font-size:12px">—</span>
-        <button class="btn-sm" style="margin-left:auto" onclick="clearTileCache()" title="Delete all cached map tiles from browser storage">Clear cache</button>
+        <button class="btn-sm" style="margin-left:auto" onclick="clearTileCache(this)" title="Delete all cached map tiles from browser storage">Clear cache</button>
       </div>
 
       <div style="border-top:1px solid var(--border);margin:10px 0 8px 0"></div>
@@ -2991,7 +2991,7 @@
       </div>
       <div id="tile-estimate" style="color:var(--muted);font-size:11px;margin:2px 0 6px 0;padding-left:2px"></div>
       <div class="settings-row" style="align-items:center;gap:8px">
-        <button class="btn-primary" id="tile-save-btn" onclick="saveTilesCurrentView()" title="Download and cache map tiles for the currently visible map area">Save current map view</button>
+        <button class="btn-primary" id="tile-save-btn" onclick="saveTilesCurrentView(this)" title="Download and cache map tiles for the currently visible map area">Save current map view</button>
       </div>
       <div id="tile-progress-wrap" style="display:none;margin-top:8px">
         <div style="background:var(--bg3);border-radius:4px;height:5px;overflow:hidden;margin-bottom:4px">
@@ -3082,7 +3082,7 @@
           </div>
           <div style="display:flex;align-items:flex-end;gap:6px;flex-wrap:wrap">
             <button class="btn-sm" type="button" onclick="document.getElementById('map-layer-file').click()">Choose file</button>
-            <button class="btn-primary" type="button" onclick="saveMapLayer()">Import layer</button>
+            <button class="btn-primary" type="button" onclick="saveMapLayer(this)">Import layer</button>
           </div>
         </div>
         <input id="map-layer-file" type="file" accept=".json,.geojson,application/geo+json,application/json" style="display:none" onchange="handleMapLayerFileInput(event)">
@@ -3100,7 +3100,7 @@
       <h2 class="settings-title">Data &amp; Storage</h2>
       <p style="color:var(--muted);font-size:12px;margin:0 0 12px">GPS history is stored locally in <code>overmesh_prefs.db</code>. Entries older than 1 year are pruned automatically on each new position log.</p>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <button class="btn" onclick="clearGpsHistory()" style="background:var(--bg3);border:1px solid #f59e0b;color:#f59e0b" title="Delete all GPS movement history for all nodes">⌫ Clear GPS history</button>
+        <button class="btn" onclick="clearGpsHistory(this)" style="background:var(--bg3);border:1px solid #f59e0b;color:#f59e0b" title="Delete all GPS movement history for all nodes">⌫ Clear GPS history</button>
       </div>
       <div id="gps-clear-status" style="font-size:12px;color:var(--muted);margin-top:8px;min-height:16px"></div>
     </div>
@@ -5922,6 +5922,15 @@ if (targetEl) {
     ).join('')}</div>`;
   }
 
+  function btnFeedback(btn, label, ms) {
+    if (!btn) return;
+    ms = ms || 1500;
+    const orig = btn.textContent;
+    btn.textContent = label || '✓ Done';
+    btn.disabled = true;
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, ms);
+  }
+
   function copyTextById(id, btn) {
     const el = document.getElementById(id);
     const text = el ? (el.textContent || el.value || '') : '';
@@ -6347,7 +6356,8 @@ if (targetEl) {
     document.getElementById('power-menu')?.classList.remove('open');
   });
 
-  async function restartOverMeshNow() {
+  async function restartOverMeshNow(btn) {
+      btnFeedback(btn, '✓ Restarting…', 3000);
       try { await fetch('/api/restart', {method: 'POST'}); } catch(_) {}
       document.body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;color:var(--muted)">
         <div style="font-size:32px">&#x21BA;</div>
@@ -7153,10 +7163,10 @@ if (targetEl) {
 
   // Download tiles for current map view
   let _savingTiles = false;
-  async function saveTilesCurrentView() {
+  async function saveTilesCurrentView(_btn) {
     if (!leafletMap || _savingTiles) return;
     _savingTiles = true;
-    const btn  = document.getElementById('tile-save-btn');
+    const btn  = _btn || document.getElementById('tile-save-btn');
     const prog = document.getElementById('tile-progress-wrap');
     const bar  = document.getElementById('tile-progress-bar');
     const txt  = document.getElementById('tile-progress-text');
@@ -7201,7 +7211,7 @@ if (targetEl) {
 
     bar.style.width = '100%';
     txt.textContent = `Done — ${saved} saved, ${skipped} already cached, ${failed} failed`;
-    btn.disabled = false;
+    btnFeedback(btn, '✓ Saved');
     } catch (err) {
       txt.textContent = `Save failed — ${err.message}`;
       btn.disabled = false;
@@ -7211,13 +7221,14 @@ if (targetEl) {
     }
   }
 
-  function clearTileCache() {
+  function clearTileCache(btn) {
     document.getElementById('confirm-ok').textContent = 'Clear';
     showConfirm('Clear all cached tiles? Saved region configs are kept but tile counts will be reset.', () => {
       tileClear().then(() => {
         saveRegions(loadRegions().map(r => ({ ...r, tiles: 0 })));
         renderRegionList();
         refreshTileCacheInfo();
+        btnFeedback(btn, '✓ Cleared');
       }).catch(() => {
         document.getElementById('tile-cache-count').textContent = 'Clear failed — try refreshing';
       });
@@ -8066,22 +8077,24 @@ if (targetEl) {
     renderOverlayPanel();
   }
 
-  function deleteLastMapLayerVertex() {
+  function deleteLastMapLayerVertex(btn) {
     if (!_mapLayerDraft || !_mapLayerDraft.vertices.length) return;
     _mapLayerDraft.vertices.pop();
     if (_mapLayerSelectedVertex >= _mapLayerDraft.vertices.length) _mapLayerSelectedVertex = _mapLayerDraft.vertices.length - 1;
     _mapLayerDraft.finished = false;
     _renderMapLayerDraft();
     renderOverlayPanel();
+    btnFeedback(btn, '✓ Deleted');
   }
 
-  function deleteSelectedMapLayerVertex() {
+  function deleteSelectedMapLayerVertex(btn) {
     if (!_mapLayerDraft || _mapLayerSelectedVertex < 0 || _mapLayerSelectedVertex >= _mapLayerDraft.vertices.length) return;
     _mapLayerDraft.vertices.splice(_mapLayerSelectedVertex, 1);
     if (_mapLayerSelectedVertex >= _mapLayerDraft.vertices.length) _mapLayerSelectedVertex = _mapLayerDraft.vertices.length - 1;
     _mapLayerDraft.finished = false;
     _renderMapLayerDraft();
     renderOverlayPanel();
+    btnFeedback(btn, '✓ Deleted');
   }
 
   function finishMapLayerDraft() {
@@ -8142,7 +8155,7 @@ if (targetEl) {
     }
   }
 
-  async function saveMapLayerDraft() {
+  async function saveMapLayerDraft(btn) {
     if (!_mapLayerDraft) return;
     const nameEl = document.getElementById('overlay-editor-name');
     const colorEl = document.getElementById('overlay-editor-color');
@@ -8167,6 +8180,7 @@ if (targetEl) {
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok || data.error) throw new Error(data.error || r.status);
+      btnFeedback(btn, '✓ Saved');
       cancelMapLayerDraft();
       await loadMapLayers({silent: true});
     } catch (e) {
@@ -8239,10 +8253,10 @@ if (targetEl) {
           </div>
           <div id="overlay-editor-status" style="font-size:12px;color:var(--muted);min-height:14px"></div>
           <div style="display:flex;gap:6px;flex-wrap:wrap">
-            <button class="overlay-tool-btn" onclick="saveMapLayerDraft()">Save</button>
+            <button class="overlay-tool-btn" onclick="saveMapLayerDraft(this)">Save</button>
             <button class="overlay-tool-btn" onclick="finishMapLayerDraft()">Finish</button>
-            <button class="overlay-tool-btn" onclick="deleteLastMapLayerVertex()">Delete last</button>
-            <button class="overlay-tool-btn" onclick="deleteSelectedMapLayerVertex()" ${_mapLayerSelectedVertex < 0 ? 'disabled' : ''}>Delete selected</button>
+            <button class="overlay-tool-btn" onclick="deleteLastMapLayerVertex(this)">Delete last</button>
+            <button class="overlay-tool-btn" onclick="deleteSelectedMapLayerVertex(this)" ${_mapLayerSelectedVertex < 0 ? 'disabled' : ''}>Delete selected</button>
             <button class="overlay-tool-btn" onclick="cancelMapLayerDraft()">Cancel</button>
           </div>
         </div>
@@ -8355,7 +8369,7 @@ if (targetEl) {
     reader.readAsText(file);
   }
 
-  async function saveMapLayer() {
+  async function saveMapLayer(btn) {
     const nameEl = document.getElementById('map-layer-name');
     const colorEl = document.getElementById('map-layer-color');
     const geoEl = document.getElementById('map-layer-geojson');
@@ -8392,6 +8406,7 @@ if (targetEl) {
       const fileEl = document.getElementById('map-layer-file');
       if (fileEl) fileEl.value = '';
       statusEl.textContent = `Saved layer "${data.layer?.name || name}".`;
+      btnFeedback(btn, '✓ Saved');
       await loadMapLayers({silent: true});
     } catch (e) {
       statusEl.textContent = `Save failed: ${e.message || e}`;
@@ -10967,8 +10982,8 @@ if (targetEl) {
     _updateSetButtons(info, state);
   }
 
-  async function settingsLoadUpdateStatus(fetchRemote = false) {
-    const checkBtn = document.getElementById('settings-update-check-btn');
+  async function settingsLoadUpdateStatus(fetchRemote = false, btn) {
+    const checkBtn = btn || document.getElementById('settings-update-check-btn');
     const summary = document.getElementById('settings-update-summary');
     if (checkBtn && fetchRemote) {
       checkBtn.disabled = true;
@@ -10987,10 +11002,12 @@ if (targetEl) {
         clearInterval(_settingsUpdatePoll);
         _settingsUpdatePoll = null;
       }
+      if (fetchRemote && checkBtn) btnFeedback(checkBtn, '✓ Checked', 2000);
     } catch(e) {
       _renderUpdateStatus({error: String(e.message || e)});
+      if (checkBtn) { checkBtn.textContent = 'Check'; checkBtn.disabled = false; }
     } finally {
-      if (checkBtn) checkBtn.textContent = 'Check';
+      if (!fetchRemote && checkBtn) { checkBtn.textContent = 'Check'; checkBtn.disabled = false; }
     }
   }
 
@@ -11045,11 +11062,11 @@ if (targetEl) {
     _applyOmManualInputs();
   }
 
-  function saveOmManualPosition() {
+  function saveOmManualPosition(btn) {
     const latRaw = document.getElementById('om-pos-lat')?.value.trim() || '';
     const lonRaw = document.getElementById('om-pos-lon')?.value.trim() || '';
     if (!latRaw && !lonRaw) {
-      clearOmManualPosition();
+      clearOmManualPosition(btn);
       return;
     }
     const coords = _normalizeCoordPair(latRaw, lonRaw);
@@ -11067,11 +11084,12 @@ if (targetEl) {
         _setOmManualPos(coords.lat, coords.lon);
         _applyOmManualInputs();
         omManualPosStatus('Saved. OM will use this position when GPS has no live fix.', true);
+        btnFeedback(btn, '✓ Saved');
       })
       .catch(e => omManualPosStatus(String(e.message || e), false));
   }
 
-  function clearOmManualPosition() {
+  function clearOmManualPosition(btn) {
     omManualPosStatus('Clearing…');
     fetch('/api/settings/app', {
       method: 'POST',
@@ -11082,6 +11100,7 @@ if (targetEl) {
         _setOmManualPos(null, null);
         _applyOmManualInputs();
         omManualPosStatus('Cleared. OM will fall back to GPS or radio positions.', true);
+        btnFeedback(btn, '✓ Cleared');
       })
       .catch(e => omManualPosStatus(String(e.message || e), false));
   }
@@ -11295,7 +11314,7 @@ if (targetEl) {
       .catch(e => { statusEl.textContent = `✗ ${escHtml(String(e))}`; });
   }
 
-  function fillPositionFromGps() {
+  function fillPositionFromGps(btn) {
     const statusEl = document.getElementById('node-cfg-position-status');
     fetch('/api/settings/gps')
       .then(r => r.json())
@@ -11310,6 +11329,7 @@ if (targetEl) {
         document.getElementById('node-cfg-fixed-lon').value = d.lon.toFixed(6);
         if (d.alt != null) document.getElementById('node-cfg-fixed-alt').value = d.alt;
         if (statusEl) statusEl.textContent = `✓ Filled from GPS (${d.sats ?? 0} sats) — review and Save`;
+        btnFeedback(btn, '✓ Filled');
       })
       .catch(() => { if (statusEl) statusEl.textContent = '✗ Failed to read GPS data'; });
   }
@@ -16138,11 +16158,10 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       ['Slot', idx],
       ['Name', name || '(empty)'],
       ['Key hash', hash || '—'],
-      ['Secret', 'Included in QR'],
     ]);
   }
 
-  function saveMcRadioParams() {
+  function saveMcRadioParams(btn) {
     const radioId = mcSettingsRadioId || activeMcRadioId;
     if (!radioId) return;
     const freq = parseFloat(document.getElementById('mc-radio-freq').value);
@@ -16163,6 +16182,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
           if (!mcLastStatus[radioId]) mcLastStatus[radioId] = {};
           Object.assign(mcLastStatus[radioId], {freq, bw, sf, cr});
           if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent)">Saved — reboot may be needed.</span>';
+          btnFeedback(btn, '✓ Saved');
         } else {
           if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Failed')}</span>`;
         }
@@ -16170,7 +16190,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
   }
 
-  function saveMcTxPower() {
+  function saveMcTxPower(btn) {
     const radioId = mcSettingsRadioId || activeMcRadioId;
     if (!radioId) return;
     const val = parseInt(document.getElementById('mc-tx-power').value);
@@ -16188,6 +16208,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
           if (!mcLastStatus[radioId]) mcLastStatus[radioId] = {};
           mcLastStatus[radioId].tx_power = val;
           if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent)">Saved.</span>';
+          btnFeedback(btn, '✓ Saved');
         } else {
           if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Failed')}</span>`;
         }
@@ -16195,7 +16216,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
   }
 
-  function saveMcPathHashMode() {
+  function saveMcPathHashMode(btn) {
     const radioId = mcSettingsRadioId || activeMcRadioId;
     const sel = document.getElementById('mc-path-hash-mode');
     const statusEl = document.getElementById('mc-path-hash-status');
@@ -16223,6 +16244,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
           ? ` ${d.warning || `Selected mode unavailable; using ${label}.`}`
           : ` Saved ${label}.`;
         if (statusEl) statusEl.innerHTML = `<span style="color:var(--accent)">${escHtml(suffix)}</span>`;
+        btnFeedback(btn, '✓ Saved');
         setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 5000);
       }).catch(e => {
         if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`;
@@ -16255,7 +16277,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       });
   }
 
-  function saveMcDeviceName() {
+  function saveMcDeviceName(btn) {
     const radioId = mcSettingsRadioId || activeMcRadioId;
     if (!radioId) return;
     const name = (document.getElementById('mc-device-name-input').value || '').trim();
@@ -16271,6 +16293,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
           if (!mcLastStatus[radioId]) mcLastStatus[radioId] = {};
           mcLastStatus[radioId].node_name = name;
           if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent)">Renamed.</span>';
+          btnFeedback(btn, '✓ Saved');
         } else {
           if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Failed')}</span>`;
         }
@@ -16278,7 +16301,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
   }
 
-  function saveMcCoords() {
+  function saveMcCoords(btn) {
     const radioId = mcSettingsRadioId || activeMcRadioId;
     if (!radioId) return;
     let lat = parseFloat(document.getElementById('mc-coords-lat').value);
@@ -16303,11 +16326,12 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         if (statusEl) statusEl.innerHTML = d.ok
           ? '<span style="color:var(--accent)">Coords set.</span>'
           : `<span style="color:var(--red)">${escHtml(d.error || 'Failed')}</span>`;
+        if (d.ok) btnFeedback(btn, '✓ Saved');
         setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
       }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
   }
 
-  function rebootMcNode() {
+  function rebootMcNode(btn) {
     const radioId = mcSettingsRadioId || activeMcRadioId;
     if (!radioId) return;
     const name = mcLastStatus[radioId]?.name || radioId;
@@ -16321,6 +16345,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
           if (statusEl) statusEl.innerHTML = d.ok
             ? '<span style="color:var(--accent)">Reboot sent.</span>'
             : `<span style="color:var(--red)">${escHtml(d.error || 'Failed')}</span>`;
+          if (d.ok) btnFeedback(btn, '✓ Rebooting…', 3000);
           setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 4000);
         }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
     });
@@ -16354,7 +16379,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     document.getElementById('mc-ch-key-hex').style.display = type === 'custom' ? '' : 'none';
   }
 
-  function saveMcChannel() {
+  function saveMcChannel(btn) {
     const radioId = _editingMcRadioId || mcSettingsRadioId || activeMcRadioId;
     if (radioId === null || _editingMcChIdx === null) return;
     const idx      = _editingMcChIdx;
@@ -16375,12 +16400,13 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     }).then(r => r.json().then(d => ({ok: r.ok, d}))).then(({ok, d}) => {
       if (!ok || d.error) { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Save failed.')}</span>`; return; }
       if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent)">Saved.</span>';
+      btnFeedback(btn, '✓ Saved');
       loadMcChannelsList(radioId);
       closeMcChEdit();
     }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
   }
 
-  function removeMcChannel() {
+  function removeMcChannel(btn) {
     const radioId = _editingMcRadioId || mcSettingsRadioId || activeMcRadioId;
     if (radioId === null || _editingMcChIdx === null) return;
     const idx  = _editingMcChIdx;
@@ -16397,12 +16423,12 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
             statusEl.style.color = d.error ? 'var(--red)' : 'var(--accent)';
             setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 4000);
           }
-          if (!d.error) { closeMcChEdit(); loadMcChannelsList(radioId); }
+          if (!d.error) { btnFeedback(btn, '✓ Removed'); closeMcChEdit(); loadMcChannelsList(radioId); }
         }).catch(e => { if (statusEl) { statusEl.textContent = `✗ ${escHtml(String(e))}`; statusEl.style.color = 'var(--red)'; } });
     });
   }
 
-  function clearMcChannelHistory() {
+  function clearMcChannelHistory(btn) {
     const radioId = _editingMcRadioId || mcSettingsRadioId || activeMcRadioId;
     if (!radioId || _editingMcChIdx === null) return;
     const idx  = _editingMcChIdx;
@@ -16424,6 +16450,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       if (activeMcRadioId === radioId) renderMcMessages();
       updateUnreadDots();
       if (statusEl) statusEl.innerHTML = `<span style="color:var(--accent)">Deleted ${removed} saved message${removed === 1 ? '' : 's'}.</span>`;
+      btnFeedback(btn, '✓ Cleared');
       setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 4000);
       document.getElementById('confirm-ok').textContent = 'OK';
     });
@@ -16454,7 +16481,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
   }
 
-  function importMcContact() {
+  function importMcContact(btn) {
     const radioId = mcSettingsRadioId || activeMcRadioId;
     const statusEl = document.getElementById('mc-import-status');
     if (!radioId) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">No MC radio selected.</span>'; return; }
@@ -16468,6 +16495,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       .then(d => {
         if (d.ok) {
           if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent)">Contact imported.</span>';
+          btnFeedback(btn, '✓ Imported');
           document.getElementById('mc-import-link').value = '';
           setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 15000);
         } else {
@@ -17243,9 +17271,10 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     }).catch(e => console.error('settingsSetAccentColor failed:', e));
   }
 
-  function settingsResetAccentColor() {
+  function settingsResetAccentColor(btn) {
     const def = '#4ade80';
     settingsSetAccentColor(def);
+    btnFeedback(btn, '✓ Reset');
   }
 
   function _syncAccentSwatch() {
@@ -17441,7 +17470,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 4000);
   }
 
-  function saveNodeOwner() {
+  function saveNodeOwner(btn) {
     const radioId   = _selectedNodeId;
     const lnEl = document.getElementById('node-cfg-long-name');
     const snEl = document.getElementById('node-cfg-short-name');
@@ -17457,10 +17486,11 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       body: JSON.stringify({long_name, short_name})
     }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       nodeCfgStatus('owner', d.error || 'Saved.', !d.error);
+      if (!d.error) btnFeedback(btn, '✓ Saved');
     }).catch(e => nodeCfgStatus('owner', 'Error: ' + escHtml(String(e)), false));
   }
 
-  function saveNodeDevice() {
+  function saveNodeDevice(btn) {
     const radioId = _selectedNodeId;
     const role    = parseInt(document.getElementById('node-cfg-role').value);
     nodeCfgStatus('device', 'Saving…', true);
@@ -17470,10 +17500,11 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       body: JSON.stringify({role})
     }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       nodeCfgStatus('device', d.error || 'Saved. Reboot may be needed.', !d.error);
+      if (!d.error) btnFeedback(btn, '✓ Saved');
     }).catch(e => nodeCfgStatus('device', 'Error: ' + escHtml(String(e)), false));
   }
 
-  function saveNodeLora() {
+  function saveNodeLora(btn) {
     const radioId = _selectedNodeId;
     const region      = parseInt(document.getElementById('node-cfg-region').value);
     const modem_preset = parseInt(document.getElementById('node-cfg-preset').value);
@@ -17486,10 +17517,11 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       body: JSON.stringify({region, modem_preset, tx_power, hop_limit})
     }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       nodeCfgStatus('lora', d.error || 'Saved. Reboot node to apply region/preset.', !d.error);
+      if (!d.error) btnFeedback(btn, '✓ Saved');
     }).catch(e => nodeCfgStatus('lora', 'Error: ' + escHtml(String(e)), false));
   }
 
-  async function rebootNode() {
+  async function rebootNode(btn) {
     const radioId = _selectedNodeId;
     const st = document.getElementById('node-cfg-actions-status');
     if (st) st.innerHTML = '<span style="color:var(--muted)">Rebooting in 5s…</span>';
@@ -17499,12 +17531,13 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       if (st) st.innerHTML = r.ok
         ? '<span style="color:var(--green)">Reboot command sent.</span>'
         : `<span style="color:#f87171">${escHtml(d.error)}</span>`;
+      if (r.ok) btnFeedback(btn, '✓ Rebooting…', 3000);
     } catch(e) {
       if (st) st.innerHTML = `<span style="color:#f87171">Error: ${escHtml(e.message)}</span>`;
     }
   }
 
-  function shutdownNode() {
+  function shutdownNode(btn) {
     const radioId = _selectedNodeId;
     document.getElementById('confirm-ok').textContent = 'Shut down';
     showConfirm('Shutdown the node? It will go offline until power-cycled.', async () => {
@@ -17516,13 +17549,14 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         if (st) st.innerHTML = r.ok
           ? '<span style="color:var(--green)">Shutdown command sent.</span>'
           : `<span style="color:#f87171">${escHtml(d.error)}</span>`;
+        if (r.ok) btnFeedback(btn, '✓ Shutting down…', 3000);
       } catch(e) {
         if (st) st.innerHTML = `<span style="color:#f87171">Error: ${escHtml(e.message)}</span>`;
       }
     });
   }
 
-  function resetKnownNodesDb() {
+  function resetKnownNodesDb(btn) {
     const radioId = _selectedNodeId;
     if (!radioId) return;
     const label = document.querySelector('#node-cfg-tabs .btn.active')?.textContent || radioId;
@@ -17537,6 +17571,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
           ? `<span style="color:var(--green)">Cleared ${escHtml(String(d.removed_db ?? 0))} saved node${(d.removed_db ?? 0) !== 1 ? 's' : ''}.</span>`
           : `<span style="color:#f87171">${escHtml(d.error || 'Reset failed.')}</span>`;
         if (r.ok) {
+          btnFeedback(btn, '✓ Reset');
           loadLive();
           loadHistory();
         }
@@ -17548,7 +17583,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     });
   }
 
-  function clearGpsHistory() {
+  function clearGpsHistory(btn) {
     document.getElementById('confirm-ok').textContent = 'Clear';
     showConfirm('Delete all GPS movement history for all nodes? This cannot be undone.', async () => {
       const st = document.getElementById('gps-clear-status');
@@ -17556,6 +17591,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       try {
         const r = await fetch('/api/db/gps_history/clear', {method:'POST'});
         const d = await r.json();
+        if (r.ok) btnFeedback(btn, '✓ Cleared');
         if (st) st.innerHTML = r.ok
           ? '<span style="color:var(--green)">GPS history cleared.</span>'
           : `<span style="color:#f87171">${escHtml(d.error || 'Failed.')}</span>`;
@@ -17626,7 +17662,9 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   function openChannelShareModal(title, fetchUrl, detailsRows) {
     openModal(title, `
-      ${_detailRows(detailsRows)}
+      <div id="channel-share-detail-grid" class="contact-detail-grid">${detailsRows.map(([k, v]) =>
+        `<div class="k">${escHtml(k)}</div><div class="v">${escHtml(v == null || v === '' ? '—' : String(v))}</div>`
+      ).join('')}</div>
       <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
         <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Channel share data</div>
         <div id="channel-share-qr-area" class="modal-loading" style="padding:10px 0;text-align:left">Preparing channel share…</div>
@@ -17643,9 +17681,18 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         }
         area.className = '';
         const secretHex = d.details && d.details.secret_hex;
+        if (secretHex) {
+          const detailGrid = document.getElementById('channel-share-detail-grid');
+          if (detailGrid) {
+            const k = document.createElement('div'); k.className = 'k'; k.textContent = 'Secret';
+            const v = document.createElement('div'); v.className = 'v';
+            v.innerHTML = `<span id="channel-share-secret" style="font-family:monospace;font-size:11px;word-break:break-all">${escHtml(secretHex)}</span> <button class="btn" style="padding:1px 7px;font-size:11px;margin-left:4px" onclick="copyTextById('channel-share-secret',this)">Copy</button>`;
+            detailGrid.appendChild(k);
+            detailGrid.appendChild(v);
+          }
+        }
         area.innerHTML = `
           ${d.qr_svg ? `<div style="margin-bottom:12px;width:160px;height:160px;flex-shrink:0">${d.qr_svg.replace('<svg ', '<svg style="width:100%;height:100%" ')}</div>` : ''}
-          ${secretHex ? `<div style="margin-bottom:10px"><span style="font-size:12px;color:var(--muted)">Secret key: </span><span id="channel-share-secret" style="font-family:monospace;font-size:12px;word-break:break-all">${escHtml(secretHex)}</span> <button class="btn" style="padding:1px 7px;font-size:11px;margin-left:6px" onclick="copyTextById('channel-share-secret',this)">Copy</button></div>` : ''}
           <div id="channel-share-link" class="share-link-box">${escHtml(d.uri || '')}</div>
           <div id="channel-share-json" class="share-link-box" style="margin-top:8px">${escHtml(d.json || JSON.stringify(d.details || {}))}</div>
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
@@ -17677,7 +17724,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     document.getElementById('node-cfg-ch-psk-hex').style.display = type === 'custom' ? '' : 'none';
   }
 
-  function saveNodeChannel() {
+  function saveNodeChannel(btn) {
     if (_editingChIndex === null) return;
     const radioId  = _selectedNodeId;
     const name     = document.getElementById('node-cfg-ch-name').value.trim();
@@ -17695,17 +17742,18 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     }).then(r => r.json().then(d => ({ok: r.ok, d}))).then(({ok, d}) => {
       if (!ok || d.error) { nodeCfgStatus('channels', d.error || 'Save failed.', false); return; }
       nodeCfgStatus('channels', 'Saved.', true);
+      btnFeedback(btn, '✓ Saved');
       loadNodeChannels();
       closeChEdit();
       initChat();   // refresh chat tab tabs too
     }).catch(e => nodeCfgStatus('channels', 'Error: ' + escHtml(String(e)), false));
   }
 
-  function removeNodeChannel(index) {
+  function removeNodeChannel(index, btn) {
     document.getElementById('confirm-ok').textContent = 'Remove';
-    showConfirm(`Remove channel ${index}? This disables the channel and clears its name and key.`, () => _doRemoveNodeChannel(index));
+    showConfirm(`Remove channel ${index}? This disables the channel and clears its name and key.`, () => _doRemoveNodeChannel(index, btn));
   }
-  function _doRemoveNodeChannel(index) {
+  function _doRemoveNodeChannel(index, btn) {
     const radioId  = _selectedNodeId;
     const statusEl = document.getElementById('node-cfg-channels-remove-status');
     if (statusEl) { statusEl.textContent = `Removing channel ${index}…`; statusEl.style.color = 'var(--muted)'; }
@@ -17720,14 +17768,14 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
           statusEl.style.color = d.error ? 'var(--red)' : 'var(--accent)';
           setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 4000);
         }
-        if (!d.error) { loadNodeChannels(); initChat(); }
+        if (!d.error) { btnFeedback(btn, '✓ Removed'); loadNodeChannels(); initChat(); }
       })
       .catch(e => {
         if (statusEl) { statusEl.textContent = `✗ ${escHtml(String(e))}`; statusEl.style.color = 'var(--red)'; }
       });
   }
 
-  function clearNodeChannelHistory(index) {
+  function clearNodeChannelHistory(index, btn) {
     if (index == null || index < 0) return;
     const radioId = _selectedNodeId;
     const ch = _chCache.find(c => c.index === index);
@@ -17746,6 +17794,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         renderChannelTabs();
         updateUnreadDots();
         nodeCfgStatus('channels', `Deleted ${d.removed_db ?? 0} saved message${(d.removed_db ?? 0) === 1 ? '' : 's'}.`, true);
+        btnFeedback(btn, '✓ Cleared');
       } catch (e) {
         nodeCfgStatus('channels', 'Error: ' + escHtml(String(e)), false);
       } finally {
@@ -17772,7 +17821,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   let _mapPickEscHandler = null;
 
-  function startMapPick() {
+  function startMapPick(btn) {
     _mapPickMode = 'mt';
     switchTab('map');
     document.getElementById('map-pick-banner').textContent = 'Click on the map to set node position';
@@ -17781,6 +17830,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     document.body.classList.add('map-pick-mode');
     _mapPickEscHandler = e => { if (e.key === 'Escape') cancelMapPick(); };
     document.addEventListener('keydown', _mapPickEscHandler);
+    btnFeedback(btn, '✓ Picking…', 3000);
   }
 
   function startMcMapPick() {
@@ -17819,7 +17869,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     document.getElementById('node-cfg-fixed-coords').style.display = checked ? 'flex' : 'none';
   }
 
-  function saveNodePosition() {
+  function saveNodePosition(btn) {
     const radioId = _selectedNodeId;
     const gps_mode            = parseInt(document.getElementById('node-cfg-gps-mode').value);
     const position_broadcast_secs = parseInt(document.getElementById('node-cfg-pos-broadcast').value) || 0;
@@ -17850,10 +17900,11 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
                             alt: fixed_alt})
     }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       nodeCfgStatus('position', d.error || 'Saved.', !d.error);
+      if (!d.error) btnFeedback(btn, '✓ Saved');
     }).catch(e => nodeCfgStatus('position', 'Error: ' + escHtml(String(e)), false));
   }
 
-  function removeNodePosition() {
+  function removeNodePosition(btn) {
     const radioId = _selectedNodeId;
     if (!radioId) return;
     nodeCfgStatus('position', 'Removing…', true);
@@ -17864,6 +17915,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       nodeCfgStatus('position', d.error || 'Position removed. GPS will resume.', !d.error);
       if (!d.error) {
+        btnFeedback(btn, '✓ Removed');
         document.getElementById('node-cfg-fixed-pos').checked = false;
         document.getElementById('node-cfg-fixed-coords').style.display = 'none';
         document.getElementById('node-cfg-fixed-lat').value = '';
@@ -17873,7 +17925,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   }
 
   // ── Power ───────────────────────────────────────────────────────────────────
-  function saveNodePower() {
+  function saveNodePower(btn) {
     const radioId = _selectedNodeId;
     const is_power_saving         = document.getElementById('node-cfg-power-saving').checked;
     const on_battery_shutdown_after_secs = parseInt(document.getElementById('node-cfg-shutdown-secs').value) || 0;
@@ -17884,19 +17936,20 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       body: JSON.stringify({power_saving: is_power_saving, shutdown_after_secs: on_battery_shutdown_after_secs})
     }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       nodeCfgStatus('power', d.error || 'Saved.', !d.error);
+      if (!d.error) btnFeedback(btn, '✓ Saved');
     }).catch(e => nodeCfgStatus('power', 'Error: ' + escHtml(String(e)), false));
   }
 
   // ── Display ─────────────────────────────────────────────────────────────────
-  function quickScreenOff() {
+  function quickScreenOff(btn) {
     document.getElementById('node-cfg-screen-secs').value = 10;
-    saveNodeDisplay();
+    saveNodeDisplay(btn);
   }
-  function quickScreenOn() {
+  function quickScreenOn(btn) {
     document.getElementById('node-cfg-screen-secs').value = 0;
-    saveNodeDisplay();
+    saveNodeDisplay(btn);
   }
-  function saveNodeDisplay() {
+  function saveNodeDisplay(btn) {
     const radioId = _selectedNodeId;
     const screen_on_secs = parseInt(document.getElementById('node-cfg-screen-secs').value) || 0;
     const flip_screen    = document.getElementById('node-cfg-flip-screen').checked;
@@ -17908,11 +17961,12 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       body: JSON.stringify({screen_on_secs, flip_screen, display_units: units})
     }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       nodeCfgStatus('display', d.error || 'Saved.', !d.error);
+      if (!d.error) btnFeedback(btn, '✓ Done');
     }).catch(e => nodeCfgStatus('display', 'Error: ' + escHtml(String(e)), false));
   }
 
   // ── Telemetry ───────────────────────────────────────────────────────────────
-  function saveNodeTelemetry() {
+  function saveNodeTelemetry(btn) {
     const radioId = _selectedNodeId;
     const device_update_interval      = parseInt(document.getElementById('node-cfg-tel-device').value) || 0;
     const environment_update_interval = parseInt(document.getElementById('node-cfg-tel-env').value)    || 0;
@@ -17923,11 +17977,12 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       body: JSON.stringify({tel_device: device_update_interval, tel_env: environment_update_interval})
     }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       nodeCfgStatus('telemetry', d.error || 'Saved.', !d.error);
+      if (!d.error) btnFeedback(btn, '✓ Saved');
     }).catch(e => nodeCfgStatus('telemetry', 'Error: ' + escHtml(String(e)), false));
   }
 
   // ── MQTT ────────────────────────────────────────────────────────────────────
-  function saveNodeMqtt() {
+  function saveNodeMqtt(btn) {
     const radioId = _selectedNodeId;
     const enabled    = document.getElementById('node-cfg-mqtt-enabled').checked;
     const address    = document.getElementById('node-cfg-mqtt-address').value.trim();
@@ -17946,6 +18001,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
                             mqtt_tls: tls, mqtt_map: map_reporting})
     }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       nodeCfgStatus('mqtt', d.error || 'Saved.', !d.error);
+      if (!d.error) btnFeedback(btn, '✓ Saved');
       if (!d.error && password) {
         document.getElementById('node-cfg-mqtt-password').value = '';
         document.getElementById('node-cfg-mqtt-password').placeholder = '(set — leave blank to keep)';
@@ -17968,7 +18024,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     pinWrap.style.display = parseInt(modeEl.value) === 1 ? '' : 'none';
   }
 
-  function saveNodeBluetooth() {
+  function saveNodeBluetooth(btn) {
     if (!_nodeCfgData) { nodeCfgStatus('bluetooth', 'Reload config first.', false); return; }
     const radioId     = _selectedNodeId;
     const bt_enabled  = document.getElementById('node-cfg-bt-enabled').checked;
@@ -17984,10 +18040,11 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       return r.json();
     }).then(d => {
       nodeCfgStatus('bluetooth', d.error || 'Saved. Reboot to apply.', !d.error);
+      if (!d.error) btnFeedback(btn, '✓ Saved');
     }).catch(e => nodeCfgStatus('bluetooth', 'Error: ' + escHtml(String(e)), false));
   }
 
-  function saveNodeNetwork() {
+  function saveNodeNetwork(btn) {
     if (!_nodeCfgData) { nodeCfgStatus('network', 'Reload config first.', false); return; }
     const radioId    = _selectedNodeId;
     const wifi_enabled = document.getElementById('node-cfg-wifi-enabled').checked;
@@ -18007,6 +18064,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     }).then(d => {
       nodeCfgStatus('network', d.error || 'Saved. Reboot to apply.', !d.error);
       if (!d.error) {
+        btnFeedback(btn, '✓ Saved');
         const pskEl = document.getElementById('node-cfg-wifi-psk');
         pskEl.value = '';
         pskEl.type  = 'password';

@@ -753,6 +753,17 @@
             </div>
             <input id="node-cfg-ch-psk-hex" class="settings-input" placeholder="hex or base64 — e.g. d4f1bb3a… or OG8mgh5H…"
                    style="width:100%;margin-top:6px;display:none;font-family:monospace;font-size:11px">
+            <div id="node-cfg-ch-key-row" style="display:none;margin-top:8px">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+                <span style="font-size:11px;color:var(--muted)">Current key (base64):</span>
+                <button type="button" id="btn-ch-key-eye" onclick="toggleNodeChKeyVis()"
+                        style="background:none;border:1px solid var(--border);border-radius:4px;padding:1px 6px;cursor:pointer;color:var(--muted);font-size:11px">Show</button>
+                <button type="button" onclick="copyNodeChKey()"
+                        style="background:none;border:1px solid var(--border);border-radius:4px;padding:1px 6px;cursor:pointer;color:var(--muted);font-size:11px">Copy</button>
+              </div>
+              <input id="node-cfg-ch-key-display" type="password" readonly class="settings-input"
+                     style="width:100%;font-family:monospace;font-size:11px" placeholder="—">
+            </div>
           </div>
           <div style="display:flex;gap:8px;margin-top:12px">
             <button class="btn" onclick="saveNodeChannel(this)" title="Save channel settings to node">Save</button>
@@ -955,6 +966,31 @@
       </div>
     </div>
     </div><!-- /st-mt -->
+
+    <!-- MT Import Channel (outside node-cfg-content, always visible in MT tab) -->
+    <div id="st-mt-import" style="display:none">
+    <div class="settings-section">
+      <h2 class="settings-title">Import MT Channel</h2>
+      <p class="network-section-note" style="margin:0 0 10px">Paste a <code>meshtastic.org/e/</code> share link to add a channel to the selected node.</p>
+      <label class="settings-label">Share Link</label>
+      <input id="mt-import-channel-link" class="settings-input" style="width:100%;font-family:monospace;font-size:11px;box-sizing:border-box"
+             placeholder="https://meshtastic.org/e/#…" oninput="parseMtChannelLink()">
+      <div id="mt-import-channel-preview" style="display:none;margin-top:10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px">
+        <div style="font-size:12px;margin-bottom:10px">
+          <span style="color:var(--muted)">Name:</span> <strong id="mt-import-ch-name-preview"></strong>
+          <span style="color:var(--muted);margin-left:14px">Key:</span> <span id="mt-import-ch-key-preview" style="font-family:monospace;font-size:11px;color:var(--muted)"></span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+          <div>
+            <label class="settings-label">Save to slot</label>
+            <input id="mt-import-ch-slot" class="settings-input" type="number" min="0" max="7" value="1" style="width:60px">
+          </div>
+          <button class="btn" onclick="importMtChannel()" title="Write this channel to the selected node slot">Import</button>
+        </div>
+      </div>
+      <div id="mt-import-channel-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-top:6px"></div>
+    </div>
+    </div><!-- /st-mt-import -->
 
     <div id="st-mc" style="display:none">
     <!-- MC Radios -->

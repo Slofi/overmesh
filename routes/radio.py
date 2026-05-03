@@ -293,6 +293,8 @@ def api_radio_channels_get(radio_id):
                 "name":    name,
                 "role":    role,
                 "psk_set": len(psk) > 0,
+                "psk_b64": base64.b64encode(psk).decode("ascii") if psk else "",
+                "psk_hex": psk.hex() if psk else "",
             })
         return jsonify(result)
     except Exception as e:
@@ -594,6 +596,75 @@ def api_radio_config_network(radio_id):
         if data.get("wifi_psk"):    net.wifi_psk       = str(data["wifi_psk"])
         iface.localNode.writeConfig("network")
         return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+def _decode_mt_channel_url(url):
+    """Parse a meshtastic.org/e/ or meshtastic://e/ URL. Returns (name, psk_bytes) or raises ValueError."""
+    fragment = None
+    if '#' in url:
+        fragment = url.split('#', 1)[1].strip()
+    elif url.startswith('meshtastic://e/'):
+        fragment = url[len('meshtastic://e/'):].strip()
+    if not fragment:
+        raise ValueError("Could not extract channel data from URL")
+    padded = fragment + '=' * (-len(fragment) % 4)
+    padded = padded.replace('-', '+').replace('_', '/')
+    try:
+        raw = base64.b64decode(padded)
+        channel_set = apponly_pb2.ChannelSet()
+        channel_set.ParseFromString(raw)
+    except Exception as e:
+        raise ValueError(f"Failed to decode channel data: {e}")
+    if not channel_set.settings:
+        raise ValueError("No channel settings found in URL")
+    s = channel_set.settings[0]
+    return s.name or "", bytes(s.psk) if s.psk else b""
+
+
+@bp.route("/api/parse-channel-url", methods=["POST"])
+def api_parse_channel_url():
+    data = request.get_json(silent=True) or {}
+    url = (data.get("url") or "").strip()
+    if not url:
+        return jsonify({"error": "No URL provided"}), 400
+    try:
+        name, psk = _decode_mt_channel_url(url)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({
+        "ok": True,
+        "name": name,
+        "psk_set": bool(psk),
+        "psk_b64": base64.b64encode(psk).decode("ascii") if psk else "",
+    })
+
+
+@bp.route("/api/radio/<radio_id>/channels/import", methods=["POST"])
+def api_radio_channel_import(radio_id):
+    iface = get_iface_by_radio(radio_id)
+    if not iface:
+        return jsonify({"error": "Radio not connected"}), 503
+    data = request.get_json(silent=True) or {}
+    url = (data.get("url") or "").strip()
+    try:
+        ch_index = int(data.get("index", 1))
+    except (TypeError, ValueError):
+        return jsonify({"error": "index must be a number"}), 400
+    if ch_index < 0 or ch_index > 7:
+        return jsonify({"error": "Channel index must be 0–7"}), 400
+    try:
+        name, psk = _decode_mt_channel_url(url)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    try:
+        ch = iface.localNode.channels[ch_index]
+        ch.role = 1 if ch_index == 0 else 2
+        ch.settings.name = name[:11]
+        ch.settings.psk  = psk if psk else bytes([1])
+        iface.localNode.writeChannel(ch_index)
+        return jsonify({"ok": True, "name": name, "index": ch_index, "psk_set": bool(psk)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

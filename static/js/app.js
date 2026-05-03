@@ -14190,6 +14190,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         document.querySelector('#node-cfg-content h3').textContent = 'Identity' + hw;
 
         content.style.display = '';
+        const importEl = document.getElementById('st-mt-import');
+        if (importEl) importEl.style.display = '';
         ['owner','device','lora','channels','position','power','display','telemetry','mqtt','bluetooth','network'].forEach(k => {
           const el = document.getElementById(`node-cfg-${k}-status`);
           if (el) el.textContent = '';
@@ -14451,11 +14453,89 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     document.getElementById('node-cfg-ch-role').value = ch.role;
     document.getElementById('node-cfg-ch-psk-type').value = 'keep';
     document.getElementById('node-cfg-ch-psk-hex').style.display = 'none';
+    const keyRow     = document.getElementById('node-cfg-ch-key-row');
+    const keyDisplay = document.getElementById('node-cfg-ch-key-display');
+    const keyEye     = document.getElementById('btn-ch-key-eye');
+    if (keyRow && keyDisplay) {
+      if (ch.psk_b64) {
+        keyDisplay.value = ch.psk_b64;
+        keyDisplay.type  = 'password';
+        if (keyEye) keyEye.textContent = 'Show';
+        keyRow.style.display = '';
+      } else {
+        keyRow.style.display = 'none';
+      }
+    }
     document.getElementById('node-cfg-channels-status').textContent = '';
     const removeBtn = document.getElementById('btn-ch-remove');
     if (removeBtn) removeBtn.style.display = index > 0 ? '' : 'none';
     document.getElementById('node-cfg-channel-edit').style.display = '';
     document.getElementById('node-cfg-channel-edit').scrollIntoView({behavior:'smooth', block:'nearest'});
+  }
+
+  function toggleNodeChKeyVis() {
+    const input = document.getElementById('node-cfg-ch-key-display');
+    const btn   = document.getElementById('btn-ch-key-eye');
+    if (!input) return;
+    if (input.type === 'password') { input.type = 'text';     if (btn) btn.textContent = 'Hide'; }
+    else                           { input.type = 'password'; if (btn) btn.textContent = 'Show'; }
+  }
+
+  function copyNodeChKey() {
+    const val = (document.getElementById('node-cfg-ch-key-display') || {}).value || '';
+    if (val) navigator.clipboard.writeText(val).catch(() => {});
+  }
+
+  function parseMtChannelLink() {
+    const link    = (document.getElementById('mt-import-channel-link').value || '').trim();
+    const preview = document.getElementById('mt-import-channel-preview');
+    const statusEl = document.getElementById('mt-import-channel-status');
+    if (statusEl) statusEl.textContent = '';
+    if (!link) { preview.style.display = 'none'; return; }
+    if (!link.includes('meshtastic.org/e/') && !link.startsWith('meshtastic://e/')) {
+      preview.style.display = 'none';
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Expected a meshtastic.org/e/ or meshtastic://e/ link.</span>';
+      return;
+    }
+    fetch('/api/parse-channel-url', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({url: link}),
+    }).then(r => r.json()).then(d => {
+      if (d.error) {
+        preview.style.display = 'none';
+        if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(d.error)}</span>`;
+        return;
+      }
+      document.getElementById('mt-import-ch-name-preview').textContent = d.name || '(unnamed)';
+      document.getElementById('mt-import-ch-key-preview').textContent  = d.psk_b64 ? d.psk_b64.slice(0, 12) + '…' : '(default)';
+      preview.style.display = '';
+    }).catch(e => {
+      preview.style.display = 'none';
+      if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`;
+    });
+  }
+
+  function importMtChannel() {
+    const radioId  = _selectedNodeId;
+    const statusEl = document.getElementById('mt-import-channel-status');
+    if (!radioId) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">No node selected.</span>'; return; }
+    const link = (document.getElementById('mt-import-channel-link').value || '').trim();
+    const slot = parseInt(document.getElementById('mt-import-ch-slot').value);
+    if (isNaN(slot) || slot < 0 || slot > 7) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Slot must be 0–7.</span>'; return; }
+    if (statusEl) statusEl.textContent = 'Importing…';
+    fetch(`/api/radio/${encodeURIComponent(radioId)}/channels/import`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({url: link, index: slot}),
+    }).then(r => r.json().then(d => ({ok: r.ok, d}))).then(({ok, d}) => {
+      if (!ok || d.error) { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Failed')}</span>`; return; }
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent)">Channel imported.</span>';
+      document.getElementById('mt-import-channel-link').value = '';
+      document.getElementById('mt-import-channel-preview').style.display = 'none';
+      loadNodeChannels();
+      setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 4000);
+    }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
   }
 
   function closeChEdit() {

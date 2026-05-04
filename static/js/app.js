@@ -7696,6 +7696,10 @@ if (targetEl) {
       document.getElementById('st-' + t).style.display = t === name ? '' : 'none';
       document.getElementById('stab-' + t).classList.toggle('active', t === name);
     });
+    if (name !== 'mt') {
+      const el = document.getElementById('st-mt-import');
+      if (el) el.style.display = 'none';
+    }
     localStorage.setItem('settingsTab', name);
     if (name === 'mc') {
       const sel = document.getElementById('settings-mc-port-select');

@@ -736,7 +736,7 @@ def handle_mc_bot_command(msg, config_id, subtype):
         if cmd == "ping":
             response = f"🏓PONG | {random.choice(['Still here, unfortunately.', 'Not dead yet.', 'Present and accounted for.', 'You rang?', 'Did someone say ping?', 'Responding as trained.', 'Loud and proud.', 'Alive and well.', 'Mesh is alive!', 'Roger that, I exist.', 'Beep boop, I am a bot.', 'Oh, you noticed me!', 'Here!', 'Indeed.', 'Obviously.'])}"
         elif cmd == "ack":
-            response = random.choice(["✋Ack to you!", "✋Copy that!", "✋Acknowledged", "✋Received!", "✋Loud and clear", "✋Message received, filing it away", "✋Got it, doing nothing about it", "✋Confirmed. Mostly.", "✋10-4, good buddy", "✋Wilco"])
+            response = random.choice(["✋Ack to you!", "✋Copy that!", "✋Acknowledged", "✋Received!", "✋Loud and clear", "✋Message received, filing it away", "✋Got it, doing nothing about it", "✋Confirmed. Mostly.", "✋10-4, good buddy", "✋Wilco"]) + rf_info
         elif cmd == "test":
             response = random.choice(["🎙Roger that!", "🎙Testing 1,2,3", "🎙Testing, testing", "🎙Read you loud and clear", "🎙Signal received", "🎙Loud and clear", "🎙You are coming through loud and hot", "🎙Heard you the first time", "🎙Five by five", "🎙Is this thing on? Yes, yes it is", "🎙Transmission received, sanity intact", "🎙Strength 5, readability 5", "🎙Clear as a bell", "🎙Your signal is better than my day", "🎙Mesh works, miracles do happen"]) + rf_info
         elif cmd == "sitrep":

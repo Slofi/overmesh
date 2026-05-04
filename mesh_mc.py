@@ -753,7 +753,7 @@ async def _connect_mc_node_async(node_cfg):
                 timeout=80,
             )
         else:
-            mc = await asyncio.wait_for(MeshCore.create_serial(port, 115200, default_timeout=75.0), timeout=80)
+            mc = await asyncio.wait_for(MeshCore.create_serial(port, 115200, default_timeout=75.0, cx_dly=3.0), timeout=85)
     except Exception as e:
         log.warning(f"[MC:{name}] Connect failed: {e}")
         _mark_mc_disconnected(config_id)

@@ -1,3 +1,5 @@
+  const BASE_PATH = window.BASE_PATH || '';
+
   // ── Helpers ────────────────────────────────────────────────────────────────
   function escHtml(s) {
     if (s == null) return '';
@@ -25,7 +27,7 @@
 
   async function toggleSilentMode() {
     try {
-      const r = await fetch('/api/silent_mode', {
+      const r = await fetch(BASE_PATH + '/api/silent_mode', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({enabled: !_silentMode})
@@ -36,7 +38,7 @@
   }
 
   // Load silent mode state on page load
-  fetch('/api/silent_mode').then(r => r.json()).then(d => _updateSilentUi(d.silent_mode)).catch(() => {});
+  fetch(BASE_PATH + '/api/silent_mode').then(r => r.json()).then(d => _updateSilentUi(d.silent_mode)).catch(() => {});
 
   // ── State ──────────────────────────────────────────────────────────────────
   let allNodes      = [];
@@ -45,7 +47,7 @@
   let mcFavs        = (() => { try { return JSON.parse(localStorage.getItem('mcFavs') || '{}'); } catch(_) { return {}; } })();
   let mcIgnored     = new Set();
   let mcShowIgnored = false;
-  fetch('/api/mc/ignored').then(r => r.ok ? r.json() : null).then(d => { if (d) { mcIgnored = new Set(d.ignored); renderLive(); } }).catch(() => {});
+  fetch(BASE_PATH + '/api/mc/ignored').then(r => r.ok ? r.json() : null).then(d => { if (d) { mcIgnored = new Set(d.ignored); renderLive(); } }).catch(() => {});
   let liveSort      = { col: 'last_heard_ts', dir: -1 };
   let _historyNodes = [];
   let dbSort        = { col: 'last_seen', dir: 'desc' };
@@ -220,7 +222,7 @@
     const gapUnitEl = document.getElementById('inapp-notif-returned-gap-unit');
     if (gapValueEl) gapValueEl.value = String(returnedGapValue);
     if (gapUnitEl) gapUnitEl.value = returnedGapUnit;
-    fetch('/api/settings/app', {
+    fetch(BASE_PATH + '/api/settings/app', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(payload)
@@ -282,7 +284,7 @@
       sound_notify_nodes: document.getElementById('sound-notif-nodes')?.checked ?? true,
     };
     Object.assign(_appSettings, payload);
-    fetch('/api/settings/app', {
+    fetch(BASE_PATH + '/api/settings/app', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(payload)
@@ -332,7 +334,7 @@
     };
     Object.assign(_appSettings, payload);
     bridgeSettingsStatus('Saving...');
-    fetch('/api/settings/app', {
+    fetch(BASE_PATH + '/api/settings/app', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(payload)
@@ -345,7 +347,7 @@
     unit = unit === 'mi' ? 'mi' : 'km';
     Object.assign(_appSettings, {distance_unit: unit});
     _setDistanceUnit(unit);
-    fetch('/api/settings/app', {
+    fetch(BASE_PATH + '/api/settings/app', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({distance_unit: unit})
@@ -826,7 +828,7 @@
           renderMessages();  // always sync message area with active channel/tab
         }
       }).catch(e => console.warn('Chat channel init failed:', e));
-      fetch('/api/status').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(s => {
+      fetch(BASE_PATH + '/api/status').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(s => {
         const activeName = activeRadioId && s[activeRadioId] ? s[activeRadioId].name : Object.values(s).map(x => x.name).join(', ');
         document.getElementById('chat-radio').textContent = '📡 ' + activeName;
       }).catch(() => {});
@@ -836,7 +838,7 @@
       _updateMcInput();
     }
     if (chatSSE) return;
-    chatSSE = new EventSource('/api/chat/stream');
+    chatSSE = new EventSource(BASE_PATH + '/api/chat/stream');
     chatSSE.onmessage = e => {
       let data; try { data = JSON.parse(e.data); } catch(err) { return; }
       if (data.type === 'gps_position') {
@@ -1887,7 +1889,7 @@ if (targetEl) {
         const payload = isDmTab
           ? { text, channel: 0, dest_id: chatChannel.slice(3), radio_id: activeRadioId }
           : { text, channel: chatChannel, radio_id: activeRadioId };
-        const r = await fetch('/api/chat/send', {
+        const r = await fetch(BASE_PATH + '/api/chat/send', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify(payload)
@@ -2640,7 +2642,7 @@ if (targetEl) {
       _prevMtNodeSeen = new Map(nodes.filter(n => n.id && !n.is_local).map(n => [n.id, n.last_heard_ts || 0]));
       notifReady  = true;
     }).catch(e => console.error('loadLive failed', e));
-    fetch('/api/status').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(status => {
+    fetch(BASE_PATH + '/api/status').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(status => {
       updateRadioSelector(status);
       _mtStatusSoundPrimed = true;
       updateHeaderNodeCount(allNodes);
@@ -2907,7 +2909,7 @@ if (targetEl) {
       return false;
     }
     try {
-      const st = await fetch('/api/traceroute/status');
+      const st = await fetch(BASE_PATH + '/api/traceroute/status');
       const sd = await st.json();
       if (sd.locked || sd.active) {
         _showTrBusy(bodyEl, sd.remaining || 30);
@@ -2977,7 +2979,7 @@ if (targetEl) {
     document.getElementById('modal-body').innerHTML =
       '<div class="modal-loading">Releasing lock…</div>';
     try {
-      const r = await fetch('/api/traceroute/reset', {
+      const r = await fetch(BASE_PATH + '/api/traceroute/reset', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({force})
@@ -3000,7 +3002,7 @@ if (targetEl) {
     const body = btn.closest('.map-panel-body');
     if (body) body.innerHTML = '<div style="color:var(--muted);font-size:12px">Releasing lock…</div>';
     try {
-      const r = await fetch('/api/traceroute/reset', {
+      const r = await fetch(BASE_PATH + '/api/traceroute/reset', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({force})
@@ -3149,7 +3151,7 @@ if (targetEl) {
 
   async function restartOverMeshNow(btn) {
       btnFeedback(btn, '✓ Restarting…', 3000);
-      try { await fetch('/api/restart', {method: 'POST'}); } catch(_) {}
+      try { await fetch(BASE_PATH + '/api/restart', {method: 'POST'}); } catch(_) {}
       document.body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;color:var(--muted)">
         <div style="font-size:32px">&#x21BA;</div>
         <div style="font-size:16px">OverMesh will restart in a few seconds…</div>
@@ -3169,7 +3171,7 @@ if (targetEl) {
     document.getElementById('power-menu').classList.remove('open');
     document.getElementById('confirm-ok').textContent = 'Shut down';
     showConfirm('Shut down the OverMesh server?', async () => {
-      try { await fetch('/api/shutdown', {method: 'POST'}); } catch(_) {}
+      try { await fetch(BASE_PATH + '/api/shutdown', {method: 'POST'}); } catch(_) {}
       document.body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;color:var(--muted)">
         <div style="font-size:24px;color:var(--accent)">&#x23FB;</div>
         <div style="font-size:16px">OverMesh stopped.</div>
@@ -4928,7 +4930,7 @@ if (targetEl) {
           is_geofence: !!def.is_geofence,
           geofence: def.geofence || {enter: true, leave: true, notify_app: true, notify_browser: true, networks: 'both'},
         };
-        const r = await fetch('/api/map_layers', {
+        const r = await fetch(BASE_PATH + '/api/map_layers', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify(payload),
@@ -5101,7 +5103,7 @@ if (targetEl) {
 
   async function loadMapLayers(opts = {}) {
     try {
-      const r = await fetch('/api/map_layers');
+      const r = await fetch(BASE_PATH + '/api/map_layers');
       if (!r.ok) throw new Error(r.status);
       _mapLayerDefs = await r.json();
       renderMapLayerList();
@@ -5185,7 +5187,7 @@ if (targetEl) {
     }
     statusEl.textContent = 'Saving…';
     try {
-      const r = await fetch('/api/map_layers', {
+      const r = await fetch(BASE_PATH + '/api/map_layers', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({name, color, data: parsed, enabled: true})
@@ -5277,7 +5279,7 @@ if (targetEl) {
     const _savedLayer = (() => { try { return localStorage.getItem('mapTileLayer') || 'osm'; } catch(e) { return 'osm'; } })();
     setTileLayer(_savedLayer);
     if (_showPolarGrid) _drawPolarGrid();
-    fetch('/api/traceroute/history').then(r => r.json()).then(rows => {
+    fetch(BASE_PATH + '/api/traceroute/history').then(r => r.json()).then(rows => {
       if (!Array.isArray(rows) || !rows.length) return;
       _traceHistory = rows.map(r => ({ ts: r.ts * 1000, nodeId: r.node_id, nodeName: r.node_name, radioId: r.radio_id, data: r.data }));
       if (_traceHistory.length) _lastTraceData = _traceHistory[0].data;
@@ -5862,7 +5864,7 @@ if (targetEl) {
     if (!name) { if (status) { status.style.color='var(--red)'; status.textContent='Name is required.'; } return; }
     if (status) { status.style.color='var(--muted)'; status.textContent='Saving…'; }
     try {
-      const res = await fetch('/api/notes', {
+      const res = await fetch(BASE_PATH + '/api/notes', {
         method: 'POST', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({name, description: desc, lat: _wpLat, lon: _wpLon, marker_emoji: _wpMarkerEmoji})
       });
@@ -5880,7 +5882,7 @@ if (targetEl) {
 
   async function loadNotes() {
     try {
-      const res = await fetch('/api/notes');
+      const res = await fetch(BASE_PATH + '/api/notes');
       if (!res.ok) throw new Error(res.status);
       const notes = await res.json();
       // Remove markers for notes no longer in list
@@ -6043,7 +6045,7 @@ if (targetEl) {
     if (useNode && !_wpDestNode) { if (status) { status.style.color='var(--red)'; status.textContent='Select a node.'; } return; }
     if (status) { status.style.color='var(--muted)'; status.textContent='Sending…'; }
     try {
-      const res = await fetch('/api/waypoints/send', {
+      const res = await fetch(BASE_PATH + '/api/waypoints/send', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({name, description: desc, lat, lon, channel_index,
           destination_ids: useNode ? [_wpDestNode.id] : null,
@@ -6108,7 +6110,7 @@ if (targetEl) {
 
   async function loadWaypoints() {
     try {
-      const res = await fetch('/api/waypoints');
+      const res = await fetch(BASE_PATH + '/api/waypoints');
       if (!res.ok) return;
       const wps = await res.json();
       const activeIds = new Set(wps.map(wp => wp.id));
@@ -6455,7 +6457,7 @@ if (targetEl) {
     const doSend = async () => {
       input.value = '';
       try {
-        const r = await fetch('/api/chat/send', {
+        const r = await fetch(BASE_PATH + '/api/chat/send', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({ text, channel: 0, dest_id: mapDmContactId, radio_id: activeRadioId })
@@ -7057,11 +7059,11 @@ if (targetEl) {
           .then(d => (d.channels || [])
             .filter(ch => (ch.name || '').trim() || (ch.hash || '').trim())
             .map(ch => ({ index: ch.idx, name: ch.name || `CH${ch.idx}` })))
-      : fetch('/api/chat/channels' + botChParam)
+      : fetch(BASE_PATH + '/api/chat/channels' + botChParam)
           .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
 
     Promise.all([
-      fetch('/api/bot/config' + botChParam).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }),
+      fetch(BASE_PATH + '/api/bot/config' + botChParam).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }),
       chFetch,
     ]).then(([cfg, channels]) => {
       botConfig = cfg;
@@ -7071,7 +7073,7 @@ if (targetEl) {
     // Load historical activity only once; new entries arrive via SSE
     if (botInitDone) return;
     botInitDone = true;
-    fetch('/api/bot/activity').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(activity => {
+    fetch(BASE_PATH + '/api/bot/activity').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(activity => {
       activity.slice().reverse().forEach(e => addBotActivityEntry(e, false));
     }).catch(() => {});
   }
@@ -7156,7 +7158,7 @@ if (targetEl) {
     const status = document.getElementById('motd-test-status');
     status.textContent = 'Sending…';
     const rid = _botRadioId();
-    fetch('/api/bot/motd/test', {
+    fetch(BASE_PATH + '/api/bot/motd/test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(rid ? { radio_id: rid } : {})
@@ -7204,7 +7206,7 @@ if (targetEl) {
       document.querySelectorAll('#motd-channels input[type=checkbox]:checked')
     ).map(el => parseInt(el.value));
 
-    fetch('/api/bot/config', {
+    fetch(BASE_PATH + '/api/bot/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...botConfig, radio_id: _botRadioId() })
@@ -7639,9 +7641,9 @@ if (targetEl) {
     _crossLoading = true;
     try {
       const [mtResp, mcResp, crossResp] = await Promise.all([
-        fetch('/api/status'),
-        fetch('/api/mc/status'),
-        fetch('/api/settings/cross'),
+        fetch(BASE_PATH + '/api/status'),
+        fetch(BASE_PATH + '/api/mc/status'),
+        fetch(BASE_PATH + '/api/settings/cross'),
       ]);
       if (!mtResp.ok || !mcResp.ok || !crossResp.ok) throw new Error('settings load failed');
       const mt = await mtResp.json();
@@ -7670,7 +7672,7 @@ if (targetEl) {
     const payload = { rules: (_crossSettings && _crossSettings.rules) || [] };
     if (statusEl) statusEl.textContent = 'Saving...';
     try {
-      const r = await fetch('/api/settings/cross', {
+      const r = await fetch(BASE_PATH + '/api/settings/cross', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(payload)
@@ -7812,7 +7814,7 @@ if (targetEl) {
     document.getElementById('confirm-ok').textContent = 'Update';
     showConfirm('Update OverMesh now? Local changes will block the update, and a restart will be required after a successful pull.', async () => {
       try {
-        const r = await fetch('/api/settings/update/run', {method: 'POST'});
+        const r = await fetch(BASE_PATH + '/api/settings/update/run', {method: 'POST'});
         const data = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
         await settingsLoadUpdateStatus(false);
@@ -7866,7 +7868,7 @@ if (targetEl) {
       return;
     }
     omManualPosStatus('Saving…');
-    fetch('/api/settings/app', {
+    fetch(BASE_PATH + '/api/settings/app', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({om_manual_lat: coords.lat, om_manual_lon: coords.lon})
@@ -7882,7 +7884,7 @@ if (targetEl) {
 
   function clearOmManualPosition(btn) {
     omManualPosStatus('Clearing…');
-    fetch('/api/settings/app', {
+    fetch(BASE_PATH + '/api/settings/app', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({om_manual_lat: null, om_manual_lon: null})
@@ -7916,7 +7918,7 @@ if (targetEl) {
       if (CROSS_SYSTEM_ENABLED && localStorage.getItem('settingsTab') !== 'cross' && !_crossLoadedOnce) loadCrossSettings();
       settingsScanPorts();
       settingsLoadUpdateStatus(false);
-      fetch('/api/settings/app').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(cfg => {
+      fetch(BASE_PATH + '/api/settings/app').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(cfg => {
         applyAppSettings(cfg);
       }).catch(e => console.error('settings/app fetch failed:', e));
     }
@@ -7927,7 +7929,7 @@ if (targetEl) {
   }
 
   function settingsRefresh() {
-    fetch('/api/settings/nodes').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
+    fetch(BASE_PATH + '/api/settings/nodes').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
       _renderSettingsRadios(data);
       _renderNodeCfgTabs(data);
     }).catch(e => console.error('settingsRefresh failed:', e));
@@ -7936,7 +7938,7 @@ if (targetEl) {
   // ── GPS receiver ──────────────────────────────────────────────────────────
 
   function loadGpsSettings() {
-    fetch('/api/settings/gps')
+    fetch(BASE_PATH + '/api/settings/gps')
       .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(cfg => {
         _gpsEnabled = cfg.enabled || false;
@@ -7963,7 +7965,7 @@ if (targetEl) {
   }
 
   function _gpsPopulatePortList(currentPort) {
-    fetch('/api/settings/ports')
+    fetch(BASE_PATH + '/api/settings/ports')
       .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(data => {
         const sel = document.getElementById('gps-port-select');
@@ -8092,7 +8094,7 @@ if (targetEl) {
                           * parseInt(document.getElementById('gps-push-interval-unit').value || 1));
     const statusEl   = document.getElementById('gps-status');
     statusEl.textContent = 'Saving…';
-    fetch('/api/settings/gps', {
+    fetch(BASE_PATH + '/api/settings/gps', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({enabled, port, auto_push, precision, precision_meters: precMeters, push_interval}),
@@ -8107,7 +8109,7 @@ if (targetEl) {
 
   function fillPositionFromGps(btn) {
     const statusEl = document.getElementById('node-cfg-position-status');
-    fetch('/api/settings/gps')
+    fetch(BASE_PATH + '/api/settings/gps')
       .then(r => r.json())
       .then(d => {
         if (!d.fix || d.lat == null || d.lon == null) {
@@ -8128,7 +8130,7 @@ if (targetEl) {
   function gpsPushToNode() {
     const statusEl = document.getElementById('gps-push-status');
     statusEl.textContent = 'Sending…';
-    fetch('/api/gps/push', {method: 'POST'})
+    fetch(BASE_PATH + '/api/gps/push', {method: 'POST'})
       .then(r => r.json().then(d => ({ok: r.ok, d})))
       .then(({ok, d}) => {
         if (!ok) { statusEl.textContent = `✗ ${escHtml(d.error || 'Request failed')}`; return; }
@@ -8173,7 +8175,7 @@ if (targetEl) {
   function settingsScanPorts() {
     const sel = document.getElementById('settings-port-select');
     sel.innerHTML = '<option value="">Scanning…</option>';
-    fetch('/api/settings/ports').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
+    fetch(BASE_PATH + '/api/settings/ports').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
       const available = data.ports.filter(p => !p.in_use);
       if (!available.length) {
         sel.innerHTML = '<option value="">No available devices found</option>';
@@ -8219,7 +8221,7 @@ if (targetEl) {
       body.usb_serial = isSerial ? val : '';
       body.port       = port;
     }
-    fetch('/api/settings/nodes/add', {
+    fetch(BASE_PATH + '/api/settings/nodes/add', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(body)
@@ -8407,7 +8409,7 @@ if (targetEl) {
     const payload = target.kind === 'dm'
       ? { text, channel: 0, dest_id: target.dest_id, radio_id: activeRadioId }
       : { text, channel: target.channel, radio_id: activeRadioId };
-    const r = await fetch('/api/chat/send', {
+    const r = await fetch(BASE_PATH + '/api/chat/send', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(payload)
@@ -8713,7 +8715,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       if (data.status === 'connected') {
         // Re-fetch full status to get radio params (freq/bw/sf/cr/tx_power)
         // that are only available after a successful send_appstart() on connect
-        fetch('/api/mc/status')
+        fetch(BASE_PATH + '/api/mc/status')
           .then(r => r.ok ? r.json() : null)
           .then(d => {
             if (!d) return;
@@ -11763,7 +11765,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
 
   // -- Fetch MC status on startup --
   function initMc() {
-    fetch('/api/mc/status')
+    fetch(BASE_PATH + '/api/mc/status')
       .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(data => {
         (data.mc_nodes || []).forEach(n => {
@@ -11799,7 +11801,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
 
   // -- Settings: MC radios --
   function loadMcSettingsNodes() {
-    fetch('/api/settings/mc_nodes').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
+    fetch(BASE_PATH + '/api/settings/mc_nodes').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
       const list = document.getElementById('settings-mc-nodes-list');
       if (!list) return;
       (data.mc_nodes || []).forEach(n => {
@@ -11841,7 +11843,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
   function settingsMcScanPorts() {
     const sel = document.getElementById('settings-mc-port-select');
     if (sel) sel.innerHTML = '<option value="">Scanning…</option>';
-    fetch('/api/settings/ports').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
+    fetch(BASE_PATH + '/api/settings/ports').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
       // Show all ports not already in use by MT nodes
       const available = (data.ports || []).filter(p => !p.in_use);
       const options = available.map(p => {
@@ -11896,7 +11898,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       body.port = port;
     }
     err.textContent = 'Adding…';
-    fetch('/api/settings/mc_nodes/add', {
+    fetch(BASE_PATH + '/api/settings/mc_nodes/add', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(body),
     }).then(r => r.json().then(data => { if (!r.ok || data.error) throw new Error(data.error || `HTTP ${r.status}`); return data; }))
@@ -13548,7 +13550,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       senseSummaryUpdate();
       // Also fetch from backend to merge any nodes not yet in saved state
       const _fetchRadioId = radioId;
-      fetch('/api/mesh/sense/status').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+      fetch(BASE_PATH + '/api/mesh/sense/status').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
         if (activeRadioId !== _fetchRadioId) return; // radio switched while fetch was in flight
         if (d.responses && d.responses.length) {
           let changed = false;
@@ -13629,7 +13631,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     if (lsActive)       status.textContent = 'Active scanning…';
     else if (lsPassive) status.textContent = 'Passive listening…';
 
-    fetch('/api/mesh/sense/status').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+    fetch(BASE_PATH + '/api/mesh/sense/status').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       _senseCooldownVal = d.cooldown;
       if (d.response_count > 0) {
         const _now = Math.floor(Date.now() / 1000);
@@ -13658,7 +13660,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   }
 
   function toggleSensePassive() {
-    fetch('/api/mesh/sense/passive', {method: 'POST'}).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+    fetch(BASE_PATH + '/api/mesh/sense/passive', {method: 'POST'}).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       document.getElementById('sense-passive-btn').classList.toggle('active', d.passive);
       localStorage.setItem('sensePassive', d.passive ? '1' : '0');
       const status = document.getElementById('sense-status');
@@ -13668,7 +13670,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   }
 
   function toggleSenseActive() {
-    fetch('/api/mesh/sense/active_auto', {method: 'POST'}).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+    fetch(BASE_PATH + '/api/mesh/sense/active_auto', {method: 'POST'}).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       document.getElementById('sense-active-btn').classList.toggle('active', d.active_auto);
       localStorage.setItem('senseActiveAuto', d.active_auto ? '1' : '0');
       const status = document.getElementById('sense-status');
@@ -13731,7 +13733,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     _senseResponses = {};
     delete _senseStateByRadio[activeRadioId];
     const body = activeRadioId ? JSON.stringify({radio_id: activeRadioId}) : '{}';
-    fetch('/api/mesh/sense', {
+    fetch(BASE_PATH + '/api/mesh/sense', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body
@@ -13995,7 +13997,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   function settingsSetSenseCooldown(val) {
     val = parseInt(val);
     document.getElementById('settings-sense-cooldown-display').textContent = senseCooldownSettingLabel(val);
-    fetch('/api/settings/app', {
+    fetch(BASE_PATH + '/api/settings/app', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({sense_cooldown: val})
     }).catch(e => console.error('settingsSetSenseCooldown failed:', e));
@@ -14067,7 +14069,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   function settingsSetAccentColor(hex) {
     applyAccentColor(hex);
     _syncAccentSwatch();
-    fetch('/api/settings/app', {
+    fetch(BASE_PATH + '/api/settings/app', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({accent_color: hex})
@@ -14090,7 +14092,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   function settingsSetZoom(val) {
     settingsApplyZoom(val);
-    fetch('/api/settings/app', {
+    fetch(BASE_PATH + '/api/settings/app', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({zoom: parseInt(val)})
@@ -14394,7 +14396,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       const st = document.getElementById('gps-clear-status');
       if (st) st.innerHTML = '<span style="color:var(--muted)">Clearing…</span>';
       try {
-        const r = await fetch('/api/db/gps_history/clear', {method:'POST'});
+        const r = await fetch(BASE_PATH + '/api/db/gps_history/clear', {method:'POST'});
         const d = await r.json();
         if (r.ok) btnFeedback(btn, '✓ Cleared');
         if (st) st.innerHTML = r.ok
@@ -14497,7 +14499,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Expected a meshtastic.org/e/ or meshtastic://e/ link.</span>';
       return;
     }
-    fetch('/api/parse-channel-url', {
+    fetch(BASE_PATH + '/api/parse-channel-url', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({url: link}),
@@ -14966,7 +14968,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   // ── Init ───────────────────────────────────────────────────────────────────
   // Apply saved font size immediately
-  fetch('/api/settings/app').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(cfg => {
+  fetch(BASE_PATH + '/api/settings/app').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(cfg => {
     applyAppSettings(cfg);
   }).catch(() => {});
 

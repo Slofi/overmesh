@@ -16,7 +16,7 @@ def _load_app_version():
 
 __version__ = _load_app_version()
 
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request
 from pubsub import pub
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -74,6 +74,12 @@ app.register_blueprint(bridge_bp)
 # ---------------------------------------------------------------------------
 # Core routes
 # ---------------------------------------------------------------------------
+
+@app.context_processor
+def inject_base_path():
+    base_path = request.headers.get("X-Ingress-Path", "").rstrip("/")
+    return {"base_path": base_path}
+
 
 @app.route("/")
 def index():

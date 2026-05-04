@@ -160,7 +160,7 @@
     if (!radioId) return Promise.resolve(null);
     const existing = _mcContactRefreshByRadio.get(radioId);
     if (existing) return existing;
-    const p = fetch(`/api/mc/${encodeURIComponent(radioId)}/contacts?refresh=1`)
+    const p = fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/contacts?refresh=1`)
       .then(r => r.ok ? r.json() : null)
       .then(cd => {
         if (!cd) return null;
@@ -809,7 +809,7 @@
       const chRadioParam = activeRadioId ? `?radio_id=${encodeURIComponent(activeRadioId)}` : '';
       const tabAtFetchTime = currentTab;
       const radioAtFetchTime = activeRadioId;
-      fetch(`/api/chat/channels${chRadioParam}`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(chs => {
+      fetch(BASE_PATH + `/api/chat/channels${chRadioParam}`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(chs => {
         // Discard if user switched away from chat tab or switched radio while fetch was in flight
         if (currentTab !== tabAtFetchTime || activeRadioId !== radioAtFetchTime) return;
         chatChannels = chs;
@@ -1999,7 +1999,7 @@ if (targetEl) {
 
   // ── Favorites ──────────────────────────────────────────────────────────────
   function toggleFav(nodeId, currentState) {
-    fetch(`/api/db/node/${nodeId}`, {
+    fetch(BASE_PATH + `/api/db/node/${nodeId}`, {
       method: 'PATCH',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ is_favorite: !currentState })
@@ -2017,7 +2017,7 @@ if (targetEl) {
   }
 
   function ignoreMcContact(id, currentlyIgnored) {
-    fetch(`/api/mc/contacts/${encodeURIComponent(id)}/ignore`, {
+    fetch(BASE_PATH + `/api/mc/contacts/${encodeURIComponent(id)}/ignore`, {
       method: 'PATCH', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ignored: !currentlyIgnored})
     }).then(() => {
@@ -2030,7 +2030,7 @@ if (targetEl) {
   function deleteMcContact(id, name, radioId) {
     document.getElementById('confirm-ok').textContent = 'Delete';
     showConfirm(`Remove "${name}" from OverMesh? If it is still on the MC radio, OM will remove it there too.`, () => {
-      fetch(`/api/mc/${encodeURIComponent(radioId)}/contacts/${encodeURIComponent(id)}`, {method: 'DELETE'})
+      fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/contacts/${encodeURIComponent(id)}`, {method: 'DELETE'})
         .then(r => r.json()).then(d => {
           if (d.error) { showAlert(d.error); return; }
           if (leafletMap) { try { leafletMap.closePopup(); } catch(e) {} }
@@ -2077,7 +2077,7 @@ if (targetEl) {
   }
 
   function ignoreNode(nodeId, currentState) {
-    fetch(`/api/db/node/${nodeId}`, {
+    fetch(BASE_PATH + `/api/db/node/${nodeId}`, {
       method: 'PATCH',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ is_ignored: !currentState })
@@ -2503,7 +2503,7 @@ if (targetEl) {
   function deleteNode(nodeId, name) {
     document.getElementById('confirm-ok').textContent = 'Delete';
     showConfirm(`Delete "${name}" from the device and OverMesh history?`, () => {
-      fetch(`/api/db/node/${encodeURIComponent(nodeId)}`, { method: 'DELETE' })
+      fetch(BASE_PATH + `/api/db/node/${encodeURIComponent(nodeId)}`, { method: 'DELETE' })
         .then(r => {
           if (!r.ok) return;
           if (leafletMap) {
@@ -2538,7 +2538,7 @@ if (targetEl) {
 
   function saveNote(nodeId, clear) {
     const val = clear ? '' : (document.getElementById('note-ta')?.value.trim() || '');
-    fetch(`/api/db/node/${nodeId}`, {
+    fetch(BASE_PATH + `/api/db/node/${nodeId}`, {
       method: 'PATCH',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({notes: val})
@@ -2594,7 +2594,7 @@ if (targetEl) {
   function loadLive() {
     const mtSelected = [...selectedRadioIds].filter(id => !id.startsWith('mc_'));
     const radioParam = mtSelected.length === 1 ? `?radio_id=${encodeURIComponent(mtSelected[0])}` : '';
-    fetch(`/api/nodes${radioParam}`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(nodes => {
+    fetch(BASE_PATH + `/api/nodes${radioParam}`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(nodes => {
       // Preserve recent true live packet timestamps over nodeDB refresh data.
       const liveCache = {};
       const nowSec = Math.floor(Date.now() / 1000);
@@ -2653,7 +2653,7 @@ if (targetEl) {
 
   function loadHistory() {
     updateDbSortArrows();
-    fetch(`/api/db/nodes?sort=${dbSort.col}&dir=${dbSort.dir}&fav_first=${dbFavFirst ? 1 : 0}&show_ignored=${showIgnored ? 1 : 0}`)
+    fetch(BASE_PATH + `/api/db/nodes?sort=${dbSort.col}&dir=${dbSort.dir}&fav_first=${dbFavFirst ? 1 : 0}&show_ignored=${showIgnored ? 1 : 0}`)
       .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(renderHistory)
       .catch(e => console.error('loadHistory failed:', e));
@@ -2769,7 +2769,7 @@ if (targetEl) {
     const detailBox = document.getElementById('mt-detail-rows');
     const area = document.getElementById('mt-share-qr-area');
     const qs = n.radio_id ? `?radio_id=${encodeURIComponent(n.radio_id)}` : '';
-    fetch(`/api/nodes/${encodeURIComponent(nodeId)}/share${qs}`)
+    fetch(BASE_PATH + `/api/nodes/${encodeURIComponent(nodeId)}/share${qs}`)
       .then(r => r.json().then(d => ({ok: r.ok, d})))
       .then(({ok, d}) => {
         if (!area) return;
@@ -2845,7 +2845,7 @@ if (targetEl) {
       </div>
     `);
     const area = document.getElementById('mc-share-area');
-    fetch(`/api/mc/${encodeURIComponent(rid)}/contacts/${encodeURIComponent(fullKey)}/share`)
+    fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/contacts/${encodeURIComponent(fullKey)}/share`)
       .then(r => r.json().then(d => ({ok: r.ok, d})))
       .then(({ok, d}) => {
         if (!area) return;
@@ -2937,7 +2937,7 @@ if (targetEl) {
     });
     try {
       const trRadioId = radioId || activeRadioId;
-      const r = await fetch(`/api/node/${encodeURIComponent(nodeId)}/traceroute`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({radio_id: trRadioId})});
+      const r = await fetch(BASE_PATH + `/api/node/${encodeURIComponent(nodeId)}/traceroute`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({radio_id: trRadioId})});
       clearInterval(timerId);
       const d = await r.json();
       if (!r.ok) {
@@ -3040,7 +3040,7 @@ if (targetEl) {
     const status = document.getElementById('dm-status');
     status.innerHTML = '<div class="modal-loading">Sending...</div>';
     try {
-      const r = await fetch(`/api/node/${encodeURIComponent(nodeId)}/dm`, {
+      const r = await fetch(BASE_PATH + `/api/node/${encodeURIComponent(nodeId)}/dm`, {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
         body: JSON.stringify({message: msg, radio_id: activeRadioId})
@@ -3061,7 +3061,7 @@ if (targetEl) {
     openModal('Request Position — ' + nodeName,
       `<div class="modal-loading">Requesting position from ${escHtml(nodeName)}...</div>`);
     try {
-      const r = await fetch(`/api/node/${encodeURIComponent(nodeId)}/position`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({radio_id: activeRadioId})});
+      const r = await fetch(BASE_PATH + `/api/node/${encodeURIComponent(nodeId)}/position`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({radio_id: activeRadioId})});
       const d = await r.json();
       document.getElementById('modal-body').innerHTML = r.ok
         ? `<div class="modal-success">Position request sent. Node should broadcast its location shortly.</div>`
@@ -3089,7 +3089,7 @@ if (targetEl) {
       }
     }, 1000);
     try {
-      const r = await fetch(`/api/node/${encodeURIComponent(nodeId)}/info`, {method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({radio_id: activeRadioId})});
+      const r = await fetch(BASE_PATH + `/api/node/${encodeURIComponent(nodeId)}/info`, {method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({radio_id: activeRadioId})});
       clearInterval(_nodeInfoTimer); _nodeInfoTimer = null;
       const d = await r.json();
       if (!r.ok) {
@@ -4938,7 +4938,7 @@ if (targetEl) {
         const data = await r.json().catch(() => ({}));
         if (!r.ok || data.error) throw new Error(data.error || r.status);
       }
-      const del = await fetch(`/api/map_layers/${id}`, {method: 'DELETE'});
+      const del = await fetch(BASE_PATH + `/api/map_layers/${id}`, {method: 'DELETE'});
       const delData = await del.json().catch(() => ({}));
       if (!del.ok || delData.error) throw new Error(delData.error || del.status);
       await loadMapLayers({silent: true});
@@ -5122,7 +5122,7 @@ if (targetEl) {
   async function toggleMapLayerGeofence(id, enabled) {
     const statusEl = document.getElementById('overlay-editor-status') || document.getElementById('map-layer-status');
     try {
-      const r = await fetch(`/api/map_layers/${id}`, {
+      const r = await fetch(BASE_PATH + `/api/map_layers/${id}`, {
         method: 'PATCH',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({is_geofence: enabled})
@@ -5208,7 +5208,7 @@ if (targetEl) {
 
   async function toggleMapLayerEnabled(id, enabled, opts = {}) {
     try {
-      const r = await fetch(`/api/map_layers/${id}`, {
+      const r = await fetch(BASE_PATH + `/api/map_layers/${id}`, {
         method: 'PATCH',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({enabled})
@@ -5255,7 +5255,7 @@ if (targetEl) {
       const statusEl = document.getElementById('map-layer-status');
       if (statusEl) statusEl.textContent = 'Deleting…';
       try {
-        const r = await fetch(`/api/map_layers/${id}`, {method: 'DELETE'});
+        const r = await fetch(BASE_PATH + `/api/map_layers/${id}`, {method: 'DELETE'});
         const data = await r.json().catch(() => ({}));
         if (!r.ok || data.error) throw new Error(data.error || r.status);
         _mapLayerDefs = _mapLayerDefs.filter(def => def.id !== id);
@@ -5626,7 +5626,7 @@ if (targetEl) {
       const ctrl = new AbortController();
       const timeout = setTimeout(() => ctrl.abort(), 3000);
       const chParam = activeRadioId ? `?radio_id=${encodeURIComponent(activeRadioId)}` : '';
-      const r = await fetch(`/api/chat/channels${chParam}`, {signal: ctrl.signal});
+      const r = await fetch(BASE_PATH + `/api/chat/channels${chParam}`, {signal: ctrl.signal});
       clearTimeout(timeout);
       if (!r.ok) throw new Error(r.status);
       const ch = await r.json();
@@ -5940,7 +5940,7 @@ if (targetEl) {
   }
 
   async function deleteNote(note_id) {
-    const r = await fetch(`/api/notes/${note_id}`, {method:'DELETE'}).catch(() => null);
+    const r = await fetch(BASE_PATH + `/api/notes/${note_id}`, {method:'DELETE'}).catch(() => null);
     if (!r || !r.ok) return;
     if (noteMarkers[note_id]) { if (leafletMap) { leafletMap.closePopup(); leafletMap.removeLayer(noteMarkers[note_id]); } delete noteMarkers[note_id]; }
     delete notesData[note_id];
@@ -6014,7 +6014,7 @@ if (targetEl) {
     if (!name) { if (status) { status.style.color='var(--red)'; status.textContent='Name is required.'; } return; }
     if (status) { status.style.color='var(--muted)'; status.textContent='Saving…'; }
     try {
-      const res = await fetch(`/api/notes/${_editNoteId}`, {
+      const res = await fetch(BASE_PATH + `/api/notes/${_editNoteId}`, {
         method: 'PUT', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({name, description: desc, marker_emoji: _wpMarkerEmoji})
       });
@@ -6134,7 +6134,7 @@ if (targetEl) {
 
   async function deleteWaypoint(wp_id) {
     try {
-      const res = await fetch(`/api/waypoints/${wp_id}`, {method: 'DELETE'});
+      const res = await fetch(BASE_PATH + `/api/waypoints/${wp_id}`, {method: 'DELETE'});
       if (!res.ok) return;
       if (waypointMarkers[wp_id]) {
         if (leafletMap) { leafletMap.removeLayer(waypointMarkers[wp_id]); leafletMap.closePopup(); }
@@ -6246,7 +6246,7 @@ if (targetEl) {
     if (btn) { btn.textContent = 'Sending…'; btn.disabled = true; }
     const resetBtn = () => { if (btn) { btn.textContent = 'Re-broadcast'; btn.style.color = ''; btn.disabled = false; } delete _rebcastTimers[wp_id]; };
     try {
-      const res = await fetch(`/api/waypoints/${wp_id}/rebroadcast`, {method: 'POST'});
+      const res = await fetch(BASE_PATH + `/api/waypoints/${wp_id}/rebroadcast`, {method: 'POST'});
       const data = await res.json().catch(() => ({}));
       if (btn) {
         btn.textContent = data.ok ? 'Sent ✓' : (data.error || 'Failed');
@@ -6286,7 +6286,7 @@ if (targetEl) {
       const ctrl = new AbortController();
       const timeout = setTimeout(() => ctrl.abort(), 3000);
       const chParam = activeRadioId ? `?radio_id=${encodeURIComponent(activeRadioId)}` : '';
-      const r = await fetch(`/api/chat/channels${chParam}`, {signal: ctrl.signal});
+      const r = await fetch(BASE_PATH + `/api/chat/channels${chParam}`, {signal: ctrl.signal});
       clearTimeout(timeout);
       if (!r.ok) throw new Error(r.status);
       const ch = await r.json();
@@ -6389,7 +6389,7 @@ if (targetEl) {
     if (!name) { if (status) { status.style.color='var(--red)'; status.textContent='Name is required.'; } return; }
     if (status) { status.style.color='var(--muted)'; status.textContent='Saving…'; }
     try {
-      const res = await fetch(`/api/waypoints/${_editWpId}`, {
+      const res = await fetch(BASE_PATH + `/api/waypoints/${_editWpId}`, {
         method: 'PUT', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({name, description: desc, marker_emoji: _wpMarkerEmoji,
           radio_id: activeRadioId, channel_index, destination_ids: dest_ids})
@@ -6524,7 +6524,7 @@ if (targetEl) {
     });
     try {
       const trRadioId = radioId || activeRadioId;
-      const r = await fetch(`/api/node/${encodeURIComponent(nodeId)}/traceroute`, { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({radio_id: trRadioId}) });
+      const r = await fetch(BASE_PATH + `/api/node/${encodeURIComponent(nodeId)}/traceroute`, { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({radio_id: trRadioId}) });
       clearInterval(timerId);
       const d = await r.json();
       if (!r.ok) {
@@ -6584,7 +6584,7 @@ if (targetEl) {
       }
     }, 1000);
     try {
-      const r = await fetch(`/api/node/${encodeURIComponent(nodeId)}/info`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({radio_id: activeRadioId})});
+      const r = await fetch(BASE_PATH + `/api/node/${encodeURIComponent(nodeId)}/info`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({radio_id: activeRadioId})});
       clearInterval(panel._timer); panel._timer = null;
       const d = await r.json();
       if (!r.ok) { body.innerHTML = `<div class="modal-error">${escHtml(d.error)}</div>`; return; }
@@ -6657,7 +6657,7 @@ if (targetEl) {
       body.innerHTML = `<div style="color:var(--muted);font-size:12px">Loading trail…</div>`;
       _clearTrail(nodeId);
       try {
-        const r = await fetch(`/api/node/${encodeURIComponent(nodeId)}/gps_history?hours=${hours}`);
+        const r = await fetch(BASE_PATH + `/api/node/${encodeURIComponent(nodeId)}/gps_history?hours=${hours}`);
         const pts = await r.json();
         if (!Array.isArray(pts) || pts.length === 0) {
           body.innerHTML = `<div style="color:var(--muted);font-size:12px">No GPS history for this period.</div>${renderPicker(hours)}`;
@@ -6729,7 +6729,7 @@ if (targetEl) {
     const { panel, body } = _openMapPanel('Pos · ' + nodeName);
     body.innerHTML = `<div class="modal-loading">Requesting position from ${escHtml(nodeName)}...</div>`;
     try {
-      const r = await fetch(`/api/node/${encodeURIComponent(nodeId)}/position`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({radio_id: activeRadioId})});
+      const r = await fetch(BASE_PATH + `/api/node/${encodeURIComponent(nodeId)}/position`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({radio_id: activeRadioId})});
       const d = await r.json();
       body.innerHTML = r.ok
         ? `<div class="modal-success">Position request sent. Node should broadcast its location shortly.</div>`
@@ -7054,7 +7054,7 @@ if (targetEl) {
 
     // Fetch channels: MT uses /api/chat/channels, MC uses /api/mc/<id>/channels
     const chFetch = (botNetwork === 'mc' && rid)
-      ? fetch(`/api/mc/${encodeURIComponent(rid)}/channels`)
+      ? fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/channels`)
           .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
           .then(d => (d.channels || [])
             .filter(ch => (ch.name || '').trim() || (ch.hash || '').trim())
@@ -7536,7 +7536,7 @@ if (targetEl) {
     const mcIds = Object.keys(mcStatus || {});
     await Promise.all(mtIds.map(async rid => {
       try {
-        const r = await fetch(`/api/chat/channels?radio_id=${encodeURIComponent(rid)}`);
+        const r = await fetch(BASE_PATH + `/api/chat/channels?radio_id=${encodeURIComponent(rid)}`);
         if (!r.ok) return;
         const rows = await r.json();
         out.mt[rid] = Object.assign({}, out.mt[rid] || {});
@@ -7545,7 +7545,7 @@ if (targetEl) {
     }));
     await Promise.all(mcIds.map(async rid => {
       try {
-        const r = await fetch(`/api/mc/${encodeURIComponent(rid)}/channels`);
+        const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/channels`);
         if (!r.ok) return;
         const rows = await r.json();
         out.mc[rid] = Object.assign({}, out.mc[rid] || {});
@@ -7788,7 +7788,7 @@ if (targetEl) {
     }
     if (summary && fetchRemote) summary.innerHTML = '<span style="color:var(--muted)">Checking GitHub…</span>';
     try {
-      const r = await fetch(`/api/settings/update/status${fetchRemote ? '?fetch=1' : ''}`);
+      const r = await fetch(BASE_PATH + `/api/settings/update/status${fetchRemote ? '?fetch=1' : ''}`);
       const data = await r.json().catch(() => ({}));
       if (!r.ok) data.error = data.error || `HTTP ${r.status}`;
       _renderUpdateStatus(data);
@@ -8239,7 +8239,7 @@ if (targetEl) {
   }
 
   function settingsToggleNode(id, enable) {
-    fetch(`/api/settings/nodes/${id}/set_enabled`, {
+    fetch(BASE_PATH + `/api/settings/nodes/${id}/set_enabled`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({enabled: enable})
@@ -8255,7 +8255,7 @@ if (targetEl) {
   function settingsRemoveNode(id, name) {
     document.getElementById('confirm-ok').textContent = 'Remove';
     showConfirm(`Remove radio "${escHtml(name)}"?`, () => {
-      fetch(`/api/settings/nodes/${id}/remove`, {method: 'POST'})
+      fetch(BASE_PATH + `/api/settings/nodes/${id}/remove`, {method: 'POST'})
         .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
           if (data.error) { showAlert(data.error); return; }
           settingsLoadNodes();
@@ -8266,7 +8266,7 @@ if (targetEl) {
   function settingsDeleteNode(id, name) {
     document.getElementById('confirm-ok').textContent = 'Delete';
     showConfirm(`DELETE "${escHtml(name)}" and wipe all message history? This cannot be undone.`, () => {
-      fetch(`/api/settings/nodes/${id}/delete`, {method: 'POST'})
+      fetch(BASE_PATH + `/api/settings/nodes/${id}/delete`, {method: 'POST'})
         .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
           if (data.error) { showAlert(data.error); return; }
           settingsLoadNodes();
@@ -8733,7 +8733,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
             if (currentTab === 'nodes') renderLive();
           }).catch(() => {});
         // Fetch contacts — initMc() only runs at page load so misses late connects
-        fetch(`/api/mc/${encodeURIComponent(data.radio_id)}/contacts`)
+        fetch(BASE_PATH + `/api/mc/${encodeURIComponent(data.radio_id)}/contacts`)
           .then(r => r.ok ? r.json() : null)
           .then(cd => {
             if (!cd) return;
@@ -8747,7 +8747,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
             if (currentTab === 'nodes') renderLive();
           }).catch(() => {});
         // Fetch channel names
-        fetch(`/api/mc/${encodeURIComponent(data.radio_id)}/channels`)
+        fetch(BASE_PATH + `/api/mc/${encodeURIComponent(data.radio_id)}/channels`)
           .then(r => r.ok ? r.json() : null)
           .then(cd => {
             if (!cd) return;
@@ -8762,7 +8762,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
               c.archived_only = true;
             });
           }
-          fetch(`/api/mc/${encodeURIComponent(data.radio_id)}/contacts`)
+          fetch(BASE_PATH + `/api/mc/${encodeURIComponent(data.radio_id)}/contacts`)
             .then(r => r.ok ? r.json() : null)
             .then(cd => {
               if (!cd) return;
@@ -8881,7 +8881,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       // Refresh contacts from device to pick up any updated coords (e.g. GPS set via phone)
       const rid = _mcScanRadioId;
       if (rid) {
-        fetch(`/api/mc/${encodeURIComponent(rid)}/contacts?refresh=1`)
+        fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/contacts?refresh=1`)
           .then(r => r.ok ? r.json() : null)
           .then(cd => {
             if (!cd) return;
@@ -9325,7 +9325,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     state.saving = true;
     renderMcRouteEditor();
     try {
-      const r = await fetch(`/api/mc/${encodeURIComponent(state.radioId)}/contacts/${encodeURIComponent(state.contactId)}/route`, {
+      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(state.radioId)}/contacts/${encodeURIComponent(state.contactId)}/route`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({clear, hops: clear ? [] : state.selected, path_hash_mode: state.pathHashMode}),
@@ -11399,7 +11399,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const entry = _mcSenseLogEntries[idx];
     if (!entry?.radioId) return;
     try {
-      const r = await fetch(`/api/mc/${encodeURIComponent(entry.radioId)}/contacts?refresh=1`);
+      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(entry.radioId)}/contacts?refresh=1`);
       if (!r.ok) throw new Error(await r.text());
       const data = await r.json();
       if (!mcContacts[entry.radioId]) mcContacts[entry.radioId] = {};
@@ -11776,7 +11776,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
           mcLastStatus[n.id] = n;
           const shouldLoadContacts = n.status === 'connected' || (n.stored_contacts || n.archived_contacts || 0) > 0;
           if (shouldLoadContacts) {
-            fetch(`/api/mc/${encodeURIComponent(n.id)}/contacts`)
+            fetch(BASE_PATH + `/api/mc/${encodeURIComponent(n.id)}/contacts`)
               .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
               .then(cd => {
                 if (!mcContacts[n.id]) mcContacts[n.id] = {};
@@ -11789,7 +11789,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
           }
           if (n.status === 'connected') {
             // Fetch channel names for this radio
-            fetch(`/api/mc/${encodeURIComponent(n.id)}/channels`)
+            fetch(BASE_PATH + `/api/mc/${encodeURIComponent(n.id)}/channels`)
               .then(r => r.ok ? r.json() : null)
               .then(cd => {
                 if (!cd) return;
@@ -12124,7 +12124,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const doSend = () => {
       const btn = document.querySelector('button[onclick="mcSendAdvert()"]');
       if (btn) { btn.disabled = true; btn.textContent = '…'; }
-      fetch(`/api/mc/${encodeURIComponent(activeMcRadioId)}/advert`, {
+      fetch(BASE_PATH + `/api/mc/${encodeURIComponent(activeMcRadioId)}/advert`, {
         method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({flood: true}),
       }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
         if (btn) { btn.disabled = false; btn.textContent = 'Advert'; }
@@ -12295,7 +12295,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     if (out) out.textContent = login ? 'Logging in…' : 'Reading…';
     const password = document.getElementById('mc-remote-password')?.value || '';
     try {
-      const r = await fetch(`/api/mc/${encodeURIComponent(_mcRemoteManage.radioId)}/remote/${encodeURIComponent(_mcRemoteManage.pubkeyPrefix)}/read`, {
+      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(_mcRemoteManage.radioId)}/remote/${encodeURIComponent(_mcRemoteManage.pubkeyPrefix)}/read`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({login, password}),
@@ -12314,7 +12314,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const command = document.getElementById('mc-remote-command')?.value || '';
     if (out) out.textContent = 'Sending…';
     try {
-      const r = await fetch(`/api/mc/${encodeURIComponent(_mcRemoteManage.radioId)}/remote/${encodeURIComponent(_mcRemoteManage.pubkeyPrefix)}/command`, {
+      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(_mcRemoteManage.radioId)}/remote/${encodeURIComponent(_mcRemoteManage.pubkeyPrefix)}/command`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({command}),
@@ -12353,7 +12353,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       }, 30000)
     };
     try {
-      const r = await fetch(`/api/mc/${encodeURIComponent(radioId)}/statusreq/${encodeURIComponent(pubkeyPrefix)}`, {method: 'POST'});
+      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/statusreq/${encodeURIComponent(pubkeyPrefix)}`, {method: 'POST'});
       const d = await r.json();
       if (!r.ok) {
         body.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Request failed.')}</span>`;
@@ -12621,7 +12621,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     panel.style.display = '';
     _mcPendingTraceTag = null;
     try {
-      const r = await fetch(`/api/mc/${encodeURIComponent(radioId)}/trace`, {method: 'POST'});
+      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/trace`, {method: 'POST'});
       const d = await r.json();
       if (!r.ok) {
         body.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Trace failed.')}</span>`;
@@ -12732,7 +12732,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     try {
       const chunks = _mcSplitTextByBytes(text, _mcTargetMsgLimit('dm', radioId));
       for (let i = 0; i < chunks.length; i++) {
-        const r = await fetch(`/api/mc/${encodeURIComponent(radioId)}/send_dm`, {
+        const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/send_dm`, {
           method: 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({text: chunks[i], target: pubkeyPrefix}),
         });
@@ -12755,7 +12755,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const btn = document.getElementById('mc-scan-btn');
     if (btn) { btn.textContent = '…'; btn.disabled = true; }
     try {
-      const r = await fetch(`/api/mc/${encodeURIComponent(radioId)}/scan`, {method: 'POST'});
+      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/scan`, {method: 'POST'});
       const d = await r.json();
       if (!r.ok) {
         if (btn) { btn.textContent = 'Scan'; btn.disabled = false; }
@@ -12765,7 +12765,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       // Also fire a trace after a brief pause — EDC-3 serial state needs to settle after advert TX
       await new Promise(r => setTimeout(r, 800));
       try {
-        const tr = await fetch(`/api/mc/${encodeURIComponent(radioId)}/trace`, {method: 'POST'});
+        const tr = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/trace`, {method: 'POST'});
         if (tr.ok) { const td = await tr.json(); _mcPendingTraceTag = td.tag; }
       } catch(e) {}
     } catch(e) {
@@ -12779,7 +12779,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   }
 
   function settingsMcToggleNode(id, enable) {
-    fetch(`/api/settings/mc_nodes/${encodeURIComponent(id)}/set_enabled`, {
+    fetch(BASE_PATH + `/api/settings/mc_nodes/${encodeURIComponent(id)}/set_enabled`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({enabled: enable})
@@ -12791,7 +12791,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   function settingsMcRemoveNode(id, name) {
     document.getElementById('confirm-ok').textContent = 'Remove';
     showConfirm(`Remove MC radio "${escHtml(name)}"?`, () => {
-      fetch(`/api/settings/mc_nodes/${encodeURIComponent(id)}/remove`, {method: 'POST'})
+      fetch(BASE_PATH + `/api/settings/mc_nodes/${encodeURIComponent(id)}/remove`, {method: 'POST'})
         .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
           if (data.error) { showAlert(data.error); return; }
           loadMcSettingsNodes();
@@ -12859,7 +12859,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const el = document.getElementById('mc-device-info-content');
     if (!el) return;
     el.textContent = 'Loading…';
-    fetch(`/api/mc/${encodeURIComponent(radioId)}/device_info`)
+    fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/device_info`)
       .then(r => r.json().then(d => ({ok: r.ok, d})))
       .then(({ok, d}) => {
         if (!ok || d.error) { el.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Request failed.')}</span>`; return; }
@@ -12892,7 +12892,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const el = document.getElementById('mc-stats-content');
     if (!el) return;
     el.textContent = 'Loading…';
-    fetch(`/api/mc/${encodeURIComponent(radioId)}/stats`)
+    fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/stats`)
       .then(r => r.json().then(d => ({ok: r.ok, d})))
       .then(({ok, d}) => {
         if (!ok || d.error) { el.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Request failed.')}</span>`; return; }
@@ -12931,7 +12931,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const el = document.getElementById('mc-channels-list');
     if (!el) return;
     el.textContent = 'Loading…';
-    fetch(`/api/mc/${encodeURIComponent(radioId)}/channels`)
+    fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/channels`)
       .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(data => {
         if (data.error) { el.innerHTML = `<span style="color:var(--red)">${escHtml(data.error)}</span>`; return; }
@@ -12982,7 +12982,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Invalid values.</span>'; return;
     }
     if (statusEl) statusEl.textContent = 'Saving…';
-    fetch(`/api/mc/${encodeURIComponent(radioId)}/radio`, {
+    fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/radio`, {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({freq, bw, sf, cr}),
     }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || 'HTTP ' + r.status); }))
@@ -13008,7 +13008,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Invalid TX power.</span>'; return;
     }
     if (statusEl) statusEl.textContent = 'Saving…';
-    fetch(`/api/mc/${encodeURIComponent(radioId)}/tx_power`, {
+    fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/tx_power`, {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({tx_power: val}),
     }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || 'HTTP ' + r.status); }))
@@ -13036,7 +13036,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       return;
     }
     if (statusEl) statusEl.textContent = 'Saving...';
-    fetch(`/api/settings/mc_nodes/${encodeURIComponent(radioId)}/path_hash_mode`, {
+    fetch(BASE_PATH + `/api/settings/mc_nodes/${encodeURIComponent(radioId)}/path_hash_mode`, {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({path_hash_mode: requested}),
@@ -13065,7 +13065,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const statusEl = document.getElementById('mc-force-flood-status');
     if (!radioId) return;
     if (statusEl) statusEl.textContent = 'Saving...';
-    fetch(`/api/settings/mc_nodes/${encodeURIComponent(radioId)}/force_flood`, {
+    fetch(BASE_PATH + `/api/settings/mc_nodes/${encodeURIComponent(radioId)}/force_flood`, {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({force_flood: !!enabled}),
@@ -13093,7 +13093,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const statusEl = document.getElementById('mc-actions-status');
     if (!name) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Name required.</span>'; return; }
     if (statusEl) statusEl.textContent = 'Saving…';
-    fetch(`/api/mc/${encodeURIComponent(radioId)}/device_name`, {
+    fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/device_name`, {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({name}),
     }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || 'HTTP ' + r.status); }))
@@ -13127,7 +13127,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       lon = Math.round(lon / step) * step;
     }
     if (statusEl) statusEl.textContent = 'Setting…';
-    fetch(`/api/mc/${encodeURIComponent(radioId)}/coords`, {
+    fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/coords`, {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({lat, lon}),
     }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || 'HTTP ' + r.status); }))
@@ -13148,7 +13148,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     showConfirm(`Reboot MC device "${escHtml(name)}"?`, () => {
       const statusEl = document.getElementById('mc-actions-status');
       if (statusEl) statusEl.textContent = 'Rebooting…';
-      fetch(`/api/mc/${encodeURIComponent(radioId)}/reboot`, {method: 'POST'})
+      fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/reboot`, {method: 'POST'})
         .then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || 'HTTP ' + r.status); }))
         .then(d => {
           if (statusEl) statusEl.innerHTML = d.ok
@@ -13203,7 +13203,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     if (statusEl) statusEl.textContent = 'Saving…';
     const body = {name, key_type: keyType};
     if (keyType === 'custom') body.key = keyHex;
-    fetch(`/api/mc/${encodeURIComponent(radioId)}/channels/${idx}`, {
+    fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/channels/${idx}`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(body),
     }).then(r => r.json().then(d => ({ok: r.ok, d}))).then(({ok, d}) => {
@@ -13224,7 +13224,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     showConfirm(`Remove channel "${name}"? This clears the slot on the device and removes its chat history.`, () => {
       const statusEl = document.getElementById('mc-channels-remove-status');
       if (statusEl) { statusEl.textContent = `Removing channel ${idx}…`; statusEl.style.color = 'var(--muted)'; }
-      fetch(`/api/mc/${encodeURIComponent(radioId)}/channels/${idx}`, {method: 'DELETE'})
+      fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/channels/${idx}`, {method: 'DELETE'})
         .then(r => r.json())
         .then(d => {
           if (statusEl) {
@@ -13270,7 +13270,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const statusEl = document.getElementById('mc-actions-status');
     const btn = document.getElementById('mc-debug-btn');
     if (!radioId) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">No MC radio selected.</span>'; return; }
-    fetch(`/api/mc/${encodeURIComponent(radioId)}/debug_events`, {
+    fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/debug_events`, {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({duration: 60}),
     }).then(r => r.json()).then(d => {
@@ -13297,7 +13297,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const link = (document.getElementById('mc-import-link').value || '').trim();
     if (!link) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Paste a meshcore:// share link first.</span>'; return; }
     if (statusEl) statusEl.textContent = 'Importing…';
-    fetch(`/api/mc/${encodeURIComponent(radioId)}/import_contact`, {
+    fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/import_contact`, {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({link}),
     }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || 'HTTP ' + r.status); }))
@@ -13350,7 +13350,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     if (statusEl) statusEl.textContent = 'Importing…';
     const body = {name, key_type: secret ? 'custom' : 'auto'};
     if (secret) body.key = secret;
-    fetch(`/api/mc/${encodeURIComponent(radioId)}/channels/${slot}`, {
+    fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/channels/${slot}`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(body),
     }).then(r => r.json().then(d => ({ok: r.ok, d}))).then(({ok, d}) => {
@@ -14156,7 +14156,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     err.textContent = '';
     err.innerHTML   = '<span style="color:var(--muted)">Loading…</span>';
     content.style.display = 'none';
-    fetch(`/api/radio/${encodeURIComponent(radioId)}/config`)
+    fetch(BASE_PATH + `/api/radio/${encodeURIComponent(radioId)}/config`)
       .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(d => {
         if (d.error) { err.innerHTML = `<span style="color:var(--red)">${escHtml(d.error)} — Press ↻ Reload to retry.</span>`; return; }
@@ -14291,7 +14291,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       nodeCfgStatus('owner', 'Long name and short name required.', false); return;
     }
     nodeCfgStatus('owner', 'Saving…', true);
-    fetch(`/api/radio/${encodeURIComponent(radioId)}/owner`, {
+    fetch(BASE_PATH + `/api/radio/${encodeURIComponent(radioId)}/owner`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({long_name, short_name})
@@ -14305,7 +14305,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const radioId = _selectedNodeId;
     const role    = parseInt(document.getElementById('node-cfg-role').value);
     nodeCfgStatus('device', 'Saving…', true);
-    fetch(`/api/radio/${encodeURIComponent(radioId)}/config/device`, {
+    fetch(BASE_PATH + `/api/radio/${encodeURIComponent(radioId)}/config/device`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({role})
@@ -14322,7 +14322,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const tx_power    = parseInt(document.getElementById('node-cfg-txpower').value) || 0;
     const hop_limit   = parseInt(document.getElementById('node-cfg-hoplimit').value) || 3;
     nodeCfgStatus('lora', 'Saving… (may take a few seconds)', true);
-    fetch(`/api/radio/${encodeURIComponent(radioId)}/config/lora`, {
+    fetch(BASE_PATH + `/api/radio/${encodeURIComponent(radioId)}/config/lora`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({region, modem_preset, tx_power, hop_limit})
@@ -14337,7 +14337,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const st = document.getElementById('node-cfg-actions-status');
     if (st) st.innerHTML = '<span style="color:var(--muted)">Rebooting in 5s…</span>';
     try {
-      const r = await fetch(`/api/radio/${encodeURIComponent(radioId)}/reboot`, {method:'POST'});
+      const r = await fetch(BASE_PATH + `/api/radio/${encodeURIComponent(radioId)}/reboot`, {method:'POST'});
       const d = await r.json();
       if (st) st.innerHTML = r.ok
         ? '<span style="color:var(--green)">Reboot command sent.</span>'
@@ -14355,7 +14355,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       const st = document.getElementById('node-cfg-actions-status');
       if (st) st.innerHTML = '<span style="color:var(--muted)">Shutting down in 5s…</span>';
       try {
-        const r = await fetch(`/api/radio/${encodeURIComponent(radioId)}/shutdown`, {method:'POST'});
+        const r = await fetch(BASE_PATH + `/api/radio/${encodeURIComponent(radioId)}/shutdown`, {method:'POST'});
         const d = await r.json();
         if (st) st.innerHTML = r.ok
           ? '<span style="color:var(--green)">Shutdown command sent.</span>'
@@ -14376,7 +14376,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       const st = document.getElementById('node-cfg-actions-status');
       if (st) st.innerHTML = '<span style="color:var(--muted)">Clearing known nodes…</span>';
       try {
-        const r = await fetch(`/api/db/radio/${encodeURIComponent(radioId)}/nodes/reset`, {method:'POST'});
+        const r = await fetch(BASE_PATH + `/api/db/radio/${encodeURIComponent(radioId)}/nodes/reset`, {method:'POST'});
         const d = await r.json();
         if (st) st.innerHTML = r.ok
           ? `<span style="color:var(--green)">Cleared ${escHtml(String(d.removed_db ?? 0))} saved node${(d.removed_db ?? 0) !== 1 ? 's' : ''}.</span>`
@@ -14424,7 +14424,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   function loadNodeChannels() {
     const radioId = _selectedNodeId;
     if (!radioId) return;
-    fetch(`/api/radio/${encodeURIComponent(radioId)}/channels`)
+    fetch(BASE_PATH + `/api/radio/${encodeURIComponent(radioId)}/channels`)
       .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(data => {
         if (data.error) return;
@@ -14530,7 +14530,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const slot = parseInt(document.getElementById('mt-import-ch-slot').value);
     if (isNaN(slot) || slot < 0 || slot > 7) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Slot must be 0–7.</span>'; return; }
     if (statusEl) statusEl.textContent = 'Importing…';
-    fetch(`/api/radio/${encodeURIComponent(radioId)}/channels/import`, {
+    fetch(BASE_PATH + `/api/radio/${encodeURIComponent(radioId)}/channels/import`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({url: link, index: slot}),
@@ -14624,7 +14624,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       nodeCfgStatus('channels', 'Enter a custom PSK hex string.', false); return;
     }
     nodeCfgStatus('channels', 'Saving…', true);
-    fetch(`/api/radio/${encodeURIComponent(radioId)}/channels/${_editingChIndex}`, {
+    fetch(BASE_PATH + `/api/radio/${encodeURIComponent(radioId)}/channels/${_editingChIndex}`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({role, name, psk_type, psk_hex})
@@ -14646,7 +14646,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const radioId  = _selectedNodeId;
     const statusEl = document.getElementById('node-cfg-channels-remove-status');
     if (statusEl) { statusEl.textContent = `Removing channel ${index}…`; statusEl.style.color = 'var(--muted)'; }
-    fetch(`/api/radio/${encodeURIComponent(radioId)}/channels/${index}`, {
+    fetch(BASE_PATH + `/api/radio/${encodeURIComponent(radioId)}/channels/${index}`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({role: 0})
@@ -14673,7 +14673,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     showConfirm(`Delete saved MT chat history for "${label}"?`, async () => {
       nodeCfgStatus('channels', 'Deleting history…', true);
       try {
-        const r = await fetch(`/api/radio/${encodeURIComponent(radioId)}/channels/${index}/history`, {method: 'POST'});
+        const r = await fetch(BASE_PATH + `/api/radio/${encodeURIComponent(radioId)}/channels/${index}/history`, {method: 'POST'});
         const d = await r.json();
         if (!r.ok || d.error) throw new Error(d.error || r.status);
         chatMsgs = chatMsgs.filter(m => !(m.radio_id === radioId && !m.is_dm && (m.channel ?? 0) === index));
@@ -14776,7 +14776,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       }
     }
     nodeCfgStatus('position', 'Saving…', true);
-    fetch(`/api/radio/${encodeURIComponent(radioId)}/config/position`, {
+    fetch(BASE_PATH + `/api/radio/${encodeURIComponent(radioId)}/config/position`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({gps_mode,
@@ -14797,7 +14797,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const radioId = _selectedNodeId;
     if (!radioId) return;
     nodeCfgStatus('position', 'Removing…', true);
-    fetch(`/api/radio/${encodeURIComponent(radioId)}/config/position`, {
+    fetch(BASE_PATH + `/api/radio/${encodeURIComponent(radioId)}/config/position`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({fixed_position: false})
@@ -14819,7 +14819,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const is_power_saving         = document.getElementById('node-cfg-power-saving').checked;
     const on_battery_shutdown_after_secs = parseInt(document.getElementById('node-cfg-shutdown-secs').value) || 0;
     nodeCfgStatus('power', 'Saving…', true);
-    fetch(`/api/radio/${encodeURIComponent(radioId)}/config/power`, {
+    fetch(BASE_PATH + `/api/radio/${encodeURIComponent(radioId)}/config/power`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({power_saving: is_power_saving, shutdown_after_secs: on_battery_shutdown_after_secs})
@@ -14844,7 +14844,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const flip_screen    = document.getElementById('node-cfg-flip-screen').checked;
     const units          = parseInt(document.getElementById('node-cfg-display-units').value);
     nodeCfgStatus('display', 'Saving…', true);
-    fetch(`/api/radio/${encodeURIComponent(radioId)}/config/display`, {
+    fetch(BASE_PATH + `/api/radio/${encodeURIComponent(radioId)}/config/display`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({screen_on_secs, flip_screen, display_units: units})
@@ -14860,7 +14860,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const device_update_interval      = parseInt(document.getElementById('node-cfg-tel-device').value) || 0;
     const environment_update_interval = parseInt(document.getElementById('node-cfg-tel-env').value)    || 0;
     nodeCfgStatus('telemetry', 'Saving…', true);
-    fetch(`/api/radio/${encodeURIComponent(radioId)}/config/telemetry`, {
+    fetch(BASE_PATH + `/api/radio/${encodeURIComponent(radioId)}/config/telemetry`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({tel_device: device_update_interval, tel_env: environment_update_interval})
@@ -14882,7 +14882,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const tls        = document.getElementById('node-cfg-mqtt-tls').checked;
     const map_reporting = document.getElementById('node-cfg-mqtt-map').checked;
     nodeCfgStatus('mqtt', 'Saving…', true);
-    fetch(`/api/radio/${encodeURIComponent(radioId)}/config/mqtt`, {
+    fetch(BASE_PATH + `/api/radio/${encodeURIComponent(radioId)}/config/mqtt`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({mqtt_enabled: enabled, mqtt_address: address, mqtt_username: username,
@@ -14920,7 +14920,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const bt_mode     = parseInt(document.getElementById('node-cfg-bt-mode').value);
     const bt_fixed_pin = parseInt(document.getElementById('node-cfg-bt-pin').value) || 0;
     nodeCfgStatus('bluetooth', 'Saving…', true);
-    fetch(`/api/radio/${encodeURIComponent(radioId)}/config/bluetooth`, {
+    fetch(BASE_PATH + `/api/radio/${encodeURIComponent(radioId)}/config/bluetooth`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({bt_enabled, bt_mode, bt_fixed_pin})
@@ -14943,7 +14943,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const payload      = {wifi_enabled, wifi_ap_mode, wifi_ssid};
     if (wifi_psk.trim()) payload.wifi_psk = wifi_psk;
     nodeCfgStatus('network', 'Saving…', true);
-    fetch(`/api/radio/${encodeURIComponent(radioId)}/config/network`, {
+    fetch(BASE_PATH + `/api/radio/${encodeURIComponent(radioId)}/config/network`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(payload)

@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import concurrent.futures
 
 from flask import Blueprint, jsonify, request
 from meshtastic.protobuf import apponly_pb2
@@ -663,7 +664,12 @@ def api_radio_channel_import(radio_id):
         ch.role = 1 if ch_index == 0 else 2
         ch.settings.name = name[:11]
         ch.settings.psk  = psk if psk else bytes([1])
-        iface.localNode.writeChannel(ch_index)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(iface.localNode.writeChannel, ch_index)
+            try:
+                fut.result(timeout=15)
+            except concurrent.futures.TimeoutError:
+                return jsonify({"error": "Node did not confirm write (timeout). Channel may still have been saved — check node channels."}), 504
         return jsonify({"ok": True, "name": name, "index": ch_index, "psk_set": bool(psk)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500

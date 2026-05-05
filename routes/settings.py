@@ -11,6 +11,7 @@ import uuid
 from flask import Blueprint, jsonify, request
 
 from config import BASE_DIR, CONFIG, CONFIG_LOCK, DATA_DIR, save_config
+from db import get_auth_setting, set_auth_setting
 from cross import _normalize_rule, get_cross_config
 from helpers import push_to_sse
 from mesh import connect_node
@@ -898,3 +899,47 @@ def api_settings_mc_nodes_force_flood(node_id):
         if node_id in mc_connections:
             mc_connections[node_id].setdefault("config", {})["force_flood"] = enabled
     return jsonify({"ok": True, "force_flood": enabled})
+
+
+
+@bp.route("/api/settings/auth", methods=["GET"])
+def api_settings_auth_get():
+    return jsonify({
+        "auth_enabled": get_auth_setting("auth_enabled", "0") == "1",
+        "auth_username": get_auth_setting("auth_username", ""),
+    })
+
+
+@bp.route("/api/settings/auth", methods=["POST"])
+def api_settings_auth_set():
+    from werkzeug.security import generate_password_hash
+    data = request.get_json(silent=True) or {}
+
+    # Toggle enable/disable
+    if "auth_enabled" in data:
+        enabled = bool(data["auth_enabled"])
+        # Don't allow enabling without credentials
+        if enabled:
+            username = str(data.get("auth_username") or get_auth_setting("auth_username", "") or "").strip()
+            password = str(data.get("auth_password") or "").strip()
+            if not username:
+                return jsonify({"error": "Username is required to enable authentication."}), 400
+            if not password and not get_auth_setting("auth_password_hash", ""):
+                return jsonify({"error": "Password is required to enable authentication."}), 400
+            if username:
+                set_auth_setting("auth_username", username)
+            if password:
+                set_auth_setting("auth_password_hash", generate_password_hash(password))
+        set_auth_setting("auth_enabled", "1" if enabled else "0")
+        return jsonify({"ok": True, "auth_enabled": enabled})
+
+    # Update credentials only (without changing enabled state)
+    username = str(data.get("auth_username") or "").strip()
+    password = str(data.get("auth_password") or "").strip()
+    if not username and not password:
+        return jsonify({"error": "Provide username and/or password to update."}), 400
+    if username:
+        set_auth_setting("auth_username", username)
+    if password:
+        set_auth_setting("auth_password_hash", generate_password_hash(password))
+    return jsonify({"ok": True})

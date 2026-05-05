@@ -210,6 +210,11 @@ def init_prefs_db():
             except sqlite3.OperationalError:
                 pass
 
+        c.execute('''CREATE TABLE IF NOT EXISTS auth_settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL DEFAULT ''
+        )''')
+
 
 def init_msgs_db(db_path):
     conn = sqlite3.connect(db_path)
@@ -426,6 +431,20 @@ def save_traceroute(node_id, node_name, radio_id, tr):
         conn.execute(
             "DELETE FROM traceroute_history WHERE id NOT IN "
             "(SELECT id FROM traceroute_history ORDER BY ts DESC LIMIT 50)"
+        )
+
+
+def get_auth_setting(key, default=None):
+    with get_prefs_db() as conn:
+        row = conn.execute("SELECT value FROM auth_settings WHERE key=?", (key,)).fetchone()
+    return row[0] if row else default
+
+
+def set_auth_setting(key, value):
+    with get_prefs_db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO auth_settings (key, value) VALUES (?, ?)",
+            (key, str(value) if value is not None else ""),
         )
 
 

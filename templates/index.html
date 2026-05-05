@@ -176,6 +176,9 @@
   <span id="last-updated" style="font-size:12px;color:var(--muted);white-space:nowrap"></span>
   <button class="btn" id="header-refresh-btn" onclick="loadCurrent(this)" title="Refresh MT and MC state from connected radios"><span class="btn-icon">↻</span><span class="btn-label">Refresh</span></button>
   <button class="btn" id="silent-btn" onclick="toggleSilentMode()" title="Enable Silent Running — suppresses all radio transmissions">Silent</button>
+  <form id="logout-form" action="{{ base_path }}/logout" method="POST" style="display:none;margin:0">
+    <button type="submit" class="btn" title="Log out" style="color:var(--muted)">Log out</button>
+  </form>
   <div id="power-btn-wrap">
     <button id="shutdown-btn" onclick="togglePowerMenu(event)" title="Power options">&#x23FB; Power</button>
     <div id="power-menu">
@@ -1691,6 +1694,32 @@
       </div>
       <div id="gps-clear-status" style="font-size:12px;color:var(--muted);margin-top:8px;min-height:16px"></div>
     </div>
+    <div class="settings-section">
+      <h2 class="settings-title">Authentication</h2>
+      <p style="color:var(--muted);font-size:12px;margin:0 0 12px">Optional username/password login. Off by default. Set credentials before enabling.</p>
+      <div style="display:grid;gap:10px;max-width:400px">
+        <div style="display:flex;align-items:center;gap:12px">
+          <label class="bot-toggle">
+            <input type="checkbox" id="auth-enabled-toggle" onchange="saveAuthEnabled(this.checked)">
+            <span class="bot-toggle-slider"></span>
+          </label>
+          <span style="font-size:13px">Require login</span>
+        </div>
+        <div style="display:grid;gap:6px">
+          <label class="settings-label">Username</label>
+          <input type="text" id="auth-username" class="settings-input" autocomplete="off" placeholder="admin">
+        </div>
+        <div style="display:grid;gap:6px">
+          <label class="settings-label">New password</label>
+          <input type="password" id="auth-password" class="settings-input" autocomplete="new-password" placeholder="leave blank to keep current">
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn" onclick="saveAuthCredentials()">Save credentials</button>
+        </div>
+        <div id="auth-settings-status" style="font-size:12px;color:var(--muted);min-height:16px"></div>
+      </div>
+    </div>
+
     </div><!-- /st-app -->
 
     <div id="st-cross" style="display:none">

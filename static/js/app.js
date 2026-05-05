@@ -343,6 +343,69 @@
       .catch(e => bridgeSettingsStatus(String(e.message || e), false));
   }
 
+  function _authStatus(msg, ok) {
+    const el = document.getElementById('auth-settings-status');
+    if (!el) return;
+    el.textContent = msg;
+    el.style.color = ok === true ? 'var(--accent)' : ok === false ? 'var(--red)' : 'var(--muted)';
+  }
+
+  function loadAuthSettings() {
+    fetch(BASE_PATH + '/api/settings/auth')
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(d => {
+        const tog = document.getElementById('auth-enabled-toggle');
+        const usr = document.getElementById('auth-username');
+        const logoutForm = document.getElementById('logout-form');
+        if (tog) tog.checked = !!d.auth_enabled;
+        if (usr) usr.value = d.auth_username || '';
+        if (logoutForm) logoutForm.style.display = d.auth_enabled ? '' : 'none';
+      })
+      .catch(() => {});
+  }
+
+  function saveAuthEnabled(enabled) {
+    const username = document.getElementById('auth-username')?.value.trim() || '';
+    const password = document.getElementById('auth-password')?.value || '';
+    const payload = {auth_enabled: enabled};
+    if (username) payload.auth_username = username;
+    if (password) payload.auth_password = password;
+    _authStatus('Saving...', null);
+    fetch(BASE_PATH + '/api/settings/auth', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || `HTTP ${r.status}`); }))
+      .then(() => {
+        _authStatus(enabled ? 'Authentication enabled.' : 'Authentication disabled.', true);
+        const lf = document.getElementById('logout-form');
+        if (lf) lf.style.display = enabled ? '' : 'none';
+      })
+      .catch(e => {
+        _authStatus(String(e.message || e), false);
+        const tog = document.getElementById('auth-enabled-toggle');
+        if (tog) tog.checked = !enabled;
+      });
+  }
+
+  function saveAuthCredentials() {
+    const username = document.getElementById('auth-username')?.value.trim() || '';
+    const password = document.getElementById('auth-password')?.value || '';
+    if (!username && !password) { _authStatus('Provide a username and/or password.', false); return; }
+    _authStatus('Saving...', null);
+    fetch(BASE_PATH + '/api/settings/auth', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({auth_username: username, auth_password: password})
+    }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || `HTTP ${r.status}`); }))
+      .then(() => {
+        _authStatus('Credentials saved.', true);
+        const pwEl = document.getElementById('auth-password');
+        if (pwEl) pwEl.value = '';
+      })
+      .catch(e => _authStatus(String(e.message || e), false));
+  }
+
   function saveDistanceUnit(unit) {
     unit = unit === 'mi' ? 'mi' : 'km';
     Object.assign(_appSettings, {distance_unit: unit});
@@ -7939,6 +8002,7 @@ if (targetEl) {
       fetch(BASE_PATH + '/api/settings/app').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(cfg => {
         applyAppSettings(cfg);
       }).catch(e => console.error('settings/app fetch failed:', e));
+      loadAuthSettings();
     }
   }
 

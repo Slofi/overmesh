@@ -16,16 +16,57 @@ def _load_app_version():
 
 __version__ = _load_app_version()
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 from pubsub import pub
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
+from auth import check_credentials, is_auth_enabled, load_secret_key
+from config import CONFIG, DATA_DIR, save_config, _valid_node_id
+
 app = Flask(__name__)
+app.secret_key = load_secret_key(DATA_DIR)
+
+# ---------------------------------------------------------------------------
+# Authentication gate (optional, off by default)
+# ---------------------------------------------------------------------------
+
+@app.before_request
+def _auth_gate():
+    path = request.path
+    if path == "/login" or path == "/logout" or path.startswith("/static"):
+        return
+    if not is_auth_enabled():
+        return
+    if session.get("authenticated"):
+        return
+    if request.method in ("GET", "HEAD") and not path.startswith("/api/") and not path.startswith("/sse"):
+        return redirect(url_for("login"))
+    return jsonify({"error": "Unauthorized"}), 401
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    error = None
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        if check_credentials(username, password):
+            session["authenticated"] = True
+            session.permanent = False
+            return redirect(url_for("index"))
+        error = "Invalid username or password."
+    return render_template("login.html", error=error)
+
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
 
 from bot import motd_scheduler_loop
-from config import CONFIG, save_config, _valid_node_id
 from db import init_prefs_db, load_notes, load_waypoints
 from gps import _gps_start, gps_port_conflict, gps_watchdog_loop
 import sense as _sense_mod

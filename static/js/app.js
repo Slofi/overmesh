@@ -14197,7 +14197,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
         content.style.display = '';
         const importEl = document.getElementById('st-mt-import');
-        if (importEl) importEl.style.display = '';
+        if (importEl) importEl.style.display = (localStorage.getItem('settingsTab') === 'mt' || !localStorage.getItem('settingsTab')) ? '' : 'none';
         ['owner','device','lora','channels','position','power','display','telemetry','mqtt','bluetooth','network'].forEach(k => {
           const el = document.getElementById(`node-cfg-${k}-status`);
           if (el) el.textContent = '';

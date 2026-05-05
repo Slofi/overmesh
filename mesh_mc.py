@@ -10,6 +10,7 @@ import atexit
 import copy
 import concurrent.futures
 import datetime
+import hashlib
 import json
 import logging
 import os
@@ -23,11 +24,27 @@ from meshcore.packets import BinaryReqType
 from config import CONFIG, CONFIG_LOCK, DATA_DIR, save_config
 from cross import maybe_forward_mc_message
 from bridge import publish_inbound_message
-from db import log_position
+from db import log_position, save_mc_message
 from helpers import push_to_sse
 from state import mc_connections, mc_connections_lock
 
 log = logging.getLogger(__name__)
+
+
+def _mc_message_id(msg):
+    parts = [
+        msg.get("radio_id", ""),
+        msg.get("subtype", ""),
+        msg.get("channel", 0),
+        msg.get("from_id", ""),
+        msg.get("to_id", ""),
+        msg.get("text", ""),
+        msg.get("ts", 0),
+        msg.get("path", ""),
+        msg.get("path_len", ""),
+    ]
+    digest = hashlib.sha1("|".join(str(p) for p in parts).encode("utf-8")).hexdigest()[:20]
+    return f"mc-{digest}"
 
 
 def _mc_bg_task(coro, label=""):
@@ -1104,6 +1121,8 @@ def _subscribe_mc_events(mc, config_id, name):
                 "rx_rssi":    msg.get("rssi", (rx or {}).get("rssi")),
                 "rx_snr":     msg.get("snr", (rx or {}).get("snr")),
             }
+            sse_msg["id"] = _mc_message_id(sse_msg)
+            save_mc_message(sse_msg)
             push_to_sse(sse_msg)
             publish_inbound_message(sse_msg)
             log.info(f"[MC:{name}] Channel msg from {msg.get('pubkey_pre','?')}: {msg.get('text','')[:60]}")
@@ -1148,6 +1167,8 @@ def _subscribe_mc_events(mc, config_id, name):
                 "rx_rssi":    msg.get("rssi", (rx or {}).get("rssi")),
                 "rx_snr":     msg.get("snr", (rx or {}).get("snr")),
             }
+            sse_msg["id"] = _mc_message_id(sse_msg)
+            save_mc_message(sse_msg)
             push_to_sse(sse_msg)
             publish_inbound_message(sse_msg)
             log.info(f"[MC:{name}] DM from {msg.get('pubkey_prefix','?')}: {msg.get('text','')[:60]}"

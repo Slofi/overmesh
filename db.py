@@ -1,12 +1,14 @@
 import json
+import hashlib
 import logging
 import math
+import os
 import sqlite3
 import time
 from contextlib import contextmanager
 from datetime import datetime
 
-from config import PREFS_DB_PATH
+from config import DATA_DIR, PREFS_DB_PATH
 from state import connections, connections_lock, waypoints_cache, waypoints_lock, notes_cache, notes_lock
 
 log = logging.getLogger(__name__)
@@ -35,6 +37,29 @@ def get_msgs_db(radio_id):
         db_path = connections.get(radio_id, {}).get("msgs_db")
     if not db_path:
         raise RuntimeError(f"get_msgs_db: msgs_db not yet initialized for radio_id={radio_id!r}")
+    conn = sqlite3.connect(db_path)
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _safe_radio_id(radio_id):
+    return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(radio_id or "unknown"))
+
+
+def mc_msgs_db_path(radio_id):
+    return os.path.join(DATA_DIR, f"overmesh_mc_msgs_{_safe_radio_id(radio_id)}.db")
+
+
+@contextmanager
+def get_mc_msgs_db(radio_id):
+    db_path = mc_msgs_db_path(radio_id)
+    init_mc_msgs_db(db_path)
     conn = sqlite3.connect(db_path)
     try:
         yield conn
@@ -255,6 +280,45 @@ def init_msgs_db(db_path):
                 c.execute(f"ALTER TABLE messages ADD COLUMN {col} INTEGER DEFAULT NULL")
             except sqlite3.OperationalError:
                 pass
+        c.execute("CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages (ts DESC)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages (channel, is_dm, ts DESC)")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def init_mc_msgs_db(db_path):
+    conn = sqlite3.connect(db_path)
+    try:
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS messages (
+            id              TEXT PRIMARY KEY,
+            radio_id        TEXT,
+            radio_name      TEXT,
+            subtype         TEXT,
+            channel         INTEGER DEFAULT 0,
+            from_id         TEXT,
+            from_name       TEXT,
+            to_id           TEXT,
+            to_name         TEXT,
+            text            TEXT,
+            ts              INTEGER,
+            sent            INTEGER DEFAULT 0,
+            status          TEXT DEFAULT 'delivered',
+            route_type      TEXT,
+            path            TEXT,
+            path_len        INTEGER,
+            path_hash_mode  INTEGER,
+            path_hash_size  INTEGER,
+            rx_rssi         REAL,
+            rx_snr          REAL,
+            dedupe_key      TEXT UNIQUE
+        )''')
+        c.execute("CREATE INDEX IF NOT EXISTS idx_mc_messages_ts ON messages (ts DESC)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_mc_messages_channel ON messages (channel, subtype, ts DESC)")
         conn.commit()
     except Exception:
         conn.rollback()
@@ -642,6 +706,98 @@ def delete_channel_messages(radio_id, channel):
         removed = int(cur.fetchone()[0] or 0)
         cur.execute(
             "DELETE FROM messages WHERE channel=? AND (is_dm IS NULL OR is_dm=0)",
+            (int(channel),),
+        )
+    return removed
+
+
+def _mc_message_dedupe_key(msg):
+    explicit = msg.get("dedupe_key") or msg.get("id")
+    if explicit:
+        return str(explicit)
+    parts = [
+        msg.get("radio_id", ""),
+        msg.get("subtype", ""),
+        msg.get("channel", 0),
+        msg.get("from_id", ""),
+        msg.get("to_id", ""),
+        msg.get("text", ""),
+        msg.get("ts", 0),
+        msg.get("path", ""),
+        msg.get("path_len", ""),
+    ]
+    return "|".join(str(p) for p in parts)
+
+
+def save_mc_message(msg):
+    radio_id = msg.get("radio_id")
+    if not radio_id:
+        return
+    msg_id = msg.get("id") or "mc-" + hashlib.sha1(_mc_message_dedupe_key(msg).encode("utf-8")).hexdigest()[:20]
+    dedupe_key = _mc_message_dedupe_key({**msg, "id": msg_id})
+    with get_mc_msgs_db(radio_id) as conn:
+        conn.execute('''
+            INSERT OR IGNORE INTO messages
+                (id, radio_id, radio_name, subtype, channel, from_id, from_name, to_id, to_name,
+                 text, ts, sent, status, route_type, path, path_len, path_hash_mode, path_hash_size,
+                 rx_rssi, rx_snr, dedupe_key)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            msg_id,
+            radio_id,
+            msg.get("radio_name"),
+            msg.get("subtype", "channel"),
+            msg.get("channel", 0),
+            msg.get("from_id"),
+            msg.get("from_name"),
+            msg.get("to_id"),
+            msg.get("to_name"),
+            msg.get("text", ""),
+            msg.get("ts", int(time.time())),
+            1 if msg.get("sent") else 0,
+            msg.get("status", "delivered"),
+            msg.get("route_type"),
+            msg.get("path"),
+            msg.get("path_len"),
+            msg.get("path_hash_mode"),
+            msg.get("path_hash_size"),
+            msg.get("rx_rssi"),
+            msg.get("rx_snr"),
+            dedupe_key,
+        ))
+        conn.execute('''
+            DELETE FROM messages WHERE id NOT IN (
+                SELECT id FROM messages ORDER BY ts DESC LIMIT 2000
+            )
+        ''')
+
+
+def load_mc_messages(radio_id, limit=500):
+    with get_mc_msgs_db(radio_id) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = [dict(r) for r in conn.execute("""
+            SELECT * FROM (
+                SELECT * FROM messages ORDER BY ts DESC LIMIT ?
+            )
+            ORDER BY ts ASC
+        """, (int(limit),)).fetchall()]
+    for row in rows:
+        row["type"] = "mc_message"
+        row["network"] = "mc"
+        row["sent"] = bool(row.get("sent"))
+    return rows
+
+
+def delete_mc_channel_messages(radio_id, channel):
+    with get_mc_msgs_db(radio_id) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) FROM messages WHERE channel=? AND subtype!='dm'",
+            (int(channel),),
+        )
+        removed = int(cur.fetchone()[0] or 0)
+        cur.execute(
+            "DELETE FROM messages WHERE channel=? AND subtype!='dm'",
             (int(channel),),
         )
     return removed

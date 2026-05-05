@@ -2,6 +2,7 @@
 MeshCore API routes.
 """
 import io
+import hashlib
 import os
 import threading
 import time
@@ -26,7 +27,13 @@ from mesh_mc import (send_chan_msg, send_dm, send_advert, refresh_contacts,
                      get_mc_contact_archive,
                      set_contact_path, remote_repeater_read,
                      remote_repeater_command)
-from db import get_mc_ignored, set_mc_ignored, delete_channel_messages
+from db import (
+    delete_mc_channel_messages,
+    get_mc_ignored,
+    load_mc_messages,
+    save_mc_message,
+    set_mc_ignored,
+)
 from state import mc_connections, mc_connections_lock
 
 # Per-radio scan state: radio_id → timer thread
@@ -399,6 +406,37 @@ def _mc_channel_msg_limit(radio_id):
     return max(0, MC_MAX_DM_MSG_BYTES - name_bytes - MC_CHANNEL_NAME_OVERHEAD_BYTES - MC_CHANNEL_SCOPE_HEADROOM_BYTES)
 
 
+def _mc_sent_message_id(msg):
+    parts = [
+        msg.get("radio_id", ""),
+        msg.get("subtype", ""),
+        msg.get("channel", 0),
+        msg.get("from_id", ""),
+        msg.get("to_id", ""),
+        msg.get("text", ""),
+        msg.get("ts", 0),
+        time.time_ns(),
+    ]
+    return "mc-" + hashlib.sha1("|".join(str(p) for p in parts).encode("utf-8")).hexdigest()[:20]
+
+
+@bp.route("/api/mc/<radio_id>/messages")
+def api_mc_messages(radio_id):
+    try:
+        limit = int(request.args.get("limit", 500))
+    except (TypeError, ValueError):
+        limit = 500
+    limit = max(1, min(limit, 2000))
+    return jsonify({"messages": load_mc_messages(radio_id, limit=limit)})
+
+
+@bp.route("/api/mc/<radio_id>/messages/channel/<int:idx>", methods=["DELETE"])
+def api_mc_delete_message_channel(radio_id, idx):
+    if not (0 <= idx <= 15):
+        return jsonify({"error": "channel index must be 0–15"}), 400
+    return jsonify({"ok": True, "removed_db": delete_mc_channel_messages(radio_id, idx)})
+
+
 @bp.route("/api/mc/<radio_id>/send_chan", methods=["POST"])
 def api_mc_send_chan(radio_id):
     """Send a channel message."""
@@ -426,16 +464,25 @@ def api_mc_send_chan(radio_id):
     except Exception as e:
         log.warning(f"[MC] send_chan failed: {e}")
         return jsonify({"error": str(e)}), 500
-    threading.Thread(target=maybe_forward_mc_message, args=({
+    msg = {
+        "type": "mc_message",
         "radio_id": radio_id,
+        "radio_name": next((n.get("name") for n in CONFIG.get("mc_nodes", []) if n.get("id") == radio_id), radio_id),
+        "network": "mc",
         "subtype": "channel",
         "channel": chan,
-        "from_id": "self",
-        "from_name": next((n.get("name") for n in CONFIG.get("mc_nodes", []) if n.get("id") == radio_id), radio_id),
+        "from_id": "me",
+        "from_name": "Me",
         "text": text,
-    },), daemon=True).start()
+        "ts": int(time.time()),
+        "sent": True,
+        "status": "delivered",
+    }
+    msg["id"] = _mc_sent_message_id(msg)
+    save_mc_message(msg)
+    threading.Thread(target=maybe_forward_mc_message, args=(dict(msg),), daemon=True).start()
 
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "message": msg})
 
 
 @bp.route("/api/mc/<radio_id>/send_dm", methods=["POST"])
@@ -464,7 +511,22 @@ def api_mc_send_dm(radio_id):
         log.warning(f"[MC] send_dm failed: {e}")
         return jsonify({"error": str(e)}), 500
 
-    return jsonify({"ok": True})
+    msg = {
+        "type": "mc_message",
+        "radio_id": radio_id,
+        "radio_name": next((n.get("name") for n in CONFIG.get("mc_nodes", []) if n.get("id") == radio_id), radio_id),
+        "network": "mc",
+        "subtype": "dm",
+        "from_id": "me",
+        "to_id": target,
+        "text": text,
+        "ts": int(time.time()),
+        "sent": True,
+        "status": "delivered",
+    }
+    msg["id"] = _mc_sent_message_id(msg)
+    save_mc_message(msg)
+    return jsonify({"ok": True, "message": msg})
 
 
 @bp.route("/api/mc/<radio_id>/statusreq/<node_id>", methods=["POST"])
@@ -900,8 +962,8 @@ def api_mc_delete_channel(radio_id, idx):
         return jsonify({"error": str(e)}), 503
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-    delete_channel_messages(radio_id, idx)
-    return jsonify({"ok": True})
+    removed = delete_mc_channel_messages(radio_id, idx)
+    return jsonify({"ok": True, "removed_db": removed})
 
 
 # ---------------------------------------------------------------------------

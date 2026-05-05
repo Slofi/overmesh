@@ -8376,6 +8376,49 @@ if (targetEl) {
   function _saveMcMessages() {
     try { localStorage.setItem('mcMessages', JSON.stringify(mcMessages.slice(-300))); } catch(e) {}
   }
+  function _mcMessageKey(m) {
+    return [
+      m?.id || '',
+      m?.radio_id || '',
+      m?.subtype || '',
+      m?.channel ?? '',
+      m?.from_id || '',
+      m?.to_id || '',
+      m?.text || '',
+      m?.ts || '',
+    ].join('|');
+  }
+  function _mcMergeMessages(incoming, opts = {}) {
+    const before = mcMessages.length;
+    const seen = new Set(mcMessages.map(_mcMessageKey));
+    (incoming || []).forEach(raw => {
+      if (!raw) return;
+      const msg = { ...raw, type: raw.type || 'mc_message', network: raw.network || 'mc' };
+      const key = _mcMessageKey(msg);
+      if (seen.has(key)) return;
+      seen.add(key);
+      mcMessages.push(msg);
+    });
+    mcMessages.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    if (mcMessages.length > 500) mcMessages.splice(0, mcMessages.length - 500);
+    if (mcMessages.length !== before) {
+      _mcRebuildMessageTabs();
+      _saveMcMessages();
+      if (!opts.silent && currentTab === 'chat' && chatNetwork === 'mc') renderMcMessages();
+    }
+    return mcMessages.length - before;
+  }
+  function _loadMcMessageArchive(radioId) {
+    if (!radioId) return;
+    fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/messages?limit=500`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (!d) return;
+        _mcMergeMessages(d.messages || [], { silent: true });
+        if (currentTab === 'chat' && chatNetwork === 'mc') renderMcMessages();
+      })
+      .catch(e => console.warn('MC message archive load failed:', e));
+  }
   function _mcLocalMsgId() {
     return `mc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }
@@ -8542,7 +8585,11 @@ if (targetEl) {
         });
         const data = await r.json().catch(() => ({}));
         if (!r.ok || data.error) throw new Error(data.error || r.status);
-        _setMcMsgStatus(msgId, 'delivered');
+        const localMsg = mcMessages.find(x => x.id === msgId);
+        if (localMsg && data.message) Object.assign(localMsg, data.message, { status: 'delivered' });
+        else _setMcMsgStatus(msgId, 'delivered');
+        _saveMcMessages();
+        renderMcMessages();
       } catch (e) {
         _setMcMsgStatus(msgId, 'failed');
         throw e;
@@ -8583,15 +8630,20 @@ if (targetEl) {
   const mcDmContacts      = {};             // pubkey_pre → display name
   let closedMcDmTabs = (() => { try { return new Set(JSON.parse(localStorage.getItem('closedMcDmTabs') || '[]')); } catch(e) { return new Set(); } })();
   function saveMcClosedDmTabs() { localStorage.setItem('closedMcDmTabs', JSON.stringify([...closedMcDmTabs])); }
+  function _mcRebuildMessageTabs() {
+    mcMessages.forEach(data => {
+      if (data.subtype === 'channel') {
+        const idx = data.channel ?? 0;
+        if (!mcKnownChannels[idx]) mcKnownChannels[idx] = `CH${idx}`;
+      } else if (data.subtype === 'dm' && !data.sent && data.from_id) {
+        if (!mcDmContacts[data.from_id] && !closedMcDmTabs.has(data.from_id)) mcDmContacts[data.from_id] = data.from_id;
+      } else if (data.subtype === 'dm' && data.sent && data.to_id) {
+        if (!mcDmContacts[data.to_id] && !closedMcDmTabs.has(data.to_id)) mcDmContacts[data.to_id] = data.to_name || data.to_id;
+      }
+    });
+  }
   // Rebuild tab state from saved messages so tabs reappear after refresh
-  mcMessages.forEach(data => {
-    if (data.subtype === 'channel') {
-      const idx = data.channel ?? 0;
-      if (!mcKnownChannels[idx]) mcKnownChannels[idx] = `CH${idx}`;
-    } else if (data.subtype === 'dm' && !data.sent && data.from_id) {
-      if (!mcDmContacts[data.from_id] && !closedMcDmTabs.has(data.from_id)) mcDmContacts[data.from_id] = data.from_id;
-    }
-  });
+  _mcRebuildMessageTabs();
 
   // MC Sense contact selection
   let _mcSenseSelectedId  = null;
@@ -8798,6 +8850,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       else selectedRadioIds.delete(data.radio_id);
       saveSelectedRadioIds();
       if (data.status === 'connected') {
+        _loadMcMessageArchive(data.radio_id);
         // Re-fetch full status to get radio params (freq/bw/sf/cr/tx_power)
         // that are only available after a successful send_appstart() on connect
         fetch(BASE_PATH + '/api/mc/status')
@@ -9004,9 +9057,8 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         snr: data.rx_snr,
         rssi: data.rx_rssi,
       });
-      mcMessages.push(data);
-      if (mcMessages.length > 500) mcMessages.splice(0, mcMessages.length - 500);
-      _saveMcMessages();
+      const addedMcMessage = _mcMergeMessages([data], { silent: true });
+      if (!addedMcMessage) return;
       // Backfill contact name from embedded "Name: message" format if still showing hex fallback
       if (data.from_id && data.radio_id && data.text) {
         const c = (mcContacts[data.radio_id] || {})[data.from_id];
@@ -10590,7 +10642,10 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const lastIdx = pathResult.points.length - 1;
     const hops = (pathResult.hops || []).map(h => ({ ...h, pointIndex: lastIdx - h.pointIndex }));
     const segmentSnrs = Array.isArray(pathResult.segmentSnrs) ? [...pathResult.segmentSnrs].reverse() : pathResult.segmentSnrs;
-    return { ...pathResult, points: [...pathResult.points].reverse(), hops, segmentSnrs };
+    const warnPointIndex = pathResult.warnPointIndex != null
+      ? lastIdx - pathResult.warnPointIndex
+      : (pathResult.endpointUnknown ? 0 : pathResult.warnPointIndex);
+    return { ...pathResult, points: [...pathResult.points].reverse(), hops, segmentSnrs, warnPointIndex };
   }
 
   function _mcHopTooltipHtml(hop) {
@@ -10810,6 +10865,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
             points,
             partial: true,
             endpointUnknown: true,
+            warnPointIndex: points.length - 1,
             hops,
             unresolved,
             inferredPathHashSize: hashSize,
@@ -11059,7 +11115,9 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       }
       const warnText = _mcPathWarningText(pathResult, kind);
       if (warnText && points.length) {
-        const warnIdx = points.length - 1;
+        const warnIdx = Number.isInteger(pathResult.warnPointIndex)
+          ? pathResult.warnPointIndex
+          : points.length - 1;
         const [warnLat, warnLon] = points[Math.max(0, Math.min(warnIdx, points.length - 1))];
         const warn = L.marker([warnLat, warnLon], {
           icon: L.divIcon({
@@ -11865,6 +11923,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       .then(data => {
         (data.mc_nodes || []).forEach(n => {
           mcLastStatus[n.id] = n;
+          _loadMcMessageArchive(n.id);
           const shouldLoadContacts = n.status === 'connected' || (n.stored_contacts || n.archived_contacts || 0) > 0;
           if (shouldLoadContacts) {
             fetch(BASE_PATH + `/api/mc/${encodeURIComponent(n.id)}/contacts`)
@@ -12143,7 +12202,11 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok || data.error) throw new Error(data.error || r.status);
-      _setMcMsgStatus(msgId, 'delivered');
+      const localMsg = mcMessages.find(x => x.id === msgId);
+      if (localMsg && data.message) Object.assign(localMsg, data.message, { status: 'delivered' });
+      else _setMcMsgStatus(msgId, 'delivered');
+      _saveMcMessages();
+      renderMcMessages();
       if (kind === 'channel') {
         const ts = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
         const chanName = mcKnownChannels[opts.channel] || (opts.channel === 0 ? 'Public' : `CH${opts.channel}`);
@@ -13323,7 +13386,14 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
             statusEl.style.color = d.error ? 'var(--red)' : 'var(--accent)';
             setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 4000);
           }
-          if (!d.error) { btnFeedback(btn, '✓ Removed'); closeMcChEdit(); loadMcChannelsList(radioId); }
+          if (!d.error) {
+            mcMessages = mcMessages.filter(m => !(m.radio_id === radioId && parseInt(m.channel ?? 0) === idx && m.subtype !== 'dm'));
+            _saveMcMessages();
+            if (activeMcRadioId === radioId) renderMcMessages();
+            btnFeedback(btn, '✓ Removed');
+            closeMcChEdit();
+            loadMcChannelsList(radioId);
+          }
         }).catch(e => { if (statusEl) { statusEl.textContent = `✗ ${escHtml(String(e))}`; statusEl.style.color = 'var(--red)'; } });
     });
   }
@@ -13350,6 +13420,14 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       if (activeMcRadioId === radioId) renderMcMessages();
       updateUnreadDots();
       if (statusEl) statusEl.innerHTML = `<span style="color:var(--accent)">Deleted ${removed} saved message${removed === 1 ? '' : 's'}.</span>`;
+      fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/messages/channel/${idx}`, { method: 'DELETE' })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => {
+          if (d?.removed_db != null && statusEl) {
+            statusEl.innerHTML = `<span style="color:var(--accent)">Deleted ${removed} browser message${removed === 1 ? '' : 's'} and ${d.removed_db} local archive message${d.removed_db === 1 ? '' : 's'}.</span>`;
+          }
+        })
+        .catch(e => console.warn('MC archive clear failed:', e));
       btnFeedback(btn, '✓ Cleared');
       setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 4000);
       document.getElementById('confirm-ok').textContent = 'OK';
@@ -15505,4 +15583,3 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     if (e.target.classList.contains('emoji-btn')) return;
     picker.style.display = 'none';
   }, true);
-

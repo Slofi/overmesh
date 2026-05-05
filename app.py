@@ -125,7 +125,7 @@ def inject_base_path():
 
 @app.route("/")
 def index():
-    return render_template("index.html", version=__version__)
+    return render_template("index.html", version=__version__, auth_enabled=is_auth_enabled())
 
 
 @app.route("/api/shutdown", methods=["POST"])

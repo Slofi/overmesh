@@ -184,6 +184,7 @@
     <div id="power-menu">
       <button onclick="doRestart()" title="Restart the OverMesh server process">&#x21BA; Restart</button>
       <button class="pm-danger" onclick="doShutdown()" title="Shut down the OverMesh server">&#x23FB; Shutdown</button>
+      {% if auth_enabled %}<button onclick="document.getElementById('logout-form').submit()" title="Log out and return to login screen">&#x23CF; Log out</button>{% endif %}
     </div>
   </div>
   <div id="clock">

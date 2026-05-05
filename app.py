@@ -57,7 +57,8 @@ def login():
             session.permanent = False
             return redirect(url_for("index"))
         error = "Invalid username or password."
-    return render_template("login.html", error=error)
+    accent = CONFIG.get("app", {}).get("accent_color", "#4ade80")
+    return render_template("login.html", error=error, accent_color=accent)
 
 
 @app.route("/logout", methods=["POST"])

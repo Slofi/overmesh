@@ -4,110 +4,227 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OverMesh — Login</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
   <link rel="icon" type="image/png" href="/static/favicon.png?v=2">
   <style>
+    :root {
+      --accent: {{ accent_color }};
+      --bg1: #0d0d0f;
+      --bg2: #17181c;
+      --bg3: #1e2025;
+      --border: #2a2b30;
+      --text: #e8e9ec;
+      --muted: #6b6e7a;
+      --red: #ef4444;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
     body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg1);
+      color: var(--text);
+      min-height: 100vh;
       display: flex;
       align-items: center;
       justify-content: center;
-      min-height: 100vh;
-      margin: 0;
-      background: var(--bg1);
+      overflow: hidden;
+      position: relative;
     }
+
+    /* ── Scatter background ─────────────────────────────── */
+    .scatter {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      overflow: hidden;
+      z-index: 0;
+    }
+
+    .s-logo {
+      position: absolute;
+      background: var(--accent);
+      -webkit-mask-image: url('/static/Overmesh_logo.png');
+      mask-image: url('/static/Overmesh_logo.png');
+      -webkit-mask-size: contain;
+      mask-size: contain;
+      -webkit-mask-repeat: no-repeat;
+      mask-repeat: no-repeat;
+      aspect-ratio: 848 / 202;
+    }
+
+    .s-text {
+      position: absolute;
+      color: var(--accent);
+      font-weight: 800;
+      white-space: nowrap;
+      letter-spacing: 0.04em;
+      line-height: 1;
+      user-select: none;
+    }
+
+    /* ── Login card ─────────────────────────────────────── */
+    .login-wrap {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      max-width: 340px;
+      padding: 16px;
+    }
+
     .login-box {
       background: var(--bg2);
       border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 32px 28px;
-      width: 100%;
-      max-width: 340px;
-      box-sizing: border-box;
+      border-radius: 12px;
+      padding: 36px 28px 28px;
     }
+
     .login-logo {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 8px;
+    }
+
+    .login-logo-img {
+      height: 22px;
+      background: var(--accent);
+      -webkit-mask-image: url('/static/Overmesh_logo.png');
+      mask-image: url('/static/Overmesh_logo.png');
+      -webkit-mask-size: contain;
+      mask-size: contain;
+      -webkit-mask-repeat: no-repeat;
+      mask-repeat: no-repeat;
+      aspect-ratio: 848 / 202;
+    }
+
+    .login-sub {
       text-align: center;
-      margin-bottom: 24px;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 26px;
     }
-    .login-logo img {
-      height: 48px;
-      opacity: 0.9;
-    }
-    .login-title {
-      text-align: center;
-      font-size: 18px;
-      font-weight: 600;
-      color: var(--text);
-      margin-bottom: 20px;
-    }
+
     .login-field {
       margin-bottom: 14px;
     }
+
     .login-field label {
       display: block;
-      font-size: 12px;
+      font-size: 11px;
       color: var(--muted);
-      margin-bottom: 4px;
+      margin-bottom: 5px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
+
     .login-field input {
       width: 100%;
-      box-sizing: border-box;
       background: var(--bg3);
       border: 1px solid var(--border);
-      border-radius: 5px;
+      border-radius: 6px;
       color: var(--text);
       font-size: 14px;
-      padding: 8px 10px;
+      padding: 9px 11px;
       outline: none;
+      transition: border-color 0.15s;
     }
+
     .login-field input:focus {
       border-color: var(--accent);
     }
+
     .login-btn {
       width: 100%;
-      margin-top: 6px;
-      padding: 9px;
+      margin-top: 8px;
+      padding: 10px;
       background: var(--accent);
       color: #000;
       border: none;
-      border-radius: 5px;
+      border-radius: 6px;
       font-size: 14px;
-      font-weight: 600;
+      font-weight: 700;
       cursor: pointer;
+      letter-spacing: 0.02em;
+      transition: opacity 0.15s;
     }
-    .login-btn:hover {
-      opacity: 0.88;
-    }
+
+    .login-btn:hover { opacity: 0.85; }
+    .login-btn:active { opacity: 0.7; }
+
     .login-error {
-      background: rgba(239,68,68,0.15);
-      border: 1px solid rgba(239,68,68,0.4);
+      background: rgba(239,68,68,0.12);
+      border: 1px solid rgba(239,68,68,0.35);
       color: #f87171;
-      border-radius: 5px;
-      padding: 8px 10px;
+      border-radius: 6px;
+      padding: 9px 11px;
       font-size: 13px;
       margin-bottom: 14px;
     }
   </style>
 </head>
 <body>
-  <div class="login-box">
-    <div class="login-logo">
-      <img src="/static/overmesh.png" alt="OverMesh" onerror="this.style.display='none'">
+
+  <div class="scatter" id="scatter"></div>
+
+  <div class="login-wrap">
+    <div class="login-box">
+      <div class="login-logo">
+        <div class="login-logo-img"></div>
+      </div>
+      <div class="login-sub">mesh network dashboard</div>
+      {% if error %}
+      <div class="login-error">{{ error }}</div>
+      {% endif %}
+      <form method="POST" action="{{ base_path }}/login">
+        <div class="login-field">
+          <label for="username">Username</label>
+          <input type="text" id="username" name="username" autocomplete="username" autofocus required>
+        </div>
+        <div class="login-field">
+          <label for="password">Password</label>
+          <input type="password" id="password" name="password" autocomplete="current-password" required>
+        </div>
+        <button type="submit" class="login-btn">Sign in</button>
+      </form>
     </div>
-    <div class="login-title">OverMesh</div>
-    {% if error %}
-    <div class="login-error">{{ error }}</div>
-    {% endif %}
-    <form method="POST" action="{{ url_for('login') }}">
-      <div class="login-field">
-        <label for="username">Username</label>
-        <input type="text" id="username" name="username" autocomplete="username" autofocus required>
-      </div>
-      <div class="login-field">
-        <label for="password">Password</label>
-        <input type="password" id="password" name="password" autocomplete="current-password" required>
-      </div>
-      <button type="submit" class="login-btn">Sign in</button>
-    </form>
   </div>
+
+  <script>
+    (function () {
+      var items = [
+        { type: 'logo', top:  3, left: -4,  rot: -18, w: 260, op: 0.07 },
+        { type: 'text', top: 12, left: 58,  rot:  22, fs: 52, op: 0.06 },
+        { type: 'logo', top: 28, left: -6,  rot:  12, w: 180, op: 0.05 },
+        { type: 'text', top: 45, left: 62,  rot: -28, fs: 38, op: 0.07 },
+        { type: 'logo', top: 58, left: 30,  rot:  35, w: 220, op: 0.06 },
+        { type: 'text', top: 68, left: -3,  rot: -14, fs: 46, op: 0.05 },
+        { type: 'logo', top: 80, left: 55,  rot: -22, w: 200, op: 0.07 },
+        { type: 'text', top: 88, left: 20,  rot:  18, fs: 34, op: 0.06 },
+        { type: 'logo', top: -4, left: 40,  rot:  28, w: 160, op: 0.05 },
+        { type: 'text', top: 35, left: 10,  rot: -35, fs: 44, op: 0.06 },
+      ];
+
+      var frag = document.createDocumentFragment();
+      items.forEach(function (item) {
+        var el = document.createElement('div');
+        el.style.position = 'absolute';
+        el.style.top = item.top + '%';
+        el.style.left = item.left + '%';
+        el.style.transform = 'rotate(' + item.rot + 'deg)';
+        el.style.opacity = item.op;
+
+        if (item.type === 'logo') {
+          el.className = 's-logo';
+          el.style.width = item.w + 'px';
+        } else {
+          el.className = 's-text';
+          el.style.fontSize = item.fs + 'px';
+          el.textContent = 'OverMesh';
+        }
+        frag.appendChild(el);
+      });
+      document.getElementById('scatter').appendChild(frag);
+    })();
+  </script>
+
 </body>
 </html>

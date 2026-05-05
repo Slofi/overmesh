@@ -1,6 +1,8 @@
 """
 Meshtastic interface management — connect, receive, reconnect, helpers.
 """
+import gc
+import glob
 import json
 import logging
 import os
@@ -351,6 +353,29 @@ def find_port_by_usb_serial(usb_serial):
 # Connection management
 # ---------------------------------------------------------------------------
 
+def _release_port_fds(port):
+    """Close any leaked FDs in this process that point to the given serial port.
+
+    When meshtastic.SerialInterface(port) raises or times out, the partially-
+    constructed object holds an open serial FD. If that object is not yet GC'd,
+    the port stays exclusively locked (EAGAIN) for every subsequent open().
+    Scanning /proc/self/fd is the only reliable way to find and close these leaks.
+    """
+    try:
+        real_port = os.path.realpath(port)
+        for fd_path in glob.glob('/proc/self/fd/*'):
+            try:
+                fd_num = int(os.path.basename(fd_path))
+                link = os.readlink(fd_path)
+                if link == port or link == real_port:
+                    os.close(fd_num)
+                    log.info(f"Released leaked FD {fd_num} → {link}")
+            except (OSError, ValueError):
+                pass
+    except Exception as e:
+        log.debug(f"_release_port_fds({port}): {e}")
+
+
 def connect_node(node_cfg):
     node_id = node_cfg["id"]
     with connections_lock:
@@ -385,10 +410,20 @@ def connect_node(node_cfg):
         else:
             port = node_cfg.get("port", "")
         log.info(f"[{node_id}] Connecting to {port} (serial)...")
+        iface = None
         try:
             iface = meshtastic.serial_interface.SerialInterface(port)
         except Exception as e:
             log.warning(f"[{node_id}] Serial connection failed: {e}")
+            if iface is not None:
+                try:
+                    iface.close()
+                except Exception:
+                    pass
+            # Force-release any leaked FDs left by the partially-constructed
+            # SerialInterface (the constructor may have opened the port before raising).
+            gc.collect()
+            _release_port_fds(port)
             with connections_lock:
                 connections[node_id]["status"] = "disconnected"
             return

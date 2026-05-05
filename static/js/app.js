@@ -453,23 +453,34 @@
   function playNotificationSound(kind) {
     if (!_notificationSoundEnabled(kind)) return;
     if (kind === 'message') {
+      // soft double-ding — clean sine, ascending
       _playNotificationToneSequence([
-        {freq: 1318, dur: 0.09, gain: 0.032, type: 'square', gap: 0.02},
-        {freq: 1760, dur: 0.26, gain: 0.07, type: 'square', gap: 0.03},
+        {freq: 660,  dur: 0.07, gain: 0.030, type: 'sine', gap: 0.02},
+        {freq: 880,  dur: 0.17, gain: 0.050, type: 'sine', gap: 0.03},
       ]);
       return;
     }
     if (kind === 'radio') {
+      // connect: low → high (G4 → C5, perfect fourth ascending)
       _playNotificationToneSequence([
-        {freq: 440, dur: 0.10, gain: 0.04, type: 'triangle', gap: 0.02},
-        {freq: 660, dur: 0.16, gain: 0.05, type: 'triangle', gap: 0.03},
+        {freq: 392, dur: 0.14, gain: 0.040, type: 'triangle', gap: 0.03},
+        {freq: 523, dur: 0.18, gain: 0.050, type: 'triangle', gap: 0.03},
+      ]);
+      return;
+    }
+    if (kind === 'radio_disconnect') {
+      // disconnect: high → low (C5 → G4, same interval descending)
+      _playNotificationToneSequence([
+        {freq: 523, dur: 0.14, gain: 0.040, type: 'triangle', gap: 0.03},
+        {freq: 392, dur: 0.18, gain: 0.035, type: 'triangle', gap: 0.03},
       ]);
       return;
     }
     if (kind === 'node') {
+      // discovery chime — light ascending triangle pair
       _playNotificationToneSequence([
-        {freq: 880, dur: 0.08, gain: 0.026, type: 'triangle', gap: 0.02},
-        {freq: 1174, dur: 0.12, gain: 0.036, type: 'triangle', gap: 0.02},
+        {freq: 784,  dur: 0.06, gain: 0.025, type: 'triangle', gap: 0.025},
+        {freq: 1046, dur: 0.12, gain: 0.040, type: 'triangle', gap: 0.03},
       ]);
     }
   }
@@ -868,6 +879,9 @@
         }
         if (_mtStatusSoundPrimed && data.status === 'connected' && prevStatus !== 'connected') {
           playNotificationSound('radio');
+        }
+        if (_mtStatusSoundPrimed && data.status === 'disconnected' && prevStatus === 'connected') {
+          playNotificationSound('radio_disconnect');
         }
         if (data.status === 'connected') selectedRadioIds.add(data.radio_id);
         else selectedRadioIds.delete(data.radio_id);
@@ -8712,6 +8726,9 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       if (data.status === 'disconnected') delete mcLastStatus[data.radio_id].node_id;
       if (_mcStatusSoundPrimed && data.status === 'connected' && prevStatus !== 'connected') {
         playNotificationSound('radio');
+      }
+      if (_mcStatusSoundPrimed && data.status === 'disconnected' && prevStatus === 'connected') {
+        playNotificationSound('radio_disconnect');
       }
       if (data.status === 'connected') selectedRadioIds.add(data.radio_id);
       else selectedRadioIds.delete(data.radio_id);

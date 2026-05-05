@@ -1,3 +1,4 @@
+import concurrent.futures
 import json
 import queue
 import time
@@ -110,10 +111,16 @@ def api_chat_send():
     if not iface:
         return jsonify({"error": "No radio connected"}), 503
     try:
-        if dest_id:
-            sent = iface.sendText(text, destinationId=dest_id, channelIndex=channel, wantAck=True)
-        else:
-            sent = iface.sendText(text, channelIndex=channel, wantAck=True)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(
+                iface.sendText, text,
+                **({'destinationId': dest_id} if dest_id else {}),
+                channelIndex=channel, wantAck=True
+            )
+            try:
+                sent = fut.result(timeout=8)
+            except concurrent.futures.TimeoutError:
+                return jsonify({"error": "Radio send timed out — node may be unresponsive"}), 504
         pkt_id = sent.id if hasattr(sent, "id") else (sent.get("id") if isinstance(sent, dict) else None)
         # Resolve my own name
         my_name = "You"

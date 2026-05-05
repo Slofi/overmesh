@@ -539,15 +539,15 @@ def get_traceroute_history(limit=20):
 def get_favorites():
     with get_prefs_db() as conn:
         c = conn.cursor()
-        c.execute("SELECT id FROM nodes WHERE is_favorite=1")
-        return {row[0] for row in c.fetchall()}
+        c.execute("SELECT id, COALESCE(radio_id, '') FROM nodes WHERE is_favorite=1")
+        return {(row[0], row[1]) for row in c.fetchall()}
 
 
 def get_ignored():
     with get_prefs_db() as conn:
         c = conn.cursor()
-        c.execute("SELECT id FROM nodes WHERE is_ignored=1")
-        return {row[0] for row in c.fetchall()}
+        c.execute("SELECT id, COALESCE(radio_id, '') FROM nodes WHERE is_ignored=1")
+        return {(row[0], row[1]) for row in c.fetchall()}
 
 
 def get_mc_ignored():
@@ -582,35 +582,15 @@ def get_db_nodes(sort_by="last_seen", sort_dir="desc", fav_first=True, show_igno
         c.execute(f"SELECT * FROM nodes {where} ORDER BY {order}")
         raw_rows = [dict(r) for r in c.fetchall()]
 
+    rows = [dict(row) for row in raw_rows]
     local_by_radio = {}
-    for row in raw_rows:
+    for row in rows:
         if row["is_local"] and row["last_lat"] is not None and row["last_lon"] is not None:
             rid = row.get("radio_id") or ""
             existing = local_by_radio.get(rid)
             if not existing or (row.get("last_seen") or 0) > (existing.get("last_seen") or 0):
                 local_by_radio[rid] = row
 
-    grouped = {}
-    for row in raw_rows:
-        node_id = row["id"]
-        current = grouped.get(node_id)
-        if current is None:
-            grouped[node_id] = dict(row)
-            continue
-        if (row.get("last_seen") or 0) > (current.get("last_seen") or 0):
-            merged = dict(current)
-            merged.update(row)
-            merged["is_favorite"] = 1 if (current.get("is_favorite") or row.get("is_favorite")) else 0
-            merged["is_ignored"] = 1 if (current.get("is_ignored") or row.get("is_ignored")) else 0
-            merged["notes"] = row.get("notes") or current.get("notes") or ""
-            grouped[node_id] = merged
-        else:
-            current["is_favorite"] = 1 if (current.get("is_favorite") or row.get("is_favorite")) else 0
-            current["is_ignored"] = 1 if (current.get("is_ignored") or row.get("is_ignored")) else 0
-            if not current.get("notes") and row.get("notes"):
-                current["notes"] = row.get("notes")
-
-    rows = list(grouped.values())
     for row in rows:
         local = local_by_radio.get(row.get("radio_id") or "")
         if local and row["last_lat"] is not None and row["last_lon"] is not None and not row["is_local"]:

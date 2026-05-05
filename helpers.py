@@ -286,6 +286,8 @@ def get_node_data():
                     except Exception:
                         pass
 
+                fav_key = (node_id_str, node_id)
+                legacy_key = (node_id_str, "")
                 node_entry = {
                     "radio_id":     node_id,    "radio_name":   node_name,
                     "radio_status": status,
@@ -300,8 +302,8 @@ def get_node_data():
                     "hops_away":    node.get("hopsAway", 0),
                     "latitude":     lat,         "longitude": lon,
                     "is_local":     is_local,
-                    "is_favorite":  node_id_str in favorites,
-                    "is_ignored":   node_id_str in ignored,
+                    "is_favorite":  fav_key in favorites or legacy_key in favorites,
+                    "is_ignored":   fav_key in ignored or legacy_key in ignored,
                     "air_util":     metrics.get("airUtilTx"),
                     "ch_util":      metrics.get("channelUtilization"),
                 }
@@ -309,7 +311,7 @@ def get_node_data():
                 if node_id_str:
                     upsert_node(node_entry)
 
-                if node_id_str in ignored:
+                if fav_key in ignored or legacy_key in ignored:
                     continue
 
                 result.append(node_entry)

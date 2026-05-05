@@ -372,27 +372,37 @@ def api_db_radio_nodes_reset(radio_id):
 @bp.route("/api/db/node/<node_id>", methods=["PATCH"])
 def api_db_node_update(node_id):
     data = request.get_json(silent=True) or {}
+    radio_id = data.get("radio_id") or request.args.get("radio_id")
+    where = "id=? AND radio_id=?" if radio_id else "id=?"
+    params = (node_id, radio_id) if radio_id else (node_id,)
     with get_prefs_db() as conn:
         c = conn.cursor()
         if "is_favorite" in data:
-            c.execute("UPDATE nodes SET is_favorite=? WHERE id=?",
-                      (1 if data["is_favorite"] else 0, node_id))
+            c.execute(f"UPDATE nodes SET is_favorite=? WHERE {where}",
+                      (1 if data["is_favorite"] else 0, *params))
         if "is_ignored" in data:
-            c.execute("UPDATE nodes SET is_ignored=? WHERE id=?",
-                      (1 if data["is_ignored"] else 0, node_id))
+            c.execute(f"UPDATE nodes SET is_ignored=? WHERE {where}",
+                      (1 if data["is_ignored"] else 0, *params))
         if "notes" in data:
-            c.execute("UPDATE nodes SET notes=? WHERE id=?", (data["notes"], node_id))
-    return jsonify({"ok": True})
+            c.execute(f"UPDATE nodes SET notes=? WHERE {where}", (data["notes"], *params))
+        updated = c.rowcount if c.rowcount is not None else 0
+    return jsonify({"ok": True, "updated": updated})
 
 
 @bp.route("/api/db/node/<node_id>", methods=["DELETE"])
 def api_db_node_delete(node_id):
+    radio_id = request.args.get("radio_id") or None
     with get_prefs_db() as conn:
-        conn.execute("DELETE FROM nodes WHERE id=?", (node_id,))
+        if radio_id:
+            conn.execute("DELETE FROM nodes WHERE id=? AND radio_id=?", (node_id, radio_id))
+        else:
+            conn.execute("DELETE FROM nodes WHERE id=?", (node_id,))
     radio_errors = []
     with connections_lock:
         items = list(connections.items())
-    for _, state in items:
+    for rid, state in items:
+        if radio_id and rid != radio_id:
+            continue
         iface = state.get("iface")
         if not iface:
             continue

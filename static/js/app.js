@@ -2075,11 +2075,11 @@ if (targetEl) {
   }
 
   // ── Favorites ──────────────────────────────────────────────────────────────
-  function toggleFav(nodeId, currentState) {
-    fetch(BASE_PATH + `/api/db/node/${nodeId}`, {
+  function toggleFav(nodeId, currentState, radioId='') {
+    fetch(BASE_PATH + `/api/db/node/${encodeURIComponent(nodeId)}`, {
       method: 'PATCH',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ is_favorite: !currentState })
+      body: JSON.stringify({ is_favorite: !currentState, radio_id: radioId || null })
     }).then(() => {
       if (currentView === 'live') loadLive();
       else loadHistory();
@@ -2153,11 +2153,11 @@ if (targetEl) {
     loadHistory();
   }
 
-  function ignoreNode(nodeId, currentState) {
-    fetch(BASE_PATH + `/api/db/node/${nodeId}`, {
+  function ignoreNode(nodeId, currentState, radioId='') {
+    fetch(BASE_PATH + `/api/db/node/${encodeURIComponent(nodeId)}`, {
       method: 'PATCH',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ is_ignored: !currentState })
+      body: JSON.stringify({ is_ignored: !currentState, radio_id: radioId || null })
     }).then(() => {
       if (currentView === 'live') loadLive();
       else loadHistory();
@@ -2307,7 +2307,7 @@ if (targetEl) {
     });
     tbody.innerHTML = real.length ? sortedLive(real).map(n => `
       <tr data-id="${n.id}" class="${n.is_favorite ? 'is-favorite' : ''}">
-        <td><span class="star ${n.is_favorite ? 'starred' : ''}" onclick="toggleFav('${jsSafe(n.id)}', ${n.is_favorite})" title="${n.is_favorite ? 'Remove from favourites' : 'Add to favourites'}">&#9733;</span></td>
+        <td><span class="star ${n.is_favorite ? 'starred' : ''}" onclick="toggleFav('${jsSafe(n.id)}', ${n.is_favorite}, '${jsSafe(n.radio_id || '')}')" title="${n.is_favorite ? 'Remove from favourites' : 'Add to favourites'}">&#9733;</span></td>
         <td>
           <div class="name-cell-main">
             <span class="name-cell-title">${escHtml(n.long_name)}</span>
@@ -2331,7 +2331,7 @@ if (targetEl) {
             : `<button class="act-btn" title="No GPS position" style="opacity:0.35;cursor:default" disabled>Map</button>`}
         </td>
         <td>${escHtml(n.radio_name)}</td>
-        <td><span class="ignore-btn" onclick="ignoreNode('${jsSafe(n.id)}', false)" title="Ignore node">&#128683;</span></td>
+        <td><span class="ignore-btn" onclick="ignoreNode('${jsSafe(n.id)}', false, '${jsSafe(n.radio_id || '')}')" title="Ignore node">&#128683;</span></td>
       </tr>`).join('') : '';
     // Append MC contacts
     const mcEnabled = mapShowMc && Object.keys(mcLastStatus).length > 0 && localStorage.getItem('mcHide') !== '1';
@@ -2509,14 +2509,17 @@ if (targetEl) {
       return;
     }
 
-    tbody.innerHTML = nodes.map(n => `
+    tbody.innerHTML = nodes.map(n => {
+      const histRadioLabel = lastStatus[n.radio_id]?.name || n.radio_name || n.radio_id || '';
+      const histMeta = [n.hw_model, histRadioLabel].filter(Boolean).join(' · ');
+      return `
       <tr class="${n.is_favorite ? 'is-favorite' : ''} ${n.is_ignored ? 'is-ignored' : ''}">
-        <td><span class="star ${n.is_favorite ? 'starred' : ''}" onclick="toggleFav('${jsSafe(n.id)}', ${!!n.is_favorite})" title="${n.is_favorite ? 'Remove from favourites' : 'Add to favourites'}">&#9733;</span></td>
+        <td><span class="star ${n.is_favorite ? 'starred' : ''}" onclick="toggleFav('${jsSafe(n.id)}', ${!!n.is_favorite}, '${jsSafe(n.radio_id || '')}')" title="${n.is_favorite ? 'Remove from favourites' : 'Add to favourites'}">&#9733;</span></td>
         <td>
           <div class="name-cell-main">
             <span class="name-cell-title">${escHtml(n.long_name)}</span>
           </div>
-          ${n.hw_model ? `<div class="name-cell-meta">${escHtml(n.hw_model)}</div>` : ''}
+          ${histMeta ? `<div class="name-cell-meta">${escHtml(histMeta)}</div>` : ''}
         </td>
         <td><span class="short-name">${escHtml(n.short_name)}</span></td>
         <td>${escHtml(n.first_seen_str)}</td>
@@ -2529,15 +2532,16 @@ if (targetEl) {
           ${n.notes
             ? `<span class="note-text" title="${escHtml(n.notes)}">${escHtml(n.notes)}</span>`
             : `<span class="note-placeholder">+ note</span>`}
-          <span class="note-edit-btn" onclick="openNoteEdit('${jsSafe(n.id)}','${jsSafe(n.long_name)}')" title="Edit note">&#9998;</span>
+          <span class="note-edit-btn" onclick="openNoteEdit('${jsSafe(n.id)}','${jsSafe(n.long_name)}','${jsSafe(n.radio_id || '')}')" title="Edit note">&#9998;</span>
         </td>
         <td style="display:flex;gap:8px;align-items:center">
           ${n.is_ignored
-            ? `<span class="unignore-btn" onclick="ignoreNode('${jsSafe(n.id)}', true)" title="Unignore">&#128683;</span>`
-            : `<span class="ignore-btn"   onclick="ignoreNode('${jsSafe(n.id)}', false)" title="Ignore">&#128683;</span>`}
-          <span class="delete-btn" onclick="deleteNode('${jsSafe(n.id)}', '${jsSafe(n.long_name)}')" title="Delete from device">&#10005;</span>
+            ? `<span class="unignore-btn" onclick="ignoreNode('${jsSafe(n.id)}', true, '${jsSafe(n.radio_id || '')}')" title="Unignore">&#128683;</span>`
+            : `<span class="ignore-btn"   onclick="ignoreNode('${jsSafe(n.id)}', false, '${jsSafe(n.radio_id || '')}')" title="Ignore">&#128683;</span>`}
+          <span class="delete-btn" onclick="deleteNode('${jsSafe(n.id)}', '${jsSafe(n.long_name)}', '${jsSafe(n.radio_id || '')}')" title="Delete from device">&#10005;</span>
         </td>
-      </tr>`).join('');
+      </tr>`;
+    }).join('');
 
     if (mcHistFiltered.length) {
       tbody.innerHTML += `<tr><td colspan="11" style="padding:3px 8px;font-size:11px;font-weight:600;color:var(--mc-color);background:rgba(56,189,248,0.07);border-top:1px solid rgba(56,189,248,0.25)">MeshCore</td></tr>`;
@@ -2577,10 +2581,11 @@ if (targetEl) {
   }
 
   // ── Delete node ────────────────────────────────────────────────────────────
-  function deleteNode(nodeId, name) {
+  function deleteNode(nodeId, name, radioId='') {
     document.getElementById('confirm-ok').textContent = 'Delete';
     showConfirm(`Delete "${name}" from the device and OverMesh history?`, () => {
-      fetch(BASE_PATH + `/api/db/node/${encodeURIComponent(nodeId)}`, { method: 'DELETE' })
+      const qs = radioId ? `?radio_id=${encodeURIComponent(radioId)}` : '';
+      fetch(BASE_PATH + `/api/db/node/${encodeURIComponent(nodeId)}${qs}`, { method: 'DELETE' })
         .then(r => {
           if (!r.ok) return;
           if (leafletMap) {
@@ -2590,7 +2595,7 @@ if (targetEl) {
               delete senseMarkers[nodeId];
             }
           }
-          allNodes = allNodes.filter(n => n.id !== nodeId);
+          allNodes = allNodes.filter(n => !(n.id === nodeId && (!radioId || n.radio_id === radioId)));
           renderLive();
           updateMapMarkers(allNodes);
           loadHistory();
@@ -2601,24 +2606,24 @@ if (targetEl) {
   }
 
   // ── Notes inline edit ──────────────────────────────────────────────────────
-  function openNoteEdit(nodeId, nodeName) {
-    const node = allNodes.find(n => n.id === nodeId);
+  function openNoteEdit(nodeId, nodeName, radioId='') {
+    const node = allNodes.find(n => n.id === nodeId && (!radioId || n.radio_id === radioId)) || allNodes.find(n => n.id === nodeId);
     const current = node?.notes || '';
     openModal('Note — ' + nodeName, `
       <textarea class="note-textarea" id="note-ta">${escHtml(current)}</textarea>
       <div class="note-modal-actions">
-        <button class="btn-secondary" onclick="saveNote('${jsSafe(nodeId)}', true)" title="Clear note">Clear</button>
-        <button class="dm-send" onclick="saveNote('${jsSafe(nodeId)}', false)">Save</button>
+        <button class="btn-secondary" onclick="saveNote('${jsSafe(nodeId)}', true, '${jsSafe(radioId || '')}')" title="Clear note">Clear</button>
+        <button class="dm-send" onclick="saveNote('${jsSafe(nodeId)}', false, '${jsSafe(radioId || '')}')">Save</button>
       </div>`);
     setTimeout(() => { const t = document.getElementById('note-ta'); if(t){t.focus();t.selectionStart=t.value.length;} }, 50);
   }
 
-  function saveNote(nodeId, clear) {
+  function saveNote(nodeId, clear, radioId='') {
     const val = clear ? '' : (document.getElementById('note-ta')?.value.trim() || '');
-    fetch(BASE_PATH + `/api/db/node/${nodeId}`, {
+    fetch(BASE_PATH + `/api/db/node/${encodeURIComponent(nodeId)}`, {
       method: 'PATCH',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({notes: val})
+      body: JSON.stringify({notes: val, radio_id: radioId || null})
     }).then(r => { if (r.ok) { closeModal(); loadHistory(); } })
       .catch(e => console.error('saveNote failed:', e));
   }
@@ -6925,7 +6930,7 @@ if (targetEl) {
         ${!n.is_local ? `<button class="map-popup-btn" title="Set position" onclick="openMapPos('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Pos</button>` : ''}
         ${!n.is_local ? `<button class="map-popup-btn" title="Node info &amp; settings" onclick="openMapInfo('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Info</button>` : ''}
         <button class="map-popup-btn" title="GPS movement trail" onclick="openGpsTrail('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Trail</button>
-        ${!n.is_local ? `<button class="map-popup-btn danger" title="Delete from device" onclick="deleteNode('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Delete</button>` : ''}
+        ${!n.is_local ? `<button class="map-popup-btn danger" title="Delete from device" onclick="deleteNode('${jsSafe(n.id)}','${jsSafe(n.long_name)}','${jsSafe(n.radio_id || '')}')">Delete</button>` : ''}
       </div>`;
   }
 
@@ -7012,7 +7017,7 @@ if (targetEl) {
                   ${!x.is_local ? `<button class="map-popup-btn" title="Traceroute to this node" onclick="openMapTR('${jsSafe(x.id)}','${jsSafe(x.long_name)}','${jsSafe(x.radio_id || '')}')">TR</button>` : ''}
                   ${!x.is_local ? `<button class="map-popup-btn" title="Node info &amp; settings" onclick="openMapInfo('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">Info</button>` : ''}
                   <button class="map-popup-btn" title="GPS movement trail" onclick="openGpsTrail('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">Trail</button>
-                  ${!x.is_local ? `<button class="map-popup-btn danger" title="Delete from device" onclick="deleteNode('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">Delete</button>` : ''}
+                  ${!x.is_local ? `<button class="map-popup-btn danger" title="Delete from device" onclick="deleteNode('${jsSafe(x.id)}','${jsSafe(x.long_name)}','${jsSafe(x.radio_id || '')}')">Delete</button>` : ''}
                 </div>
               </div>`).join('')}`;
           clusterMarkers[k].setIcon(updatedIcon).setPopupContent(updatedPopup);
@@ -7044,7 +7049,7 @@ if (targetEl) {
                 ${!x.is_local ? `<button class="map-popup-btn" title="Send direct message" onclick="openMapDM('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">DM</button>` : ''}
                 ${!x.is_local ? `<button class="map-popup-btn" title="Traceroute to this node" onclick="openMapTR('${jsSafe(x.id)}','${jsSafe(x.long_name)}','${jsSafe(x.radio_id || '')}')">TR</button>` : ''}
                 ${!x.is_local ? `<button class="map-popup-btn" title="Node info &amp; settings" onclick="openMapInfo('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">Info</button>` : ''}
-                ${!x.is_local ? `<button class="map-popup-btn danger" title="Delete from device" onclick="deleteNode('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">Delete</button>` : ''}
+                ${!x.is_local ? `<button class="map-popup-btn danger" title="Delete from device" onclick="deleteNode('${jsSafe(x.id)}','${jsSafe(x.long_name)}','${jsSafe(x.radio_id || '')}')">Delete</button>` : ''}
               </div>
             </div>`).join('')}`;
         const marker = L.marker([group[0].latitude, group[0].longitude], {icon: clusterIcon})
@@ -13641,7 +13646,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
           <button class="map-popup-btn" title="Traceroute to this node" onclick="openMapTR('${jsSafe(n.from_id)}','${safeName}','${jsSafe(n.radio_id || activeRadioId || '')}')">TR</button>
           <button class="map-popup-btn" title="Set position" onclick="openMapPos('${jsSafe(n.from_id)}','${safeName}')">Pos</button>
           <button class="map-popup-btn" title="Node info &amp; settings" onclick="openMapInfo('${jsSafe(n.from_id)}','${safeName}')">Info</button>
-          <button class="map-popup-btn danger" title="Delete from device" onclick="deleteNode('${jsSafe(n.from_id)}','${safeName}')">Delete</button>
+          <button class="map-popup-btn danger" title="Delete from device" onclick="deleteNode('${jsSafe(n.from_id)}','${safeName}','${jsSafe(n.radio_id || activeRadioId || '')}')">Delete</button>
         </div>`,
       ].filter(Boolean).join('');
       return rows;

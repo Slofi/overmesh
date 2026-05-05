@@ -29,7 +29,6 @@
       position: relative;
     }
 
-    /* ── Topo SVG layer ──────────────────────────────────── */
     #topo-layer {
       position: fixed;
       inset: 0;
@@ -39,7 +38,6 @@
       pointer-events: none;
     }
 
-    /* ── Scatter layer ───────────────────────────────────── */
     .scatter {
       position: fixed;
       inset: 0;
@@ -68,7 +66,6 @@
       user-select: none;
     }
 
-    /* ── Login card ──────────────────────────────────────── */
     .login-wrap {
       position: relative;
       z-index: 2;
@@ -139,8 +136,8 @@
       letter-spacing: 0.02em;
       transition: opacity 0.15s;
     }
-    .login-btn:hover { opacity: 0.85; }
-    .login-btn:active { opacity: 0.7; }
+    .login-btn:hover  { opacity: 0.85; }
+    .login-btn:active { opacity: 0.70; }
     .login-error {
       background: rgba(239,68,68,0.12);
       border: 1px solid rgba(239,68,68,0.35);
@@ -154,49 +151,142 @@
 </head>
 <body>
 
-  <!-- Topo lines + map markers -->
+  <!--
+    Topographic layer — loosely based on Ljubljana basin / surrounding hills.
+    Elevation interval: 20 m. Index contours (every 100 m): 300, 400.
+    Terrain rises toward upper-right (Golovec/Rožnik direction).
+  -->
   <svg id="topo-layer" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice"
        xmlns="http://www.w3.org/2000/svg">
     <defs>
-      <!-- Reusable map pin: tip at (0,0), body above -->
-      <path id="pin"
-        d="M0,0 C-3,-3 -11,-3 -11,-12 C-11,-20 -6,-26 0,-26
-           C6,-26 11,-20 11,-12 C11,-3 3,-3 0,0 Z
-           M-4,-14 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0"
-        fill-rule="evenodd"/>
+      <!-- Open contour lines, terrain rising toward upper-right -->
+      <path id="c300"
+        d="M -30,808 C 90,791 220,810 370,794
+           C 520,778 660,798 820,781
+           C 980,764 1120,783 1280,765
+           C 1370,755 1430,758 1460,756"/>
+      <path id="c320"
+        d="M 10,694 C 140,676 285,696 440,678
+           C 595,660 740,682 905,663
+           C 1060,644 1200,666 1350,646
+           C 1415,637 1448,639 1460,638"/>
+      <path id="c340"
+        d="M 60,580 C 200,561 355,583 510,562
+           C 665,541 810,565 975,543
+           C 1130,521 1270,546 1410,522
+           C 1442,516 1456,518 1460,517"/>
+      <path id="c360"
+        d="M 130,468 C 280,447 440,470 600,447
+           C 760,424 900,450 1060,425
+           C 1205,401 1335,425 1430,405
+           C 1450,401 1458,402 1460,402"/>
+      <path id="c380"
+        d="M 230,358 C 385,334 548,360 710,334
+           C 872,308 1010,337 1160,308
+           C 1290,283 1380,302 1435,291
+           C 1452,287 1458,288 1460,288"/>
+      <path id="c400"
+        d="M 370,252 C 528,225 695,254 858,225
+           C 1021,196 1155,228 1295,198
+           C 1385,178 1430,185 1453,181"/>
+      <path id="c420"
+        d="M 540,155 C 690,126 845,157 1000,126
+           C 1145,97 1275,124 1395,97
+           C 1432,88 1452,90 1460,89"/>
+      <path id="c440"
+        d="M 740,66 C 878,40 1012,68 1148,40
+           C 1270,15 1370,34 1444,16"/>
+
+      <!-- Closed hilltop loops -->
+      <!-- Castle Hill (Grajski grič) ~385 m — upper right cluster -->
+      <path id="castle385"
+        d="M 1078,322 C 1112,293 1168,286 1212,303
+           C 1260,321 1270,363 1244,390
+           C 1218,417 1164,420 1118,401
+           C 1072,382 1058,349 1078,322 Z"/>
+      <!-- Inner peak ~400 m -->
+      <path id="castle400"
+        d="M 1118,332 C 1142,315 1174,312 1200,325
+           C 1228,338 1232,368 1212,386
+           C 1192,404 1156,406 1128,391
+           C 1100,376 1094,350 1118,332 Z"/>
+
+      <!-- Rožnik hill ~390 m — upper left -->
+      <path id="roznik390"
+        d="M 165,248 C 202,218 262,211 308,229
+           C 358,248 368,292 342,320
+           C 316,348 260,353 208,333
+           C 156,313 138,276 165,248 Z"/>
+      <!-- Inner peak ~405 m -->
+      <path id="roznik405"
+        d="M 202,257 C 228,237 268,231 302,247
+           C 338,263 344,298 322,320
+           C 300,342 258,346 222,328
+           C 186,310 178,277 202,257 Z"/>
     </defs>
 
-    <!-- Topo contour lines — slightly darker than bg, no fill -->
-    <g stroke="rgba(0,0,0,0.45)" stroke-width="1.2" fill="none" stroke-linecap="round">
-      <path d="M-20,838 C120,822 260,845 420,830 C580,815 720,840 900,824 C1060,810 1220,832 1380,818 C1420,815 1445,817 1460,816"/>
-      <path d="M-20,762 C100,746 250,768 430,752 C610,736 760,759 940,743 C1100,729 1260,750 1420,736 C1440,734 1455,735 1460,734"/>
-      <path d="M-20,686 C130,670 290,692 460,676 C630,660 790,683 970,667 C1130,653 1290,674 1440,660"/>
-      <path d="M-20,605 C150,589 320,612 500,596 C680,580 840,603 1020,587 C1180,573 1330,593 1460,580"/>
-      <path d="M-20,523 C160,507 340,530 520,514 C700,498 860,521 1040,505 C1200,491 1360,512 1460,499"/>
-      <path d="M-20,442 C170,426 360,449 540,433 C720,417 880,440 1060,424 C1220,410 1370,430 1460,417"/>
-      <path d="M-20,360 C180,344 370,367 550,351 C730,335 890,358 1070,342 C1230,328 1380,349 1460,336"/>
-      <path d="M-20,279 C190,263 380,286 560,270 C740,254 900,277 1080,261 C1240,247 1390,268 1460,255"/>
-      <path d="M-20,198 C200,182 390,205 570,189 C750,173 910,196 1090,180 C1250,166 1390,186 1460,174"/>
-      <path d="M-20,117 C210,101 400,124 580,108 C760,92 920,115 1100,99 C1260,85 1400,105 1460,93"/>
-      <path d="M-20,38 C220,22 410,44 590,28 C770,12 930,35 1110,19 C1270,5 1400,24 1460,13"/>
+    <!-- ── Regular contour lines (stroke-width 0.85) ── -->
+    <g fill="none" stroke-linecap="round">
+      <g stroke="#080809" stroke-width="0.85" opacity="0.9">
+        <use href="#c320"/>
+        <use href="#c340"/>
+        <use href="#c360"/>
+        <use href="#c380"/>
+        <use href="#c420"/>
+        <use href="#c440"/>
+        <use href="#castle385"/>
+        <use href="#roznik390"/>
+      </g>
+      <!-- Index contours 300 m and 400 m — thicker, slightly darker -->
+      <g stroke="#060607" stroke-width="1.5" opacity="0.9">
+        <use href="#c300"/>
+        <use href="#c400"/>
+      </g>
+      <!-- Inner hilltop loops -->
+      <g stroke="#080809" stroke-width="0.75" opacity="0.85">
+        <use href="#castle400"/>
+        <use href="#roznik405"/>
+      </g>
     </g>
 
-    <!-- Map pin markers scattered across the canvas -->
-    <g fill="rgba(0,0,0,0.4)">
-      <use href="#pin" transform="translate(142,198) scale(1.8)"/>
-      <use href="#pin" transform="translate(380,520) scale(2.2)"/>
-      <use href="#pin" transform="translate(620,310) scale(1.5)"/>
-      <use href="#pin" transform="translate(890,670) scale(2.0)"/>
-      <use href="#pin" transform="translate(1100,180) scale(1.6)"/>
-      <use href="#pin" transform="translate(1280,490) scale(2.4)"/>
-      <use href="#pin" transform="translate(250,760) scale(1.7)"/>
-      <use href="#pin" transform="translate(740,90)  scale(1.4)"/>
-      <use href="#pin" transform="translate(1380,740) scale(1.9)"/>
-      <use href="#pin" transform="translate(60,440)  scale(1.5)"/>
+    <!--
+      Elevation labels — paint-order:stroke trick gives bg-coloured halo
+      that "breaks" the contour line behind the text, like a real topo map.
+    -->
+    <g font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif"
+       font-size="9.5" font-weight="500"
+       fill="#131315"
+       stroke="#0d0d0f" stroke-width="5" paint-order="stroke"
+       dominant-baseline="middle">
+
+      <text><textPath href="#c300" startOffset="10%">300</textPath></text>
+      <text><textPath href="#c300" startOffset="56%">300</textPath></text>
+
+      <text><textPath href="#c320" startOffset="22%">320</textPath></text>
+      <text><textPath href="#c320" startOffset="74%">320</textPath></text>
+
+      <text><textPath href="#c340" startOffset="38%">340</textPath></text>
+
+      <text><textPath href="#c360" startOffset="15%">360</textPath></text>
+      <text><textPath href="#c360" startOffset="66%">360</textPath></text>
+
+      <text><textPath href="#c380" startOffset="44%">380</textPath></text>
+
+      <text><textPath href="#c400" startOffset="20%">400</textPath></text>
+      <text><textPath href="#c400" startOffset="70%">400</textPath></text>
+
+      <text><textPath href="#c420" startOffset="35%">420</textPath></text>
+
+      <text><textPath href="#c440" startOffset="50%">440</textPath></text>
+
+      <!-- Hilltop labels, centred inside the loops -->
+      <text text-anchor="middle" x="1168" y="355">385</text>
+      <text text-anchor="middle" x="1168" y="359" font-size="0"> </text><!-- spacer -->
+      <text text-anchor="middle" x="256"  y="284">390</text>
     </g>
   </svg>
 
-  <!-- Scattered OverMesh wordmarks + text -->
+  <!-- Scattered OverMesh wordmarks -->
   <div class="scatter" id="scatter"></div>
 
   <div class="login-wrap">
@@ -223,7 +313,6 @@
   <script>
   (function () {
     var items = [
-      /* logos — { type, top%, left%, rot, width px, opacity } */
       { type:'logo', top:-3,  left:-6,  rot:-18, w:300, op:0.08 },
       { type:'logo', top:8,   left:50,  rot: 22, w:200, op:0.06 },
       { type:'logo', top:22,  left:-4,  rot: 10, w:160, op:0.05 },
@@ -236,7 +325,6 @@
       { type:'logo', top:15,  left:30,  rot:-40, w:150, op:0.06 },
       { type:'logo', top:44,  left:-3,  rot: 28, w:320, op:0.04 },
       { type:'logo', top:78,  left:72,  rot:-16, w:190, op:0.06 },
-      /* text — { type, top%, left%, rot, fontSize px, opacity } */
       { type:'text', top:5,   left:68,  rot: 18, fs:60, op:0.06 },
       { type:'text', top:18,  left:7,   rot:-25, fs:36, op:0.07 },
       { type:'text', top:30,  left:42,  rot: 30, fs:48, op:0.05 },
@@ -248,7 +336,6 @@
       { type:'text', top:38,  left:20,  rot: 42, fs:24, op:0.05 },
       { type:'text', top:12,  left:82,  rot:-14, fs:52, op:0.06 },
     ];
-
     var frag = document.createDocumentFragment();
     items.forEach(function (it) {
       var el = document.createElement('div');

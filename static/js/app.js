@@ -11059,7 +11059,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       }
       const warnText = _mcPathWarningText(pathResult, kind);
       if (warnText && points.length) {
-        const warnIdx = pathResult?.endpointUnknown ? 0 : (points.length - 1);
+        const warnIdx = points.length - 1;
         const [warnLat, warnLon] = points[Math.max(0, Math.min(warnIdx, points.length - 1))];
         const warn = L.marker([warnLat, warnLon], {
           icon: L.divIcon({
@@ -11621,18 +11621,28 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const rawHashes = _mcRawHopHashesForEntry(entry);
     if (!rawHashes.length) return fallbackText ? escHtml(fallbackText) : '—';
     const resolvedHops = _mcSortedPathHops(pathResult);
-    return rawHashes.map((hash, rawIdx) => {
-      const hopIdx = resolvedHops.findIndex(h => String(h.hash || '').toLowerCase() === hash);
-      const hop = hopIdx >= 0 ? resolvedHops[hopIdx] : null;
-      const point = hop ? _mcHopGpsPoint(hop, pathResult, entry?.radioId) : null;
-      if (!point) return `<span class="mc-hop-prefix" title="No resolved GPS/contact match">${escHtml(hash)}</span>`;
+    const parts = [];
+    // Iterate in geographic/map order (pointIndex order), matching map direction
+    resolvedHops.forEach((hop, hopIdx) => {
+      const point = _mcHopGpsPoint(hop, pathResult, entry?.radioId);
+      const hash = String(hop.hash || '').toLowerCase();
+      if (!point) {
+        parts.push(`<span class="mc-hop-prefix" title="No resolved GPS/contact match">${escHtml(hash)}</span>`);
+        return;
+      }
       const name = hop.name && hop.name !== hash ? ` ${escHtml(hop.name)}` : '';
-      return `<button class="mc-hop-focus" style="display:inline-flex;width:auto;padding:2px 6px;margin:0 3px 3px 0"
+      parts.push(`<button class="mc-hop-focus" style="display:inline-flex;width:auto;padding:2px 6px;margin:0 3px 3px 0"
         title="Center map on ${escHtml(hop.name || hash)}"
         onclick="event.stopPropagation();_mcFocusLogHop(${entryIdx},${hopIdx})">
         <span class="mc-hop-prefix">${escHtml(hash)}</span><span>${name}</span>
-      </button>`;
-    }).join('');
+      </button>`);
+    });
+    // Append unresolved hashes (not matched to any contact with GPS) at the end
+    rawHashes.forEach((hash) => {
+      if (resolvedHops.some(h => String(h.hash || '').toLowerCase() === hash)) return;
+      parts.push(`<span class="mc-hop-prefix" title="No resolved GPS/contact match">${escHtml(hash)}</span>`);
+    });
+    return parts.join('');
   }
 
   function _closeDetailPanel() {

@@ -16,9 +16,7 @@
       --muted: #6b6e7a;
       --red: #ef4444;
     }
-
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       background: var(--bg1);
@@ -31,15 +29,24 @@
       position: relative;
     }
 
-    /* ── Scatter background ─────────────────────────────── */
+    /* ── Topo SVG layer ──────────────────────────────────── */
+    #topo-layer {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    /* ── Scatter layer ───────────────────────────────────── */
     .scatter {
       position: fixed;
       inset: 0;
       pointer-events: none;
       overflow: hidden;
-      z-index: 0;
+      z-index: 1;
     }
-
     .s-logo {
       position: absolute;
       background: var(--accent);
@@ -51,7 +58,6 @@
       mask-repeat: no-repeat;
       aspect-ratio: 848 / 202;
     }
-
     .s-text {
       position: absolute;
       color: var(--accent);
@@ -62,28 +68,25 @@
       user-select: none;
     }
 
-    /* ── Login card ─────────────────────────────────────── */
+    /* ── Login card ──────────────────────────────────────── */
     .login-wrap {
       position: relative;
-      z-index: 1;
+      z-index: 2;
       width: 100%;
       max-width: 340px;
       padding: 16px;
     }
-
     .login-box {
       background: var(--bg2);
       border: 1px solid var(--border);
       border-radius: 12px;
       padding: 36px 28px 28px;
     }
-
     .login-logo {
       display: flex;
       justify-content: center;
       margin-bottom: 8px;
     }
-
     .login-logo-img {
       height: 22px;
       background: var(--accent);
@@ -95,18 +98,13 @@
       mask-repeat: no-repeat;
       aspect-ratio: 848 / 202;
     }
-
     .login-sub {
       text-align: center;
       font-size: 12px;
       color: var(--muted);
       margin-bottom: 26px;
     }
-
-    .login-field {
-      margin-bottom: 14px;
-    }
-
+    .login-field { margin-bottom: 14px; }
     .login-field label {
       display: block;
       font-size: 11px;
@@ -115,7 +113,6 @@
       text-transform: uppercase;
       letter-spacing: 0.05em;
     }
-
     .login-field input {
       width: 100%;
       background: var(--bg3);
@@ -127,11 +124,7 @@
       outline: none;
       transition: border-color 0.15s;
     }
-
-    .login-field input:focus {
-      border-color: var(--accent);
-    }
-
+    .login-field input:focus { border-color: var(--accent); }
     .login-btn {
       width: 100%;
       margin-top: 8px;
@@ -146,10 +139,8 @@
       letter-spacing: 0.02em;
       transition: opacity 0.15s;
     }
-
     .login-btn:hover { opacity: 0.85; }
     .login-btn:active { opacity: 0.7; }
-
     .login-error {
       background: rgba(239,68,68,0.12);
       border: 1px solid rgba(239,68,68,0.35);
@@ -163,13 +154,54 @@
 </head>
 <body>
 
+  <!-- Topo lines + map markers -->
+  <svg id="topo-layer" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice"
+       xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <!-- Reusable map pin: tip at (0,0), body above -->
+      <path id="pin"
+        d="M0,0 C-3,-3 -11,-3 -11,-12 C-11,-20 -6,-26 0,-26
+           C6,-26 11,-20 11,-12 C11,-3 3,-3 0,0 Z
+           M-4,-14 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0"
+        fill-rule="evenodd"/>
+    </defs>
+
+    <!-- Topo contour lines — slightly darker than bg, no fill -->
+    <g stroke="rgba(0,0,0,0.45)" stroke-width="1.2" fill="none" stroke-linecap="round">
+      <path d="M-20,838 C120,822 260,845 420,830 C580,815 720,840 900,824 C1060,810 1220,832 1380,818 C1420,815 1445,817 1460,816"/>
+      <path d="M-20,762 C100,746 250,768 430,752 C610,736 760,759 940,743 C1100,729 1260,750 1420,736 C1440,734 1455,735 1460,734"/>
+      <path d="M-20,686 C130,670 290,692 460,676 C630,660 790,683 970,667 C1130,653 1290,674 1440,660"/>
+      <path d="M-20,605 C150,589 320,612 500,596 C680,580 840,603 1020,587 C1180,573 1330,593 1460,580"/>
+      <path d="M-20,523 C160,507 340,530 520,514 C700,498 860,521 1040,505 C1200,491 1360,512 1460,499"/>
+      <path d="M-20,442 C170,426 360,449 540,433 C720,417 880,440 1060,424 C1220,410 1370,430 1460,417"/>
+      <path d="M-20,360 C180,344 370,367 550,351 C730,335 890,358 1070,342 C1230,328 1380,349 1460,336"/>
+      <path d="M-20,279 C190,263 380,286 560,270 C740,254 900,277 1080,261 C1240,247 1390,268 1460,255"/>
+      <path d="M-20,198 C200,182 390,205 570,189 C750,173 910,196 1090,180 C1250,166 1390,186 1460,174"/>
+      <path d="M-20,117 C210,101 400,124 580,108 C760,92 920,115 1100,99 C1260,85 1400,105 1460,93"/>
+      <path d="M-20,38 C220,22 410,44 590,28 C770,12 930,35 1110,19 C1270,5 1400,24 1460,13"/>
+    </g>
+
+    <!-- Map pin markers scattered across the canvas -->
+    <g fill="rgba(0,0,0,0.4)">
+      <use href="#pin" transform="translate(142,198) scale(1.8)"/>
+      <use href="#pin" transform="translate(380,520) scale(2.2)"/>
+      <use href="#pin" transform="translate(620,310) scale(1.5)"/>
+      <use href="#pin" transform="translate(890,670) scale(2.0)"/>
+      <use href="#pin" transform="translate(1100,180) scale(1.6)"/>
+      <use href="#pin" transform="translate(1280,490) scale(2.4)"/>
+      <use href="#pin" transform="translate(250,760) scale(1.7)"/>
+      <use href="#pin" transform="translate(740,90)  scale(1.4)"/>
+      <use href="#pin" transform="translate(1380,740) scale(1.9)"/>
+      <use href="#pin" transform="translate(60,440)  scale(1.5)"/>
+    </g>
+  </svg>
+
+  <!-- Scattered OverMesh wordmarks + text -->
   <div class="scatter" id="scatter"></div>
 
   <div class="login-wrap">
     <div class="login-box">
-      <div class="login-logo">
-        <div class="login-logo-img"></div>
-      </div>
+      <div class="login-logo"><div class="login-logo-img"></div></div>
       <div class="login-sub">mesh network dashboard</div>
       {% if error %}
       <div class="login-error">{{ error }}</div>
@@ -189,41 +221,51 @@
   </div>
 
   <script>
-    (function () {
-      var items = [
-        { type: 'logo', top:  3, left: -4,  rot: -18, w: 260, op: 0.07 },
-        { type: 'text', top: 12, left: 58,  rot:  22, fs: 52, op: 0.06 },
-        { type: 'logo', top: 28, left: -6,  rot:  12, w: 180, op: 0.05 },
-        { type: 'text', top: 45, left: 62,  rot: -28, fs: 38, op: 0.07 },
-        { type: 'logo', top: 58, left: 30,  rot:  35, w: 220, op: 0.06 },
-        { type: 'text', top: 68, left: -3,  rot: -14, fs: 46, op: 0.05 },
-        { type: 'logo', top: 80, left: 55,  rot: -22, w: 200, op: 0.07 },
-        { type: 'text', top: 88, left: 20,  rot:  18, fs: 34, op: 0.06 },
-        { type: 'logo', top: -4, left: 40,  rot:  28, w: 160, op: 0.05 },
-        { type: 'text', top: 35, left: 10,  rot: -35, fs: 44, op: 0.06 },
-      ];
+  (function () {
+    var items = [
+      /* logos — { type, top%, left%, rot, width px, opacity } */
+      { type:'logo', top:-3,  left:-6,  rot:-18, w:300, op:0.08 },
+      { type:'logo', top:8,   left:50,  rot: 22, w:200, op:0.06 },
+      { type:'logo', top:22,  left:-4,  rot: 10, w:160, op:0.05 },
+      { type:'logo', top:36,  left:62,  rot:-28, w:260, op:0.07 },
+      { type:'logo', top:50,  left:18,  rot: 35, w:220, op:0.06 },
+      { type:'logo', top:63,  left:-5,  rot:-12, w:180, op:0.05 },
+      { type:'logo', top:72,  left:55,  rot: 20, w:240, op:0.07 },
+      { type:'logo', top:84,  left:28,  rot:-22, w:130, op:0.06 },
+      { type:'logo', top:92,  left:60,  rot: 15, w:280, op:0.05 },
+      { type:'logo', top:15,  left:30,  rot:-40, w:150, op:0.06 },
+      { type:'logo', top:44,  left:-3,  rot: 28, w:320, op:0.04 },
+      { type:'logo', top:78,  left:72,  rot:-16, w:190, op:0.06 },
+      /* text — { type, top%, left%, rot, fontSize px, opacity } */
+      { type:'text', top:5,   left:68,  rot: 18, fs:60, op:0.06 },
+      { type:'text', top:18,  left:7,   rot:-25, fs:36, op:0.07 },
+      { type:'text', top:30,  left:42,  rot: 30, fs:48, op:0.05 },
+      { type:'text', top:48,  left:72,  rot:-18, fs:28, op:0.07 },
+      { type:'text', top:58,  left:5,   rot: 14, fs:54, op:0.06 },
+      { type:'text', top:70,  left:38,  rot:-32, fs:40, op:0.05 },
+      { type:'text', top:80,  left:70,  rot: 24, fs:32, op:0.07 },
+      { type:'text', top:91,  left:8,   rot:-10, fs:46, op:0.06 },
+      { type:'text', top:38,  left:20,  rot: 42, fs:24, op:0.05 },
+      { type:'text', top:12,  left:82,  rot:-14, fs:52, op:0.06 },
+    ];
 
-      var frag = document.createDocumentFragment();
-      items.forEach(function (item) {
-        var el = document.createElement('div');
-        el.style.position = 'absolute';
-        el.style.top = item.top + '%';
-        el.style.left = item.left + '%';
-        el.style.transform = 'rotate(' + item.rot + 'deg)';
-        el.style.opacity = item.op;
-
-        if (item.type === 'logo') {
-          el.className = 's-logo';
-          el.style.width = item.w + 'px';
-        } else {
-          el.className = 's-text';
-          el.style.fontSize = item.fs + 'px';
-          el.textContent = 'OverMesh';
-        }
-        frag.appendChild(el);
-      });
-      document.getElementById('scatter').appendChild(frag);
-    })();
+    var frag = document.createDocumentFragment();
+    items.forEach(function (it) {
+      var el = document.createElement('div');
+      el.style.cssText = 'position:absolute;top:' + it.top + '%;left:' + it.left
+        + '%;transform:rotate(' + it.rot + 'deg);opacity:' + it.op + ';';
+      if (it.type === 'logo') {
+        el.className = 's-logo';
+        el.style.width = it.w + 'px';
+      } else {
+        el.className = 's-text';
+        el.style.fontSize = it.fs + 'px';
+        el.textContent = 'OverMesh';
+      }
+      frag.appendChild(el);
+    });
+    document.getElementById('scatter').appendChild(frag);
+  })();
   </script>
 
 </body>

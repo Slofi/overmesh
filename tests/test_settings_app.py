@@ -22,6 +22,20 @@ sys.path.insert(0, "/home/slofi/overmesh")
 import routes.settings as settings_routes  # noqa: E402
 
 
+class UpdateStatusDirtyFilterTests(unittest.TestCase):
+    def test_ignores_machine_local_secret_key(self):
+        status = "?? secret.key\n M templates/login.html\n"
+
+        lines = settings_routes._filter_update_status_lines(status)
+
+        self.assertEqual(lines, [" M templates/login.html"])
+
+    def test_secret_key_alone_is_not_dirty(self):
+        lines = settings_routes._filter_update_status_lines("?? secret.key\n")
+
+        self.assertEqual(lines, [])
+
+
 class AppSettingsOmPositionTests(unittest.TestCase):
     def setUp(self):
         self.app = Flask(__name__)

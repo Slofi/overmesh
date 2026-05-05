@@ -29,6 +29,7 @@ _UPDATE_STATE = {
     "log": [],
     "updated_at": None,
 }
+_UPDATE_STATUS_IGNORED_PATHS = {"secret.key"}
 
 
 def _app_settings_payload():
@@ -124,6 +125,25 @@ def _git_cmd(args, timeout=30, check=False):
     return result.returncode, out, err
 
 
+def _git_status_path(line):
+    if not line or len(line) < 4:
+        return ""
+    path = line[3:].strip()
+    if " -> " in path:
+        path = path.rsplit(" -> ", 1)[-1]
+    if len(path) >= 2 and path[0] == path[-1] == '"':
+        path = path[1:-1]
+    return path
+
+
+def _filter_update_status_lines(status):
+    lines = status.splitlines() if status else []
+    return [
+        line for line in lines
+        if _git_status_path(line) not in _UPDATE_STATUS_IGNORED_PATHS
+    ]
+
+
 def _app_version():
     try:
         with open(os.path.join(BASE_DIR, "VERSION"), encoding="utf-8") as f:
@@ -157,8 +177,9 @@ def _git_info(fetch=False):
     })
 
     rc, status, _ = _git_cmd(["status", "--porcelain"], timeout=10)
-    info["dirty"] = bool(status) if rc == 0 else True
-    info["dirty_summary"] = status.splitlines()[:12] if status else []
+    status_lines = _filter_update_status_lines(status) if rc == 0 else []
+    info["dirty"] = bool(status_lines) if rc == 0 else True
+    info["dirty_summary"] = status_lines[:12]
 
     if fetch:
         frc, fout, ferr = _git_cmd(["fetch", "--prune", "origin"], timeout=45)

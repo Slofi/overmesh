@@ -866,12 +866,14 @@
     const mcCh = document.getElementById('mc-chat-channels');
     if (chCh)  chCh.style.display   = isMt ? '' : 'none';
     if (mcCh)  mcCh.style.display   = isMt ? 'none' : 'flex';
+    const mcRad = document.getElementById('mc-chat-radio');
     if (chRad) chRad.style.display  = isMt ? '' : 'none';
+    if (mcRad) mcRad.style.display  = isMt ? 'none' : '';
     const btnMt = document.getElementById('chat-net-mt');
     const btnMc = document.getElementById('chat-net-mc');
     if (btnMt) btnMt.classList.toggle('active', isMt);
     if (btnMc) btnMc.classList.toggle('active', !isMt);
-    if (!isMt) { renderMcMessages(); _updateMcInput(); }
+    if (!isMt) { _updateMcChatRadioLabel(); renderMcMessages(); _updateMcInput(); }
   }
 
   function initChat() {
@@ -9061,7 +9063,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
   }
 
   function _updateMcChatRadioLabel() {
-    const radioEl = document.getElementById('chat-radio');
+    const radioEl = document.getElementById('mc-chat-radio');
     if (!radioEl) return;
     const activeName = activeMcRadioId && mcLastStatus[activeMcRadioId]
       ? mcLastStatus[activeMcRadioId].name
@@ -13771,6 +13773,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
           btnFeedback(btn, '✓ Imported');
           document.getElementById('mc-import-link').value = '';
           setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 15000);
+          // Refresh contacts so the new entry appears in Nodes with full_key populated
+          setTimeout(() => _refreshMcContactsForNotification(radioId), 1500);
         } else {
           if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Failed')}</span>`;
         }

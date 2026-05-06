@@ -580,6 +580,7 @@
   let _mtHoverRouteKey             = null;
   let _mtHoverHadTraceLines        = false;
   let _mtHoverPrevShowTrMap        = null;
+  let _mtSenseRoutesByEntryKey     = {};
   let _nodeInfoTimer               = null;
   const inactiveRadioUnread = new Set();       // radio_ids with any unread (drives radio btn dot)
   const radioUnreadChannels = {};              // radio_id → Set of channels with unread (drives Chat tab + sub-tab dots)
@@ -2035,6 +2036,9 @@ if (targetEl) {
           leafletMap && leafletMap.invalidateSize();
           updateMapMarkers(allNodes);
           renderMcMapMarkers();
+          if (_showTrMap && (_pendingTraceMapData || _lastTraceData)) {
+            _drawTraceRouteOnMap(_pendingTraceMapData || _lastTraceData);
+          }
           if (!_mapStaticLoaded) {
             _mapStaticLoaded = true;
             loadWaypoints();
@@ -3033,6 +3037,7 @@ if (targetEl) {
         return;
       }
       // snrTowards[i] = SNR of link route[i]→route[i+1]
+      d.radio_id = trRadioId;
       const buildChain = (nodes, snrs) => nodes.map((node, i) => {
         const isEnd = i === 0 || i === nodes.length - 1;
         const snr   = snrs?.[i];
@@ -3047,6 +3052,10 @@ if (targetEl) {
         <div class="tr-chain">${buildChain(d.route, d.snrTowards)}</div>
         <div class="tr-section">Route back</div>
         <div class="tr-chain">${buildChain(d.routeBack, d.snrBack)}</div>`;
+      _lastTraceData = d;
+      _traceHistory.unshift({ ts: Date.now(), nodeId, nodeName, radioId: trRadioId, data: d });
+      if (_traceHistory.length > 10) _traceHistory.pop();
+      if (_showTrMap) _drawTraceRouteOnMap(d);
     } catch(e) {
       clearInterval(timerId);
       document.getElementById('modal-body').innerHTML =
@@ -3282,6 +3291,7 @@ if (targetEl) {
   let _traceMapLines  = [];
   let _showTrMap      = (() => { try { const v = localStorage.getItem('mapShowTrSnr'); return v === null ? true : v === '1'; } catch(e) { return true; } })();
   let _lastTraceData  = null;   // most recent traceroute result object
+  let _pendingTraceMapData = null;  // trace selected before Leaflet finished initializing
   let _traceHistory   = [];     // [{ts, nodeName, data}] last 10, newest first
   let _polarGridLayer = null;
   let _showPolarGrid  = (() => { try { return localStorage.getItem('mapShowPolarGrid') === '1'; } catch(e) { return false; } })();
@@ -3581,13 +3591,14 @@ if (targetEl) {
     return 0.45 + Math.max(0, Math.min(1, (snr + 20) / 35)) * 0.4;
   }
 
-  function _nodeLatLon(nodeId) {
+  function _nodeLatLon(nodeId, radioId = '') {
     if (!nodeId) return null;
     if (nodeId === 'local') {
-      const origin = _mtLocalPosition();
+      const origin = _mtLocalPosition(radioId);
       return origin ? [origin.lat, origin.lon] : null;
     }
-    const n = allNodes.find(n => n.id === nodeId && n.latitude != null);
+    const n = allNodes.find(n => n.id === nodeId && n.latitude != null && n.longitude != null && (!radioId || n.radio_id === radioId))
+      || allNodes.find(n => n.id === nodeId && n.latitude != null && n.longitude != null);
     return n ? [n.latitude, n.longitude] : null;
   }
 
@@ -3602,7 +3613,13 @@ if (targetEl) {
 
   function _drawTraceRouteOnMap(trData) {
     _clearTraceLines();
-    if (!_showTrMap || !leafletMap) return;
+    if (!_showTrMap) return;
+    if (!leafletMap) {
+      _pendingTraceMapData = trData || null;
+      return;
+    }
+    _pendingTraceMapData = null;
+    const traceRadioId = trData?.radio_id || trData?.radioId || '';
 
     // Build per-segment SNR lookups for both directions so each tooltip can show both values
     const _segKey = (a, b) => [a, b].sort().join('|');
@@ -3619,10 +3636,13 @@ if (targetEl) {
 
       // Dots at every node with a known position
       ids.forEach((id, i) => {
-        const pt = _nodeLatLon(id);
+        const pt = _nodeLatLon(id, traceRadioId);
         if (!pt) return;
         const snr = i < (snrs?.length || 0) ? snrs[i] : (i > 0 ? snrs?.[i - 1] : null);
-        _traceMapLines.push(L.circleMarker(pt, {radius: 6, color: '#111', fillColor: _snrLineColor(snr ?? null), fillOpacity: 1, weight: 1.5, interactive: false}).addTo(leafletMap));
+        _traceMapLines.push(L.circleMarker(pt, {
+          radius: 8, color: '#000', fillColor: _snrLineColor(snr ?? null),
+          fillOpacity: 1, weight: 2, interactive: false
+        }).addTo(leafletMap));
       });
 
       // Draw segments between consecutive known-position nodes.
@@ -3630,7 +3650,7 @@ if (targetEl) {
       // so the full path shape is always visible on the map.
       let prevKnown = null; // { idx, pos }
       for (let j = 0; j < ids.length; j++) {
-        const pos = _nodeLatLon(ids[j]);
+        const pos = _nodeLatLon(ids[j], traceRadioId);
         if (!pos) continue;
         if (prevKnown !== null) {
           const pi = prevKnown.idx, p1 = prevKnown.pos;
@@ -3641,14 +3661,24 @@ if (targetEl) {
           const snr = coveredSnrs.length ? coveredSnrs.reduce((a, b) => a + b, 0) / coveredSnrs.length : null;
 
           const color    = _snrLineColor(snr);
-          const weight   = skipped > 0 ? 2 : 4;
-          const opacity  = skipped > 0 ? 0.45 : _snrLineOpacity(snr);
-          const dashArr  = dashed ? '6,5' : (skipped > 0 ? '3,8' : null);
+          const weight   = 3;
+          const opacity  = skipped > 0 ? 0.72 : _snrLineOpacity(snr);
+          const dashArr  = dashed ? '6,5' : (skipped > 0 ? '2,6' : null);
+          const packetHops = trData.sensePacket && trData.senseHops != null ? Number(trData.senseHops) : null;
+          const packetPartial = packetHops != null && packetHops > 0;
+          const finalDashArr = packetPartial ? '2,6' : dashArr;
+          const finalOpacity = packetPartial ? 0.9 : opacity;
 
-          // Shadow
-          _traceMapLines.push(L.polyline([p1, pos], {color: '#111', weight: weight + 3, opacity: 0.4, lineCap: 'round', interactive: false}).addTo(leafletMap));
+          // Same dark halo style as MC paths for contrast on topo/map tiles.
+          _traceMapLines.push(L.polyline([p1, pos], {
+            color: '#111', weight: weight + 3, opacity: 0.52,
+            dashArray: null, lineCap: 'round', lineJoin: 'round', interactive: false
+          }).addTo(leafletMap));
 
-          const seg = L.polyline([p1, pos], {color, weight, opacity, dashArray: dashArr, lineCap: 'round'});
+          const seg = L.polyline([p1, pos], {
+            color, weight, opacity: finalOpacity, dashArray: finalDashArr,
+            lineCap: 'round', lineJoin: 'round'
+          });
 
           // Tooltip — one line per covered hop that has SNR data
           const tipLines = [];
@@ -3661,24 +3691,25 @@ if (targetEl) {
             }
           }
           if (skipped > 0) tipLines.push(`<em style="color:#a78bfa">${skipped} hop${skipped > 1 ? 's' : ''} — no GPS</em>`);
+          if (packetPartial) tipLines.push(`<em style="color:#a78bfa">${packetHops} packet hop${packetHops !== 1 ? 's' : ''} — intermediate hops unknown</em>`);
           if (tipLines.length) seg.bindTooltip(tipLines.join('<br>'), {sticky: true, direction: 'top'});
 
           seg.addTo(leafletMap);
           _traceMapLines.push(seg);
 
-          // Wing markers — same approved style as MC paths, with pixel-size stable across zoom.
+          // Directional wings — same visual language as MC paths, with pixel-size stable across zoom.
           const wingArm = _mcWingArm('trace') * 1.28;
-          const wCount  = Math.max(1, Math.min(6, Math.ceil(_mcWingCount(p1, pos) * 0.55)));
-          const wingOpacity = skipped > 0 ? 0.45 : 1.0;
+          const wCount  = Math.min(12, _mcWingCount(p1, pos) + 1);
+          const wingOpacity = (skipped > 0 || packetPartial) ? 0.7 : 1.0;
           Array.from({length: wCount}, (_, idx) => (idx + 1) / (wCount + 1)).forEach(t => {
             const wingPts = _mcWingLatLngs(p1, pos, t, wingArm, 19);
             if (wingPts.length === 3) {
               _traceMapLines.push(L.polyline(wingPts, {
-                color: '#111', weight: weight + 3, opacity: skipped > 0 ? 0.32 : 0.52,
+                color: '#111', weight: weight + 3, opacity: 0.52,
                 dashArray: null, lineCap: 'round', lineJoin: 'round', interactive: false
               }).addTo(leafletMap));
               _traceMapLines.push(L.polyline(wingPts, {
-                color, weight: (skipped > 0 ? 2 : 4) + 1, opacity: wingOpacity,
+                color, weight: weight + 1, opacity: wingOpacity,
                 dashArray: null, lineCap: 'round', lineJoin: 'round', interactive: false
               }).addTo(leafletMap));
             }
@@ -3769,6 +3800,36 @@ if (targetEl) {
     try { localStorage.setItem('mapShowTrSnr', _showTrMap ? '1' : '0'); } catch(_) {}
   }
 
+  function _mtSensePacketTraceData(entry, radioId = '') {
+    if (!entry?.from_id) return null;
+    const rid = radioId || entry.radio_id || activeRadioId || '';
+    const local = _nodeLatLon('local', rid);
+    const remote = entry.lat != null && entry.lon != null
+      ? [Number(entry.lat), Number(entry.lon)]
+      : _nodeLatLon(entry.from_id, rid);
+    if (!local || !remote) return null;
+    const hopNum = entry.hops != null ? Number(entry.hops) : NaN;
+    const hops = Number.isFinite(hopNum) && hopNum >= 0 ? hopNum : null;
+    const snr = entry.snr != null && Number.isFinite(Number(entry.snr)) ? Number(entry.snr) : null;
+    const inbound = !entry.sent;
+    const routeIds = inbound ? [entry.from_id, 'local'] : ['local', entry.from_id];
+    return {
+      radio_id: rid,
+      sensePacket: true,
+      senseHops: hops,
+      routeIds,
+      routeBackIds: [],
+      snrTowards: [snr],
+      snrBack: [],
+    };
+  }
+
+  function _mtSenseRouteEntry(entryKey, fromId, radioId = '') {
+    return (entryKey && _mtSenseRoutesByEntryKey[entryKey])
+      || Object.values(_senseResponses || {}).find(n => n?.from_id === fromId && (!radioId || !n.radio_id || n.radio_id === radioId))
+      || null;
+  }
+
   function _mtMessageRouteMeta(m) {
     if (!m || m.is_emoji) return null;
     const targetId = m.sent ? (m.to_id || null) : (m.from_id || null);
@@ -3851,7 +3912,21 @@ if (targetEl) {
     }
     const cached = _mtCachedTraceForNode(fromId, radioId || activeRadioId);
     if (!cached?.data) {
-      showToast('MT route', 'No cached traceroute is available for this node yet.', 'node', `mt-sense-route-${fromId}`);
+      const entry = _mtSenseRouteEntry(entryKey, fromId, radioId || activeRadioId);
+      const packetTrace = _mtSensePacketTraceData(entry, radioId || activeRadioId);
+      if (!packetTrace) {
+        showToast('MT route', 'No sender/local position is available for this packet path yet.', 'node', `mt-sense-route-${fromId}`);
+        return;
+      }
+      switchTab('map');
+      if (!_showTrMap) _mtSetTraceMapVisible(true);
+      _drawTraceRouteOnMap(packetTrace);
+      _lastTraceData = packetTrace;
+      _activeMtRouteKey = routeKey;
+      _activeMtRouteEntryKey = entryKey || routeKey;
+      _mtRefreshSenseRouteSelection();
+      const targetPos = _nodeLatLon(fromId, radioId || activeRadioId);
+      if (targetPos && leafletMap) leafletMap.panTo(targetPos);
       return;
     }
     switchTab('map');
@@ -3884,12 +3959,13 @@ if (targetEl) {
       return;
     }
     const cached = _mtCachedTraceForNode(fromId, radioId || activeRadioId);
-    if (!cached?.data) return;
+    const previewData = cached?.data || _mtSensePacketTraceData(_mtSenseRouteEntry('', fromId, radioId || activeRadioId), radioId || activeRadioId);
+    if (!previewData) return;
     _mtHoverRouteKey = routeKey;
     _mtHoverHadTraceLines = _traceMapLines.length > 0;
     _mtHoverPrevShowTrMap = _showTrMap;
     if (!_showTrMap) _mtSetTraceMapVisible(true);
-    _drawTraceRouteOnMap(cached.data);
+    _drawTraceRouteOnMap(previewData);
   }
 
   function _mtSensePacketKey(n) {
@@ -5363,7 +5439,7 @@ if (targetEl) {
     if (_showPolarGrid) _drawPolarGrid();
     fetch(BASE_PATH + '/api/traceroute/history').then(r => r.json()).then(rows => {
       if (!Array.isArray(rows) || !rows.length) return;
-      _traceHistory = rows.map(r => ({ ts: r.ts * 1000, nodeId: r.node_id, nodeName: r.node_name, radioId: r.radio_id, data: r.data }));
+      _traceHistory = rows.map(r => ({ ts: r.ts * 1000, nodeId: r.node_id, nodeName: r.node_name, radioId: r.radio_id, data: {...(r.data || {}), radio_id: r.radio_id} }));
       if (_traceHistory.length) _lastTraceData = _traceHistory[0].data;
       if (chatNetwork === 'mt') renderMessages();
     }).catch(() => {});
@@ -6618,6 +6694,7 @@ if (targetEl) {
         body.innerHTML = `<div class="modal-error">${escHtml(d.error)}</div>`;
         return;
       }
+      d.radio_id = trRadioId;
       const buildChain = (nodes, snrs) => nodes.map((node, i) => {
         const isEnd = i === 0 || i === nodes.length - 1;
         const snr   = snrs?.[i];
@@ -14054,17 +14131,16 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const routeKey = routeMeta ? _mtRouteKey(routeMeta.targetId || n.from_id, n.radio_id || activeRadioId) : '';
     const routeEntryKey = pktKey || (n.msg_id ? `sense-msg-${n.msg_id}` : `sense-mt-entry-${String(n.radio_id || activeRadioId || 'mt').replace(/[^A-Za-z0-9_-]/g, '_')}-${String(n.from_id || '').replace(/[^A-Za-z0-9_-]/g, '_')}-${n.ts || Date.now()}`);
     const routeChip = routeMeta
-      ? (routeMeta.cached
-        ? `<button class="mt-route-badge cached" title="${escHtml(routeMeta.detail)}" onclick="event.stopPropagation();showMtSenseRoute('${jsSafe(n.from_id)}','${jsSafe(n.radio_id || '')}','${jsSafe(routeEntryKey)}')">${escHtml(routeMeta.label)}</button>`
-        : `<span class="mt-route-badge info" title="${escHtml(routeMeta.detail)}">${escHtml(routeMeta.label)}</span>`)
+      ? `<button class="mt-route-badge ${routeMeta.cached ? 'cached' : 'info'}" title="${escHtml(routeMeta.detail)}" onclick="event.stopPropagation();showMtSenseRoute('${jsSafe(n.from_id)}','${jsSafe(n.radio_id || '')}','${jsSafe(routeEntryKey)}')">${escHtml(routeMeta.label)}</button>`
       : '';
+    if (routeMeta) _mtSenseRoutesByEntryKey[routeEntryKey] = {...n};
     const line = document.createElement('div');
     if (pktKey) line.id = pktKey;
     else if (n.msg_id) line.id = `sense-msg-${n.msg_id}`;
     if (routeKey) line.dataset.mtRouteKey = routeKey;
-    if (routeMeta?.cached) line.dataset.mtEntryKey = routeEntryKey;
-    if (routeMeta?.cached && routeEntryKey === _activeMtRouteEntryKey) line.classList.add('mt-route-selected');
-    line.style.cssText = 'border-bottom:1px solid var(--border);padding:3px 0' + ((routeMeta?.cached || clickPos) ? ';cursor:pointer' : '');
+    if (routeMeta) line.dataset.mtEntryKey = routeEntryKey;
+    if (routeMeta && routeEntryKey === _activeMtRouteEntryKey) line.classList.add('mt-route-selected');
+    line.style.cssText = 'border-bottom:1px solid var(--border);border-left:3px solid transparent;padding:3px 0 3px 6px' + ((routeMeta || clickPos) ? ';cursor:pointer' : '');
     line.innerHTML =
       `<div style="display:flex;gap:6px;align-items:baseline">` +
         `<span style="color:var(--accent);flex-shrink:0">${ts}</span>` +
@@ -14073,17 +14149,17 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         routeChip +
       `</div>` +
       (dataRow ? `<div style="color:var(--muted);padding-left:4px">${dataRow}</div>` : '');
-    if (routeMeta?.cached) {
+    if (routeMeta) {
       line.onclick = () => showMtSenseRoute(n.from_id, n.radio_id || '', routeEntryKey);
     } else if (clickPos) {
       line.onclick = () => { setMapLock(false); leafletMap && leafletMap.setView(clickPos, leafletMap.getZoom()); };
     }
     line.onmouseenter = function() {
-      if (routeMeta?.cached) previewMtSenseRoute(n.from_id, n.radio_id || '', true);
+      if (routeMeta) previewMtSenseRoute(n.from_id, n.radio_id || '', true);
       if (routeMeta?.cached || clickPos) this.style.background = 'rgba(255,255,255,0.04)';
     };
     line.onmouseleave = function() {
-      if (routeMeta?.cached) previewMtSenseRoute(n.from_id, n.radio_id || '', false);
+      if (routeMeta) previewMtSenseRoute(n.from_id, n.radio_id || '', false);
       this.style.background = '';
     };
     log.prepend(line);

@@ -222,21 +222,23 @@
     .mc-msg-tag { font-size: 10px; color: var(--mc-color); background: rgba(56,189,248,0.12); border: 1px solid rgba(56,189,248,0.25); border-radius: 3px; padding: 0 4px; margin-right: 4px; }
     .mt-route-badge { border: 1px solid rgba(74,222,128,0.28); background: rgba(74,222,128,0.10); color: var(--accent); border-radius: 3px; padding: 0 4px; margin-left: 4px; font-size: 10px; line-height: 15px; cursor: pointer; vertical-align: 1px; display:inline-flex; align-items:center; white-space:nowrap; flex-shrink:0; }
     .mt-route-badge.cached { border-color: rgba(59,130,246,0.28); background: rgba(59,130,246,0.10); color: #93c5fd; }
-    .mt-route-badge.info { cursor: default; opacity: 0.85; }
+    .mt-route-badge.info { opacity: 0.85; }
     .mt-route-badge:hover { border-color: var(--accent); color: var(--text); }
     .mt-route-badge.info:hover { border-color: rgba(74,222,128,0.28); color: var(--accent); }
     .mc-route-badge { border: 1px solid rgba(56,189,248,0.30); background: rgba(56,189,248,0.10); color: var(--mc-color); border-radius: 3px; padding: 0 4px; margin-left: 4px; font-size: 10px; line-height: 15px; cursor: pointer; vertical-align: 1px; display:inline-flex; align-items:center; white-space:nowrap; flex-shrink:0; }
     .mc-route-badge:hover { border-color: var(--mc-color); color: var(--text); }
-    #sense-log > .mt-route-selected,
-    #sense-mc-log > .mc-route-selected {
-      background: rgba(74,222,128,0.10);
-      box-shadow: inset 3px 0 0 var(--accent);
+    #sense-log > .mt-route-selected {
+      background: rgba(59,130,246,0.10);
+      border-left-color: #3b82f6 !important;
+      box-shadow: inset 3px 0 0 #3b82f6;
       padding-left: 7px !important;
       box-sizing: border-box;
     }
     #sense-mc-log > .mc-route-selected {
       background: rgba(56,189,248,0.10);
       box-shadow: inset 3px 0 0 var(--mc-color);
+      padding-left: 7px !important;
+      box-sizing: border-box;
     }
     #chat-mt-pane, #chat-mc-pane { flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
     #mc-radio-selector { display: flex; gap: 4px; align-items: center; }

@@ -2103,7 +2103,7 @@ if (targetEl) {
           leafletMap && leafletMap.invalidateSize();
           updateMapMarkers(allNodes);
           renderMcMapMarkers();
-          if (_showTrMap && (_pendingTraceMapData || _lastTraceData)) {
+          if (_showTrMap && (_pendingTraceMapData || (_activeMtRouteKey && _lastTraceData))) {
             _drawTraceRouteOnMap(_pendingTraceMapData || _lastTraceData);
           }
           if (!_mapStaticLoaded) {
@@ -3120,6 +3120,8 @@ if (targetEl) {
         <div class="tr-section">Route back</div>
         <div class="tr-chain">${buildChain(d.routeBack, d.snrBack)}</div>`;
       _lastTraceData = d;
+      _activeMtRouteKey = _mtRouteKey(nodeId, trRadioId);
+      _activeMtRouteEntryKey = null;
       _traceHistory.unshift({ ts: Date.now(), nodeId, nodeName, radioId: trRadioId, data: d });
       if (_traceHistory.length > 10) _traceHistory.pop();
       if (_showTrMap) _drawTraceRouteOnMap(d);
@@ -3361,9 +3363,11 @@ if (targetEl) {
   let _pendingTraceMapData = null;  // trace selected before Leaflet finished initializing
   let _traceHistory   = [];     // [{ts, nodeName, data}] last 10, newest first
   let _polarGridLayer = null;
+  const DEFAULT_POLAR_GRID_COLOR = '#000000';
+  const DEFAULT_POLAR_GRID_HARDNESS = 0.25;
   let _showPolarGrid  = (() => { try { return localStorage.getItem('mapShowPolarGrid') === '1'; } catch(e) { return false; } })();
-  let _polarGridColor         = (() => { try { return localStorage.getItem('mapPolarGridColor')    || '#4ade80'; } catch(e) { return '#4ade80'; } })();
-  let _polarGridHardness      = (() => { try { return parseFloat(localStorage.getItem('mapPolarGridHardness')) || 0.6; } catch(e) { return 0.6; } })();
+  let _polarGridColor         = (() => { try { return localStorage.getItem('mapPolarGridColor')    || DEFAULT_POLAR_GRID_COLOR; } catch(e) { return DEFAULT_POLAR_GRID_COLOR; } })();
+  let _polarGridHardness      = (() => { try { return parseFloat(localStorage.getItem('mapPolarGridHardness')) || DEFAULT_POLAR_GRID_HARDNESS; } catch(e) { return DEFAULT_POLAR_GRID_HARDNESS; } })();
   let _showIntercardinals     = (() => { try { return localStorage.getItem('mapPolarIntercard') === '1'; } catch(e) { return false; } })();
   let mapLocked     = false;
   let mapLabels     = false;
@@ -3798,7 +3802,7 @@ if (targetEl) {
       _activeMtRouteEntryKey = null;
       _mtRefreshSenseRouteSelection();
     }
-    else if (_lastTraceData) _drawTraceRouteOnMap(_lastTraceData);
+    else if (_activeMtRouteKey && _lastTraceData) _drawTraceRouteOnMap(_lastTraceData);
   }
 
   function _mtCachedTraceForNode(nodeId, radioId = null) {
@@ -3854,6 +3858,8 @@ if (targetEl) {
 
   function _mtClearSelectedRoute() {
     _clearTraceLines();
+    _pendingTraceMapData = null;
+    _lastTraceData = null;
     _activeMtRouteKey = null;
     _activeMtRouteEntryKey = null;
     _mtHoverRouteKey = null;
@@ -3895,6 +3901,83 @@ if (targetEl) {
     return (entryKey && _mtSenseRoutesByEntryKey[entryKey])
       || Object.values(_senseResponses || {}).find(n => n?.from_id === fromId && (!radioId || !n.radio_id || n.radio_id === radioId))
       || null;
+  }
+
+  function _mtSensePacketTypeLabel(n) {
+    return {
+      POSITION_APP: 'Position', NODEINFO_APP: 'Node Info', TELEMETRY_APP: 'Telemetry',
+      TEXT_MESSAGE_APP: 'Text', ROUTING_APP: 'Routing', ADMIN_APP: 'Admin',
+      TRACEROUTE_APP: 'Traceroute', NEIGHBORINFO_APP: 'Neighbor Info',
+      WAYPOINT_APP: 'Waypoint', PAXCOUNTER_APP: 'Pax Counter',
+      STORE_FORWARD_APP: 'Store & Fwd', RANGE_TEST_APP: 'Range Test',
+      DETECTION_SENSOR_APP: 'Detection', MAP_REPORT_APP: 'Map Report',
+      ATAK_PLUGIN: 'ATAK', SERIAL_APP: 'Serial', AUDIO_APP: 'Audio',
+      REMOTE_HARDWARE_APP: 'Remote HW', IP_TUNNEL_APP: 'IP Tunnel',
+    }[n?.portnum] || (n?.portnum ? String(n.portnum).replace(/_APP$/,'').replace(/_/g,' ') : '—');
+  }
+
+  function _mtSenseEntryDetailRows(entry) {
+    if (!entry) return [];
+    const label = entry.name && entry.name !== 'null' ? entry.name : entry.from_id;
+    const node = allNodes.find(n => n.id === entry.from_id && (!entry.radio_id || !n.radio_id || n.radio_id === entry.radio_id))
+      || allNodes.find(n => n.id === entry.from_id)
+      || {};
+    const ts = entry.ts
+      ? new Date(entry.ts * 1000).toLocaleString([], {hour12: false})
+      : '';
+    const position = entry.lat != null && entry.lon != null
+      ? `${Number(entry.lat).toFixed(5)}, ${Number(entry.lon).toFixed(5)}`
+      : (node.latitude != null && node.longitude != null ? `${Number(node.latitude).toFixed(5)}, ${Number(node.longitude).toFixed(5)}` : '');
+    const rows = [
+      ['Network', 'Meshtastic'],
+      ['Packet type', _mtSensePacketTypeLabel(entry)],
+      ['From', label],
+      ['Node ID', entry.from_id],
+      ['Radio', entry.radio_name || entry.radio_id || activeRadioId || ''],
+      ['Received', ts],
+      ['SNR', entry.snr != null ? `${entry.snr} dB` : ''],
+      ['RSSI', entry.rssi != null ? `${entry.rssi} dBm` : ''],
+      ['Hops', entry.hops != null ? (Number(entry.hops) === 0 ? 'Direct' : `${entry.hops} hop${Number(entry.hops) !== 1 ? 's' : ''}`) : ''],
+      ['Battery', battDisplay(entry.battery)],
+      ['Voltage', entry.voltage != null ? `${Number(entry.voltage).toFixed ? Number(entry.voltage).toFixed(2) : entry.voltage} V` : ''],
+      ['Position', position],
+      ['Altitude', entry.alt != null ? `${entry.alt} m` : ''],
+      ['Satellites', entry.sats],
+      ['Hardware', entry.hw_model || node.hw_model],
+      ['Role', entry.role || node.role],
+      ['Channel util', entry.ch_util != null ? `${entry.ch_util}%` : ''],
+      ['Air util', entry.air_util != null ? `${entry.air_util}%` : ''],
+      ['Packet ID', entry.pkt_id],
+      ['Message ID', entry.msg_id],
+    ];
+    if (entry.text) rows.push(['Message', String(entry.text)]);
+    return rows.filter(([, v]) => v !== undefined && v !== null && v !== '');
+  }
+
+  function _showMtSenseEntryDetail(entry, entryKey = '') {
+    const panel = document.getElementById('mc-statusreq-panel');
+    const title = document.getElementById('mc-statusreq-title');
+    const body  = document.getElementById('mc-statusreq-body');
+    if (!panel || !title || !body || !entry) return;
+    const label = entry.name && entry.name !== 'null' ? entry.name : entry.from_id;
+    const safeId = jsSafe(entry.from_id || '');
+    const safeName = jsSafe(label || entry.from_id || '');
+    const safeRadio = jsSafe(entry.radio_id || activeRadioId || '');
+    const pos = entry.lat != null && entry.lon != null
+      ? [Number(entry.lat), Number(entry.lon)]
+      : _nodeLatLon(entry.from_id, entry.radio_id || activeRadioId);
+    const actions = [
+      entry.from_id ? `<button class="btn" onclick="showNodeInList('${safeId}')">List</button>` : '',
+      entry.from_id ? `<button class="btn" onclick="openMapDM('${safeId}','${safeName}')">DM</button>` : '',
+      entry.from_id ? `<button class="btn" onclick="openMapTR('${safeId}','${safeName}','${safeRadio}')">TR</button>` : '',
+      pos ? `<button class="btn" onclick="setMapLock(false);leafletMap&&leafletMap.setView([${pos[0]},${pos[1]}],Math.max(leafletMap.getZoom(),14))">Center</button>` : '',
+    ].filter(Boolean).join('');
+    panel.dataset.detailKind = 'mt-sense';
+    panel.dataset.mtEntryKey = entryKey || '';
+    title.textContent = label || 'MT packet';
+    body.innerHTML = `${_detailRows(_mtSenseEntryDetailRows(entry))}
+      ${actions ? `<div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">${actions}</div>` : ''}`;
+    panel.style.display = '';
   }
 
   function _mtMessageRouteMeta(m) {
@@ -3975,39 +4058,43 @@ if (targetEl) {
     const routeKey = _mtRouteKey(fromId, radioId || activeRadioId);
     if (_activeMtRouteKey === routeKey && _activeMtRouteEntryKey === entryKey) {
       _mtClearSelectedRoute();
+      const panel = document.getElementById('mc-statusreq-panel');
+      if (panel?.dataset.detailKind === 'mt-sense') {
+        panel.style.display = 'none';
+        panel.dataset.detailKind = '';
+        panel.dataset.mtEntryKey = '';
+      }
       return;
     }
+    const entry = _mtSenseRouteEntry(entryKey, fromId, radioId || activeRadioId);
     const cached = _mtCachedTraceForNode(fromId, radioId || activeRadioId);
+    let drewRoute = false;
     if (!cached?.data) {
-      const entry = _mtSenseRouteEntry(entryKey, fromId, radioId || activeRadioId);
       const packetTrace = _mtSensePacketTraceData(entry, radioId || activeRadioId);
-      if (!packetTrace) {
-        showToast('MT route', 'No sender/local position is available for this packet path yet.', 'node', `mt-sense-route-${fromId}`);
-        return;
+      if (packetTrace) {
+        if (!_showTrMap) _mtSetTraceMapVisible(true);
+        _drawTraceRouteOnMap(packetTrace);
+        _lastTraceData = packetTrace;
+        drewRoute = true;
+      } else {
+        _clearTraceLines();
+        _pendingTraceMapData = null;
+        _lastTraceData = null;
       }
-      switchTab('map');
+    } else {
       if (!_showTrMap) _mtSetTraceMapVisible(true);
-      _drawTraceRouteOnMap(packetTrace);
-      _lastTraceData = packetTrace;
-      _activeMtRouteKey = routeKey;
-      _activeMtRouteEntryKey = entryKey || routeKey;
-      _mtRefreshSenseRouteSelection();
-      const targetPos = _nodeLatLon(fromId, radioId || activeRadioId);
-      if (targetPos && leafletMap) leafletMap.panTo(targetPos);
-      return;
+      _drawTraceRouteOnMap(cached.data);
+      _lastTraceData = cached.data;
+      drewRoute = true;
     }
     switchTab('map');
-    if (!_showTrMap) {
-      _showTrMap = true;
-      try { localStorage.setItem('mapShowTrSnr', '1'); } catch(_) {}
-    }
-    _drawTraceRouteOnMap(cached.data);
-    _lastTraceData = cached.data;
     _activeMtRouteKey = routeKey;
     _activeMtRouteEntryKey = entryKey || routeKey;
     _mtRefreshSenseRouteSelection();
-    const targetPos = _nodeLatLon(fromId);
+    const targetPos = _nodeLatLon(fromId, radioId || activeRadioId);
     if (targetPos && leafletMap) leafletMap.panTo(targetPos);
+    if (!drewRoute && entry) showToast('MT route', 'No sender/local position is available for this packet path yet.', 'node', `mt-sense-route-${fromId}`);
+    if (entry) _showMtSenseEntryDetail(entry, entryKey || routeKey);
   }
 
   function previewMtSenseRoute(fromId, radioId = '', on = true) {
@@ -5507,7 +5594,6 @@ if (targetEl) {
     fetch(BASE_PATH + '/api/traceroute/history').then(r => r.json()).then(rows => {
       if (!Array.isArray(rows) || !rows.length) return;
       _traceHistory = rows.map(r => ({ ts: r.ts * 1000, nodeId: r.node_id, nodeName: r.node_name, radioId: r.radio_id, data: {...(r.data || {}), radio_id: r.radio_id} }));
-      if (_traceHistory.length) _lastTraceData = _traceHistory[0].data;
       if (chatNetwork === 'mt') renderMessages();
     }).catch(() => {});
 
@@ -6777,6 +6863,8 @@ if (targetEl) {
         <div class="tr-section">Route back</div>
         <div class="tr-chain">${buildChain(d.routeBack, d.snrBack)}</div>`;
       _lastTraceData = d;
+      _activeMtRouteKey = _mtRouteKey(nodeId, trRadioId);
+      _activeMtRouteEntryKey = null;
       _traceHistory.unshift({ ts: Date.now(), nodeId, nodeName, radioId: trRadioId, data: d });
       if (_traceHistory.length > 10) _traceHistory.pop();
       if (chatNetwork === 'mt') renderMessages();
@@ -11870,6 +11958,13 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
 
   function _closeDetailPanel() {
     const panel = document.getElementById('mc-statusreq-panel');
+    if (panel?.dataset.detailKind === 'mt-sense') {
+      panel.style.display = 'none';
+      panel.dataset.detailKind = '';
+      panel.dataset.mtEntryKey = '';
+      _mtClearSelectedRoute();
+      return;
+    }
     if (panel) panel.style.display = 'none';
     if (_mcPingPathActive) { showMcHoverPath(null, false); _mcPingPathActive = false; }
     if (_mcLogPinnedIdx !== null) {
@@ -11884,6 +11979,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const title = document.getElementById('mc-statusreq-title');
     const body  = document.getElementById('mc-statusreq-body');
     if (!panel || !title || !body) return;
+    panel.dataset.detailKind = 'mc-log';
     const entryIdx = _mcLogPinnedIdx !== null ? _mcLogPinnedIdx : _mcSenseLogEntries.indexOf(entry);
 
     const td = (label, val) =>
@@ -12656,6 +12752,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const body  = document.getElementById('mc-statusreq-body');
     if (!panel) return;
     // Show panel with pending state
+    panel.dataset.detailKind = 'mc-ping';
     title.textContent = name;
     body.innerHTML = '<span style="color:var(--muted)">Pinging…</span>';
     panel.style.display = '';
@@ -12935,6 +13032,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const title = document.getElementById('mc-statusreq-title');
     const body  = document.getElementById('mc-statusreq-body');
     if (!panel) return;
+    panel.dataset.detailKind = 'mc-trace';
     title.textContent = 'Broadcast Trace';
     body.innerHTML = '<span style="color:var(--muted)">Sending trace…</span>';
     panel.style.display = '';
@@ -14213,16 +14311,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     if (pktKey && document.getElementById(pktKey)) return;
     const label = n.name && n.name !== 'null' ? n.name : n.from_id;
     const hasGps = n.lat != null && n.lon != null;
-    const pktType = {
-      POSITION_APP: 'Position', NODEINFO_APP: 'Node Info', TELEMETRY_APP: 'Telemetry',
-      TEXT_MESSAGE_APP: 'Text', ROUTING_APP: 'Routing', ADMIN_APP: 'Admin',
-      TRACEROUTE_APP: 'Traceroute', NEIGHBORINFO_APP: 'Neighbor Info',
-      WAYPOINT_APP: 'Waypoint', PAXCOUNTER_APP: 'Pax Counter',
-      STORE_FORWARD_APP: 'Store & Fwd', RANGE_TEST_APP: 'Range Test',
-      DETECTION_SENSOR_APP: 'Detection', MAP_REPORT_APP: 'Map Report',
-      ATAK_PLUGIN: 'ATAK', SERIAL_APP: 'Serial', AUDIO_APP: 'Audio',
-      REMOTE_HARDWARE_APP: 'Remote HW', IP_TUNNEL_APP: 'IP Tunnel',
-    }[n.portnum] || (n.portnum ? n.portnum.replace(/_APP$/,'').replace(/_/g,' ') : '—');
+    const pktType = _mtSensePacketTypeLabel(n);
     const clickPos = hasGps
       ? [n.lat, n.lon]
       : (() => { const mn = allNodes.find(nd => nd.id === n.from_id); return mn && mn.latitude != null ? [mn.latitude, mn.longitude] : null; })();
@@ -14247,14 +14336,14 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const routeChip = routeMeta
       ? `<button class="mt-route-badge ${routeMeta.cached ? 'cached' : 'info'}" title="${escHtml(routeMeta.detail)}" onclick="event.stopPropagation();showMtSenseRoute('${jsSafe(n.from_id)}','${jsSafe(n.radio_id || '')}','${jsSafe(routeEntryKey)}')">${escHtml(routeMeta.label)}</button>`
       : '';
-    if (routeMeta) _mtSenseRoutesByEntryKey[routeEntryKey] = {...n};
+    _mtSenseRoutesByEntryKey[routeEntryKey] = {...n};
     const line = document.createElement('div');
     if (pktKey) line.id = pktKey;
     else if (n.msg_id) line.id = `sense-msg-${n.msg_id}`;
     if (routeKey) line.dataset.mtRouteKey = routeKey;
-    if (routeMeta) line.dataset.mtEntryKey = routeEntryKey;
-    if (routeMeta && routeEntryKey === _activeMtRouteEntryKey) line.classList.add('mt-route-selected');
-    line.style.cssText = 'border-bottom:1px solid var(--border);border-left:3px solid transparent;padding:3px 0 3px 6px' + ((routeMeta || clickPos) ? ';cursor:pointer' : '');
+    line.dataset.mtEntryKey = routeEntryKey;
+    if (routeEntryKey === _activeMtRouteEntryKey) line.classList.add('mt-route-selected');
+    line.style.cssText = 'border-bottom:1px solid var(--border);border-left:3px solid transparent;padding:3px 0 3px 6px;cursor:pointer';
     line.innerHTML =
       `<div style="display:flex;gap:6px;align-items:baseline">` +
         `<span style="color:var(--accent);flex-shrink:0">${ts}</span>` +
@@ -14263,11 +14352,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         routeChip +
       `</div>` +
       (dataRow ? `<div style="color:var(--muted);padding-left:4px">${dataRow}</div>` : '');
-    if (routeMeta) {
-      line.onclick = () => showMtSenseRoute(n.from_id, n.radio_id || '', routeEntryKey);
-    } else if (clickPos) {
-      line.onclick = () => { setMapLock(false); leafletMap && leafletMap.setView(clickPos, leafletMap.getZoom()); };
-    }
+    line.onclick = () => showMtSenseRoute(n.from_id, n.radio_id || '', routeEntryKey);
     line.onmouseenter = function() {
       if (routeMeta) previewMtSenseRoute(n.from_id, n.radio_id || '', true);
       if (routeMeta?.cached || clickPos) this.style.background = 'rgba(255,255,255,0.04)';
@@ -15392,7 +15477,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   ];
   const CPICKER_MAX_RECENT = 6;
   const PG_PALETTE = [
-    '#f9fafb','#4ade80','#22d3ee','#60a5fa','#facc15','#fb923c','#f87171',
+    '#000000','#f9fafb','#4ade80','#22d3ee','#60a5fa','#facc15','#fb923c','#f87171',
     '#9ca3af','#16a34a','#0891b2','#2563eb','#ca8a04','#c2410c','#7c3aed',
   ];
   let _cpickerSelected = '#4ade80';

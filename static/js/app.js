@@ -356,10 +356,8 @@
       .then(d => {
         const tog = document.getElementById('auth-enabled-toggle');
         const usr = document.getElementById('auth-username');
-        const logoutForm = document.getElementById('logout-form');
         if (tog) tog.checked = !!d.auth_enabled;
         if (usr) usr.value = d.auth_username || '';
-        if (logoutForm) logoutForm.style.display = d.auth_enabled ? '' : 'none';
       })
       .catch(() => {});
   }
@@ -378,8 +376,6 @@
     }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || `HTTP ${r.status}`); }))
       .then(() => {
         _authStatus(enabled ? 'Authentication enabled.' : 'Authentication disabled.', true);
-        const lf = document.getElementById('logout-form');
-        if (lf) lf.style.display = enabled ? '' : 'none';
       })
       .catch(e => {
         _authStatus(String(e.message || e), false);

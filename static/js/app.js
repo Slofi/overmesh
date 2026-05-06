@@ -1234,14 +1234,15 @@
   const OM_MANUAL_SECTIONS = [
     {
       title: 'Start Here',
-      tags: 'overview first launch setup radios update local dashboard',
+      tags: 'overview first launch setup radios update local dashboard intro',
       body: [
-        'OverMesh is a local dashboard for Meshtastic and MeshCore radios. It runs in your browser and talks to radios connected to this machine.',
-        'Normal flow: add radios in Settings, watch activity in Sense/Map, inspect nodes in Nodes, send traffic in Chat, and use Map for positions, overlays, routes, and field context.',
-        'MT and MC can be used together or separately. Cross-system bridge controls are intentionally hidden for now.'
+        'OverMesh is a local dashboard for Meshtastic (MT) and MeshCore (MC) radios. It runs in your browser and talks to radios connected to this machine via USB serial, TCP/WiFi, or Bluetooth.',
+        'Normal flow: add radios in Settings, watch activity in Sense/Map, inspect nodes in the Nodes tab, send traffic in Chat, and use Map for positions, overlays, routes, and field context.',
+        'MT and MC can be used together or separately. When both are active, the Nodes table, Chat, and Map show combined data. The Cross-system bridge tab appears when both are configured.',
+        'Authentication is optional. Enable it in Settings → App → Security if the device is on a shared or accessible network. When enabled, a login page protects the dashboard and a Log out button appears in the power menu.'
       ],
       buttons: [
-        ['Settings', 'Open radio setup, app preferences, GPS, offline maps, updates, and help.'],
+        ['Settings', 'Open radio setup, app preferences, GPS, offline maps, updates, security, and help.'],
         ['Show Intro', 'Open the short first-launch overview again.'],
         ['Manual', 'Open this searchable reference. Search by tab name, button name, or feature.'],
         ['Restart', 'Restart the OverMesh server after updates or when the app needs a clean reload.']
@@ -1249,11 +1250,12 @@
     },
     {
       title: 'Top Bar and Global Controls',
-      tags: 'header top bar status pills radio selector silent running power restart shutdown refresh',
+      tags: 'header top bar status pills radio selector silent running power restart shutdown refresh logout auth',
       body: [
-        'The top bar is for global state: active radios, current tab, Silent Running, refresh, and server power actions.',
-        'Radio pills show connected MT and MC radios. They give quick confidence that OM is actually attached to the hardware.',
-        'Silent Running is enforced by the backend. It blocks OM-initiated transmissions even if a browser tries to bypass the UI.'
+        'The top bar shows active radios, the current tab, Silent Running state, refresh, and server power actions.',
+        'Radio pills show each connected MT and MC radio by name. A green/active pill means OM has an open connection to that radio right now.',
+        'Silent Running is enforced by the backend. When active it blocks all OM-initiated transmissions — DMs, pings, adverts, bot replies, and trace packets — regardless of what the browser tries to send.',
+        'The power menu (⏻) contains Restart, Shut down, and Log out. Log out is only shown when authentication is enabled.'
       ],
       buttons: [
         ['Nodes', 'Open the node/contact table.'],
@@ -1261,409 +1263,478 @@
         ['Map', 'Open the main map, markers, marks, notes, and overlays.'],
         ['Sense/Map', 'Open live RF activity and path visualization.'],
         ['Bot', 'Configure and monitor automatic bot replies.'],
-        ['Settings', 'Open app, radio, update, GPS, offline-map, and help controls.'],
+        ['Settings', 'Open app, radio, update, GPS, offline-map, security, and help controls.'],
         ['Refresh', 'Reload visible app data from the backend.'],
-        ['Silent Running', 'Toggle monitor-only mode for OM transmit paths.'],
+        ['Silent Running', 'Toggle monitor-only mode. Blocks all OM transmissions when active.'],
         ['Restart', 'Restart the OverMesh service/process.'],
-        ['Shut down', 'Stop the OverMesh server.']
+        ['Shut down', 'Stop the OverMesh server.'],
+        ['Log out', 'End the current session and return to the login screen. Only visible when authentication is enabled.']
       ]
     },
     {
       title: 'Nodes',
-      tags: 'nodes contacts table favorites ignored map dm traceroute route path mc mt ping trace info position',
+      tags: 'nodes contacts table favorites ignored map dm traceroute route path mc mt ping trace info position manual path lock flood',
       body: [
-        'Nodes lists known Meshtastic nodes and MeshCore contacts. Use it when you need identity, last-heard time, battery, signal, position, and route state.',
+        'Nodes lists known Meshtastic nodes and MeshCore contacts. Use it to check identity, last-heard time, battery, signal, position, route state, and to take actions like DM, ping, trace, or route edit.',
         'The table is shared, but MT and MC route information means different things because the protocols expose different metadata.',
-        'Info/Share opens full contact details. MT shows identity and public-key data. MC shows name, type, full public key, source state, path data, distance, and a MeshCore contact share link/QR when available.'
+        'Info/Share opens full contact details. MT shows identity and public-key data. MC shows name, type, full public key, source state, path data, distance, and a MeshCore share link/QR when available.',
+        'Favorites are per-radio. A starred contact sorts above non-starred ones when Fav first is active. Favorites and ignored contacts are tracked by radio so the same contact on two different radios can be treated independently.'
       ],
       split: [
         {
           title: 'MT Nodes',
           kind: 'mt',
           body: [
-            'MT rows show Meshtastic node IDs, names, signal, battery, position, and Last Seen. Hops is the radio/nodeDB view of how many repeaters away a node appears to be.',
-            'TR runs a real Meshtastic traceroute. That is the source OM uses when it can draw MT route lines on the map.',
-            'Last Seen from real received packets should stay fresh across Refresh; nodeDB-only timestamps are treated more cautiously.'
+            'MT rows show Meshtastic node IDs, names, signal (SNR/RSSI), battery, position, hops, and Last Seen.',
+            'Hops is the radio/nodeDB view of repeater distance. It is informational — it tells you hop count but not which nodes were involved. Use TR for exact route nodes.',
+            'TR sends a real Meshtastic traceroute. When a response arrives OM draws the route-to-node and route-back on the map with SNR coloring per segment. If an intermediate node has no GPS, OM draws a bypass segment and marks the gap.',
+            'Last Seen comes from real received packets when available. NodeDB-only timestamps are treated more cautiously and may lag behind actual activity.'
           ],
           buttons: [
             ['TR', 'Send an MT traceroute and draw route-to-node / route-back if the node responds.'],
-            ['Pos', 'Request an MT position broadcast.'],
+            ['Pos', 'Request an MT position broadcast from this node.'],
             ['Info', 'Request MT node info and telemetry.'],
             ['Info/Share', 'Open MT contact details, public-key data, and copyable share data.'],
-            ['DM', 'Open an MT direct message.'],
-            ['Ignore', 'Hide a noisy MT node from normal views.'],
-            ['Unignore', 'Restore an ignored MT node from History.']
+            ['DM', 'Open a direct message thread with this MT node.'],
+            ['Ignore', 'Hide this MT node from normal Live and History views.'],
+            ['Unignore', 'Restore an ignored MT node. Find ignored nodes under History → MT ignored.']
           ]
         },
         {
           title: 'MC Contacts',
           kind: 'mc',
           body: [
-            'MC rows include short hash chips before names. These help match contacts to MC path hashes shown by messages, pings, and traces.',
-            'Path labels: direct means no known repeater, flood mode means open/unknown routing, route means a stored route exists, and 1 hop / 2 hops means known repeaters.',
-            'MC path hashes may be 1, 2, or 3 bytes. Short hashes can collide, so OM marks uncertain matches instead of pretending every hop is exact.',
-            'Route editing lets you choose the path hash size for the stored route. The Settings -> MeshCore default is used as the starting point.'
+            'MC rows include short hash chips before names. These match the hop-hash IDs shown in Sense/Map path entries, pings, and traces — use them to identify relays.',
+            'Path labels in the Hops column: direct = no stored repeater, flood = open/automatic routing, route = a stored route exists, 1 hop / 2 hops = known stored repeater count.',
+            'The ➤ indicator next to a contact name means a stored route path exists on the device for that contact. A 🔒➤ indicator means the path was manually set by you — it is protected and will not be cleared by the Force Flood setting. A plain ➤ means an auto-learned route; Force Flood will clear it before DMs and pings.',
+            'MC path hashes may be 1, 2, or 3 bytes. Short hashes can collide on busy meshes, so OM marks uncertain matches as likely/estimated/ambiguous rather than treating every hop as confirmed.',
+            'Route editing lets you pick a repeater contact as the next hop and choose the path hash size (1B/2B/3B). The Settings → MeshCore default hash mode is used as the starting point, but you can override it per-contact.',
+            'Clearing a manual route (via Route → Clear) removes the 🔒 lock and reverts to flood routing when Force Flood is on, or leaves the path empty for the firmware to re-learn when Force Flood is off.',
+            'MC contacts are kept in an archive so contacts seen on previous sessions are available even after a contact list refresh or reconnect. The archive merges with live data — live data takes priority for path and seen-time fields.'
           ],
           buttons: [
-            ['Ping', 'Check MC reachability and draw observed path metadata when available.'],
-            ['Trace', 'Send an MC broadcast trace and draw known hops.'],
-            ['Route', 'Edit a stored MC contact route using repeater hash prefixes.'],
-            ['Info/Share', 'Open MC contact details, public key, type, source, distance, MeshCore share link, and contact QR.'],
-            ['★', 'Favorite an MC contact so it sorts higher.'],
-            ['Ignore', 'Hide a noisy MC contact from normal views.'],
-            ['Unignore', 'Restore an ignored MC contact from History.']
+            ['Ping', 'Check MC reachability and signal; draws observed path hops when the response includes path metadata.'],
+            ['Trace', 'Send an MC broadcast trace packet and draw the resolved hop chain on the map.'],
+            ['Route', 'Open the route editor to set or clear a stored hop path for this MC contact.'],
+            ['Manage', 'Open remote repeater/room-server management for supported MC node types (repeaters and room servers only).'],
+            ['Info/Share', 'Open full MC contact details: public key, type, source state, distance, MeshCore share link, and QR code.'],
+            ['★', 'Favorite this MC contact so it sorts above non-favorited rows.'],
+            ['Ignore', 'Hide this MC contact from normal views.'],
+            ['Unignore', 'Restore an ignored MC contact. Find ignored contacts under History → MC ignored.'],
+            ['➤', 'Auto-learned stored route exists. Force Flood will clear it before DMs/pings.'],
+            ['🔒➤', 'Manually set stored route. Protected from Force Flood — only cleared when you explicitly use Route → Clear.']
           ]
         }
       ],
       buttons: [
         ['Live', 'Show currently active MT nodes and MC contacts.'],
-        ['History', 'Browse all remembered MT nodes and MC contacts.'],
-        ['Search', 'Filter visible node/contact rows by name, short name, ID, or radio metadata.'],
-        ['★ Fav first', 'Sort favorites above other rows.'],
+        ['History', 'Browse all remembered MT nodes and MC contacts including ones not heard recently.'],
+        ['Search', 'Filter visible rows by name, short name, ID, or radio metadata.'],
+        ['★ Fav first', 'Sort favorited contacts above all others.'],
         ['MT', 'Show or hide MT rows in the shared table.'],
         ['MC', 'Show or hide MC rows in the shared table.'],
-        ['Clear TR lock', 'Release a stuck traceroute lock if a previous request did not complete cleanly.'],
-        ['MT ignored', 'Show ignored MT nodes in History.'],
-        ['MC ignored', 'Show ignored MC contacts in History.'],
+        ['Clear TR lock', 'Release a stuck MT traceroute lock if a previous request did not complete cleanly.'],
+        ['MT ignored', 'Show ignored MT nodes in History view.'],
+        ['MC ignored', 'Show ignored MC contacts in History view.'],
         ['Map', 'Center the map on that node/contact and open its popup when a position is known.']
       ]
     },
     {
       title: 'Chat',
-      tags: 'chat messages mt mc channel dm reply split byte limit send history delete mention',
+      tags: 'chat messages mt mc channel dm reply split byte limit send history delete mention archive',
       body: [
-        'Chat is for normal text traffic. Use the MT/MC selector when both networks are enabled.',
-        'Chat stays intentionally compact. Route details belong in Sense/Map, while Chat only shows small badges or links when useful.'
+        'Chat is for text traffic on both networks. Use the MT/MC selector at the top when both are enabled.',
+        'Chat stays intentionally compact. Detailed route and signal information belongs in Sense/Map; Chat only shows small badges or links when directly useful.',
+        'All sent and received messages are saved to a local database. MC messages are also kept in a contact archive that survives reconnects and contact list refreshes.'
       ],
       split: [
         {
           title: 'MT Chat',
           kind: 'mt',
           body: [
-            'MT messages can show a small route badge: direct, 1 hop, 2 hops, etc.',
-            'A plain hop badge comes from packet hop metadata. It tells you hop count only, not the exact repeaters.',
-            'A cached-route badge means OM has a recent traceroute for that exact peer. Clicking it draws the cached MT route on Map.'
+            'MT messages can show a small route badge next to the timestamp: direct, 1 hop, 2 hops, etc.',
+            'A plain hop badge comes from packet hop metadata — it gives hop count only, not exact repeaters. Use TR from the Nodes tab when you need exact route nodes.',
+            'A cached-route badge means OM has a recent traceroute for that exact sender. Click it to draw the cached MT route on the map.',
+            'Channel tabs at the top of MT Chat correspond to configured MT channels. A dot indicator on a tab means there are unread messages on that channel.'
           ],
           buttons: [
-            ['Route badge', 'Shows packet hop count or a cached traceroute link for the exact MT peer.'],
-            ['Reply', 'Insert a reply prefix for MT text.'],
-            ['TR', 'Run traceroute from node actions when you need exact route nodes.']
+            ['Route badge', 'Shows packet hop count, or a cached-route link when a recent traceroute exists for that exact peer.'],
+            ['Reply', 'Insert a reply prefix into the input for this MT sender.'],
+            ['TR', 'Run a traceroute from the Nodes tab when you need exact route nodes.'],
+            ['Channel tab', 'Switch between configured MT channels.']
           ]
         },
         {
           title: 'MC Chat',
           kind: 'mc',
           body: [
-            'MC messages are byte-limited by firmware and sender/channel overhead. OM checks byte length and auto-splits longer sends into safe parts.',
-            'MC Reply inserts native bracketed mentions where possible, so original MC users see a proper mention.',
-            'Received MC messages can show a small hop badge. Clicking it opens Sense/Map and pins the matching message path when OM has enough path data.',
-            'A badge such as flood mode describes route mode; a detail such as 2B/hop describes hop-hash size. They are separate facts.'
+            'MC messages have a strict byte budget set by the firmware. The budget depends on channel name length and sender name overhead. OM tracks this and shows a byte counter.',
+            'When a message exceeds the safe byte limit, OM splits it into numbered parts automatically. Each part is sent with a short (1/N) prefix.',
+            'MC Reply inserts a native bracketed mention where possible, so MC app users see a proper @mention in their client.',
+            'Received MC messages show a hop badge when path metadata is available. Click the badge to open Sense/Map and pin the matching path entry.',
+            'A badge like flood mode describes the routing mode for that message. A detail like 2B/hop describes the hop-hash size used in path metadata. They are independent facts — a flood-mode message can still carry 2B/hop path data.',
+            'MC channel slots are numbered 0–N. Channel 0 is usually the default public channel. Each slot can be renamed and given a custom key in Settings → MeshCore.'
           ],
           buttons: [
-            ['Route badge', 'Shows MC direct/hop/flood-mode path metadata; click to open Sense/Map and inspect the message path.'],
-            ['Reply', 'Insert a native MC mention/reply prefix when possible.'],
-            ['Advert', 'Send this MC radio advert so other nodes learn its identity.'],
-            ['Byte counter', 'Shows remaining safe bytes; longer text is split into numbered parts when possible.']
+            ['Route badge', 'Shows MC path metadata: direct/hop count/flood mode and hash size; click to open Sense/Map and inspect the message path.'],
+            ['Reply', 'Insert a native MC mention/reply prefix when the sender is a known contact.'],
+            ['Advert', 'Send the MC radio advert so other nodes can discover and add this radio.'],
+            ['Byte counter', 'Shows remaining safe bytes for the current input. Turns red when a split will occur.'],
+            ['DM tab', 'Open or switch to a direct message thread with a specific MC contact.'],
+            ['DM tab close (×)', 'Close a DM tab without deleting message history.'],
+            ['Channel tab', 'Switch between MC channel slots.'],
+            ['Delete History', 'Delete the saved message history for the current channel or DM thread.']
           ]
         }
       ],
       buttons: [
-        ['MT', 'Switch Chat to Meshtastic channels and DMs.'],
-        ['MC', 'Switch Chat to MeshCore channels and DMs.'],
+        ['MT', 'Switch Chat to the Meshtastic network.'],
+        ['MC', 'Switch Chat to the MeshCore network.'],
         ['Send', 'Transmit the current message. Blocked when Silent Running is active.'],
-        ['Delete History', 'Delete saved visible history for the current conversation or channel.'],
-        ['Emoji', 'Open the emoji picker for the current message input.'],
-        ['Byte counter', 'MC only: shows remaining safe bytes or split-message state for the current input.'],
-        ['DM tab close', 'Close a direct-message tab without deleting history.'],
-        ['Channel tab', 'Switch between public/private MT channels or MC channel slots.']
+        ['Emoji', 'Open the emoji picker to insert a character into the current input.']
       ]
     },
     {
       title: 'Map',
-      tags: 'map markers pins filters overlays marks notes traceroute gps paths layers center popup',
+      tags: 'map markers pins filters overlays marks notes traceroute gps paths layers center popup polar grid distance',
       body: [
-        'Map is the main geographic view. It shows MT nodes, MC contacts, local radios, marks, self notes, overlays, and paths drawn by tools.',
-        'Click markers for quick actions. MT and MC filters let you reduce clutter when both networks are active.',
-        'Marks are mesh waypoints. Self Notes are local-only notes. Overlays are local shapes and imported GeoJSON.',
-        'Distance labels use the OM origin when available: live GPS first, then the manual OM position, then a connected/local radio position fallback. If OM has no origin and the node has only its own coordinates, distance is shown as unknown.'
+        'Map is the main geographic view. It shows MT nodes, MC contacts, local radios, mesh marks, self notes, overlays, and paths drawn by traceroutes, pings, and traces.',
+        'Click any marker to open a popup with quick actions: DM, Ping, Trace, TR, Manage, Show in Nodes, and more depending on the contact type.',
+        'MT and MC filter buttons at the top let you hide one network when the map is too busy.',
+        'Distance labels use the OM origin: live GPS first, then manual OM position (set in Settings → App), then a connected/local radio position as a fallback. If none is available, distances are shown as unknown.',
+        'Marks are mesh waypoints shared over the network. Self Notes are local-only annotations stored in the browser. Overlays are locally drawn shapes and imported GeoJSON.'
       ],
       split: [
         {
           title: 'MT Map',
           kind: 'mt',
           body: [
-            'MT route lines come from traceroute results or cached traceroute replay. Response log hover/click controls preview and pinned routes, with SNR coloring when available.',
-            'If an intermediate MT node has no GPS, OM draws a bypass segment and marks that some hops had no map position.'
+            'MT route lines come from traceroute results or cached traceroute replay. Each segment is colored by SNR quality: green = good, yellow = fair, red = marginal.',
+            'Hover a segment to see SNR for that hop. If an intermediate node has no GPS fix, OM draws a bypass segment and labels it with how many hops had no map position.',
+            'Cached traceroutes are stored per sender. If a new TR result arrives for the same sender, it replaces the cached version.'
           ],
           buttons: [
-            ['TR', 'Run a traceroute from an MT marker popup.']
+            ['TR', 'Run a traceroute from this MT node popup and draw the result on the map.'],
+            ['Pos', 'Request a position broadcast from this MT node.']
           ]
         },
         {
           title: 'MC Map',
           kind: 'mc',
           body: [
-            'MC route lines come from adverts, messages, pings, traces, or stored contact routes. OM shows all known hops it can resolve.',
-            'A warning marker means OM only knows a relay chain or partial path; it is not the final sender/contact position.'
+            'MC route lines come from adverts, messages, pings, traces, and stored contact routes. OM draws all hops it can resolve from the available path metadata.',
+            'A warning marker (!) means OM only knows a relay chain or partial path for this entry — the marker is not the final sender/contact position.',
+            'MC path segments are SNR-colored when signal data is available in the packet metadata. Hover a segment to see its SNR value.',
+            'MC map markers are differentiated by node type: client, room server, and repeater each have a distinct shape and color.'
           ],
           buttons: [
-            ['Ping', 'Run MC reachability check and draw observed path when available.'],
-            ['Trace', 'Run MC broadcast trace and draw resolved hops.'],
-            ['!', 'Known relay only or partial MC path warning.']
+            ['Ping', 'Run an MC reachability check from this contact popup and draw the observed path.'],
+            ['Trace', 'Run an MC broadcast trace from this contact popup and draw resolved hops.'],
+            ['Manage', 'Open remote repeater/room-server management for supported node types.'],
+            ['!', 'Partial or relay-only path warning — marker position is a known relay, not the final contact.']
           ]
         }
       ],
       buttons: [
         ['MT', 'Show or hide Meshtastic markers and paths on the map.'],
         ['MC', 'Show or hide MeshCore markers and paths on the map.'],
-        ['Marks', 'Open the map waypoint panel for mesh-shared marks.'],
-        ['Self Notes', 'Open local-only map notes.'],
-        ['Overlays', 'Open the overlay editor/import panel.'],
-        ['Add Mark', 'Create a mesh waypoint/mark at the selected position.'],
-        ['Add Note', 'Create a local-only map note.'],
+        ['Marks', 'Open the mesh waypoint panel.'],
+        ['Self Notes', 'Open the local-only map annotation panel.'],
+        ['Overlays', 'Open the overlay editor and import panel.'],
+        ['Add Mark', 'Create a mesh waypoint at the tapped/clicked map position.'],
+        ['Add Note', 'Create a local-only map note at the current position.'],
         ['Point', 'Start drawing a point overlay.'],
-        ['Line', 'Start drawing a line/route overlay.'],
-        ['Area', 'Start drawing a polygon overlay.'],
+        ['Line', 'Start drawing a line or route overlay.'],
+        ['Area', 'Start drawing a polygon area overlay.'],
         ['Circle', 'Start drawing a circular overlay.'],
-        ['Finish', 'Finish the current overlay draft.'],
-        ['Layer menu', 'Choose map tiles and open map-layer tools.'],
-        ['Polar Grid', 'Show or hide the polar/range grid overlay.'],
-        ['Customize', 'Adjust polar grid appearance.'],
+        ['Finish', 'Complete the current overlay shape.'],
+        ['Layer menu', 'Choose map tile source and open map layer tools.'],
+        ['Polar Grid', 'Show or hide the range/bearing polar grid overlay centered on the OM origin.'],
+        ['Customize', 'Adjust polar grid ring count, range, and label appearance.'],
         ['Save', 'Save the current mark, note, overlay, or edited settings.'],
-        ['Cancel', 'Cancel the current map edit/draft.'],
-        ['Zoom', 'Zoom the map to a saved overlay or known node position.']
+        ['Cancel', 'Cancel the current map edit or drawing operation.'],
+        ['Zoom', 'Zoom the map to a saved overlay bounding box or a known node position.']
       ]
     },
     {
       title: 'Sense/Map',
-      tags: 'sense activity passive active live rf map mc path hops ping trace log warning path refresh',
+      tags: 'sense activity passive active live rf map mc path hops ping trace log warning path refresh snr rssi signal',
       body: [
-        'Sense/Map is the live RF activity view. It is the best place to watch recent packets, adverts, messages, pings, traces, and path hops.',
-        'Hover or click activity entries to draw known paths. Shared controls are separated below because MT and MC expose different route data.'
+        'Sense/Map is the live RF activity view. It is the best place to watch recent packets, adverts, messages, pings, traces, and resolved path hops.',
+        'The left panel is the map. The right panel is the activity/response log. Clicking log entries draws paths on the map; clicking again clears them.',
+        'MT and MC show separate Sense panels because the two protocols expose different route metadata.'
       ],
       split: [
         {
           title: 'MT Sense/Map',
           kind: 'mt',
           body: [
-            'MT Sense logs heard packets and active Sense responses. Text entries can show SNR, a message preview, and hop count.',
-            'MT route badges in Sense use packet hop metadata when available. Hop-only badges are informational. If a cached traceroute exists for the exact sender, hovering the response-log row previews that route; clicking pins that one row, and clicking the same row again clears it.',
-            'MT hop count alone does not identify which repeaters were used; run TR when you need exact route nodes.'
+            'MT Sense logs heard packets and active Sense responses. Each entry can show SNR, RSSI, a message preview, and hop count from packet metadata.',
+            'A plain hop badge (e.g. 2 hops) comes from packet metadata and shows count only — no repeater identity. Use TR from Nodes to get exact route nodes.',
+            'When a cached traceroute exists for the exact sender, hovering its log row previews the cached route on the map. Clicking pins that route; clicking again clears the pin.',
+            'Active Sense periodically broadcasts a Sense request on a configured cooldown. Passive captures heard packets without transmitting anything.'
           ],
           buttons: [
-            ['Sense Mesh', 'Broadcast an active MT Sense request and collect responses.'],
+            ['Sense Mesh', 'Broadcast an active MT Sense request and collect responses for the cooldown window.'],
             ['Passive', 'Continuously capture heard MT packets without transmitting.'],
-            ['Active', 'Periodically run MT Sense requests using the configured cooldown.'],
-            ['Response log', 'Lists heard MT packets and active Sense responses; only cached-route rows preview on hover and pin/clear on click.'],
-            ['direct', 'Packet metadata says the message was heard directly.'],
-            ['1 hop / 2 hops', 'MT badge for one/two packet hops. This is hop count, not exact route nodes.'],
-            ['cached route', 'A recent MT traceroute exists for this exact peer; hover to preview, click to pin only that entry or clear it.'],
-            ['Clear', 'Clear the current MT Sense detected-node list.']
+            ['Active', 'Periodically run MT Sense requests on the configured cooldown schedule.'],
+            ['Response log', 'MT packet/Sense response list. Cached-route rows preview on hover and pin/unpin on click.'],
+            ['direct', 'Packet arrived with no repeater hops — heard directly.'],
+            ['1 hop / 2 hops', 'Hop count from packet metadata. Does not identify which nodes relayed it.'],
+            ['cached route', 'A recent traceroute exists for this exact sender. Hover to preview, click to pin.'],
+            ['Clear', 'Clear the MT Sense detected-node list.']
           ]
         },
         {
           title: 'MC Sense/Map',
           kind: 'mc',
           body: [
-            'MC Sense logs adverts, messages, pings, traces, scans, and bot replies. It is the main place to inspect MC paths.',
-            'Route source badges explain where OM got the path: live means this packet/RX-log metadata; cached means stored contact route; inferred means a fallback line; refreshed means newer contact/path data changed the entry.',
-            'Flood mode is a route/delivery mode, not a byte size. 1B/hop, 2B/hop, or 3B/hop are hop-hash widths; larger widths reduce repeater ID collisions.',
-            'Observed path hops are shown as clickable hop IDs when OM can resolve them. Click a hop/repeater ID to focus the map on that hop.',
-            'When MC SNR is available, path segments use the same quality colors as MT traceroutes. Hover a colored segment to see its SNR value.',
-            'Confidence labels: likely, estimated, and ambiguous mean OM resolved a short hash but it is not guaranteed exact. Partial paths show only known relays.',
-            'MC hop badges say 1 hop / 2 hops to avoid confusing h with hours.'
+            'MC Sense logs adverts, channel messages, DMs, pings, traces, scans, and bot replies. It is the primary place to inspect MC routing.',
+            'Route source badges explain where OM resolved the path from: live = this packet\'s RX-log metadata (best), cached = stored contact route, inferred = fallback line, refreshed = newer data changed the entry after it was logged.',
+            'Flood mode is a routing/delivery mode label, not a byte count. 1B/hop, 2B/hop, and 3B/hop describe the hop-hash width used in path metadata. A flood-mode packet can still carry 2B/hop path data — these are independent.',
+            'Observed path hops appear as clickable hash IDs. Click a hop ID to center the map on that relay when OM knows its position.',
+            'Path segments use SNR-quality coloring (green/yellow/red) when signal data is available. Hover a segment to see its SNR value.',
+            'Confidence labels: likely = best candidate selected but another match existed; estimated = short/ambiguous hash, treat as probable route not proof; ambiguous = candidates too close to call.',
+            'MC hop count badges read "1 hop" / "2 hops" to avoid confusing "h" with hours in age labels.'
           ],
           buttons: [
-            ['Scan', 'Flood-advertise on MC and collect responses/contacts for the scan window.'],
-            ['MC activity', 'Right-side log of MC adverts, messages, pings, traces, scans, and bot replies. Click entries to pin or clear paths.'],
-            ['live', 'Path came from this packet/RX-log metadata. Best source, but not a guarantee if hashes are short.'],
-            ['cached', 'Path came from stored MC contact route/cache, not necessarily this exact message.'],
-            ['inferred', 'OM drew a fallback such as sender/receiver or partial known line.'],
-            ['refreshed', 'Path changed after OM re-resolved it with newer contact/path data.'],
-            ['flood mode', 'Open/unknown routing mode for the message. It can still have 1B/2B/3B hop metadata.'],
-            ['1B/2B/3B per hop', 'Hop-hash size used in path metadata. 2B/hop is more precise than 1B/hop, but still separate from route mode.'],
-            ['1 hop / 2 hops', 'Known MC repeater count for this entry.'],
-            ['Hop ID', 'Clickable MC path hop/repeater hash; centers the map when OM knows a matching contact position.'],
-            ['likely', 'Best candidate was selected, but another match existed.'],
-            ['estimated', 'Short/ambiguous hash; use as likely route, not proof.'],
-            ['ambiguous', 'Candidates were too close to call confidently.'],
-            ['Path refresh', 'Refresh contact/path data for the selected message or node and redraw if better data exists.'],
-            ['!', 'Known relay only; marker is not final sender/contact location.'],
+            ['Scan', 'Flood-advertise on MC mesh and collect contact responses for the scan window (default 60 s).'],
+            ['MC activity', 'Right panel: MC event log. Click entries to draw/clear path on the map.'],
+            ['live', 'Path resolved from this packet\'s own RX-log metadata. Best quality source.'],
+            ['cached', 'Path from stored MC contact route. May not match this exact packet\'s routing.'],
+            ['inferred', 'OM drew a fallback line (sender→receiver or partial known segment).'],
+            ['refreshed', 'Path was updated after OM re-resolved it with newer data.'],
+            ['flood mode', 'Routing was open/automatic for this message.'],
+            ['1B/2B/3B per hop', 'Hop-hash width in the path metadata. 2B/hop is more collision-resistant than 1B/hop.'],
+            ['1 hop / 2 hops', 'Known MC relay count for this path entry.'],
+            ['Hop ID', 'Clickable relay hash; click to center the map on that relay position.'],
+            ['likely', 'Best hash match selected; another candidate existed.'],
+            ['estimated', 'Short/ambiguous hash — probable route, not confirmed.'],
+            ['ambiguous', 'Multiple equally plausible matches, cannot determine the exact relay.'],
+            ['Path refresh', 'Re-resolve path/contact data for this entry and redraw if better data is available.'],
+            ['!', 'Partial path — marker shows a known relay position, not the final contact.'],
             ['Clear', 'Clear the MC activity log.']
           ]
         }
       ],
       buttons: [
-        ['Map', 'Show the normal map panel.'],
+        ['Map', 'Show the map panel.'],
         ['Sense', 'Open the live RF Sense side panels.'],
         ['MT', 'Show MT Sense controls and MT response log.'],
         ['MC', 'Show MC Sense contacts and MC activity log.'],
-        ['Filter', 'Search/filter the visible Sense contact list or activity log.'],
-        ['📍', 'Indicates a known position or map-focus action for the entry.']
+        ['Filter', 'Search/filter the visible Sense contact list or activity log by name or ID.'],
+        ['📍', 'Indicates a known position or a map-focus action for this entry.']
       ]
     },
     {
       title: 'Bot',
-      tags: 'bot commands motd weather ping automatic replies per radio settings activity test',
+      tags: 'bot commands motd ping test ack sitrep joke dot relay automatic replies per radio settings activity snr rssi rf info',
       body: [
-        'Bot settings are per radio. A bot can answer enabled commands, send MOTD, and log activity.',
-        'Bot sends use the same backend transmit safeguards as manual sends. MC bot replies use the same byte-safe splitting behavior.',
-        'Use Bot activity to check what OM received and what it tried to answer.'
+        'The bot handles incoming text commands automatically. It is configured per radio — each MT and MC radio can have its own bot settings, label, enabled commands, and MOTD.',
+        'Bot transmissions use the same safeguards as manual sends: Silent Running blocks them, byte limits are respected, and MT bot responses use the correct channel.',
+        'Use the Activity tab to see what the bot received and what it replied with.',
+        'Bot responses to test and ping commands include RF metadata: SNR, RSSI, hop count, and hop-hash size (e.g. 2B/hop) when that data is available from the incoming packet. On MC, both uppercase (SNR) and lowercase (snr) key variants from the radio are handled.',
+        'The sitrep command returns a summary of recently heard contacts. Entries are separated by semicolons for clarity — for example: TMP-rpt, 7m ago; CD-MC, 11m ago; CF878292, 32m ago.'
       ],
       buttons: [
-        ['Enable bot', 'Turn bot handling on for the selected radio.'],
-        ['Settings', 'Open per-radio bot command and response configuration.'],
-        ['Activity', 'Show recent bot command/reply activity.'],
-        ['Test MOTD', 'Send or preview the configured message-of-the-day path.'],
-        ['Save', 'Store bot command, MOTD, and response settings.'],
-        ['Same channel', 'Respond in the channel where the command arrived.'],
-        ['DM', 'Respond privately when the command and network support it.']
+        ['Enable bot', 'Turn bot command handling on for the selected radio.'],
+        ['Settings', 'Open per-radio bot configuration: commands, response channel, MOTD, label.'],
+        ['Activity', 'Show recent bot command/reply log for this radio.'],
+        ['Test MOTD', 'Preview or send the configured message-of-the-day for this radio.'],
+        ['Save', 'Save bot command enable/disable, MOTD text, and response settings.'],
+        ['Same channel', 'Send bot response on the same channel the command arrived on.'],
+        ['DM', 'Send bot response as a direct message when supported.'],
+        ['ping', 'Bot replies with PONG + RF metadata (SNR, RSSI).'],
+        ['test', 'Bot replies with a random acknowledgement phrase + RF metadata (SNR, RSSI, hops, hop-hash size).'],
+        ['ack', 'Bot replies with a short acknowledgement + RF metadata.'],
+        ['sitrep', 'Bot replies with last-heard contacts, total count, and recently-heard count.'],
+        ['cmd', 'Bot replies with a list of enabled commands.'],
+        ['motd', 'Bot replies with the configured message-of-the-day text.'],
+        ['joke', 'Bot replies with a random mesh-themed joke.'],
+        ['.', 'Dot command — bot acknowledges receipt of a lone period (mesh connectivity check).'],
+        ['relay', 'Bot relays a quoted message to a named contact: relay "NAME" your message.']
       ]
     },
     {
       title: 'Settings - Meshtastic',
-      tags: 'settings meshtastic mt radios add remove delete node config lora channels gps telemetry mqtt bluetooth wifi reboot shutdown',
+      tags: 'settings meshtastic mt radios add remove serial tcp wifi channels lora gps telemetry mqtt bluetooth reboot shutdown node config key import',
       body: [
-        'Settings -> Meshtastic manages MT radios and MT node configuration.',
-        'Add radios by serial device or TCP/WiFi. OM remembers USB serials so a radio can reconnect even if the port name changes.',
-        'Node settings write directly to the connected node. Reboot may be required for some firmware settings.'
+        'Settings → Meshtastic manages MT radios and MT node configuration.',
+        'Add radios by USB serial port or TCP/WiFi host and port. OM remembers USB serial numbers so a radio reconnects to the right config even if the device path (e.g. /dev/ttyUSB0) changes.',
+        'Node settings write directly to the connected node over the Meshtastic API. Some settings require a node reboot to take effect.',
+        'MT channel keys can be viewed (eye icon) and exported as a URL that others can use to import the channel directly. Import a channel key from a meshcore:// or similar URL using the import field.'
       ],
       buttons: [
-        ['Serial', 'Add a Meshtastic radio by USB serial device.'],
-        ['TCP / WiFi', 'Add a Meshtastic radio reachable by host and TCP port.'],
+        ['Serial', 'Add a Meshtastic radio by USB serial device path.'],
+        ['TCP / WiFi', 'Add a Meshtastic radio by host/IP and TCP port.'],
         ['↻', 'Rescan available serial ports.'],
-        ['Add', 'Add the selected/configured radio to OM.'],
+        ['Add', 'Add the selected radio to OM.'],
         ['Enable', 'Allow OM to connect this configured radio.'],
-        ['Disable', 'Keep the radio configured but disconnect/ignore it.'],
-        ['Remove', 'Remove the radio from OM but keep its message DB unless deleted separately.'],
-        ['Delete', 'Remove the radio and delete its associated saved message DB when applicable.'],
-        ['Edit', 'Open or edit the selected channel/config item.'],
-        ['Save', 'Write the current node/channel/settings block.'],
+        ['Disable', 'Keep the radio configured but tell OM not to connect to it.'],
+        ['Remove', 'Remove the radio from OM (keeps message DB).'],
+        ['Delete', 'Remove the radio and delete its associated message database.'],
+        ['Edit', 'Open or edit a channel or node config item.'],
+        ['Save', 'Write the current node/channel/settings block to the radio.'],
         ['Turn off', 'Set the MT node screen timeout to 10 seconds.'],
         ['Always on', 'Set the MT node screen timeout to never sleep.'],
         ['Reboot', 'Ask the connected MT node to reboot.'],
-        ['Shutdown', 'Ask the connected MT node to shut down if supported.'],
-        ['Clear known nodes', 'Clear remembered remote nodes for the selected MT radio from OM history/live cache.']
+        ['Shutdown', 'Ask the connected MT node to shut down (if firmware supports it).'],
+        ['👁 (key view)', 'Reveal the channel key/secret for the selected MT channel.'],
+        ['Copy URL', 'Copy the channel join URL to the clipboard.'],
+        ['Import channel', 'Import a channel key from a URL or share link.'],
+        ['Clear known nodes', 'Clear all remembered remote nodes for this radio from OM history and live cache.']
       ]
     },
     {
       title: 'Settings - MeshCore',
-      tags: 'settings meshcore mc radios serial tcp wifi bluetooth bt channels tx power coords advert scan reboot import contacts radio params route flood qr share',
+      tags: 'settings meshcore mc radios serial tcp wifi bluetooth bt channels tx power coords position advert scan reboot import contacts radio params route flood qr share hash mode manual path lock repeater remote manage stats debug archive',
       body: [
-        'Settings -> MeshCore manages MC radios, channels, device identity, coordinates, TX power, radio parameters, and default MC path hash size.',
-        'Add MC radios by USB serial, TCP/WiFi host and port, or Bluetooth Low Energy address plus optional PIN. BT address means the AA:BB:CC:DD:EE:FF device address exposed by the OS/phone Bluetooth tools.',
-        'MC capabilities vary by firmware. If a function returns unavailable, it usually means the radio or current connection state cannot do it right now.',
-        'Path Hash Mode chooses the preferred 1B/2B/3B per-hop hash for MC stored routes and the radio default when firmware supports it. OM tries the selected mode first and falls back to the highest mode the radio accepts.',
-        'Always use flood routing clears the selected MC contact path before DMs and status pings so firmware uses flood/automatic routing instead of stored or learned paths.',
-        'Import Contact accepts meshcore:// share links and writes the contact to the selected radio. Contact Info/Share exports official meshcore://contact/add links and QR codes; MC channel Info/Share exports meshcore://channel/add data when the channel secret is readable.',
-        'The temporary config-only repeater tool was removed. Configure only radios that OM can use as normal MC nodes.'
+        'Settings → MeshCore manages MC radios, device identity, radio parameters, channels, coordinates, TX power, path hash mode, and position sharing.',
+        'Add MC radios by USB serial, TCP/WiFi, or Bluetooth LE (BT address in AA:BB:CC:DD:EE:FF format, optional PIN).',
+        'MC capabilities vary by firmware version. If a function returns an error or "unavailable", the radio or firmware may not support it.',
+        'Path Hash Mode selects the preferred per-hop hash width (1B, 2B, or 3B) used when storing a route for a contact. OM tries the selected mode first and falls back if the radio rejects it. Wider hashes are more collision-resistant on dense meshes.',
+        'Always use flood routing clears the stored contact path before each DM and status ping so the firmware routes via flood/automatic mode. Exception: contacts where you have manually set a path via the Route editor keep their path regardless of this setting — they show a 🔒➤ indicator in the Nodes tab. Clearing the path for that contact (Route → Clear) removes the lock.',
+        'Share position in adverts controls whether the MC radio includes its GPS coordinates in mesh advertisement packets. Enable this so other nodes and OM instances can see the radio on the map. When you set or change the coordinates, OM automatically sends an advertisement to propagate the update to the mesh immediately.',
+        'Set Coords writes static GPS coordinates to the MC device and immediately re-advertises so other nodes get the position update without waiting for the next scheduled advert.',
+        'MC node stats (Fetch) query live packet counters and airtime from the device.',
+        'Debug Events logs all raw serial events from the MC radio to a file for 60 seconds. Use it to diagnose ping/status timeouts — check the OverMesh server log file during or after the window.',
+        'MC channel slots are numbered 0 to max_channels-1. Each slot has a name and a 16-byte secret key. The channel hash (2-char hex) identifies the slot on the mesh. Channel Info/Share exports a meshcore://channel/add link and QR code when the secret is available.',
+        'Import Contact accepts an official meshcore://contact/add share link and writes the contact to the selected MC radio NVS storage.',
+        'Remote Manage opens a login/read/command interface for MC repeater and room-server nodes. Only visible for contacts identified as repeaters or room servers.'
       ],
       buttons: [
-        ['Serial', 'Add a MeshCore radio by USB serial device.'],
-        ['TCP / WiFi', 'Add a MeshCore radio by host/IP and TCP port.'],
-        ['BT', 'Add a MeshCore BLE radio by Bluetooth address and optional PIN.'],
-        ['Add', 'Add the selected/configured MeshCore radio to OM.'],
+        ['Serial', 'Add an MC radio by USB serial device path.'],
+        ['TCP / WiFi', 'Add an MC radio by host/IP and TCP port.'],
+        ['BT', 'Add an MC BLE radio by Bluetooth address and optional PIN.'],
+        ['Add', 'Add the configured MC radio to OM.'],
         ['Enable', 'Allow OM to connect this MC radio.'],
         ['Disable', 'Keep the MC radio configured but disconnected.'],
         ['Remove', 'Remove the MC radio from OM settings.'],
-        ['Advert', 'Send the radio advert so other MC nodes learn this radio.'],
-        ['Scan', 'Refresh MC contacts or query radio state where supported.'],
-        ['Import', 'Import a meshcore:// contact share link.'],
-        ['Save Radio Params', 'Write frequency, bandwidth, spreading factor, and coding rate.'],
-        ['Save TX Power', 'Write MC transmit power.'],
-        ['Save Path Mode', 'Write the preferred MC path hash size.'],
-        ['Always use flood routing', 'Force MC DMs and status pings through flood/automatic routing for this radio.'],
-        ['Rename', 'Write MC device name.'],
-        ['Select on map', 'Pick MC device coordinates from the map.'],
-        ['Set Coords', 'Write MC device coordinates.'],
-        ['Debug Events', 'Log raw MC serial events for 60 seconds for troubleshooting.'],
-        ['Set', 'Set or edit an MC channel slot.'],
-        ['Reboot Device', 'Try to reboot the connected MC radio.'],
-        ['Delete History', 'Delete saved MC channel history.']
+        ['Advert', 'Send a mesh advertisement from this MC radio so other nodes learn its identity.'],
+        ['Scan', 'Flood-advertise and open the scan window to collect MC contacts.'],
+        ['Import', 'Import an MC contact from a meshcore:// share link.'],
+        ['Save Radio Params', 'Write frequency (MHz), bandwidth (kHz), spreading factor (SF7–12), and coding rate (CR5–8) to the radio.'],
+        ['Save TX Power', 'Write MC transmit power in dBm. Cannot exceed the radio hardware maximum.'],
+        ['Save Path Mode', 'Write the preferred MC path hash width (1B/2B/3B) to the radio default and OM config.'],
+        ['Always use flood routing', 'Before each DM/ping, clear stored contact paths so the firmware uses flood routing. Manually-set (🔒) paths are exempt.'],
+        ['Rename', 'Write a new device name to the MC radio (shown in adverts and contacts).'],
+        ['Select on map', 'Pick static GPS coordinates for this MC radio by clicking on the map.'],
+        ['Set Coords', 'Write the entered coordinates to the MC radio and immediately re-advertise to push the position to the mesh.'],
+        ['Share position in adverts', 'Enable (1) or disable (0) whether the radio includes its coordinates in mesh advertisement packets. Enable so other OM instances and MC nodes can see its position. Toggle calls re-advertise immediately.'],
+        ['Fetch (Stats)', 'Query live packet and airtime statistics from the MC radio.'],
+        ['Debug Events', 'Enable verbose serial event logging for 60 s. Check the OM server log to diagnose ping/status issues.'],
+        ['Set (channel)', 'Set or edit an MC channel slot by name and key type (auto/keep/random/custom).'],
+        ['Delete (channel)', 'Clear an MC channel slot and delete its stored message history.'],
+        ['Share (channel)', 'Export a meshcore://channel/add link and QR code for this channel slot.'],
+        ['Reboot Device', 'Send a reboot command to the connected MC radio.'],
+        ['Manage', 'Open remote repeater/room-server login and management for this MC node.']
       ]
     },
     {
       title: 'Settings - App',
-      tags: 'settings app appearance zoom accent notifications offline maps gps update manual intro cache regions',
+      tags: 'settings app appearance zoom accent notifications sounds offline maps gps update manual intro cache regions auth security login password',
       body: [
-        'Settings -> App controls UI zoom, accent color, notifications, GPS receiver, offline map tiles, map regions, updates, and help.',
-        'The updater is conservative: trusted local/private access only, no dirty worktree, fast-forward only, explicit restart afterward.',
-        'If requirements changed on a Linux system with externally managed Python, the updater retries dependency installation with --break-system-packages after Python reports the PEP 668 block.',
-        'Distance units switch all app distance displays between kilometres and miles.',
-        'Manual OM position is an app-only fallback origin for distances and map context when there is no live GPS fix. It does not write coordinates to a radio by itself.',
-        'Offline maps are stored in browser IndexedDB; they are per browser/profile.'
+        'Settings → App controls UI zoom, accent color, notification sounds, GPS, offline maps, updates, security/authentication, and help.',
+        'Notification sounds play on new MT/MC messages and node-seen events. Connect/disconnect events play a distinct two-tone radio sound.',
+        'The updater pulls from GitHub main. It refuses dirty worktrees, locally-ahead commits, or non-Git installs. On PEP 668 externally-managed Python it retries with --break-system-packages automatically.',
+        'Distance units switch all distance displays and polar-grid labels between kilometres and miles.',
+        'Manual OM position is an app-only fallback origin for distances and map context. It does not write coordinates to any radio — use Set Coords in MeshCore settings or the node GPS settings in Meshtastic settings for that.',
+        'Authentication (Security section): set a username and password to protect the OverMesh dashboard. When enabled, a login page appears on first load and after logout. The session persists in a browser cookie until you log out or the server restarts. Leave the password field blank when saving to keep the current password unchanged.',
+        'Offline maps are stored in browser IndexedDB and are per-browser/profile. They are not shared between browsers or devices.'
       ],
       buttons: [
-        ['−', 'Decrease UI zoom.'],
-        ['+', 'Increase UI zoom.'],
-        ['Reset', 'Reset accent color to the default.'],
-        ['Distance units', 'Choose kilometres or miles for app distance labels and polar-grid range labels.'],
-        ['Check', 'Fetch/check GitHub origin and show whether an update is available.'],
-        ['Update', 'Pull the latest GitHub main branch if the local checkout is clean and fast-forwardable.'],
-        ['Restart', 'Restart OM after a successful update.'],
+        ['−', 'Decrease UI zoom level.'],
+        ['+', 'Increase UI zoom level.'],
+        ['Reset (accent)', 'Reset the accent color to the default.'],
+        ['Distance units', 'Switch between kilometres and miles for all distance labels.'],
+        ['Check', 'Check GitHub for a newer version.'],
+        ['Update', 'Pull the latest version from GitHub main if the install is clean and fast-forwardable.'],
+        ['Restart', 'Restart OM after a successful update to load the new code.'],
         ['Show Intro', 'Open the first-launch overview.'],
         ['Manual', 'Open this searchable manual.'],
-        ['New messages', 'Enable or disable in-app/browser message notifications.'],
-        ['New node seen', 'Enable or disable node/contact seen notifications.'],
-        ['Clear cache', 'Delete cached offline map tiles from this browser.'],
-        ['Save current map view', 'Download map tiles for the current map viewport.'],
-        ['Search', 'Find a map region/place for offline tile download.'],
-        ['GPS receiver', 'Select/configure the local GPS source used for OM and node position updates.'],
-        ['Manual OM position', 'Set or clear the app fallback origin used when GPS has no live fix.'],
-        ['Set from map', 'Pick the manual OM position from the map.'],
-        ['Send to nodes now', 'Push the current GPS receiver fix to connected nodes.']
+        ['New messages', 'Enable or disable in-app browser notifications for incoming messages.'],
+        ['New node seen', 'Enable or disable notifications when a new node/contact is first heard.'],
+        ['Clear cache', 'Delete all cached offline map tiles from this browser.'],
+        ['Save current map view', 'Download and cache map tiles for the current map viewport at the current zoom.'],
+        ['Search (maps)', 'Find a named region/place to download offline map tiles for.'],
+        ['GPS receiver', 'Select and configure the local GPS source (USB NMEA, u-blox, internal).'],
+        ['Manual OM position', 'Set a fallback app origin for distances when no live GPS fix is available.'],
+        ['Set from map', 'Pick the manual OM position by clicking on the map.'],
+        ['Send to nodes now', 'Push the current GPS fix to all connected radios immediately.'],
+        ['Save (Security)', 'Save the authentication username and password. Leave password blank to keep the current one.'],
+        ['Disable auth', 'Remove authentication — dashboard will be accessible without login.']
+      ]
+    },
+    {
+      title: 'Settings - Cross-System Bridge',
+      tags: 'settings cross system bridge mt mc relay webhook automation ingest token forward message',
+      body: [
+        'The Cross-system tab is visible when both MT and MC radios are configured. It controls MT↔MC message forwarding and automation webhooks.',
+        'Channel bridge rules define which MT channel maps to which MC channel slot and in which direction(s) messages are forwarded. Only manually configured rules are active — there is no auto-bridge.',
+        'Outbound webhooks post a JSON payload to configured URLs when a message is received. Use a shared secret for HMAC verification on the receiving end.',
+        'Inbound API accepts POST requests to /api/bridge/send. Authenticate with Authorization: Bearer TOKEN or the X-OverMesh-Token header. The payload specifies the network, radio, channel/destination, and message text.'
+      ],
+      buttons: [
+        ['Enable bridge', 'Turn on MT↔MC message forwarding for the configured rules.'],
+        ['Add rule', 'Create a new MT↔MC channel forwarding rule.'],
+        ['Enable webhooks', 'Send outbound HTTP POST notifications when messages are received.'],
+        ['Enable ingest', 'Accept inbound HTTP POST messages via the bridge API endpoint.'],
+        ['Save', 'Save bridge, webhook, and ingest settings.']
       ]
     },
     {
       title: 'Overlays and Geofences',
-      tags: 'overlays geojson geofence zones area circle alerts enter leave map import split edit',
+      tags: 'overlays geojson geofence zones area circle alerts enter leave map import split edit polygon',
       body: [
-        'Map overlays are local GeoJSON points, lines, areas, or circles. Use them for routes, zones, boundaries, and reference markers.',
-        'Area and circle overlays can become geofences. Geofence alerts can watch MT, MC, or both networks and notify on enter or leave.',
-        'Imported multi-feature GeoJSON renders as one overlay, but can be split into editable single-feature overlays.'
+        'Map overlays are local GeoJSON shapes: points, lines, areas (polygons), or circles. Use them for routes, zones, boundaries, and reference markers.',
+        'Area and circle overlays can be configured as geofences. A geofence watches node/contact positions and fires an alert when a tracked node enters or leaves the zone.',
+        'Geofences can watch MT, MC, or both networks independently. Alert types are enter, leave, or both.',
+        'Imported multi-feature GeoJSON renders as one combined overlay. Use Split to break it into individual editable overlays.'
       ],
       buttons: [
-        ['Import', 'Import pasted or uploaded GeoJSON overlay data.'],
-        ['Edit', 'Edit a saved single-feature overlay on the map.'],
-        ['Split', 'Split a multi-feature overlay into editable single-feature overlays.'],
-        ['Geofence', 'Enable or disable geofence behavior for an area or circle.'],
-        ['Alert on enter', 'Notify when a tracked node/contact enters the geofence.'],
-        ['Alert on leave', 'Notify when a tracked node/contact leaves the geofence.'],
-        ['Both', 'Track MT and MC positions for this geofence.'],
-        ['MT only', 'Track only Meshtastic positions.'],
-        ['MC only', 'Track only MeshCore positions.']
+        ['Import', 'Import pasted or uploaded GeoJSON data as a new overlay.'],
+        ['Edit', 'Edit a saved single-feature overlay shape on the map.'],
+        ['Split', 'Split a multi-feature overlay into individual editable overlays.'],
+        ['Geofence', 'Enable or disable geofence behavior for an area or circle overlay.'],
+        ['Alert on enter', 'Notify when a tracked node/contact enters this geofence zone.'],
+        ['Alert on leave', 'Notify when a tracked node/contact leaves this geofence zone.'],
+        ['Both', 'Track both MT and MC positions for this geofence.'],
+        ['MT only', 'Track only Meshtastic positions for this geofence.'],
+        ['MC only', 'Track only MeshCore positions for this geofence.']
       ]
     },
     {
       title: 'Version and Updates',
-      tags: 'version update github build release restart dirty worktree fast forward',
+      tags: 'version update github build release restart dirty worktree fast forward requirements',
       body: [
-        'OM versions use YYYY.MM.DD.N. The Settings updater also shows the exact Git build hash.',
-        'Every GitHub push should bump VERSION and add a VERSIONS.md entry.',
-        'If Update is disabled, the local install is probably dirty, ahead of GitHub, not a Git checkout, or already current.',
-        'When requirements.txt changes, the updater installs dependencies after pulling. On PEP 668 externally-managed Python installs, OM retries with --break-system-packages and logs that step in the update output.'
+        'OM versions use YYYY.MM.DD.N format. The Settings updater shows the current version, the latest GitHub version, the exact Git build hash, and whether the install is clean and up to date.',
+        'The updater performs a safe fast-forward pull. It refuses to update if the local checkout is dirty (uncommitted changes), ahead of GitHub, not a Git repository, or already current.',
+        'When requirements.txt changes, the updater installs the new dependencies after pulling. On PEP 668 externally-managed Python systems (e.g. Debian/Ubuntu with system Python), it retries with --break-system-packages and logs that step.',
+        'After any update, use Restart so the new code is loaded by the server process.'
       ],
       buttons: [
-        ['Check', 'Refresh version/build status from origin/GitHub.'],
-        ['Update', 'Run a safe fast-forward update. Refuses dirty or locally-ahead installs.'],
-        ['Restart', 'Restart the server so updated code takes effect.']
+        ['Check', 'Fetch version and build status from GitHub origin.'],
+        ['Update', 'Run a safe fast-forward update from GitHub main.'],
+        ['Restart', 'Restart the OM server so the updated code takes effect.']
       ]
     },
     {
       title: 'Limits and Troubleshooting',
-      tags: 'limits troubleshooting restart hard refresh no path direct usb firmware cache stale reconnect',
+      tags: 'limits troubleshooting restart hard refresh no path direct usb firmware cache stale reconnect serial fd leak brownout',
       body: [
-        'After code changes, restart OverMesh and hard-refresh the browser if the UI looks stale.',
-        'Some MC path data depends on firmware and packet type. OM shows all known hops when available, but older packets or missing RX metadata may only show sender/receiver or a partial path.',
-        'If a USB radio stops responding after restart, unplug/replug can be necessary on some devices. Reconnect loops will pick it up again once the OS exposes the serial port.'
+        'After any code update, restart OverMesh and hard-refresh the browser (Ctrl+Shift+R) if the UI looks stale or buttons do not match the manual.',
+        'Some MC path data depends on firmware version and packet type. Older firmware packets or missing RX-log metadata may only provide sender/receiver or a partial path rather than full hop data.',
+        'If a USB radio stops responding after an OM restart, unplug and replug it. The reconnect loop will pick it up once the OS re-exposes the serial port. A brief connection loop in logs (EAGAIN on open) usually means a previous process left the port\'s file descriptor open — OM attempts to release leaked FDs automatically.',
+        'On MC: if the radio connects (shows in status) but messages do not send or receive, and channel utilization reads 0%, the radio\'s LoRa chip may have locked up from a USB power brownout during TX. A physical power cycle (disconnect USB power, wait 5 s, reconnect) is the fix. Using a powered USB hub or a dedicated port helps prevent this.',
+        'The MT traceroute lock prevents stacked TR requests. If a previous TR did not complete (no response from node), the lock may stay set. Use Clear TR lock to release it.'
       ],
       buttons: [
         ['Restart', 'Cleanly reload the OM server process.'],
-        ['Refresh', 'Reload visible frontend/backend data.'],
-        ['Path refresh', 'Try to refresh route/path data for a selected message/contact.'],
-        ['Clear TR lock', 'Release a stuck MT traceroute lock.'],
-        ['Enable', 'Reconnect a disabled configured radio.'],
-        ['Disable', 'Temporarily disconnect a configured radio without deleting it.']
+        ['Refresh', 'Reload visible frontend/backend data from the server.'],
+        ['Path refresh', 'Re-resolve and redraw route/path data for a selected message or contact.'],
+        ['Clear TR lock', 'Release a stuck MT traceroute lock so new TR requests can proceed.'],
+        ['Enable', 'Reconnect a disabled configured radio without reconfiguring it.'],
+        ['Disable', 'Temporarily disconnect a configured radio without removing its config or history.']
       ]
     }
   ];

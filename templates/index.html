@@ -317,7 +317,13 @@
         <span id="mc-byte-counter" style="font-size:11px;color:var(--muted);flex-shrink:0;min-width:28px;text-align:right">160</span>
         <button class="emoji-btn" onclick="toggleEmojiPicker('mc-chat-input',this)" title="Emoji">😊</button>
         <button class="dm-send" id="mc-send-btn" onclick="sendMcChan()" title="Send message to active MC channel">Send</button>
-        <button class="btn btn-net-mc network-accent-mc" style="font-size:12px;padding:4px 10px;flex-shrink:0" onclick="mcSendAdvert()" title="Flood-advertise — announces this node to the MeshCore network">Advert</button>
+        <div id="mc-advert-wrap" style="position:relative;flex-shrink:0">
+          <button class="btn btn-net-mc network-accent-mc" id="mc-advert-btn" style="font-size:12px;padding:4px 10px" onclick="toggleMcAdvertMenu(event)" title="Advertise — announces this node to the MeshCore network">Advert &#9650;</button>
+          <div id="mc-advert-menu" style="display:none;position:absolute;bottom:calc(100% + 4px);right:0;background:var(--bg2);border:1px solid var(--border);border-radius:6px;min-width:140px;z-index:999;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.4)">
+            <button style="display:flex;width:100%;padding:8px 14px;background:none;border:none;color:var(--text);cursor:pointer;font-size:12px;align-items:center;gap:8px;transition:background 0.1s" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''" onclick="mcSendAdvert(false)">Local <span style="color:var(--muted);font-size:11px">(no hops)</span></button>
+            <button style="display:flex;width:100%;padding:8px 14px;background:none;border:none;color:var(--text);cursor:pointer;font-size:12px;align-items:center;gap:8px;transition:background 0.1s" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''" onclick="mcSendAdvert(true)">Flood</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>

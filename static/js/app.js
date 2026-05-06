@@ -12537,15 +12537,29 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     doSend();
   }
 
-  function mcSendAdvert() {
+  function toggleMcAdvertMenu(e) {
+    e.stopPropagation();
+    const menu = document.getElementById('mc-advert-menu');
+    if (!menu) return;
+    const isOpen = menu.style.display !== 'none';
+    menu.style.display = isOpen ? 'none' : 'block';
+    if (!isOpen) {
+      const close = () => { menu.style.display = 'none'; document.removeEventListener('click', close); };
+      setTimeout(() => document.addEventListener('click', close), 0);
+    }
+  }
+
+  function mcSendAdvert(flood) {
+    if (flood === undefined) flood = true;
+    document.getElementById('mc-advert-menu')?.style && (document.getElementById('mc-advert-menu').style.display = 'none');
     if (!activeMcRadioId) return;
     const doSend = () => {
-      const btn = document.querySelector('button[onclick="mcSendAdvert()"]');
+      const btn = document.getElementById('mc-advert-btn');
       if (btn) { btn.disabled = true; btn.textContent = '…'; }
       fetch(BASE_PATH + `/api/mc/${encodeURIComponent(activeMcRadioId)}/advert`, {
-        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({flood: true}),
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({flood}),
       }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
-        if (btn) { btn.disabled = false; btn.textContent = 'Advert'; }
+        if (btn) { btn.disabled = false; btn.innerHTML = 'Advert &#9650;'; }
         if (!d.error) {
           const ts = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
           const radioName = mcLastStatus[activeMcRadioId]?.name || activeMcRadioId;
@@ -12555,7 +12569,8 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
           try { localStorage.setItem('mcSenseLog', JSON.stringify(_mcSenseLogEntries.slice(0, 100))); } catch(e) {}
           renderMcSenseLog();
         }
-        const statusText = d.error ? `Advert failed: ${d.error}` : 'Advert sent (flood).';
+        const modeLabel = flood ? 'flood' : 'local';
+        const statusText = d.error ? `Advert failed: ${d.error}` : `Advert sent (${modeLabel}).`;
         mcMessages.push({
           type: 'mc_message', radio_id: activeMcRadioId,
           radio_name: mcLastStatus[activeMcRadioId]?.node_name || mcLastStatus[activeMcRadioId]?.name || '',
@@ -12566,7 +12581,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         _saveMcMessages();
         renderMcMessages();
       }).catch(e => {
-        if (btn) { btn.disabled = false; btn.textContent = 'Advert'; }
+        if (btn) { btn.disabled = false; btn.innerHTML = 'Advert &#9650;'; }
         mcMessages.push({
           type: 'mc_message', radio_id: activeMcRadioId,
           radio_name: '', network: 'mc', subtype: 'system',

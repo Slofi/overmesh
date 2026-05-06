@@ -301,7 +301,7 @@ def build_sitrep():
         return "👀 In Mesh: 0"
 
     recent = sorted(remote, key=lambda n: n.get("last_heard_ts", 0), reverse=True)
-    seen_lines = "\n".join(
+    seen_lines = "; ".join(
         f"{sname(n)}, {n['last_heard']}" for n in recent[:3] if n.get("last_heard")
     )
 
@@ -548,7 +548,7 @@ def build_mc_sitrep(config_id):
     cutoff = now - 3600
     recent_count = sum(1 for c in contacts.values() if _mc_contact_seen_ts(c, now) > cutoff)
     recent = sorted(contacts.values(), key=lambda c: _mc_contact_seen_ts(c, now), reverse=True)
-    seen_lines = "\n".join(
+    seen_lines = "; ".join(
         f"{c.get('adv_name', '?')[:10]}, {_format_delta(now - _mc_contact_seen_ts(c, now))}"
         for c in recent[:3] if _mc_contact_seen_ts(c, now)
     )
@@ -576,8 +576,8 @@ def build_mc_motd_text(cfg, config_id):
 
 def _build_mc_rf_info(msg):
     parts = []
-    snr = msg.get("snr")
-    rssi = msg.get("rssi")
+    snr = msg.get("snr") if msg.get("snr") is not None else msg.get("SNR")
+    rssi = msg.get("rssi") if msg.get("rssi") is not None else msg.get("RSSI")
     path_len = msg.get("path_len")
     path_hash_mode = msg.get("path_hash_mode")
 

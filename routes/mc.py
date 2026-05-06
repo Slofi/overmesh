@@ -151,6 +151,7 @@ def _serialize_mc_contact(pubkey, contact, now=None, source_state=None):
         "out_path": contact.get("out_path", ""),
         "out_path_hash_mode": contact.get("out_path_hash_mode"),
         "out_path_hash_size": contact.get("out_path_hash_size"),
+        "path_manual": bool(contact.get("path_manual", False)),
         "type": contact.get("type", 0),
         "network": "mc",
     }

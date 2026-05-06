@@ -333,6 +333,9 @@ def _configured_force_flood(config_id):
 async def _force_contact_flood_if_configured(mc, config_id, full_key, contact, reason):
     if not _configured_force_flood(config_id):
         return False
+    if contact.get("path_manual"):
+        log.info(f"[MC:{config_id}] skipping force flood for {full_key[:12]} — manual path set by user")
+        return False
     result = await mc.commands.reset_path(full_key)
     _raise_if_mc_error(result, f"force flood path for {reason}")
     contact["out_path_len"] = -1
@@ -993,6 +996,7 @@ async def _retry_contacts_async(mc, config_id, name):
                 "out_path":           c.get("out_path", ""),
                 "out_path_hash_mode": c.get("out_path_hash_mode"),
                 "out_path_hash_size": c.get("out_path_hash_size"),
+                "path_manual":        bool(c.get("path_manual", False)),
                 "contact_type": c.get("type", 0),
                 "network":     "mc",
             })
@@ -1085,6 +1089,7 @@ def _subscribe_mc_events(mc, config_id, name):
                 "out_path":          existing.get("out_path", ""),
                 "out_path_hash_mode": existing.get("out_path_hash_mode"),
                 "out_path_hash_size": existing.get("out_path_hash_size"),
+                "path_manual":       bool(existing.get("path_manual", False)),
                 "contact_type":      existing.get("type", 0),
                 "network":           "mc",
             })
@@ -1206,6 +1211,7 @@ def _subscribe_mc_events(mc, config_id, name):
                 "out_path":          c.get("out_path", ""),
                 "out_path_hash_mode": c.get("out_path_hash_mode"),
                 "out_path_hash_size": c.get("out_path_hash_size"),
+                "path_manual":       bool(c.get("path_manual", False)),
                 "contact_type":      c.get("type", 0),
                 "network":           "mc",
             })
@@ -1304,6 +1310,7 @@ def _subscribe_mc_events(mc, config_id, name):
                     "out_path":          c.get("out_path", ""),
                     "out_path_hash_mode": c.get("out_path_hash_mode"),
                     "out_path_hash_size": c.get("out_path_hash_size"),
+                    "path_manual":       bool(c.get("path_manual", False)),
                     "network":           "mc",
                 })
                 log.info(f"[MC:{name}] on_path_update: pushed updated path for {pubkey[:12]}")
@@ -1578,6 +1585,17 @@ async def _set_contact_path_async(config_id, pubkey_prefix, hop_prefixes=None, c
         if result is None:
             raise last_error or RuntimeError("Could not update contact path")
 
+    # Stamp path_manual BEFORE the contact refresh so the merge preserves the flag.
+    # clear=True → user is explicitly removing the manual path → revert to flood behaviour.
+    # clear=False → user explicitly chose a path → protect it from force-flood clearing.
+    is_manual = not clear
+    with mc_connections_lock:
+        if config_id in mc_connections:
+            for bucket in ("contacts", "live_contacts"):
+                existing = mc_connections[config_id].get(bucket, {}).get(full_key)
+                if existing is not None:
+                    existing["path_manual"] = is_manual
+
     refreshed = await _get_contacts_async(config_id)
     if refreshed is None:
         raise RuntimeError("Contact path updated but refresh timed out")
@@ -1585,6 +1603,8 @@ async def _set_contact_path_async(config_id, pubkey_prefix, hop_prefixes=None, c
     with mc_connections_lock:
         updated_contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
     _, updated_contact = _resolve_mc_contact(updated_contacts, full_key)
+    # Re-stamp in case contact was newly created and wasn't in cache before the refresh
+    updated_contact["path_manual"] = is_manual
     return updated_contact, result
 
 

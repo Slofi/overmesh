@@ -9366,7 +9366,9 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
 
   function mcRouteIndicator(contact, radioId = null) {
     if (!contact || (contact.out_path_len ?? -1) < 0) return '';
-    return `<span class="mc-route-indicator" title="${escHtml(_mcStoredRouteSummary(contact, radioId))}">&#10148;</span>`;
+    const icon = contact.path_manual ? '&#128274;&#10148;' : '&#10148;';
+    const title = (contact.path_manual ? '[Manual] ' : '') + _mcStoredRouteSummary(contact, radioId);
+    return `<span class="mc-route-indicator" title="${escHtml(title)}">${icon}</span>`;
   }
 
   function _mcRouteCandidateList(radioId, targetId, query = '') {

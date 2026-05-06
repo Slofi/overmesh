@@ -25,7 +25,7 @@ from mesh_mc import (send_chan_msg, send_dm, send_advert, refresh_contacts,
                      req_node_status, get_stats, remove_mc_contact,
                      send_trace_broadcast, import_mc_contact, enable_mc_debug,
                      get_mc_contact_archive,
-                     set_contact_path, remote_repeater_read,
+                     set_contact_path, reset_all_paths, remote_repeater_read,
                      remote_repeater_command)
 from db import (
     delete_mc_channel_messages,
@@ -355,6 +355,21 @@ def api_mc_set_contact_route(radio_id, contact_id):
         return jsonify({"error": str(e)}), 503
     except Exception as e:
         log.warning(f"[MC] set route failed for {contact_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/api/mc/<radio_id>/reset_all_paths", methods=["POST"])
+def api_mc_reset_all_paths(radio_id):
+    """Reset stored routes for every contact on this radio, including manually-set ones."""
+    try:
+        result = reset_all_paths(radio_id)
+        return jsonify({"ok": True, "cleared": result.get("cleared", 0), "errors": result.get("errors", 0)})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 503
+    except Exception as e:
+        log.warning(f"[MC] reset_all_paths failed: {e}")
         return jsonify({"error": str(e)}), 500
 
 

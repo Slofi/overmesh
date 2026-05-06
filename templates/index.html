@@ -1115,6 +1115,10 @@
         </span>
       </label>
       <div id="mc-force-flood-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-bottom:14px"></div>
+      <div style="margin-bottom:14px">
+        <button class="btn" onclick="mcResetAllPaths(this)" title="Clear all stored contact routes on this MC radio, including manually-set ones">Reset All Paths</button>
+        <span id="mc-reset-all-paths-status" style="font-size:12px;color:var(--muted);margin-left:8px"></span>
+      </div>
 
       <h2 class="settings-title">Device Info <button class="btn" onclick="loadMcDeviceInfo()" style="font-size:11px;padding:2px 8px;margin-left:6px" title="Query device for fresh info">↻ Refresh</button></h2>
       <div id="mc-device-info-content" style="color:var(--muted);font-size:12px;margin-bottom:14px">—</div>

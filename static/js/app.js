@@ -13513,6 +13513,27 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       });
   }
 
+  function mcResetAllPaths(btn) {
+    const radioId = mcSettingsRadioId || activeMcRadioId;
+    const statusEl = document.getElementById('mc-reset-all-paths-status');
+    if (!radioId) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">No MC radio selected.</span>'; return; }
+    if (!confirm('Reset ALL stored contact routes on this MC radio? This includes manually-set paths.')) return;
+    if (statusEl) statusEl.textContent = 'Resetting…';
+    btnFeedback(btn, '…');
+    fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/reset_all_paths`, {method: 'POST'})
+      .then(r => r.json().then(d => ({ok: r.ok, d})))
+      .then(({ok, d}) => {
+        if (!ok || d.error) throw new Error(d.error || 'Request failed.');
+        if (statusEl) statusEl.innerHTML = `<span style="color:var(--accent)">Cleared ${d.cleared} contact routes.</span>`;
+        btnFeedback(btn, '✓ Done');
+        setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 8000);
+        if (currentTab === 'nodes') renderLive();
+      }).catch(e => {
+        if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`;
+        btnFeedback(btn, '✗ Failed');
+      });
+  }
+
   function saveMcDeviceName(btn) {
     const radioId = mcSettingsRadioId || activeMcRadioId;
     if (!radioId) return;

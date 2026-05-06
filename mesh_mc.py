@@ -529,6 +529,28 @@ def _merge_mc_contact_records(old_contact, new_contact):
     return merged
 
 
+def _dedup_mc_contacts(contacts):
+    """Remove short-key stub entries that are a prefix of a full 64-char pubkey entry.
+
+    _touch_contact_seen may create a stub under a short prefix (e.g. 12 chars) when
+    an advert or message arrives before the contact is in the radio's contact list.
+    When the full key later arrives via get_contacts or on_new_contact, both the
+    short stub and the full entry coexist — causing _resolve_mc_contact to raise
+    "ambiguous prefix". Merge stub data into the canonical full-key entry.
+    """
+    full_keys = {k for k in contacts if len(k) == 64}
+    short_keys = [k for k in contacts if len(k) < 64]
+    if not short_keys:
+        return contacts
+    result = dict(contacts)
+    for short in short_keys:
+        canonical = next((f for f in full_keys if f.startswith(short)), None)
+        if canonical:
+            result[canonical] = _merge_mc_contact_records(result[short], result[canonical])
+            del result[short]
+    return result
+
+
 def _merge_mc_contacts(old_contacts, new_contacts):
     """Merge refreshed MC contacts without dropping previously known nodes.
 
@@ -546,7 +568,7 @@ def _merge_mc_contacts(old_contacts, new_contacts):
         if pubkey in merged:
             continue
         merged[pubkey] = _mc_copy_contact(contact)
-    return merged
+    return _dedup_mc_contacts(merged)
 
 
 def _best_recent_rx_for_message(config_id, subtype, now_ts, sender_prefix=None, msg=None):
@@ -1195,8 +1217,14 @@ def _subscribe_mc_events(mc, config_id, name):
             c["last_seen_ts"] = int(time.time())
             with mc_connections_lock:
                 if config_id in mc_connections:
+                    contacts = mc_connections[config_id].setdefault("contacts", {})
+                    # Remove any short-key stub created by _touch_contact_seen before this full key arrived
+                    stubs = [k for k in list(contacts.keys()) if len(k) < 64 and pubkey.startswith(k)]
+                    for stub in stubs:
+                        stub_data = contacts.pop(stub, {})
+                        c = _merge_mc_contact_records(stub_data, c)
                     mc_connections[config_id].setdefault("live_contacts", {})[pubkey] = dict(c)
-                    mc_connections[config_id]["contacts"][pubkey] = c
+                    contacts[pubkey] = c
             _mc_archive_merge_contacts(config_id, {pubkey: dict(c)})
             # Emit as mc_node so the frontend renders it the same way as an advertisement
             _push_mc_node({
@@ -1980,6 +2008,38 @@ def set_contact_path(config_id, pubkey_prefix, hop_prefixes=None, clear=False, p
         ),
         timeout=timeout,
     )
+
+
+async def _reset_all_paths_async(config_id):
+    """Reset stored routes for every contact on the radio, including manually-set ones."""
+    mc, _ = _get_mc(config_id)
+    with mc_connections_lock:
+        contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
+    errors = []
+    cleared = 0
+    for pubkey in contacts.keys():
+        try:
+            await mc.commands.reset_path(pubkey)
+            cleared += 1
+            with mc_connections_lock:
+                if config_id in mc_connections:
+                    for bucket in ("contacts", "live_contacts"):
+                        c = mc_connections[config_id].get(bucket, {}).get(pubkey)
+                        if c is not None:
+                            c["out_path_len"] = -1
+                            c["out_path"] = ""
+                            c.pop("path_manual", None)
+        except Exception as e:
+            errors.append(str(e))
+    if errors:
+        log.warning(f"[MC:{config_id}] reset_all_paths: {len(errors)} errors: {errors[:3]}")
+    log.info(f"[MC:{config_id}] reset_all_paths: cleared {cleared}/{len(contacts)} contacts")
+    await _get_contacts_async(config_id)
+    return {"cleared": cleared, "errors": len(errors)}
+
+
+def reset_all_paths(config_id, timeout=60):
+    return run_mc(_reset_all_paths_async(config_id), timeout=timeout)
 
 
 # ---------------------------------------------------------------------------

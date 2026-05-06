@@ -337,7 +337,12 @@ async def _force_contact_flood_if_configured(mc, config_id, full_key, contact, r
         log.info(f"[MC:{config_id}] skipping force flood for {full_key[:12]} — manual path set by user")
         return False
     result = await mc.commands.reset_path(full_key)
-    _raise_if_mc_error(result, f"force flood path for {reason}")
+    if getattr(result, "type", None) == EventType.ERROR:
+        payload = getattr(result, "payload", {}) or {}
+        if payload.get("error_code") == 2 or payload.get("code_string") == "ERR_CODE_NOT_FOUND":
+            log.info(f"[MC:{config_id}] reset_path NOT_FOUND for {full_key[:12]} — no stored path, flooding naturally")
+        else:
+            _raise_if_mc_error(result, f"force flood path for {reason}")
     contact["out_path_len"] = -1
     contact["out_path"] = ""
     with mc_connections_lock:
@@ -2017,10 +2022,12 @@ async def _reset_all_paths_async(config_id):
         contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
     errors = []
     cleared = 0
+    cleared_keys = []
     for pubkey in contacts.keys():
         try:
             await mc.commands.reset_path(pubkey)
             cleared += 1
+            cleared_keys.append(pubkey)
             with mc_connections_lock:
                 if config_id in mc_connections:
                     for bucket in ("contacts", "live_contacts"):
@@ -2031,10 +2038,57 @@ async def _reset_all_paths_async(config_id):
                             c.pop("path_manual", None)
         except Exception as e:
             errors.append(str(e))
+
+    # Clear stale path data from the archive so _get_contacts_async doesn't re-merge it back
+    if cleared_keys:
+        with _mc_contact_archive_lock:
+            archive = _mc_archive_load_locked()
+            radio_key = str(config_id)
+            radio_archive = archive.get(radio_key, {})
+            changed = False
+            for pubkey in cleared_keys:
+                if pubkey in radio_archive:
+                    c = radio_archive[pubkey]
+                    if c.get("out_path") or c.get("path_manual") or c.get("out_path_len") not in (-1, None, 0):
+                        c["out_path"] = ""
+                        c["out_path_len"] = -1
+                        c.pop("path_manual", None)
+                        changed = True
+            if changed:
+                archive[radio_key] = radio_archive
+                _mc_archive_save_locked()
+
     if errors:
         log.warning(f"[MC:{config_id}] reset_all_paths: {len(errors)} errors: {errors[:3]}")
     log.info(f"[MC:{config_id}] reset_all_paths: cleared {cleared}/{len(contacts)} contacts")
     await _get_contacts_async(config_id)
+
+    # Push SSE updates so the Nodes tab reflects the cleared paths immediately
+    with mc_connections_lock:
+        state = mc_connections.get(config_id, {})
+        updated = dict(state.get("contacts", {}))
+        radio_name = state.get("name", config_id)
+    for pubkey, c in updated.items():
+        _push_mc_node({
+            "type":           "mc_node",
+            "radio_id":       config_id,
+            "radio_name":     radio_name,
+            "id":             pubkey[:12],
+            "full_key":       pubkey,
+            "long_name":      c.get("adv_name") or c.get("long_name") or pubkey[:8],
+            "short_name":     (c.get("adv_name") or c.get("short_name") or "?")[:4].upper(),
+            "latitude":       c.get("adv_lat") or c.get("latitude") or None,
+            "longitude":      c.get("adv_lon") or c.get("longitude") or None,
+            "last_heard_ts":  _mc_contact_seen_ts(c),
+            "out_path_len":   c.get("out_path_len", -1),
+            "out_path":       c.get("out_path", ""),
+            "out_path_hash_mode": c.get("out_path_hash_mode"),
+            "out_path_hash_size": c.get("out_path_hash_size"),
+            "path_manual":    bool(c.get("path_manual", False)),
+            "contact_type":   c.get("type", 0),
+            "network":        "mc",
+        })
+
     return {"cleared": cleared, "errors": len(errors)}
 
 
@@ -2169,6 +2223,13 @@ def _build_reachability_fallback(config_id, pubkey_prefix, full_key, phase, rx_e
     if rx_event is None:
         return None
     payload = dict(getattr(rx_event, "payload", {}) or {})
+    # Only attribute path/hop data to the target if the rx_event sender matches.
+    # An unrelated node's rx_event may arrive first and produce a misleading hop count.
+    sender = _rx_sender_prefix(payload)
+    sender_matches = sender and (full_key.startswith(sender) or sender.startswith(full_key[:len(sender)]))
+    path_len = payload.get("path_len")
+    path_str = payload.get("path", "") if sender_matches else ""
+    path_hash_size = payload.get("path_hash_size") if sender_matches else None
     return {
         "mode": "reachability",
         "reachable": True,
@@ -2180,9 +2241,9 @@ def _build_reachability_fallback(config_id, pubkey_prefix, full_key, phase, rx_e
             "Observed RF activity after ping, but firmware returned no "
             "STATUS_RESPONSE. Showing local RX observations only."
         ),
-        "observed_path": payload.get("path", ""),
-        "observed_path_len": payload.get("path_len"),
-        "observed_path_hash_size": payload.get("path_hash_size"),
+        "observed_path": path_str,
+        "observed_path_len": path_len,
+        "observed_path_hash_size": path_hash_size,
         "observed_rssi": payload.get("rssi"),
         "observed_snr": payload.get("snr"),
         "observed_payload_type": payload.get("payload_typename"),
@@ -2190,6 +2251,40 @@ def _build_reachability_fallback(config_id, pubkey_prefix, full_key, phase, rx_e
         "observed_recv_time": payload.get("recv_time"),
         "source": f"{phase}_rx_log",
         "radio_id": config_id,
+    }
+
+
+def _mc_status_observed_path_fields(full_key, contact, rx_event=None):
+    """Best path metadata to attach to a STATUS_RESPONSE/ping result.
+
+    STATUS_RESPONSE itself does not consistently carry a drawable hop list on all
+    companion firmware. Prefer the matching RX_LOG_DATA path when present, then
+    fall back to the contact's learned outbound path so the UI can draw and list
+    the route used for repeaters and other contacts too.
+    """
+    payload = dict(getattr(rx_event, "payload", {}) or {}) if rx_event is not None else {}
+    sender = _rx_sender_prefix(payload)
+    sender_matches = sender and (full_key.startswith(sender) or sender.startswith(full_key[:len(sender)]))
+    if payload.get("path") and (sender_matches or not sender):
+        return {
+            "observed_path": payload.get("path", ""),
+            "observed_path_len": payload.get("path_len"),
+            "observed_path_hash_size": payload.get("path_hash_size") or contact.get("out_path_hash_size"),
+            "observed_rssi": payload.get("rssi"),
+            "observed_snr": payload.get("snr"),
+            "observed_payload_type": payload.get("payload_typename"),
+            "observed_route_type": payload.get("route_typename"),
+            "observed_recv_time": payload.get("recv_time") or payload.get("timestamp"),
+        }
+    return {
+        "observed_path": contact.get("out_path", ""),
+        "observed_path_len": contact.get("out_path_len"),
+        "observed_path_hash_size": contact.get("out_path_hash_size"),
+        "observed_rssi": payload.get("rssi") if sender_matches else None,
+        "observed_snr": payload.get("snr") if sender_matches else None,
+        "observed_payload_type": payload.get("payload_typename") if sender_matches else None,
+        "observed_route_type": payload.get("route_typename") if sender_matches else None,
+        "observed_recv_time": (payload.get("recv_time") or payload.get("timestamp")) if sender_matches else None,
     }
 
 
@@ -2326,11 +2421,26 @@ def _validate_remote_admin_command(command):
         "advert",
         "advert.zerohop",
         "neighbors",
+        "discover.neighbors",
         "get name",
         "get radio",
         "get tx",
+        "get radio.rxgain",
         "get repeat",
+        "get powersaving",
         "get path.hash.mode",
+        "get loop.detect",
+        "get txdelay",
+        "get direct.txdelay",
+        "get rxdelay",
+        "get dutycycle",
+        "get af",
+        "get int.thresh",
+        "get agc.reset.interval",
+        "get multi.acks",
+        "get flood.advert.interval",
+        "get advert.interval",
+        "get flood.max",
         "get owner.info",
         "get lat",
         "get lon",
@@ -2343,7 +2453,22 @@ def _validate_remote_admin_command(command):
         "set lat ",
         "set lon ",
         "set tx ",
+        "set radio ",
+        "set radio.rxgain ",
         "set repeat ",
+        "set path.hash.mode ",
+        "set loop.detect ",
+        "set txdelay ",
+        "set direct.txdelay ",
+        "set rxdelay ",
+        "set dutycycle ",
+        "set af ",
+        "set int.thresh ",
+        "set agc.reset.interval ",
+        "set multi.acks ",
+        "set flood.advert.interval ",
+        "set advert.interval ",
+        "set flood.max ",
         "set owner.info ",
         "powersaving ",
     )
@@ -2391,7 +2516,7 @@ async def _remote_command_async(config_id, pubkey_prefix, command):
             reply_task.cancel()
 
 
-async def _req_status_async(config_id, pubkey_prefix):
+async def _req_status_async(config_id, pubkey_prefix, prime_trace=False):
     mc, _ = _get_mc(config_id)
     with mc_connections_lock:
         contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
@@ -2447,7 +2572,9 @@ async def _req_status_async(config_id, pubkey_prefix):
                     f"last_rssi={legacy_event.payload.get('last_rssi')}, "
                     f"last_snr={legacy_event.payload.get('last_snr')})"
                 )
-                return legacy_event.payload
+                result_payload = dict(legacy_event.payload or {})
+                result_payload.update(_mc_status_observed_path_fields(full_key, contact, legacy_rx))
+                return result_payload
             log.warning(f"[MC:{config_id}] legacy statusreq timed out for {pubkey_prefix[:12]}")
             if legacy_rx is not None:
                 log.info(
@@ -2461,7 +2588,7 @@ async def _req_status_async(config_id, pubkey_prefix):
         log.warning(f"[MC:{config_id}] legacy statusreq failed for {pubkey_prefix[:12]}: {e}")
 
     log.info(f"[MC:{config_id}] falling back to binary req_status_sync for {pubkey_prefix[:12]}")
-    if not force_flood:
+    if prime_trace and not force_flood:
         # Prime routing first for repeaters/contacts that only have a known RF path
         # after a recent trace. Skip this when the user explicitly forces flood.
         try:
@@ -2502,7 +2629,7 @@ async def _req_status_async(config_id, pubkey_prefix):
                 )
         except Exception as e:
             log.warning(f"[MC:{config_id}] req_status_sync contact refresh failed for {pubkey_prefix[:12]}: {e}")
-    else:
+    elif force_flood:
         await _force_contact_flood_if_configured(mc, config_id, full_key, contact, "status request after legacy")
 
     rx_task = None
@@ -2538,6 +2665,8 @@ async def _req_status_async(config_id, pubkey_prefix):
             f"(pubkey_pre={result.get('pubkey_pre', '?')}, "
             f"last_rssi={result.get('last_rssi')}, last_snr={result.get('last_snr')})"
         )
+        result = dict(result)
+        result.update(_mc_status_observed_path_fields(full_key, contact, rx_event))
     return result
 
 
@@ -2582,9 +2711,9 @@ def reboot_device(config_id, timeout=10):
     return run_mc(_reboot_async(config_id), timeout=timeout)
 
 
-def req_node_status(config_id, pubkey_prefix, timeout=30):
+def req_node_status(config_id, pubkey_prefix, timeout=30, prime_trace=False):
     _ensure_mc_tx_allowed("MC status request")
-    return run_mc(_req_status_async(config_id, pubkey_prefix), timeout=timeout)
+    return run_mc(_req_status_async(config_id, pubkey_prefix, prime_trace=prime_trace), timeout=timeout)
 
 
 def remote_repeater_read(config_id, pubkey_prefix, password=None, login=False, timeout=75):

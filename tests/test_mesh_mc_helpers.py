@@ -473,13 +473,83 @@ class MeshMcPathHelperTests(unittest.TestCase):
             self.assertEqual(mc_connections[radio_id]["contacts"][pubkey]["out_path_len"], -1)
             self.assertEqual(mc_connections[radio_id]["live_contacts"][pubkey]["out_path"], "")
 
+    def test_status_response_path_fields_fall_back_to_learned_repeater_path(self):
+        full_key = "aabbccddeeff" + "00" * 26
+        contact = {
+            "type": 2,
+            "out_path": "1234abcd",
+            "out_path_len": 2,
+            "out_path_hash_size": 2,
+        }
+
+        fields = mesh_mc._mc_status_observed_path_fields(full_key, contact)
+
+        self.assertEqual(fields["observed_path"], "1234abcd")
+        self.assertEqual(fields["observed_path_len"], 2)
+        self.assertEqual(fields["observed_path_hash_size"], 2)
+
+    def test_status_response_path_fields_prefer_matching_rx_path(self):
+        full_key = "aabbccddeeff" + "00" * 26
+        contact = {
+            "out_path": "1234abcd",
+            "out_path_len": 2,
+            "out_path_hash_size": 2,
+        }
+        rx_event = SimpleNamespace(payload={
+            "pubkey_pre": "aabbccddeeff",
+            "path": "beef",
+            "path_len": 1,
+            "path_hash_size": 2,
+            "rssi": -90,
+            "snr": 4.25,
+        })
+
+        fields = mesh_mc._mc_status_observed_path_fields(full_key, contact, rx_event)
+
+        self.assertEqual(fields["observed_path"], "beef")
+        self.assertEqual(fields["observed_path_len"], 1)
+        self.assertEqual(fields["observed_path_hash_size"], 2)
+        self.assertEqual(fields["observed_rssi"], -90)
+        self.assertEqual(fields["observed_snr"], 4.25)
+
+    def test_api_mc_statusreq_does_not_prime_trace_by_default(self):
+        app = Flask(__name__)
+        app.register_blueprint(mc_routes.bp)
+        client = app.test_client()
+
+        with mock.patch.object(mc_routes, "req_node_status", return_value={"pubkey_pre": "abcdef123456"}) as status_mock:
+            res = client.post("/api/mc/mc1/statusreq/abcdef123456")
+
+        self.assertEqual(res.status_code, 200)
+        status_mock.assert_called_once_with("mc1", "abcdef123456", prime_trace=False)
+
+    def test_api_mc_statusreq_can_opt_in_to_trace_prime(self):
+        app = Flask(__name__)
+        app.register_blueprint(mc_routes.bp)
+        client = app.test_client()
+
+        with mock.patch.object(mc_routes, "req_node_status", return_value={"pubkey_pre": "abcdef123456"}) as status_mock:
+            res = client.post("/api/mc/mc1/statusreq/abcdef123456", json={"trace_probe": True})
+
+        self.assertEqual(res.status_code, 200)
+        status_mock.assert_called_once_with("mc1", "abcdef123456", prime_trace=True)
+
     def test_remote_admin_command_allowlist_normalizes_safe_commands(self):
         self.assertEqual(mesh_mc._validate_remote_admin_command("  get   name  "), "get name")
+        self.assertEqual(mesh_mc._validate_remote_admin_command("get powersaving"), "get powersaving")
         self.assertEqual(mesh_mc._validate_remote_admin_command("set repeat on"), "set repeat on")
+        self.assertEqual(mesh_mc._validate_remote_admin_command("advert.zerohop"), "advert.zerohop")
+        self.assertEqual(mesh_mc._validate_remote_admin_command("discover.neighbors"), "discover.neighbors")
+        self.assertEqual(mesh_mc._validate_remote_admin_command("set radio 869.525,250,11,5"), "set radio 869.525,250,11,5")
+        self.assertEqual(mesh_mc._validate_remote_admin_command("set advert.interval 60"), "set advert.interval 60")
+        self.assertEqual(mesh_mc._validate_remote_admin_command("set flood.advert.interval 12"), "set flood.advert.interval 12")
+        self.assertEqual(mesh_mc._validate_remote_admin_command("set loop.detect minimal"), "set loop.detect minimal")
 
     def test_remote_admin_command_allowlist_rejects_unknown_commands(self):
         with self.assertRaises(ValueError):
             mesh_mc._validate_remote_admin_command("erase everything")
+        with self.assertRaises(ValueError):
+            mesh_mc._validate_remote_admin_command("set prv.key abc")
 
     def test_api_mc_remote_read_calls_backend_helper(self):
         app = Flask(__name__)

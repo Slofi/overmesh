@@ -874,6 +874,7 @@
     if (btnMt) btnMt.classList.toggle('active', isMt);
     if (btnMc) btnMc.classList.toggle('active', !isMt);
     if (!isMt) { _updateMcChatRadioLabel(); renderMcMessages(); _updateMcInput(); }
+    else { _updateMtInput(); }
   }
 
   function initChat() {
@@ -899,6 +900,7 @@
           updateUnreadDots();
           renderChannelTabs();
           renderMessages();  // always sync message area with active channel/tab
+          _updateMtInput();
         }
       }).catch(e => console.warn('Chat channel init failed:', e));
       fetch(BASE_PATH + '/api/status').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(s => {
@@ -1179,6 +1181,20 @@
     document.getElementById('chat-channels').innerHTML = chTabs + dmTabs;
   }
 
+  function _updateMtInput() {
+    const input = document.getElementById('chat-input');
+    if (!input) return;
+    if (typeof chatChannel === 'string' && chatChannel.startsWith('dm:')) {
+      const id = chatChannel.slice(3);
+      const msg = getActiveChatMsgs().find(m => m.is_dm && dmContactId(m) === id);
+      const name = msg ? dmContactName(msg) : id;
+      input.placeholder = `DM to ${name}…`;
+    } else {
+      const ch = chatChannels?.find(c => c.index === chatChannel);
+      input.placeholder = ch ? `${ch.name}…` : 'Message…';
+    }
+  }
+
   function switchChatChannel(idx) {
     chatChannel = idx;
     unreadChannels.delete(idx);
@@ -1186,6 +1202,7 @@
     updateUnreadDots();
     renderChannelTabs();
     renderMessages();
+    _updateMtInput();
   }
 
   let _confirmCallback = null;
@@ -1311,12 +1328,15 @@
             'The ➤ indicator next to a contact name means a stored route path exists on the device for that contact. A 🔒➤ indicator means the path was manually set by you — it is protected and will not be cleared by the Force Flood setting. A plain ➤ means an auto-learned route; Force Flood will clear it before DMs and pings.',
             'MC path hashes may be 1, 2, or 3 bytes. Short hashes can collide on busy meshes, so OM marks uncertain matches as likely/estimated/ambiguous rather than treating every hop as confirmed.',
             'Route editing lets you pick a repeater contact as the next hop and choose the path hash size (1B/2B/3B). The Settings → MeshCore default hash mode is used as the starting point, but you can override it per-contact.',
+            'Ping popups show the path hash width when it is known: 1B/hop, 2B/hop, or 3B/hop. Direct responses have no relay hashes, so the path row can be empty while the hop row correctly says direct.',
+            'If a Ping only proves fallback reachability, use Trace Probe deliberately from the ping popup. It sends one MC Trace broadcast and folds any returned hop data back into the same popup.',
             'Clearing a manual route (via Route → Clear) removes the 🔒 lock and reverts to flood routing when Force Flood is on, or leaves the path empty for the firmware to re-learn when Force Flood is off.',
             'MC contacts are kept in an archive so contacts seen on previous sessions are available even after a contact list refresh or reconnect. The archive merges with live data — live data takes priority for path and seen-time fields.'
           ],
           buttons: [
             ['Ping', 'Check MC reachability and signal; draws observed path hops when the response includes path metadata.'],
-            ['Trace', 'Send an MC broadcast trace packet and draw the resolved hop chain on the map.'],
+            ['Trace', 'Send one deliberate MC broadcast trace packet and draw the resolved hop chain on the map.'],
+            ['Trace Probe', 'Optional trace from a Ping popup when the targeted status response did not provide enough path data.'],
             ['Route', 'Open the route editor to set or clear a stored hop path for this MC contact.'],
             ['Manage', 'Open remote repeater/room-server management for supported MC node types (repeaters and room servers only).'],
             ['Info/Share', 'Open full MC contact details: public key, type, source state, distance, MeshCore share link, and QR code.'],
@@ -1425,13 +1445,15 @@
           kind: 'mc',
           body: [
             'MC route lines come from adverts, messages, pings, traces, and stored contact routes. OM draws all hops it can resolve from the available path metadata.',
+            'Ping popups use the same path display as Sense. When path hashes are present, the popup lists hop IDs and the hash width (1B/hop, 2B/hop, or 3B/hop).',
             'A warning marker (!) means OM only knows a relay chain or partial path for this entry — the marker is not the final sender/contact position.',
             'MC path segments are SNR-colored when signal data is available in the packet metadata. Hover a segment to see its SNR value.',
             'MC map markers are differentiated by node type: client, room server, and repeater each have a distinct shape and color.'
           ],
           buttons: [
             ['Ping', 'Run an MC reachability check from this contact popup and draw the observed path.'],
-            ['Trace', 'Run an MC broadcast trace from this contact popup and draw resolved hops.'],
+            ['Trace', 'Run one MC broadcast trace and draw resolved hops.'],
+            ['Trace Probe', 'Optional Ping popup action for path discovery when targeted status gives no route.'],
             ['Manage', 'Open remote repeater/room-server management for supported node types.'],
             ['!', 'Partial or relay-only path warning — marker position is a known relay, not the final contact.']
           ]
@@ -1492,6 +1514,8 @@
           kind: 'mc',
           body: [
             'MC Sense logs adverts, channel messages, DMs, pings, traces, scans, and bot replies. It is the primary place to inspect MC routing.',
+            'Scan and Trace are separate on purpose. Scan sends the normal MC advert/scan request and listens for contact responses; it does not secretly run Trace.',
+            'Trace sends one mesh-wide broadcast trace probe, then waits for TRACE_DATA and draws any returned hop chain. The amber warning and cooldown are there because this is active mesh traffic.',
             'Route source badges explain where OM resolved the path from: live = this packet\'s RX-log metadata (best), cached = stored contact route, inferred = fallback line, refreshed = newer data changed the entry after it was logged.',
             'Flood mode is a routing/delivery mode label, not a byte count. 1B/hop, 2B/hop, and 3B/hop describe the hop-hash width used in path metadata. A flood-mode packet can still carry 2B/hop path data — these are independent.',
             'Observed path hops appear as clickable hash IDs. Click a hop ID to center the map on that relay when OM knows its position.',
@@ -1500,7 +1524,9 @@
             'MC hop count badges read "1 hop" / "2 hops" to avoid confusing "h" with hours in age labels.'
           ],
           buttons: [
-            ['Scan', 'Flood-advertise on MC mesh and collect contact responses for the scan window (default 60 s).'],
+            ['Scan', 'Send the MC scan advert and collect contact responses for the scan window (default 60 s). Does not run Trace.'],
+            ['Trace', 'Send one mesh-wide MC Trace probe, draw returned hops, then enter cooldown.'],
+            ['⚠️ Trace broadcasts', 'Reminder that Trace is a mesh-wide broadcast action. Use it deliberately on quiet mesh windows.'],
             ['MC activity', 'Right panel: MC event log. Click entries to draw/clear path on the map.'],
             ['live', 'Path resolved from this packet\'s own RX-log metadata. Best quality source.'],
             ['cached', 'Path from stored MC contact route. May not match this exact packet\'s routing.'],
@@ -1602,7 +1628,10 @@
         'Debug Events logs all raw serial events from the MC radio to a file for 60 seconds. Use it to diagnose ping/status timeouts — check the OverMesh server log file during or after the window.',
         'MC channel slots are numbered 0 to max_channels-1. Each slot has a name and a 16-byte secret key. The channel hash (2-char hex) identifies the slot on the mesh. Channel Info/Share exports a meshcore://channel/add link and QR code when the secret is available.',
         'Import Contact accepts an official meshcore://contact/add share link and writes the contact to the selected MC radio NVS storage.',
-        'Remote Manage opens a login/read/command interface for MC repeater and room-server nodes. Only visible for contacts identified as repeaters or room servers.'
+        'Remote Manage opens a login/read/command interface for MC repeater and room-server nodes. Only visible for contacts identified as repeaters or room servers.',
+        'Remote Manage also has Quick settings for common RPTR/room-server options: name, repeat, power save, TX power, radio parameters, position, owner info, path hash mode, loop detect, advert timers, flood max, neighbour discovery, and local/flood adverts. After Admin Login + Read, OM best-effort pre-fills these fields from safe remote get commands; Read settings runs that prefill again. The Map button lets you pick RPTR coordinates directly from the map before pressing Set.',
+        'Remember stores the RPTR admin password in this browser for this radio/contact pair, similar to the MeshCore Android app. Uncheck it before Login + Read to remove the saved password.',
+        'Remote Local advert and Flood advert try to send immediately while connected. If firmware rejects the advert during the admin session, OM queues one retry when you close Manage, which is the practical log-off point in this UI.'
       ],
       buttons: [
         ['Serial', 'Add an MC radio by USB serial device path.'],
@@ -1629,7 +1658,12 @@
         ['Delete (channel)', 'Clear an MC channel slot and delete its stored message history.'],
         ['Share (channel)', 'Export a meshcore://channel/add link and QR code for this channel slot.'],
         ['Reboot Device', 'Send a reboot command to the connected MC radio.'],
-        ['Manage', 'Open remote repeater/room-server login and management for this MC node.']
+        ['Manage', 'Open remote repeater/room-server login, CLI commands, and Quick settings for this MC node.'],
+        ['Remember', 'Store or remove the RPTR admin password in this browser for this radio/contact pair.'],
+        ['Read settings', 'Best-effort read of current RPTR settings into the Quick settings fields using safe get commands.'],
+        ['Map (Manage)', 'Pick a remote RPTR/room-server position from the map, then press Set in Manage to write lat/lon.'],
+        ['Local advert', 'Ask the managed RPTR/room-server to send a local zero-hop advert.'],
+        ['Flood advert', 'Ask the managed RPTR/room-server to send a flood advert.']
       ]
     },
     {
@@ -2379,6 +2413,7 @@ if (targetEl) {
              (n.short_name || '').toLowerCase().includes(query) ||
              (n.id || '').toLowerCase().includes(query);
     });
+    real.forEach(n => { n._dist = _mtDistanceKm(n); });
     tbody.innerHTML = real.length ? sortedLive(real).map(n => `
       <tr data-id="${n.id}" class="${n.is_favorite ? 'is-favorite' : ''}">
         <td><span class="star ${n.is_favorite ? 'starred' : ''}" onclick="toggleFav('${jsSafe(n.id)}', ${n.is_favorite}, '${jsSafe(n.radio_id || '')}')" title="${n.is_favorite ? 'Remove from favourites' : 'Add to favourites'}">&#9733;</span></td>
@@ -2426,10 +2461,23 @@ if (targetEl) {
       tbody.innerHTML = '<tr><td colspan="11" class="no-data">No nodes found</td></tr>';
     }
     if (mcFiltered.length) {
-      // Sort: favourited MC contacts first when favFirst is on
-      const mcSorted = favFirst
-        ? [...mcFiltered.filter(c => mcFavs[c.id || c.full_key]), ...mcFiltered.filter(c => !mcFavs[c.id || c.full_key])]
-        : mcFiltered;
+      // Sort MC contacts: by distance when active, otherwise favourites-first
+      let mcSorted;
+      if (liveSort.col === '_dist') {
+        const withDist = mcFiltered.map(c => ({...c, _dist: _mcDistanceFromLocal(c, c._rid)}));
+        withDist.sort((a, b) => {
+          const av = a._dist, bv = b._dist;
+          if (av == null && bv == null) return 0;
+          if (av == null) return 1;
+          if (bv == null) return -1;
+          return (av - bv) * liveSort.dir;
+        });
+        mcSorted = withDist;
+      } else {
+        mcSorted = favFirst
+          ? [...mcFiltered.filter(c => mcFavs[c.id || c.full_key]), ...mcFiltered.filter(c => !mcFavs[c.id || c.full_key])]
+          : mcFiltered;
+      }
       tbody.innerHTML += `<tr><td colspan="11" style="padding:3px 8px;font-size:11px;font-weight:600;color:var(--mc-color);background:rgba(56,189,248,0.07);border-top:1px solid rgba(56,189,248,0.25)">MeshCore</td></tr>`;
       tbody.innerHTML += mcSorted.map(c => {
         const cid    = c.id || c.full_key || '';
@@ -2859,6 +2907,7 @@ if (targetEl) {
   }
   function closeModal() {
     document.getElementById('action-modal').classList.remove('open');
+    _mcRemoteFlushQueuedAdvert();
     _editWpId    = null;
     _editNoteId  = null;
     _mcRouteEditor = null;
@@ -3459,8 +3508,8 @@ if (targetEl) {
     const origin = _omLocalOrigin();
     if (origin) return origin;
     const st = (radioId && mcLastStatus[radioId]) || (activeMcRadioId && mcLastStatus[activeMcRadioId]) || null;
-    if (st && st.lat != null && st.lon != null) return {lat: Number(st.lat), lon: Number(st.lon)};
-    const any = Object.values(mcLastStatus).find(s => s?.status === 'connected' && s.lat != null && s.lon != null);
+    if (st && st.lat != null && st.lon != null && !(st.lat === 0 && st.lon === 0)) return {lat: Number(st.lat), lon: Number(st.lon)};
+    const any = Object.values(mcLastStatus).find(s => s?.status === 'connected' && s.lat != null && s.lon != null && !(s.lat === 0 && s.lon === 0));
     return any ? {lat: Number(any.lat), lon: Number(any.lon)} : null;
   }
 
@@ -3475,7 +3524,7 @@ if (targetEl) {
     if (!contact) return '—';
     const lat = contact.latitude ?? contact.lat;
     const lon = contact.longitude ?? contact.lon;
-    if (lat == null || lon == null) return '—';
+    if (lat == null || lon == null || (lat === 0 && lon === 0)) return '—';
     const origin = _mcLocalPosition(radioId || contact._rid || contact.radio_id || '');
     if (!origin) return '—';
     return _distanceLabel(_distanceKm(origin.lat, origin.lon, lat, lon));
@@ -3485,10 +3534,17 @@ if (targetEl) {
     if (!contact) return null;
     const lat = contact.latitude ?? contact.lat;
     const lon = contact.longitude ?? contact.lon;
-    if (lat == null || lon == null) return null;
+    if (lat == null || lon == null || (lat === 0 && lon === 0)) return null;
     const origin = _mcLocalPosition(radioId || contact._rid || contact.radio_id || '');
     if (!origin) return null;
     return _distanceKm(origin.lat, origin.lon, lat, lon);
+  }
+
+  function _mtDistanceKm(node) {
+    if (!node || node.latitude == null || node.longitude == null) return null;
+    const origin = _mtLocalPosition(node.radio_id || '');
+    if (!origin) return null;
+    return _distanceKm(origin.lat, origin.lon, node.latitude, node.longitude);
   }
 
   function _destPoint(lat, lon, bearingDeg, distM) {
@@ -5640,7 +5696,7 @@ if (targetEl) {
         if (lonEl) lonEl.value = lon.toFixed(6);
         const st = document.getElementById('mc-actions-status');
         if (st) {
-          st.innerHTML = `<span style="color:var(--accent)">Position set to ${lat.toFixed(5)}, ${lon.toFixed(5)}. Click Save coords to send it to the MC node.</span>`;
+          st.innerHTML = `<span style="color:var(--accent)">Position set to ${lat.toFixed(5)}, ${lon.toFixed(5)}. Press Save to send it to the MC node.</span>`;
         }
       } else if (_mapPickMode === 'om') {
         document.getElementById('om-pos-lat').value = lat.toFixed(6);
@@ -5649,6 +5705,15 @@ if (targetEl) {
         switchTab('settings');
         switchSettingsTab('app');
         omManualPosStatus(`Position set to ${lat.toFixed(5)}, ${lon.toFixed(5)}. Save to use it as OM origin.`, true);
+      } else if (_mapPickMode === 'mc-remote') {
+        cancelMapPick({keepTab: true});
+        openMcRemoteManage(_mcRemoteManage?.pubkeyPrefix || '', _mcRemoteManage?.radioId || '', _mcRemoteManage?.name || '');
+        const latEl = document.getElementById('mc-remote-set-lat');
+        const lonEl = document.getElementById('mc-remote-set-lon');
+        if (latEl) latEl.value = lat.toFixed(6);
+        if (lonEl) lonEl.value = lon.toFixed(6);
+        const out = document.getElementById('mc-remote-quick-result');
+        if (out) out.innerHTML = `<span style="color:var(--accent)">Position set to ${lat.toFixed(5)}, ${lon.toFixed(5)}. Press Set to send it to the RPTR.</span>`;
       } else {
         document.getElementById('node-cfg-fixed-lat').value = lat.toFixed(6);
         document.getElementById('node-cfg-fixed-lon').value = lon.toFixed(6);
@@ -8876,9 +8941,11 @@ if (targetEl) {
         const idx = data.channel ?? 0;
         if (!mcKnownChannels[idx]) mcKnownChannels[idx] = `CH${idx}`;
       } else if (data.subtype === 'dm' && !data.sent && data.from_id) {
-        if (!mcDmContacts[data.from_id] && !closedMcDmTabs.has(data.from_id)) mcDmContacts[data.from_id] = data.from_id;
+        const fk = data.from_id.slice(0, 12);
+        if (!mcDmContacts[fk] && !closedMcDmTabs.has(fk)) mcDmContacts[fk] = data.from_id;
       } else if (data.subtype === 'dm' && data.sent && data.to_id) {
-        if (!mcDmContacts[data.to_id] && !closedMcDmTabs.has(data.to_id)) mcDmContacts[data.to_id] = data.to_name || data.to_id;
+        const tk = data.to_id.slice(0, 12);
+        if (!mcDmContacts[tk] && !closedMcDmTabs.has(tk)) mcDmContacts[tk] = data.to_name || data.to_id;
       }
     });
   }
@@ -8974,8 +9041,13 @@ if (targetEl) {
     // Scan/Trace buttons live inside MC sense wrap — visible only when MC connected
     const btn = document.getElementById('mc-scan-btn');
     const st  = document.getElementById('mc-scan-status');
-if (btn) btn.style.display = mcConnected ? '' : 'none';
+    const traceBtn = document.getElementById('mc-trace-btn');
+    const traceWarn = document.getElementById('mc-trace-warning');
+    if (btn) btn.style.display = mcConnected ? '' : 'none';
     if (st && !mcConnected) st.style.display = 'none';
+    if (traceBtn) traceBtn.style.display = mcConnected ? '' : 'none';
+    if (traceWarn) traceWarn.style.display = mcConnected ? '' : 'none';
+    if (!mcConnected) _mcTraceSetButtonState();
   }
 
   function applyMcVisibility() {
@@ -9333,13 +9405,14 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         if (!mcKnownChannels[idx]) mcKnownChannels[idx] = `CH${idx}`;
         msgTab = `chan:${idx}`;
       } else if (data.subtype === 'dm' && !data.sent) {
-        if (!mcDmContacts[data.from_id]) {
+        const fk = (data.from_id || '').slice(0, 12);
+        if (!mcDmContacts[fk]) {
           // Reopen a previously closed DM tab when a new live message arrives
-          if (closedMcDmTabs.has(data.from_id)) { closedMcDmTabs.delete(data.from_id); saveMcClosedDmTabs(); }
-          const c = (mcContacts[data.radio_id] || {})[data.from_id];
-          mcDmContacts[data.from_id] = c?.long_name || data.from_id;
+          if (closedMcDmTabs.has(fk)) { closedMcDmTabs.delete(fk); saveMcClosedDmTabs(); }
+          const c = (mcContacts[data.radio_id] || {})[fk];
+          mcDmContacts[fk] = c?.long_name || data.from_id;
         }
-        msgTab = `dm:${data.from_id}`;
+        msgTab = `dm:${fk}`;
       }
       // Mark unread if not on this tab or not in chat/MC view
       if (msgTab && !data.sent && (currentTab !== 'chat' || chatNetwork !== 'mc' || mcChatTab !== msgTab)) {
@@ -11273,6 +11346,14 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     return '';
   }
 
+  function _mcPathHashSizeLabel(size, mode = null) {
+    const n = Number(size);
+    if (Number.isFinite(n) && n >= 1 && n <= 3) return `${n}B/hop`;
+    const m = Number(mode);
+    if (Number.isFinite(m) && m >= 0 && m <= 2) return `${m + 1}B/hop`;
+    return '—';
+  }
+
   function showMcHoverPath(pathResult, on) {
     _mcHoverLines.forEach(l => leafletMap && leafletMap.removeLayer(l));
     _mcHoverLines = [];
@@ -12620,14 +12701,20 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
   function doMcDm(pubkeyPrefix, radioId, name) {
     // Open a DM tab in MC chat instead of a modal
     if (radioId && radioId !== activeMcRadioId) toggleRadioSelection(radioId);
-    mcDmContacts[pubkeyPrefix] = name || pubkeyPrefix;
+    const tabKey = (pubkeyPrefix || '').slice(0, 12);  // firmware always reports 12-char from_id; normalize so reply lands on same tab
+    mcDmContacts[tabKey] = name || pubkeyPrefix;
     setChatNetwork('mc');
     switchTab('chat');
-    switchMcTab(`dm:${pubkeyPrefix}`);
+    switchMcTab(`dm:${tabKey}`);
     setTimeout(() => document.getElementById('mc-chat-input')?.focus(), 80);
   }
 
   let _mcRemoteManage = null;
+  let _mcRemoteQueuedAdvert = null;
+
+  function _mcRemotePasswordKey(pubkeyPrefix, radioId) {
+    return `mcRemotePassword:${radioId || ''}:${(pubkeyPrefix || '').slice(0, 12)}`;
+  }
 
   function _mcRemoteJson(value) {
     if (value == null) return '—';
@@ -12647,6 +12734,39 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       <summary style="cursor:pointer;color:var(--muted)">${escHtml(title)}</summary>
       <div style="margin-top:6px">${_mcRemoteJson(block.data)}</div>
     </details>`;
+  }
+
+  function _mcRemoteQuickSettingsHtml() {
+    const row = (label, inner, action) => `
+      <div style="display:grid;grid-template-columns:minmax(96px,130px) 1fr auto;gap:8px;align-items:end;margin-bottom:8px">
+        <label class="settings-label" style="margin-bottom:0">${label}</label>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">${inner}</div>
+        <button class="btn" onclick="${action}">Set</button>
+      </div>`;
+    const input = (id, width, placeholder, attrs = '') => `<input id="${id}" class="settings-input" style="width:${width}px" placeholder="${placeholder}" ${attrs}>`;
+    return `
+      <div style="border-top:1px solid var(--border);padding-top:10px;margin-top:10px">
+        <h3 class="settings-subtitle" style="margin:0 0 8px">Quick settings</h3>
+        ${row('Name', input('mc-remote-set-name', 180, 'RPTR name', 'maxlength="32"'), "mcRemoteApplySetting('name')")}
+        ${row('Repeat', `<select id="mc-remote-set-repeat" class="settings-select"><option value="on">On</option><option value="off">Off</option></select>`, "mcRemoteApplySetting('repeat')")}
+        ${row('Power save', `<select id="mc-remote-set-powersaving" class="settings-select"><option value="off">Off</option><option value="on">On</option></select>`, "mcRemoteApplySetting('powersaving')")}
+        ${row('TX power', input('mc-remote-set-tx', 82, '1-22', 'type="number" min="1" max="22" step="1"'), "mcRemoteApplySetting('tx')")}
+        ${row('Radio', `${input('mc-remote-set-freq', 88, 'MHz', 'type="number" step="0.001"')} ${input('mc-remote-set-bw', 72, 'BW', 'type="number" step="0.1"')} ${input('mc-remote-set-sf', 54, 'SF', 'type="number" min="5" max="12" step="1"')} ${input('mc-remote-set-cr', 54, 'CR', 'type="number" min="5" max="8" step="1"')}`, "mcRemoteApplySetting('radio')")}
+        ${row('Position', `${input('mc-remote-set-lat', 106, 'lat', 'type="number" step="0.000001"')} ${input('mc-remote-set-lon', 106, 'lon', 'type="number" step="0.000001"')} <button class="btn" onclick="startMcRemoteMapPick()" title="Pick RPTR position from map">Map</button>`, "mcRemoteApplySetting('position')")}
+        ${row('Owner info', `<input id="mc-remote-set-owner" class="settings-input" style="width:260px" placeholder="owner text">`, "mcRemoteApplySetting('owner')")}
+        ${row('Path hash', `<select id="mc-remote-set-path-hash" class="settings-select"><option value="0">1 byte</option><option value="1">2 bytes</option><option value="2">3 bytes</option></select>`, "mcRemoteApplySetting('path_hash')")}
+        ${row('Loop detect', `<select id="mc-remote-set-loop" class="settings-select"><option value="off">Off</option><option value="minimal">Minimal</option><option value="moderate">Moderate</option><option value="strict">Strict</option></select>`, "mcRemoteApplySetting('loop')")}
+        ${row('Advert timers', `${input('mc-remote-set-advert-int', 96, 'zero-hop min', 'type="number" min="0" step="2"')} ${input('mc-remote-set-flood-advert-int', 96, 'flood hrs', 'type="number" min="0" step="1"')}`, "mcRemoteApplySetting('adverts')")}
+        ${row('Flood max', input('mc-remote-set-flood-max', 82, '0-64', 'type="number" min="0" max="64" step="1"'), "mcRemoteApplySetting('flood_max')")}
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
+          <button class="btn" onclick="mcRemotePrefillSettings()" title="Read current RPTR settings into the fields above">Read settings</button>
+          <button class="btn" onclick="mcRemoteAdvert('local')">Local advert</button>
+          <button class="btn" onclick="mcRemoteAdvert('flood')">Flood advert</button>
+          <button class="btn" onclick="mcRemoteRunCommand('discover.neighbors')">Discover neighbours</button>
+          <button class="btn" onclick="mcRemoteRunCommand('neighbors')">Read neighbours</button>
+        </div>
+        <div id="mc-remote-quick-result" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
+      </div>`;
   }
 
   function _mcRemoteRenderResult(data) {
@@ -12671,6 +12791,111 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       ${_mcRemoteSection('ACL', data.acl)}`;
   }
 
+  function _mcRemoteReplyText(data) {
+    return String(data?.reply?.text || '').trim();
+  }
+
+  function _mcRemoteExtractValue(text, key = '') {
+    const raw = String(text || '').trim();
+    if (!raw) return '';
+    const lines = raw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    const lowerKey = key.toLowerCase();
+    const keyed = lines.find(line => lowerKey && line.toLowerCase().startsWith(lowerKey));
+    const line = keyed || lines[0] || '';
+    const parts = line.split(/[:=]/);
+    if (parts.length > 1) return parts.slice(1).join(':').trim();
+    if (lowerKey && line.toLowerCase().startsWith(lowerKey)) return line.slice(lowerKey.length).trim();
+    return line.trim();
+  }
+
+  function _mcRemoteSetValue(id, value) {
+    const el = document.getElementById(id);
+    if (!el || value == null || value === '') return false;
+    el.value = String(value).trim();
+    el.dataset.prefilled = '1';
+    return true;
+  }
+
+  function _mcRemoteNormalizeOnOff(value) {
+    const v = String(value || '').trim().toLowerCase();
+    if (!v) return '';
+    if (['1', 'true', 'yes', 'enabled', 'enable', 'on'].includes(v)) return 'on';
+    if (['0', 'false', 'no', 'disabled', 'disable', 'off'].includes(v)) return 'off';
+    if (v.includes('on') || v.includes('enabled')) return 'on';
+    if (v.includes('off') || v.includes('disabled')) return 'off';
+    return '';
+  }
+
+  function _mcRemoteNormalizePathHash(value) {
+    const v = String(value || '').trim().toLowerCase();
+    if (!v) return '';
+    if (v.includes('3') || v.includes('3b')) return '2';
+    if (v.includes('2') || v.includes('2b')) return '1';
+    if (v.includes('1') || v.includes('1b')) return '0';
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 && n <= 2 ? String(n) : '';
+  }
+
+  function _mcRemoteNormalizeLoop(value) {
+    const v = String(value || '').trim().toLowerCase();
+    if (!v) return '';
+    if (v.includes('strict')) return 'strict';
+    if (v.includes('moderate')) return 'moderate';
+    if (v.includes('minimal')) return 'minimal';
+    if (v.includes('off') || v === '0' || v === 'false') return 'off';
+    return '';
+  }
+
+  function _mcRemoteApplyPrefill(command, data) {
+    const text = _mcRemoteReplyText(data);
+    const value = _mcRemoteExtractValue(text, command.replace(/^get\s+/, ''));
+    if (!value) return false;
+    if (command === 'get name') return _mcRemoteSetValue('mc-remote-set-name', value);
+    if (command === 'get repeat') return _mcRemoteSetValue('mc-remote-set-repeat', _mcRemoteNormalizeOnOff(value));
+    if (command === 'get powersaving') return _mcRemoteSetValue('mc-remote-set-powersaving', _mcRemoteNormalizeOnOff(value));
+    if (command === 'get tx') return _mcRemoteSetValue('mc-remote-set-tx', value.match(/-?\d+(\.\d+)?/)?.[0] || '');
+    if (command === 'get lat') return _mcRemoteSetValue('mc-remote-set-lat', value.match(/-?\d+(\.\d+)?/)?.[0] || '');
+    if (command === 'get lon') return _mcRemoteSetValue('mc-remote-set-lon', value.match(/-?\d+(\.\d+)?/)?.[0] || '');
+    if (command === 'get owner.info') return _mcRemoteSetValue('mc-remote-set-owner', value);
+    if (command === 'get path.hash.mode') return _mcRemoteSetValue('mc-remote-set-path-hash', _mcRemoteNormalizePathHash(value));
+    if (command === 'get loop.detect') return _mcRemoteSetValue('mc-remote-set-loop', _mcRemoteNormalizeLoop(value));
+    if (command === 'get advert.interval') return _mcRemoteSetValue('mc-remote-set-advert-int', value.match(/-?\d+(\.\d+)?/)?.[0] || '');
+    if (command === 'get flood.advert.interval') return _mcRemoteSetValue('mc-remote-set-flood-advert-int', value.match(/-?\d+(\.\d+)?/)?.[0] || '');
+    if (command === 'get flood.max') return _mcRemoteSetValue('mc-remote-set-flood-max', value.match(/-?\d+(\.\d+)?/)?.[0] || '');
+    if (command === 'get radio') {
+      const nums = text.match(/-?\d+(\.\d+)?/g) || [];
+      if (nums.length >= 4) {
+        _mcRemoteSetValue('mc-remote-set-freq', nums[0]);
+        _mcRemoteSetValue('mc-remote-set-bw', nums[1]);
+        _mcRemoteSetValue('mc-remote-set-sf', nums[2]);
+        _mcRemoteSetValue('mc-remote-set-cr', nums[3]);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  async function mcRemotePrefillSettings() {
+    if (!_mcRemoteManage) return;
+    const out = document.getElementById('mc-remote-quick-result');
+    const commands = [
+      'get name', 'get repeat', 'get powersaving', 'get tx', 'get radio',
+      'get lat', 'get lon', 'get owner.info', 'get path.hash.mode',
+      'get loop.detect', 'get advert.interval', 'get flood.advert.interval', 'get flood.max',
+    ];
+    let filled = 0;
+    if (out) out.textContent = 'Reading current settings...';
+    for (const command of commands) {
+      try {
+        const data = await mcRemoteRunCommand(command, 'mc-remote-quick-result', {silentError: true});
+        if (data && _mcRemoteApplyPrefill(command, data)) filled++;
+      } catch(e) {}
+    }
+    if (out) out.innerHTML = filled
+      ? `<span style="color:var(--green)">Prefilled ${filled} setting${filled !== 1 ? 's' : ''} from RPTR replies.</span>`
+      : '<span style="color:#f59e0b">Settings read finished, but no parseable setting replies were received.</span>';
+  }
+
   function openMcRemoteManage(pubkeyPrefix, radioId, name) {
     _mcRemoteManage = { pubkeyPrefix, radioId, name: name || pubkeyPrefix };
     const title = document.getElementById('modal-title');
@@ -12692,6 +12917,10 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
           <label class="settings-label">Password</label>
           <input id="mc-remote-password" class="settings-input" type="password" style="width:150px" autocomplete="new-password" placeholder="blank if allowed">
         </div>
+        <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);padding-bottom:6px">
+          <input id="mc-remote-remember-password" type="checkbox">
+          Remember
+        </label>
         <button class="btn btn-net-mc" onclick="mcRemoteRead(true)">Login + Read</button>
         <button class="btn" onclick="mcRemoteRead(false)">Read Only</button>
       </div>
@@ -12699,6 +12928,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         Guest access is read-only when the repeater allows it. Admin unlocks remote CLI commands after the repeater accepts the password.
       </div>
       <div id="mc-remote-result" style="font-size:12px;color:var(--muted);margin-bottom:14px">Not connected.</div>
+      ${_mcRemoteQuickSettingsHtml()}
       <div style="border-top:1px solid var(--border);padding-top:10px">
         <h3 class="settings-subtitle" style="margin-top:0">Admin command</h3>
         <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
@@ -12706,11 +12936,22 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
             <option value="get name">get name</option>
             <option value="get radio">get radio</option>
             <option value="get tx">get tx</option>
+            <option value="get radio.rxgain">get radio.rxgain</option>
             <option value="get repeat">get repeat</option>
+            <option value="get powersaving">get powersaving</option>
+            <option value="get path.hash.mode">get path.hash.mode</option>
+            <option value="get loop.detect">get loop.detect</option>
+            <option value="get advert.interval">get advert.interval</option>
+            <option value="get flood.advert.interval">get flood.advert.interval</option>
+            <option value="get flood.max">get flood.max</option>
+            <option value="get dutycycle">get dutycycle</option>
+            <option value="get multi.acks">get multi.acks</option>
             <option value="get owner.info">get owner.info</option>
             <option value="neighbors">neighbors</option>
+            <option value="discover.neighbors">discover.neighbors</option>
             <option value="clock">clock</option>
             <option value="advert">advert</option>
+            <option value="advert.zerohop">advert.zerohop</option>
             <option value="set repeat on">set repeat on</option>
             <option value="set repeat off">set repeat off</option>
           </select>
@@ -12719,6 +12960,11 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         </div>
         <div id="mc-remote-command-result" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
       </div>`;
+    const savedPassword = localStorage.getItem(_mcRemotePasswordKey(pubkeyPrefix, radioId)) || '';
+    const pwEl = document.getElementById('mc-remote-password');
+    const rememberEl = document.getElementById('mc-remote-remember-password');
+    if (pwEl && savedPassword) pwEl.value = savedPassword;
+    if (rememberEl) rememberEl.checked = !!savedPassword;
     document.getElementById('action-modal').classList.add('open');
   }
 
@@ -12727,6 +12973,9 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const out = document.getElementById('mc-remote-result');
     if (out) out.textContent = login ? 'Logging in…' : 'Reading…';
     const password = document.getElementById('mc-remote-password')?.value || '';
+    const remember = !!document.getElementById('mc-remote-remember-password')?.checked;
+    const passwordKey = _mcRemotePasswordKey(_mcRemoteManage.pubkeyPrefix, _mcRemoteManage.radioId);
+    if (login && !remember) localStorage.removeItem(passwordKey);
     try {
       const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(_mcRemoteManage.radioId)}/remote/${encodeURIComponent(_mcRemoteManage.pubkeyPrefix)}/read`, {
         method: 'POST',
@@ -12735,16 +12984,24 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || r.status);
+      if (login && d.login?.ok) {
+        if (remember && password) localStorage.setItem(passwordKey, password);
+      }
       _mcRemoteRenderResult(d);
+      if (login && d.login?.ok) mcRemotePrefillSettings();
     } catch (e) {
       if (out) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
     }
   }
 
   async function mcRemoteCommand() {
-    if (!_mcRemoteManage) return;
-    const out = document.getElementById('mc-remote-command-result');
     const command = document.getElementById('mc-remote-command')?.value || '';
+    return mcRemoteRunCommand(command, 'mc-remote-command-result');
+  }
+
+  async function mcRemoteRunCommand(command, outId = 'mc-remote-quick-result', opts = {}) {
+    if (!_mcRemoteManage) return;
+    const out = document.getElementById(outId);
     if (out) out.textContent = 'Sending…';
     try {
       const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(_mcRemoteManage.radioId)}/remote/${encodeURIComponent(_mcRemoteManage.pubkeyPrefix)}/command`, {
@@ -12755,16 +13012,104 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || r.status);
       const reply = d.reply?.text ? `<div style="margin-top:6px;color:var(--text)">${escHtml(d.reply.text)}</div>` : '';
-      if (out) out.innerHTML = `<span style="color:var(--green)">Sent: ${escHtml(d.command || command)}</span>${reply}${d.note ? `<div style="margin-top:4px">${escHtml(d.note)}</div>` : ''}`;
+      if (out && !opts.silentError) out.innerHTML = `<span style="color:var(--green)">Sent: ${escHtml(d.command || command)}</span>${reply}${d.note ? `<div style="margin-top:4px">${escHtml(d.note)}</div>` : ''}`;
+      return d;
     } catch (e) {
+      if (opts.queueAdvertOnFail && !_mcRemoteQueuedAdvert) {
+        _mcRemoteQueuedAdvert = {
+          command,
+          target: {..._mcRemoteManage},
+          label: opts.label || command,
+        };
+        if (out) out.innerHTML = `<span style="color:#f59e0b">Could not send now. Queued ${escHtml(opts.label || command)} for when Manage closes.</span><div style="margin-top:4px;color:var(--muted)">${escHtml(e.message)}</div>`;
+        return null;
+      }
+      if (out && !opts.silentError) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
+      throw e;
+    }
+  }
+
+  function mcRemoteAdvert(mode) {
+    const command = mode === 'flood' ? 'advert' : 'advert.zerohop';
+    const label = mode === 'flood' ? 'flood advert' : 'local advert';
+    return mcRemoteRunCommand(command, 'mc-remote-quick-result', {queueAdvertOnFail: true, label});
+  }
+
+  async function _mcRemoteFlushQueuedAdvert() {
+    const queued = _mcRemoteQueuedAdvert;
+    if (!queued) return;
+    _mcRemoteQueuedAdvert = null;
+    const prev = _mcRemoteManage;
+    _mcRemoteManage = queued.target;
+    try {
+      await new Promise(resolve => setTimeout(resolve, 1200));
+      await mcRemoteRunCommand(queued.command, 'mc-remote-quick-result');
+      console.info(`Queued MC remote ${queued.label} sent after Manage close`);
+    } catch (e) {
+      console.warn(`Queued MC remote ${queued.label} failed after Manage close:`, e);
+    } finally {
+      _mcRemoteManage = prev;
+    }
+  }
+
+  function startMcRemoteMapPick() {
+    if (!_mcRemoteManage) return;
+    _mapPickMode = 'mc-remote';
+    document.getElementById('action-modal')?.classList.remove('open');
+    switchTab('map');
+    document.getElementById('map-pick-banner').textContent = 'Click on the map to set RPTR position';
+    document.getElementById('map-pick-banner').style.display = 'block';
+    document.getElementById('map-pick-cancel').style.display = 'block';
+    document.body.classList.add('map-pick-mode');
+    if (_mapPickEscHandler) document.removeEventListener('keydown', _mapPickEscHandler);
+    _mapPickEscHandler = e => { if (e.key === 'Escape') cancelMapPick(); };
+    document.addEventListener('keydown', _mapPickEscHandler);
+  }
+
+  async function mcRemoteApplySetting(kind) {
+    const val = id => (document.getElementById(id)?.value || '').trim();
+    const num = (id, label, min = null, max = null) => {
+      const raw = val(id);
+      const n = Number(raw);
+      if (!raw || !Number.isFinite(n) || (min != null && n < min) || (max != null && n > max)) {
+        throw new Error(`Invalid ${label}`);
+      }
+      return raw;
+    };
+    const commands = [];
+    try {
+      if (kind === 'name') commands.push(`set name ${val('mc-remote-set-name')}`);
+      if (kind === 'repeat') commands.push(`set repeat ${val('mc-remote-set-repeat')}`);
+      if (kind === 'powersaving') commands.push(`powersaving ${val('mc-remote-set-powersaving')}`);
+      if (kind === 'tx') commands.push(`set tx ${num('mc-remote-set-tx', 'TX power', 1, 22)}`);
+      if (kind === 'radio') {
+        commands.push(`set radio ${num('mc-remote-set-freq', 'frequency', 300, 2500)},${num('mc-remote-set-bw', 'bandwidth', 7.8, 500)},${num('mc-remote-set-sf', 'spreading factor', 5, 12)},${num('mc-remote-set-cr', 'coding rate', 5, 8)}`);
+      }
+      if (kind === 'position') {
+        commands.push(`set lat ${num('mc-remote-set-lat', 'latitude', -90, 90)}`);
+        commands.push(`set lon ${num('mc-remote-set-lon', 'longitude', -180, 180)}`);
+      }
+      if (kind === 'owner') commands.push(`set owner.info ${val('mc-remote-set-owner')}`);
+      if (kind === 'path_hash') commands.push(`set path.hash.mode ${val('mc-remote-set-path-hash')}`);
+      if (kind === 'loop') commands.push(`set loop.detect ${val('mc-remote-set-loop')}`);
+      if (kind === 'adverts') {
+        if (val('mc-remote-set-advert-int')) commands.push(`set advert.interval ${num('mc-remote-set-advert-int', 'zero-hop advert interval', 0, 240)}`);
+        if (val('mc-remote-set-flood-advert-int')) commands.push(`set flood.advert.interval ${num('mc-remote-set-flood-advert-int', 'flood advert interval', 0, 168)}`);
+      }
+      if (kind === 'flood_max') commands.push(`set flood.max ${num('mc-remote-set-flood-max', 'flood max', 0, 64)}`);
+      if (!commands.length || commands.some(c => !c.trim() || c.endsWith(' '))) throw new Error('Enter a value first.');
+      for (const command of commands) await mcRemoteRunCommand(command);
+    } catch (e) {
+      const out = document.getElementById('mc-remote-quick-result');
       if (out) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
     }
   }
 
   let _mcStatusReqPending = null;   // {pubkey_pre, timer, onResult?}
   let _mcPingPathActive   = false;  // true while ping-response path is drawn on map
+  let _mcPingTracePending = null;   // trace probe sent as part of Ping
 
-  async function doMcPing(pubkeyPrefix, radioId, name) {
+  async function doMcPing(pubkeyPrefix, radioId, name, withTrace = false) {
     const panel = document.getElementById('mc-statusreq-panel');
     const title = document.getElementById('mc-statusreq-title');
     const body  = document.getElementById('mc-statusreq-body');
@@ -12780,12 +13125,18 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     _mcStatusReqPending = {
       pubkey_pre: pubkeyPrefix.slice(0, 12),
       radioId,
+      withTrace,
       timer: setTimeout(() => {
-        if (document.getElementById('mc-statusreq-body')?.innerHTML.includes('Pinging'))
-          document.getElementById('mc-statusreq-body').innerHTML = '<span style="color:var(--red)">No status reply or reachability signal arrived. This USB companion firmware may not support remote status responses on this path.</span>';
+        const bodyEl = document.getElementById('mc-statusreq-body');
+        if (bodyEl?.innerHTML.includes('Pinging')) {
+          const traceBlock = document.getElementById('mc-ping-trace-block');
+          const msg = '<span style="color:var(--red)">No status reply arrived. Trace data below may still show the route heard by the mesh.</span>';
+          bodyEl.innerHTML = traceBlock ? `${msg}${traceBlock.outerHTML}` : '<span style="color:var(--red)">No status reply or reachability signal arrived. This USB companion firmware may not support remote status responses on this path.</span>';
+        }
         _mcStatusReqPending = null;
       }, 30000)
     };
+    if (withTrace) _mcStartPingTrace(pubkeyPrefix, radioId, name);
     try {
       const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/statusreq/${encodeURIComponent(pubkeyPrefix)}`, {method: 'POST'});
       const d = await r.json();
@@ -12797,7 +13148,12 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         // Backend returned without a response — node didn't reply within timeout
         if (_mcStatusReqPending?.timer) clearTimeout(_mcStatusReqPending.timer);
         _mcStatusReqPending = null;
-        body.innerHTML = '<span style="color:var(--red)">No response from node. It may be out of range, or our pubkey is missing from its NVS (try Advert first).</span>';
+        const traceBlock = document.getElementById('mc-ping-trace-block');
+        const msg = withTrace
+          ? '<span style="color:var(--red)">No STATUS_RESPONSE from node. Trace data below may still show the route heard by the mesh.</span>'
+          : '<span style="color:var(--red)">No STATUS_RESPONSE from node.</span>';
+        const traceBtn = withTrace ? '' : _mcTraceProbeButton(pubkeyPrefix, radioId, name);
+        body.innerHTML = traceBlock ? `${msg}${traceBlock.outerHTML}` : `${msg}${traceBtn}`;
       }
       // else: response was pushed via SSE before HTTP returned — _mcStatusReqShowResult already handled it
     } catch(e) {
@@ -12809,11 +13165,43 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
 
   function doMcStatus(pk, rid, name) { return doMcPing(pk, rid, name); }  // backward compat
 
+  function _mcTraceProbeButton(pubkeyPrefix, radioId, name) {
+    return `<div style="margin-top:8px">
+      <button class="map-popup-btn" title="Broadcast one MC Trace probe to discover path details" onclick="doMcPing('${jsSafe(pubkeyPrefix || '')}','${jsSafe(radioId || '')}','${jsSafe(name || pubkeyPrefix || 'Ping target')}',true)">Trace Probe</button>
+      <span style="color:var(--muted);font-size:11px;margin-left:6px">broadcasts once</span>
+    </div>`;
+  }
+
+  async function _mcStartPingTrace(pubkeyPrefix, radioId, name) {
+    if (!radioId) return;
+    if (_mcPingTracePending?.timer) clearTimeout(_mcPingTracePending.timer);
+    _mcPingTracePending = null;
+    try {
+      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/trace`, {method: 'POST'});
+      const d = await r.json();
+      if (!r.ok || d.tag == null) return;
+      const pending = {
+        tag: d.tag,
+        radioId,
+        pubkey_pre: (pubkeyPrefix || '').slice(0, 12),
+        name: name || pubkeyPrefix || 'Ping target',
+        timer: null,
+      };
+      pending.timer = setTimeout(() => {
+        if (_mcPingTracePending?.tag === pending.tag) _mcPingTracePending = null;
+      }, 25000);
+      _mcPingTracePending = pending;
+    } catch(e) {
+      console.warn('MC ping trace probe failed:', e);
+    }
+  }
+
   function _mcStatusReqShowResult(data) {
     if (!_mcStatusReqPending) return;
     // Match by pubkey prefix (full 12-char prefix)
     if (!data.pubkey_pre?.startsWith(_mcStatusReqPending.pubkey_pre)) return;
     clearTimeout(_mcStatusReqPending.timer);
+    const pendingReq = _mcStatusReqPending;
     const cb = _mcStatusReqPending.onResult;
     _mcStatusReqPending = null;
     if (cb) { cb(data); return; }
@@ -12850,6 +13238,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       const pingEntry = _mcSenseLogEntries[pingEntryIdx] || null;
       const pingPath = pingEntry?.pathResult || (pathResult ? { ...pathResult, kind: 'ping', snr: data.observed_snr ?? data.last_snr ?? null } : null);
       const observedPathHtml = _mcInlineHopPathHtml(pingEntry, pingPath, pingEntryIdx, data.observed_path || '');
+      const pathHashSizeLabel = _mcPathHashSizeLabel(data.observed_path_hash_size ?? pingPath?.inferredPathHashSize ?? pingEntry?.pathHashSize, data.observed_path_hash_mode ?? mcLastStatus[data.radio_id]?.path_hash_mode);
       body.innerHTML = `<table style="border-collapse:collapse;width:100%">
         ${th('Result')}
         ${td('Status', '<span style="color:var(--accent)">Reachable</span>')}
@@ -12858,12 +13247,13 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         ${pathWarn ? td('Path note', `<span style="color:#f59e0b;font-size:11px">${escHtml(pathWarn)}</span>`) : ''}
         ${th('Observed RF')}
         ${td('Path', observedPathHtml)}
-        ${td('Path hops', data.observed_path_len != null ? data.observed_path_len : '—')}
+        ${td('Observed hops', data.observed_path_len != null ? data.observed_path_len : '—')}
+        ${td('Path hash', pathHashSizeLabel)}
         ${td('Observed RSSI', data.observed_rssi != null ? data.observed_rssi + ' dBm' : '—')}
         ${td('Observed SNR', data.observed_snr != null ? data.observed_snr.toFixed(1) + ' dB' : '—')}
         ${td('Payload type', data.observed_payload_type ? escHtml(data.observed_payload_type) : '—')}
         ${td('Route type', data.observed_route_type ? escHtml(data.observed_route_type) : '—')}
-      </table>${_mcLogHopListHtml(pingEntry, pingPath, pingEntryIdx)}`;
+      </table>${_mcLogHopListHtml(pingEntry, pingPath, pingEntryIdx)}${(!pendingReq?.withTrace && !pingPath) ? _mcTraceProbeButton(data.pubkey_pre || '', data.radio_id || '', pingContact?.long_name || pingContact?.name || data.pubkey_pre || '') : ''}`;
       // Update contact's last_seen in local cache so map popup reflects the ping
       _mcUpdateContactLastSeen(data.radio_id, data.pubkey_pre || data.target_pubkey_pre, {
         out_path_len: data.observed_path_len,
@@ -12885,6 +13275,32 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     function _fmtAt(s)     { return s != null ? `${s}s` : '—'; }
     const td = (label, val) => `<tr><td style="padding:2px 10px 2px 0;color:var(--muted);white-space:nowrap">${label}</td><td>${val}</td></tr>`;
     const th = (label) => `<tr><td colspan="2" style="padding:6px 0 3px;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:0.5px;text-transform:uppercase">${label}</td></tr>`;
+    const pingContact = findMcContactByKeyPrefix(data.pubkey_pre || '', data.radio_id);
+    const [radioLat, radioLon] = _mcSenseRadioPos(data.radio_id);
+    const cLat = pingContact?.latitude ?? pingContact?.lat ?? null;
+    const cLon = pingContact?.longitude ?? pingContact?.lon ?? null;
+    let pathResult = decodeMcEventPath({
+      path: data.observed_path,
+      path_len: data.observed_path_len,
+      path_hash_size: data.observed_path_hash_size,
+    }, cLat, cLon, radioLat, radioLon, data.radio_id);
+    if (!pathResult && pingContact) pathResult = decodeMcPath(pingContact, radioLat, radioLon, data.radio_id);
+    if (!pathResult) {
+      pathResult = decodeMcRelayPath({
+        path: data.observed_path,
+        path_len: data.observed_path_len,
+        path_hash_size: data.observed_path_hash_size,
+      }, radioLat, radioLon, data.radio_id);
+    }
+    if (!pathResult && cLat != null && cLon != null && radioLat != null) {
+      pathResult = { points: [[radioLat, radioLon], [cLat, cLon]], flood: true };
+    }
+    const pathWarn = _mcPathWarningText(pathResult, 'ping');
+    const pingEntryIdx = _mcAddPingLogEntry(data, pingContact, pathResult);
+    const pingEntry = _mcSenseLogEntries[pingEntryIdx] || null;
+    const pingPath = pingEntry?.pathResult || (pathResult ? { ...pathResult, kind: 'ping', snr: data.observed_snr ?? data.last_snr ?? null } : null);
+    const observedPathHtml = _mcInlineHopPathHtml(pingEntry, pingPath, pingEntryIdx, data.observed_path || '');
+    const pathHashSizeLabel = _mcPathHashSizeLabel(data.observed_path_hash_size ?? pingPath?.inferredPathHashSize ?? pingEntry?.pathHashSize, data.observed_path_hash_mode ?? mcLastStatus[data.radio_id]?.path_hash_mode);
     body.innerHTML = `<table style="border-collapse:collapse;width:100%">
       ${th('General')}
       ${td('Battery', _fmtBat(data.bat))}
@@ -12906,21 +13322,19 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       ${td('Recv direct', data.recv_direct ?? '—')}
       ${td('Flood dups', data.flood_dups ?? '—')}
       ${td('Direct dups', data.direct_dups ?? '—')}
-    </table>`;
+      ${th('Path')}
+      ${td('Path', observedPathHtml)}
+      ${td('Hops', data.observed_path_len != null ? mcPathHopLabel(Number(data.observed_path_len), true) : (pingEntry?.hopStr ?? '—'))}
+      ${td('Path hash', pathHashSizeLabel)}
+      ${pathWarn ? td('Path note', `<span style="color:#f59e0b;font-size:11px">${escHtml(pathWarn)}</span>`) : ''}
+      ${data.observed_route_type ? td('Route type', escHtml(data.observed_route_type)) : ''}
+    </table>${_mcLogHopListHtml(pingEntry, pingPath, pingEntryIdx)}${(!pendingReq?.withTrace && !pingPath) ? _mcTraceProbeButton(data.pubkey_pre || '', data.radio_id || '', pingContact?.long_name || pingContact?.name || data.pubkey_pre || '') : ''}`;
     // Draw path to pinged node on Sense map
-    const pingContact = findMcContactByKeyPrefix(data.pubkey_pre || '', data.radio_id);
-    if (pingContact) {
-      const [radioLat, radioLon] = _mcSenseRadioPos(data.radio_id);
-      let pathResult = decodeMcPath(pingContact, radioLat, radioLon, data.radio_id);
-      if (!pathResult && pingContact.latitude != null && radioLat != null) {
-        pathResult = { points: [[radioLat, radioLon], [pingContact.latitude, pingContact.longitude]], flood: true };
-      }
-      if (pathResult) {
-        switchTab('map'); toggleSensePanel(true); switchSenseNet('mc');
-        showMcHoverPath({ ...pathResult, kind: 'ping', snr: data.observed_snr ?? data.last_snr ?? null }, true);
-        _mcPingPathActive = true;
-        if (pingContact.latitude != null) setTimeout(() => leafletMap && leafletMap.panTo([pingContact.latitude, pingContact.longitude]), 80);
-      }
+    if (pingPath) {
+      switchTab('map'); toggleSensePanel(true); switchSenseNet('mc');
+      showMcHoverPath(pingPath, true);
+      _mcPingPathActive = true;
+      if (cLat != null) setTimeout(() => leafletMap && leafletMap.panTo([cLat, cLon]), 80);
     }
     // Update contact's last_seen in local cache so map popup reflects the ping
     _mcUpdateContactLastSeen(data.radio_id, data.pubkey_pre, {
@@ -12930,11 +13344,6 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       snr: data.observed_snr ?? data.last_snr,
       rssi: data.observed_rssi ?? data.last_rssi,
     });
-    _mcAddPingLogEntry(data, pingContact, pingContact ? (() => {
-      const [rLat, rLon] = _mcSenseRadioPos(data.radio_id);
-      return decodeMcPath(pingContact, rLat, rLon, data.radio_id)
-          || (pingContact.latitude != null && rLat != null ? { points: [[rLat, rLon], [pingContact.latitude, pingContact.longitude]], flood: true } : null);
-    })() : null);
   }
 
   function _mcAddBotReplyLogEntry(data) {
@@ -12965,7 +13374,7 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     const snr  = data.last_snr ?? data.observed_snr ?? null;
     const snrLabel = snr != null ? snr.toFixed(1) + 'dB' : null;
     const hopLen = data.observed_path_len ?? 0;
-    const hopStr = hopLen === 0 ? 'direct' : `${hopLen} hop${hopLen !== 1 ? 's' : ''}`;
+    const hopStr = mcPathHopLabel(Number(hopLen), true);
     const lat = contact?.latitude ?? null;
     const lon = contact?.longitude ?? null;
     if (!pathResult && contact && lat != null) {
@@ -13041,15 +13450,63 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
   // ---------------------------------------------------------------------------
 
   let _mcPendingTraceTag = null;   // tag of last sent trace, for correlation
+  let _mcTraceCooldownUntil = 0;
+  let _mcTraceCooldownTimer = null;
+  const MC_TRACE_COOLDOWN_MS = 30000;
+
+  function _mcTraceSetButtonState(running = false) {
+    const btn = document.getElementById('mc-trace-btn');
+    const status = document.getElementById('sense-mc-status');
+    if (!btn) return;
+    const remainingMs = Math.max(0, _mcTraceCooldownUntil - Date.now());
+    if (running) {
+      btn.textContent = 'Tracing...';
+      btn.disabled = true;
+      return;
+    }
+    if (remainingMs > 0) {
+      btn.textContent = `${Math.ceil(remainingMs / 1000)}s`;
+      btn.disabled = true;
+      if (status && _senseNet === 'mc') status.textContent = `Trace cooldown ${Math.ceil(remainingMs / 1000)}s`;
+      if (!_mcTraceCooldownTimer) {
+        _mcTraceCooldownTimer = setInterval(() => {
+          if (Date.now() >= _mcTraceCooldownUntil) {
+            clearInterval(_mcTraceCooldownTimer);
+            _mcTraceCooldownTimer = null;
+            _mcTraceSetButtonState();
+            return;
+          }
+          _mcTraceSetButtonState();
+        }, 1000);
+      }
+      return;
+    }
+    btn.textContent = 'Trace';
+    btn.disabled = false;
+    if (status && _senseNet === 'mc' && /^Trace cooldown /.test(status.textContent || '')) status.textContent = '';
+  }
+
+  function _mcTraceStartCooldown() {
+    _mcTraceCooldownUntil = Date.now() + MC_TRACE_COOLDOWN_MS;
+    _mcTraceSetButtonState();
+  }
 
   async function doMcTrace() {
     // Use first connected MC radio
     const radioId = Object.keys(mcLastStatus).find(id => mcLastStatus[id]?.status === 'connected');
     if (!radioId) return;
+    const remainingMs = Math.max(0, _mcTraceCooldownUntil - Date.now());
+    if (remainingMs > 0) {
+      const status = document.getElementById('sense-mc-status');
+      if (status) status.textContent = `Trace cooldown ${Math.ceil(remainingMs / 1000)}s`;
+      _mcTraceSetButtonState();
+      return;
+    }
     const panel = document.getElementById('mc-statusreq-panel');
     const title = document.getElementById('mc-statusreq-title');
     const body  = document.getElementById('mc-statusreq-body');
     if (!panel) return;
+    _mcTraceSetButtonState(true);
     panel.dataset.detailKind = 'mc-trace';
     title.textContent = 'Broadcast Trace';
     body.innerHTML = '<span style="color:var(--muted)">Sending trace…</span>';
@@ -13060,8 +13517,10 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       const d = await r.json();
       if (!r.ok) {
         body.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Trace failed.')}</span>`;
+        _mcTraceSetButtonState();
         return;
       }
+      _mcTraceStartCooldown();
       _mcPendingTraceTag = d.tag;
       body.innerHTML = '<span style="color:var(--muted)">Waiting for trace response…</span>';
       // Timeout if no TRACE_DATA arrives within 20s
@@ -13073,14 +13532,29 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       }, 20000);
     } catch(e) {
       body.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
+      _mcTraceSetButtonState();
     }
   }
 
   function _mcHandleTraceData(data) {
     const isOurs = _mcPendingTraceTag !== null && data.tag === _mcPendingTraceTag;
-    if (isOurs) _mcPendingTraceTag = null;
+    if (isOurs) {
+      _mcPendingTraceTag = null;
+      const status = document.getElementById('sense-mc-status');
+      if (status && _senseNet === 'mc') status.textContent = 'Trace response received.';
+      _mcTraceSetButtonState();
+    }
+    const isPingTrace = _mcPingTracePending !== null
+      && data.tag === _mcPingTracePending.tag
+      && data.radio_id === _mcPingTracePending.radioId;
+    const pingTrace = isPingTrace ? _mcPingTracePending : null;
+    if (isPingTrace) {
+      if (_mcPingTracePending.timer) clearTimeout(_mcPingTracePending.timer);
+      _mcPingTracePending = null;
+    }
     _drawMcTracePath(data);
-    _addMcTraceLogEntry(data, isOurs);
+    const traceEntryIdx = _addMcTraceLogEntry(data, isOurs || isPingTrace);
+    if (isPingTrace) _mcShowPingTraceResult(data, pingTrace, traceEntryIdx);
   }
 
   function _mcTracePathData(data) {
@@ -13155,6 +13629,45 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
     if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
     try { localStorage.setItem('mcSenseLog', JSON.stringify(_mcSenseLogEntries.slice(0, 100))); } catch(e) {}
     renderMcSenseLog();
+    return 0;
+  }
+
+  function _mcShowPingTraceResult(data, pending, traceEntryIdx = 0) {
+    const panel = document.getElementById('mc-statusreq-panel');
+    const body = document.getElementById('mc-statusreq-body');
+    if (!panel || !body || panel.dataset.detailKind !== 'mc-ping') return;
+    const trace = _mcTracePathData(data);
+    const entry = _mcSenseLogEntries[traceEntryIdx] || null;
+    const pathResult = entry?.pathResult || trace.pathResult;
+    const responderName = entry?.responderName || trace.responderContact?.long_name || trace.responderContact?.name || 'Trace responder';
+    const pathHtml = _mcInlineHopPathHtml(entry, pathResult, traceEntryIdx, '');
+    const warn = _mcPathWarningText(pathResult, 'trace');
+    const hopList = _mcLogHopListHtml(entry, pathResult, traceEntryIdx);
+    const pathHashSizeLabel = _mcPathHashSizeLabel(data.path_hash_size ?? pathResult?.inferredPathHashSize ?? entry?.pathHashSize, mcLastStatus[data.radio_id]?.path_hash_mode);
+    const traceBlock = `<div id="mc-ping-trace-block" style="margin-top:8px;border-top:1px solid var(--border);padding-top:7px">
+      <div style="font-size:11px;font-weight:600;color:var(--muted);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px">Trace Probe</div>
+      <table style="border-collapse:collapse;width:100%">
+        <tr><td style="padding:2px 10px 2px 0;color:var(--muted);white-space:nowrap">Responder</td><td>${escHtml(responderName || pending?.name || '—')}</td></tr>
+        <tr><td style="padding:2px 10px 2px 0;color:var(--muted);white-space:nowrap">Hops</td><td>${mcPathHopLabel(Number(data.path_len || 0), true)}</td></tr>
+        <tr><td style="padding:2px 10px 2px 0;color:var(--muted);white-space:nowrap">Path hash</td><td>${pathHashSizeLabel}</td></tr>
+        <tr><td style="padding:2px 10px 2px 0;color:var(--muted);white-space:nowrap">Path</td><td>${pathHtml || '—'}</td></tr>
+        ${trace.finalSnr != null ? `<tr><td style="padding:2px 10px 2px 0;color:var(--muted);white-space:nowrap">Final SNR</td><td>${Number(trace.finalSnr).toFixed(1)} dB</td></tr>` : ''}
+        ${warn ? `<tr><td style="padding:2px 10px 2px 0;color:var(--muted);white-space:nowrap">Path note</td><td><span style="color:#f59e0b;font-size:11px">${escHtml(warn)}</span></td></tr>` : ''}
+      </table>${hopList}
+    </div>`;
+    const existing = document.getElementById('mc-ping-trace-block');
+    if (existing) {
+      existing.outerHTML = traceBlock;
+    } else if (body.innerHTML.includes('Pinging')) {
+      body.innerHTML = `<span style="color:var(--muted)">Pinging… trace response received.</span>${traceBlock}`;
+    } else {
+      body.insertAdjacentHTML('beforeend', traceBlock);
+    }
+    if (pathResult) {
+      switchTab('map'); toggleSensePanel(true); switchSenseNet('mc');
+      showMcHoverPath(pathResult, true);
+      _mcPingPathActive = true;
+    }
   }
 
 
@@ -13197,12 +13710,6 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
         showAlert(d.error || 'Scan failed.');
         return;
       }
-      // Also fire a trace after a brief pause — EDC-3 serial state needs to settle after advert TX
-      await new Promise(r => setTimeout(r, 800));
-      try {
-        const tr = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/trace`, {method: 'POST'});
-        if (tr.ok) { const td = await tr.json(); _mcPendingTraceTag = td.tag; }
-      } catch(e) {}
     } catch(e) {
       if (btn) { btn.textContent = 'Scan'; btn.disabled = false; }
       showAlert('Scan failed: ' + e.message);
@@ -13532,7 +14039,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const radioId = mcSettingsRadioId || activeMcRadioId;
     const statusEl = document.getElementById('mc-reset-all-paths-status');
     if (!radioId) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">No MC radio selected.</span>'; return; }
-    if (!confirm('Reset ALL stored contact routes on this MC radio? This includes manually-set paths.')) return;
+    document.getElementById('confirm-ok').textContent = 'Reset All';
+    showConfirm('Reset ALL stored contact routes on this MC radio? This includes manually-set paths.', () => {
     if (statusEl) statusEl.textContent = 'Resetting…';
     btnFeedback(btn, '…');
     fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/reset_all_paths`, {method: 'POST'})
@@ -13547,6 +14055,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`;
         btnFeedback(btn, '✗ Failed');
       });
+    });
   }
 
   function saveMcDeviceName(btn) {
@@ -15246,12 +15755,17 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     document.addEventListener('keydown', _mapPickEscHandler);
   }
 
-  function cancelMapPick() {
+  function cancelMapPick(opts = {}) {
+    const mode = _mapPickMode;
     _mapPickMode = false;
     document.getElementById('map-pick-banner').style.display = 'none';
     document.getElementById('map-pick-cancel').style.display = 'none';
     document.body.classList.remove('map-pick-mode');
     if (_mapPickEscHandler) { document.removeEventListener('keydown', _mapPickEscHandler); _mapPickEscHandler = null; }
+    if (mode === 'mc-remote') {
+      if (!opts.keepTab) openMcRemoteManage(_mcRemoteManage?.pubkeyPrefix || '', _mcRemoteManage?.radioId || '', _mcRemoteManage?.name || '');
+      return;
+    }
     switchTab('settings');
   }
 
@@ -15856,8 +16370,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         document.querySelectorAll('.emoji-cat-tab').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         _emojiCat = icon;
-        _emojiGrid(_EC[icon]);
-        document.getElementById('emoji-search').value = '';
+        const q = document.getElementById('emoji-search').value;
+        if (q.trim()) { _emojiFilter(q); } else { _emojiGrid(_EC[icon]); }
       };
       tabs.appendChild(btn);
     });

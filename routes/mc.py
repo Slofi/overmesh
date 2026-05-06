@@ -208,8 +208,8 @@ def api_mc_status():
             "tx_power":   info.get("tx_power"),
             "max_tx_power": info.get("max_tx_power"),
             "max_channels": info.get("max_channels"),
-            "lat":        info.get("adv_lat"),
-            "lon":        info.get("adv_lon"),
+            "lat":        info.get("adv_lat") or None,
+            "lon":        info.get("adv_lon") or None,
             "adv_loc_policy": info.get("adv_loc_policy"),
             "contacts":   len(live_contacts),
             "stored_contacts": len(merged_contacts),
@@ -560,8 +560,10 @@ def api_mc_statusreq(radio_id, node_id):
         return jsonify({"error": "Silent Running active — transmissions are blocked"}), 409
     if not node_id or len(node_id) < 6:
         return jsonify({"error": "node_id (pubkey prefix) required"}), 400
+    data = request.get_json(silent=True) or {}
+    prime_trace = bool(data.get("trace_probe"))
     try:
-        result = req_node_status(radio_id, node_id)
+        result = req_node_status(radio_id, node_id, prime_trace=prime_trace)
         if result:
             log.info(
                 f"[MC] statusreq sync success: radio={radio_id} node={node_id[:12]} "

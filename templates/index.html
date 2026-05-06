@@ -247,7 +247,7 @@
             <th class="sortable" data-col="snr"          onclick="setLiveSort('snr')">SNR <span class="sort-arrow"></span></th>
             <th class="sortable" data-col="battery"      onclick="setLiveSort('battery')">Battery <span class="sort-arrow"></span></th>
             <th class="sortable" data-col="hops_away"    onclick="setLiveSort('hops_away')">Hops <span class="sort-arrow"></span></th>
-            <th>Distance</th>
+            <th class="sortable" data-col="_dist" onclick="setLiveSort('_dist')">Distance <span class="sort-arrow"></span></th>
             <th class="sortable" data-col="last_heard_ts" onclick="setLiveSort('last_heard_ts')">Last Seen <span class="sort-arrow"></span></th>
             <th></th>
             <th>Radio</th>
@@ -299,6 +299,7 @@
       <div id="chat-messages"><div class="chat-empty">No messages yet</div></div>
       <div class="chat-input-bar">
         <input type="text" id="chat-input" placeholder="Message..." maxlength="200"
+               autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
                onkeydown="if(event.key==='Enter')sendChat()">
         <button class="emoji-btn" onclick="toggleEmojiPicker('chat-input',this)" title="Emoji">😊</button>
         <button class="dm-send" onclick="sendChat()" title="Send message">Send</button>
@@ -313,12 +314,13 @@
       </div>
       <div class="chat-input-bar">
         <input type="text" id="mc-chat-input" placeholder="Public channel…"
+               autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
                oninput="_mcUpdateByteCount()" onkeydown="if(event.key==='Enter')sendMcChan()">
         <span id="mc-byte-counter" style="font-size:11px;color:var(--muted);flex-shrink:0;min-width:28px;text-align:right">160</span>
         <button class="emoji-btn" onclick="toggleEmojiPicker('mc-chat-input',this)" title="Emoji">😊</button>
         <button class="dm-send" id="mc-send-btn" onclick="sendMcChan()" title="Send message to active MC channel">Send</button>
         <div id="mc-advert-wrap" style="position:relative;flex-shrink:0">
-          <button class="btn btn-net-mc network-accent-mc" id="mc-advert-btn" style="font-size:12px;padding:4px 10px" onclick="toggleMcAdvertMenu(event)" title="Advertise — announces this node to the MeshCore network">Advert &#9650;</button>
+          <button class="btn btn-net-mc network-accent-mc" id="mc-advert-btn" style="font-size:12px;padding:0 10px;height:36px;display:inline-flex;align-items:center" onclick="toggleMcAdvertMenu(event)" title="Advertise — announces this node to the MeshCore network">Advert &#9650;</button>
           <div id="mc-advert-menu" style="display:none;position:absolute;bottom:calc(100% + 4px);right:0;background:var(--bg2);border:1px solid var(--border);border-radius:6px;min-width:140px;z-index:999;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.4)">
             <button style="display:flex;width:100%;padding:8px 14px;background:none;border:none;color:var(--text);cursor:pointer;font-size:12px;align-items:center;gap:8px;transition:background 0.1s" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''" onclick="mcSendAdvert(false)">Local <span style="color:var(--muted);font-size:11px">(no hops)</span></button>
             <button style="display:flex;width:100%;padding:8px 14px;background:none;border:none;color:var(--text);cursor:pointer;font-size:12px;align-items:center;gap:8px;transition:background 0.1s" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background=''" onclick="mcSendAdvert(true)">Flood</button>
@@ -387,12 +389,14 @@
 
         <!-- MC sense content -->
         <div id="sense-mc-wrap" style="display:none;flex-direction:column;flex:1;min-height:0">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-shrink:0">
-            <button id="mc-scan-btn" class="btn" onclick="startMcScan()" title="Flood-advertise on MC mesh and collect responses for 60s" style="display:none">Scan</button>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-shrink:0;flex-wrap:wrap">
+            <button id="mc-scan-btn" class="btn" onclick="startMcScan()" title="Send one MC advert and listen for contact responses during the scan window" style="display:none">Scan</button>
             <span id="mc-scan-status" style="display:none;font-size:11px;color:var(--muted);white-space:nowrap"></span>
+            <button id="mc-trace-btn" class="btn" onclick="doMcTrace()" title="Send one mesh-wide MC Trace probe and draw returned hop data" style="display:none">Trace</button>
             <span style="flex:1"></span>
             <span id="sense-mc-status" style="font-size:11px;color:var(--muted);white-space:nowrap"></span>
           </div>
+          <div id="mc-trace-warning" title="Trace is a mesh-wide broadcast. Use deliberately." style="display:none;font-size:11px;color:var(--muted);margin-bottom:8px;flex-shrink:0">⚠️ Trace broadcasts to the <strong>entire mesh</strong>. Use sparingly.</div>
           <div id="sense-mc-stats" style="display:flex;gap:8px;margin-bottom:6px;flex-shrink:0;font-size:10px;color:var(--muted)">
             <span id="sense-mc-stat-total">0 contacts</span>
             <span style="color:var(--border)">·</span>
@@ -1152,7 +1156,7 @@
           <input id="mc-coords-lon" class="settings-input" type="number" step="0.000001" style="width:120px" placeholder="14.50">
         </div>
         <button class="btn" onclick="startMcMapPick()" title="Click on the map to set position">Select on map</button>
-        <button class="btn" onclick="saveMcCoords(this)" title="Set GPS coordinates on MC device">Set Coords</button>
+        <button class="btn" onclick="saveMcCoords(this)" title="Set GPS coordinates on MC device">Save</button>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
         <label class="settings-label" style="margin-bottom:0">Share position in adverts:</label>
@@ -1894,7 +1898,7 @@
 </div>
 
 <!-- MC ping / detail floating panel — lives outside all tabs so it's visible everywhere -->
-<div id="mc-statusreq-panel" style="display:none;position:fixed;bottom:20px;right:12px;z-index:2000;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px;min-width:240px;max-height:70vh;overflow-y:auto;box-shadow:0 2px 12px rgba(0,0,0,.5)">
+<div id="mc-statusreq-panel" style="display:none;position:fixed;bottom:20px;right:12px;z-index:2000;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px;width:min(460px,calc(100vw - 24px));max-height:70vh;overflow-y:auto;box-shadow:0 2px 12px rgba(0,0,0,.5)">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
     <span id="mc-statusreq-title" style="font-weight:600;color:var(--text)"></span>
     <span onclick="_closeDetailPanel()" style="cursor:pointer;color:var(--muted);margin-left:12px">✕</span>

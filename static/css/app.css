@@ -34,6 +34,20 @@
       gap: 6px;
     }
 
+    #app-topo-bg {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image: url('/static/background-topo.png');
+      background-size: cover;
+      background-position: center;
+      background-repeat: no-repeat;
+      opacity: 0.05;
+      z-index: 0;
+    }
+
+    #header, #content { position: relative; z-index: 1; }
+
     /* Silent Running banner */
     #silent-banner {
       display: none; position: fixed; top: 0; left: 0; right: 0; z-index: 9999;

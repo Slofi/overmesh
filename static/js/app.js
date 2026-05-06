@@ -74,6 +74,46 @@
   const _pendingMcNodeSeenToasts = new Map();
   const _mcContactRefreshByRadio = new Map();
 
+  // Passive mesh intelligence — summary cache: radio_id → { pubkey_pre → {obs_count, best_rssi, best_snr, last_ts} }
+  const _mcPassiveSummaryCache = {};
+  let _mcPassiveSummaryPending = false;
+
+  function _mcPassiveSummaryFor(radioId, pubkeyPre) {
+    return (_mcPassiveSummaryCache[radioId] || {})[pubkeyPre] || null;
+  }
+
+  function _mcPassiveBadgeHtml(radioId, pubkeyPre) {
+    const s = _mcPassiveSummaryFor(radioId, pubkeyPre);
+    if (!s || !s.obs_count) return '';
+    const snr = s.best_snr != null ? ` SNR ${s.best_snr > 0 ? '+' : ''}${s.best_snr.toFixed(1)}` : '';
+    return `<span class="passive-badge" title="Passive intel: ${s.obs_count} observation${s.obs_count !== 1 ? 's' : ''}${snr}" style="font-size:10px;color:var(--muted);margin-left:4px;opacity:0.8">&#128065;${s.obs_count}</span>`;
+  }
+
+  async function _refreshMcPassiveSummary(radioIds, pubkeyPres) {
+    if (_mcPassiveSummaryPending || !radioIds.length || !pubkeyPres.length) return;
+    _mcPassiveSummaryPending = true;
+    try {
+      // Group prefixes by radio_id
+      const byRadio = {};
+      for (const rid of radioIds) byRadio[rid] = [];
+      pubkeyPres.forEach((pre, i) => { if (byRadio[radioIds[i]]) byRadio[radioIds[i]].push(pre); });
+      for (const [rid, prefixes] of Object.entries(byRadio)) {
+        if (!prefixes.length) continue;
+        const unique = [...new Set(prefixes)].filter(Boolean);
+        if (!unique.length) continue;
+        try {
+          const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/passive_obs/summary?prefixes=${unique.join(',')}`);
+          if (r.ok) {
+            const data = await r.json();
+            _mcPassiveSummaryCache[rid] = Object.assign(_mcPassiveSummaryCache[rid] || {}, data);
+          }
+        } catch (_) {}
+      }
+    } finally {
+      _mcPassiveSummaryPending = false;
+    }
+  }
+
   function _appPrefBool(key, fallback = true) {
     if (_appSettings && typeof _appSettings[key] === 'boolean') return _appSettings[key];
     return fallback;
@@ -2491,6 +2531,7 @@ if (targetEl) {
         const metaRadio = connectedRadios > 1 ? (mcLastStatus[c._rid]?.name || mcLastStatus[c._rid]?.node_name || '') : '';
         const archiveMeta = c.archived_only ? 'OM archive' : '';
         const meta   = escHtml([shortKey, metaRadio, archiveMeta].filter(Boolean).join(' · '));
+        const passiveBadge = _mcPassiveBadgeHtml(c._rid, shortKey);
         const pk     = jsSafe(c.full_key || c.id || '');
         const rid    = jsSafe(c._rid);
         const lat    = c.latitude ?? c.lat;
@@ -2520,7 +2561,7 @@ if (targetEl) {
             <div class="name-cell-main">
               <span class="name-cell-title">${name}</span>${mcTypeBadge(c.type ?? 0)}${mcRouteIndicator(c, c._rid)}
             </div>
-            <div class="name-cell-meta">${meta}</div>
+            <div class="name-cell-meta">${meta}${passiveBadge}</div>
           </td>
           <td><span class="short-name">${sname}</span></td>
           <td>—</td><td>—</td>
@@ -2546,6 +2587,10 @@ if (targetEl) {
           </td>
         </tr>`;
       }).join('');
+      // Refresh passive obs summary in background for visible MC contacts
+      const _pRids = mcSorted.map(c => c._rid);
+      const _pPres = mcSorted.map(c => (c.full_key || c.id || '').slice(0, 12));
+      _refreshMcPassiveSummary(_pRids, _pPres);
     }
 
     document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false});
@@ -3042,13 +3087,54 @@ if (targetEl) {
       ['Longitude', lon],
       ['Last seen', c.last_heard_ts ? senseTimeAgo(c.last_heard_ts) : (c.last_seen || '')],
     ];
+    const pubkeyPre = fullKey.slice(0, 12);
     openModal('MC Contact Details', `
       ${_detailRows(rows)}
+      <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Passive Intel</div>
+        <div id="mc-passive-intel-area" class="modal-loading" style="padding:6px 0;text-align:left;font-size:12px">Loading…</div>
+      </div>
       <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
         <div style="font-size:12px;color:var(--muted);margin-bottom:6px">MeshCore share data</div>
         <div id="mc-share-area" class="modal-loading" style="padding:10px 0;text-align:left">Preparing contact details…</div>
       </div>
     `);
+    // Passive intel section
+    const piArea = document.getElementById('mc-passive-intel-area');
+    fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/passive_obs?pubkey_pre=${encodeURIComponent(pubkeyPre)}&limit=20`)
+      .then(r => r.json())
+      .then(obs => {
+        if (!piArea) return;
+        piArea.className = '';
+        if (!obs || !obs.length) {
+          piArea.innerHTML = '<span style="color:var(--muted)">No passive observations recorded yet.</span>';
+          return;
+        }
+        const rows = obs.map(o => {
+          const t  = o.ts ? new Date(o.ts * 1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}) : '?';
+          const dt = o.ts ? senseTimeAgo(o.ts) : '';
+          const sig = [
+            o.snr  != null ? `SNR ${o.snr > 0 ? '+' : ''}${o.snr.toFixed(1)}` : '',
+            o.rssi != null ? `RSSI ${o.rssi}` : '',
+          ].filter(Boolean).join(' · ');
+          const path = o.path_len != null ? `${o.path_len} hop${o.path_len !== 1 ? 's' : ''}` : '';
+          const type = [o.obs_type, o.payload_type, o.route_type].filter(Boolean).join('/');
+          return `<div style="padding:3px 0;border-bottom:1px solid var(--border);display:flex;gap:8px;flex-wrap:wrap;align-items:baseline">
+            <span style="color:var(--muted);white-space:nowrap">${t}</span>
+            <span style="color:var(--muted);font-size:10px">(${dt})</span>
+            ${sig ? `<span>${escHtml(sig)}</span>` : ''}
+            ${path ? `<span style="color:var(--muted)">${escHtml(path)}</span>` : ''}
+            ${type ? `<span style="color:var(--muted);font-size:10px">${escHtml(type)}</span>` : ''}
+          </div>`;
+        }).join('');
+        const total = obs.length;
+        piArea.innerHTML = `<div style="color:var(--muted);margin-bottom:4px">${total} recent observation${total !== 1 ? 's' : ''}</div>${rows}
+          <div style="margin-top:6px">
+            <button class="btn btn-small" onclick="_clearMcPassiveObs('${jsSafe(rid)}','${jsSafe(pubkeyPre)}',this)" style="font-size:11px;padding:3px 8px">Clear passive data</button>
+          </div>`;
+      })
+      .catch(() => { if (piArea) piArea.innerHTML = '<span style="color:var(--muted)">Passive data unavailable.</span>'; });
+
     const area = document.getElementById('mc-share-area');
     fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/contacts/${encodeURIComponent(fullKey)}/share`)
       .then(r => r.json().then(d => ({ok: r.ok, d})))
@@ -3085,6 +3171,295 @@ if (targetEl) {
       .catch(e => {
         if (area) area.innerHTML = `<div class="modal-error" style="padding:0;text-align:left">Share data export failed: ${escHtml(e.message)}</div>`;
       });
+  }
+
+  function _clearMcPassiveObs(radioId, pubkeyPre, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = 'Clearing…'; }
+    fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/passive_obs`, {
+      method: 'DELETE',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({pubkey_pre: pubkeyPre}),
+    })
+      .then(r => r.json())
+      .then(() => {
+        if (_mcPassiveSummaryCache[radioId]) delete _mcPassiveSummaryCache[radioId][pubkeyPre];
+        const piArea = document.getElementById('mc-passive-intel-area');
+        if (piArea) piArea.innerHTML = '<span style="color:var(--muted)">Passive data cleared.</span>';
+      })
+      .catch(() => { if (btn) { btn.disabled = false; btn.textContent = 'Clear passive data'; } });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Passive Intel Manager (Settings → MC)
+  // ---------------------------------------------------------------------------
+
+  function _passiveIntelRadioId() {
+    // Use the currently selected MC radio
+    const ids = Object.keys(mcLastStatus).filter(id => mcLastStatus[id]?.status === 'connected');
+    return ids[0] || null;
+  }
+
+  async function loadPassiveIntelManager() {
+    const rids = Object.keys(mcLastStatus).filter(id => mcLastStatus[id]?.status === 'connected');
+    const listEl  = document.getElementById('passive-intel-list');
+    const statsEl = document.getElementById('passive-intel-stats');
+    if (!listEl) return;
+    if (!rids.length) {
+      listEl.innerHTML = '<div style="color:var(--muted)">No MC radio connected.</div>';
+      if (statsEl) statsEl.textContent = '—';
+      return;
+    }
+    listEl.innerHTML = '<div style="color:var(--muted)">Loading…</div>';
+    try {
+      // Fetch from all connected radios in parallel
+      const allResults = await Promise.all(rids.map(async rid => {
+        const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/passive_obs?limit=500`);
+        const obs = r.ok ? await r.json() : [];
+        return obs.map(o => ({...o, _rid: rid}));
+      }));
+      const allObs = allResults.flat();
+
+      if (!allObs.length) {
+        listEl.innerHTML = '<div style="color:var(--muted)">No passive observations stored yet.</div>';
+        if (statsEl) statsEl.textContent = '0 observations';
+        return;
+      }
+
+      // Merge by pubkey_pre across all radios — track which radio(s) saw each node
+      const byKey = {};
+      for (const o of allObs) {
+        if (!byKey[o.pubkey_pre]) byKey[o.pubkey_pre] = {entries: [], rids: new Set()};
+        byKey[o.pubkey_pre].entries.push(o);
+        byKey[o.pubkey_pre].rids.add(o._rid);
+      }
+
+      // Resolve names from known MC contacts
+      const nameMap = {};
+      Object.values(mcContacts).forEach(radioMap => {
+        Object.values(radioMap || {}).forEach(c => {
+          const pre = (c.full_key || c.id || '').slice(0, 12);
+          if (pre) nameMap[pre] = c.long_name || c.name || pre;
+        });
+      });
+
+      // Deduplicate obs count: count unique (pubkey_pre, ts, obs_type) across radios
+      const totalObs = allObs.length;
+      const uniqueKeys = Object.keys(byKey).length;
+      const multiRadio = rids.length > 1;
+      if (statsEl) statsEl.textContent = `${totalObs} observation${totalObs !== 1 ? 's' : ''} · ${uniqueKeys} unique node${uniqueKeys !== 1 ? 's' : ''}${multiRadio ? ` · ${rids.length} radios` : ''}`;
+
+      // Sort by most recent first
+      const sorted = Object.entries(byKey).sort((a, b) => {
+        const at = Math.max(...a[1].entries.map(o => o.ts || 0));
+        const bt = Math.max(...b[1].entries.map(o => o.ts || 0));
+        return bt - at;
+      });
+
+      listEl.innerHTML = sorted.map(([pre, {entries, rids: seenByRids}]) => {
+        const name     = nameMap[pre];
+        const isKnown  = !!name;
+        const label    = isKnown ? escHtml(name) : `<span style="font-family:monospace">${escHtml(pre)}</span>`;
+        const badge    = isKnown ? '' : ' <span style="font-size:10px;color:var(--muted);background:var(--bg3);padding:1px 5px;border-radius:3px">unknown</span>';
+        const count    = entries.length;
+        const lastTs   = Math.max(...entries.map(o => o.ts || 0));
+        const lastAgo  = lastTs ? senseTimeAgo(lastTs) : '?';
+        const rxEntries = entries.filter(o => o.obs_type === 'rx');
+        const trEntries = entries.filter(o => o.obs_type === 'trace');
+        const bestSnr  = rxEntries.reduce((m, o) => o.snr  != null && o.snr  > m ? o.snr  : m, -Infinity);
+        const bestRssi = rxEntries.reduce((m, o) => o.rssi != null && o.rssi > m ? o.rssi : m, -Infinity);
+        const snrStr   = isFinite(bestSnr)  ? `SNR ${bestSnr  > 0 ? '+' : ''}${bestSnr.toFixed(1)}` : '';
+        const rssiStr  = isFinite(bestRssi) ? `RSSI ${bestRssi}` : '';
+        const sigStr   = [snrStr, rssiStr].filter(Boolean).join(' · ');
+        const typeStr  = [rxEntries.length ? `${rxEntries.length} rx` : '', trEntries.length ? `${trEntries.length} trace` : ''].filter(Boolean).join(' · ');
+        // Show which radios heard this node only when multiple radios are connected
+        const radioNames = multiRadio && seenByRids.size > 0
+          ? [...seenByRids].map(rid => escHtml(mcLastStatus[rid]?.name || mcLastStatus[rid]?.node_name || rid.slice(-6))).join(', ')
+          : '';
+
+        // Last 3 observations inline (most recent first, across all radios)
+        const recent = [...entries].sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 3);
+        const recentHtml = recent.map(o => {
+          const t   = o.ts ? new Date(o.ts * 1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}) : '?';
+          const sig = [
+            o.snr  != null ? `SNR ${o.snr > 0 ? '+' : ''}${o.snr.toFixed(1)}` : '',
+            o.rssi != null ? `RSSI ${o.rssi}` : '',
+            o.path_len != null ? `${o.path_len}h` : '',
+          ].filter(Boolean).join(' ');
+          const radioLabel = multiRadio ? ` <span style="color:var(--muted);font-size:10px">${escHtml(mcLastStatus[o._rid]?.name || mcLastStatus[o._rid]?.node_name || '')}</span>` : '';
+          return `<span style="color:var(--muted)">${t}</span> <span>${escHtml(sig)}</span> <span style="font-size:10px;color:var(--muted)">${escHtml(o.obs_type || '')}</span>${radioLabel}`;
+        }).map(s => `<div style="padding:1px 0">${s}</div>`).join('');
+
+        // Delete button clears from all radios that saw this node
+        const deleteRids = jsSafe(JSON.stringify([...seenByRids]));
+        return `<div style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:6px;background:var(--bg2)">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">
+            <div>
+              <span style="font-weight:600">${label}</span>${badge}
+              <div style="font-size:11px;color:var(--muted);margin-top:2px">${escHtml(pre)} · ${count} obs · last ${lastAgo}${radioNames ? ` · via ${radioNames}` : ''}</div>
+              <div style="font-size:11px;color:var(--muted)">${escHtml(sigStr)}${sigStr && typeStr ? ' · ' : ''}${escHtml(typeStr)}</div>
+            </div>
+            <button class="btn" style="font-size:11px;padding:2px 8px;flex-shrink:0;color:var(--red);border-color:var(--red)"
+              onclick="passiveIntelDeleteEntry('${deleteRids}','${jsSafe(pre)}',this)" title="Delete all observations for this node">Delete</button>
+          </div>
+          <div style="margin-top:6px;font-size:11px;border-top:1px solid var(--border);padding-top:4px">${recentHtml}</div>
+        </div>`;
+      }).join('');
+    } catch (e) {
+      listEl.innerHTML = `<div style="color:var(--red)">Failed to load: ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  async function passiveIntelDeleteEntry(radioIdsJson, pubkeyPre, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = '…'; }
+    let radioIds;
+    try { radioIds = JSON.parse(radioIdsJson); } catch { radioIds = [radioIdsJson]; }
+    try {
+      await Promise.all(radioIds.map(rid =>
+        fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/passive_obs`, {
+          method: 'DELETE',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({pubkey_pre: pubkeyPre}),
+        })
+      ));
+      radioIds.forEach(rid => { if (_mcPassiveSummaryCache[rid]) delete _mcPassiveSummaryCache[rid][pubkeyPre]; });
+      loadPassiveIntelManager();
+    } catch (e) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Delete'; }
+    }
+  }
+
+  async function passiveIntelRunCleanup(btn) {
+    const rids = Object.keys(mcLastStatus).filter(id => mcLastStatus[id]?.status === 'connected');
+    if (!rids.length) return;
+    const ttl = parseInt(document.getElementById('passive-ttl-days')?.value || '30', 10);
+    if (btn) { btn.disabled = true; btn.textContent = 'Cleaning…'; }
+    try {
+      const results = await Promise.all(rids.map(rid =>
+        fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/passive_obs/cleanup`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ttl_days: ttl}),
+        }).then(r => r.json()).catch(() => ({deleted: 0}))
+      ));
+      const total = results.reduce((s, d) => s + (d.deleted || 0), 0);
+      showToast('Passive Intel', `Removed ${total} old observation${total !== 1 ? 's' : ''}.`, 'node');
+      loadPassiveIntelManager();
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Run TTL cleanup'; }
+    }
+  }
+
+  function passiveIntelClearAll(btn) {
+    const rids = Object.keys(mcLastStatus).filter(id => mcLastStatus[id]?.status === 'connected');
+    const radioCount = rids.length;
+    showConfirm(
+      `Delete ALL passive observations for ${radioCount > 1 ? 'all ' + radioCount + ' MC radios' : 'this MC radio'}? This cannot be undone.`,
+      async () => {
+        if (!rids.length) return;
+        if (btn) { btn.disabled = true; }
+        try {
+          await Promise.all(rids.map(rid =>
+            fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/passive_obs`, {
+              method: 'DELETE',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({}),
+            })
+          ));
+          rids.forEach(rid => { _mcPassiveSummaryCache[rid] = {}; });
+          loadPassiveIntelManager();
+        } finally {
+          if (btn) { btn.disabled = false; }
+        }
+      }
+    );
+  }
+
+  // Collectors — stored in localStorage per OM instance
+  function _loadCollectors() {
+    try { return JSON.parse(localStorage.getItem('mcPassiveCollectors') || '[]'); } catch { return []; }
+  }
+  function _saveCollectors(list) {
+    localStorage.setItem('mcPassiveCollectors', JSON.stringify(list));
+  }
+
+  function renderPassiveCollectors() {
+    const el = document.getElementById('passive-collectors-list');
+    if (!el) return;
+    const collectors = _loadCollectors();
+    if (!collectors.length) {
+      el.innerHTML = '<div style="color:var(--muted);font-size:12px">No collectors configured.</div>';
+      return;
+    }
+    const rid = _passiveIntelRadioId();
+    el.innerHTML = collectors.map((c, i) => {
+      const summary = rid ? (_mcPassiveSummaryFor(rid, c.key) || {}) : {};
+      const obsNote = summary.obs_count ? ` · ${summary.obs_count} obs stored` : '';
+      return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);flex-wrap:wrap">
+        <span style="font-weight:600;font-size:12px">${escHtml(c.label || c.key)}</span>
+        <span style="font-family:monospace;font-size:11px;color:var(--muted)">${escHtml(c.key)}</span>
+        <span style="font-size:11px;color:var(--muted)">${escHtml(obsNote)}</span>
+        <div style="margin-left:auto;display:flex;gap:6px">
+          <button class="btn" style="font-size:11px;padding:2px 10px" onclick="collectFromNode('${jsSafe(c.key)}',this)" title="Send collect trigger to this node">Collect</button>
+          <button class="btn" style="font-size:11px;padding:2px 8px;color:var(--red);border-color:var(--red)" onclick="removePassiveCollector(${i})" title="Remove this collector">✕</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  function addPassiveCollector() {
+    const keyEl   = document.getElementById('passive-collector-key');
+    const labelEl = document.getElementById('passive-collector-label');
+    const statEl  = document.getElementById('passive-collector-status');
+    const key   = (keyEl?.value || '').trim().slice(0, 64);
+    const label = (labelEl?.value || '').trim();
+    if (!key || key.length < 8) {
+      if (statEl) statEl.textContent = 'Enter at least 8 characters of the collector pubkey.';
+      return;
+    }
+    const collectors = _loadCollectors();
+    if (collectors.find(c => c.key === key)) {
+      if (statEl) statEl.textContent = 'Already added.';
+      return;
+    }
+    collectors.push({key, label: label || key});
+    _saveCollectors(collectors);
+    if (keyEl)   keyEl.value   = '';
+    if (labelEl) labelEl.value = '';
+    if (statEl)  statEl.textContent = `Added: ${label || key}`;
+    renderPassiveCollectors();
+  }
+
+  function removePassiveCollector(idx) {
+    const collectors = _loadCollectors();
+    collectors.splice(idx, 1);
+    _saveCollectors(collectors);
+    renderPassiveCollectors();
+  }
+
+  async function collectFromNode(pubkeyPre, btn) {
+    const rid = _passiveIntelRadioId();
+    if (!rid) { showToast('Passive Intel', 'No MC radio connected.', 'node'); return; }
+    const contact = findMcContactByKeyPrefix(pubkeyPre, rid);
+    const fullKey = contact?.full_key || contact?.id || pubkeyPre;
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+    try {
+      // Send the OMCOLLECT trigger as a DM to the collector node
+      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/send_dm`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({pubkey: fullKey, text: 'OMCOLLECT'}),
+      });
+      const d = await r.json();
+      if (r.ok && !d.error) {
+        showToast('Passive Intel', `Collect trigger sent to ${escHtml(pubkeyPre)}. Observations will arrive as messages.`, 'node');
+      } else {
+        showToast('Passive Intel', `Send failed: ${escHtml(d.error || 'unknown error')}`, 'node');
+      }
+    } catch (e) {
+      showToast('Passive Intel', `Error: ${escHtml(e.message)}`, 'node');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Collect'; }
+    }
   }
 
   function trTimerStart(updateFn) {
@@ -8087,6 +8462,8 @@ if (targetEl) {
       const sel = document.getElementById('settings-mc-port-select');
       if (!sel.options.length || !sel.options[0].value) settingsMcScanPorts();
       loadMcNodeSettings();
+      loadPassiveIntelManager();
+      renderPassiveCollectors();
     }
     if (CROSS_SYSTEM_ENABLED && name === 'cross' && !_crossLoadedOnce) loadCrossSettings();
   }
@@ -9095,10 +9472,12 @@ if (targetEl) {
     const mcCh = document.getElementById('mc-channels-section');
     const mcImp  = document.getElementById('mc-import-contact-section');
     const mcImpCh = document.getElementById('mc-import-channel-section');
+    const mcPI = document.getElementById('mc-passive-intel-section');
     if (mcNS)    mcNS.style.display    = show ? '' : 'none';
     if (mcCh)    mcCh.style.display    = show ? '' : 'none';
     if (mcImp)   mcImp.style.display   = show ? '' : 'none';
     if (mcImpCh) mcImpCh.style.display = show ? '' : 'none';
+    if (mcPI)    mcPI.style.display    = show ? '' : 'none';
     // Force-hide header pills + chat toggle when MC UI is suppressed
     if (!show) {
       const sep = document.getElementById('mc-pill-sep');

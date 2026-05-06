@@ -1248,6 +1248,58 @@
       <div id="mc-import-channel-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-top:6px"></div>
     </div><!-- /mc-import-channel-section -->
 
+    <!-- Passive Intel Manager -->
+    <div class="settings-section" id="mc-passive-intel-section" style="display:none">
+      <h2 class="settings-title">Passive Intel
+        <button class="btn" onclick="loadPassiveIntelManager()" style="font-size:11px;padding:2px 8px;margin-left:6px" title="Refresh passive observations list">↻ Refresh</button>
+      </h2>
+      <p class="network-section-note mc" style="margin:0 0 10px">
+        OM passively records RF observations from overheard mesh traffic — adverts, messages, and trace hops — without transmitting. Data is stored per MC radio and keyed by node pubkey prefix.
+      </p>
+
+      <!-- Controls row -->
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+        <button class="btn" onclick="passiveIntelRunCleanup(this)" title="Delete observations older than the configured TTL">Run TTL cleanup</button>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px">
+          <span style="color:var(--muted)">Keep last</span>
+          <input id="passive-ttl-days" class="settings-input" type="number" min="1" max="365" value="30" style="width:52px;text-align:center">
+          <span style="color:var(--muted)">days</span>
+        </label>
+        <button class="btn" style="color:var(--red);border-color:var(--red)" onclick="passiveIntelClearAll(this)" title="Delete ALL passive observations for this MC radio">Clear all</button>
+      </div>
+
+      <!-- Stats summary -->
+      <div id="passive-intel-stats" style="font-size:12px;color:var(--muted);margin-bottom:10px">—</div>
+
+      <!-- Contact list -->
+      <div id="passive-intel-list" style="font-size:12px">
+        <div style="color:var(--muted)">Press Refresh to load.</div>
+      </div>
+
+      <!-- Collectors subsection -->
+      <h2 class="settings-title" style="margin-top:20px">Remote Collectors
+        <span style="font-size:11px;font-weight:normal;color:var(--muted);margin-left:6px">— pull intel from solar/remote nodes over the mesh</span>
+      </h2>
+      <p style="font-size:12px;color:var(--muted);margin:0 0 10px">
+        A configured collector node passively accumulates observations in its local flash buffer. Press <b>Collect</b> to trigger a dump — it sends its buffer to this MC radio as batched messages which OM stores automatically.
+      </p>
+      <div id="passive-collectors-list" style="margin-bottom:10px">
+        <div style="color:var(--muted);font-size:12px">No collectors configured.</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:6px">
+        <div>
+          <label class="settings-label">Collector pubkey prefix <span style="font-weight:normal;color:var(--muted)">(12 chars)</span></label>
+          <input id="passive-collector-key" class="settings-input" maxlength="64" style="width:220px;font-family:monospace;font-size:11px" placeholder="e.g. faff04a08bd6">
+        </div>
+        <div>
+          <label class="settings-label">Label</label>
+          <input id="passive-collector-label" class="settings-input" style="width:140px" placeholder="Solar hilltop">
+        </div>
+        <button class="btn" onclick="addPassiveCollector()" title="Save this collector">Add collector</button>
+      </div>
+      <div id="passive-collector-status" style="font-size:12px;min-height:16px;color:var(--muted)"></div>
+    </div><!-- /mc-passive-intel-section -->
+
     </div><!-- /st-mc -->
 
     <div id="st-app" style="display:none">

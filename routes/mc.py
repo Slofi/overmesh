@@ -29,8 +29,12 @@ from mesh_mc import (send_chan_msg, send_dm, send_advert, refresh_contacts,
                      remote_repeater_command)
 from db import (
     delete_mc_channel_messages,
+    delete_passive_obs,
+    cleanup_passive_obs,
     get_mc_ignored,
     load_mc_messages,
+    load_passive_obs,
+    load_passive_obs_summary,
     save_mc_message,
     set_mc_ignored,
 )
@@ -1141,3 +1145,61 @@ def api_mc_import_contact(radio_id):
         log.warning(f"[MC] import_contact failed: {e}")
         return jsonify({"error": str(e)}), 500
     return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# Passive mesh intelligence
+# ---------------------------------------------------------------------------
+
+@bp.route("/api/mc/<radio_id>/passive_obs")
+def api_mc_passive_obs(radio_id):
+    """Return stored passive observations, optionally filtered by pubkey_pre."""
+    pubkey_pre = request.args.get("pubkey_pre")
+    limit = min(int(request.args.get("limit", 200)), 500)
+    try:
+        obs = load_passive_obs(radio_id, pubkey_pre=pubkey_pre, limit=limit)
+        return jsonify(obs)
+    except Exception as e:
+        log.warning(f"[MC] passive_obs load error: {e}")
+        return jsonify([])
+
+
+@bp.route("/api/mc/<radio_id>/passive_obs/summary")
+def api_mc_passive_obs_summary(radio_id):
+    """Return per-contact passive obs summary (count, best signal, last seen) for a list of pubkey prefixes."""
+    prefixes_raw = request.args.get("prefixes", "")
+    prefixes = [p.strip() for p in prefixes_raw.split(",") if p.strip()]
+    if not prefixes:
+        return jsonify({})
+    try:
+        summary = load_passive_obs_summary(radio_id, prefixes)
+        return jsonify(summary)
+    except Exception as e:
+        log.warning(f"[MC] passive_obs summary error: {e}")
+        return jsonify({})
+
+
+@bp.route("/api/mc/<radio_id>/passive_obs", methods=["DELETE"])
+def api_mc_passive_obs_delete(radio_id):
+    """Delete passive observations for a radio, optionally scoped to one contact."""
+    data = request.get_json(silent=True) or {}
+    pubkey_pre = data.get("pubkey_pre")
+    try:
+        delete_passive_obs(radio_id, pubkey_pre=pubkey_pre)
+        return jsonify({"ok": True})
+    except Exception as e:
+        log.warning(f"[MC] passive_obs delete error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/api/mc/<radio_id>/passive_obs/cleanup", methods=["POST"])
+def api_mc_passive_obs_cleanup(radio_id):
+    """Delete observations older than ttl_days (default 30)."""
+    data = request.get_json(silent=True) or {}
+    ttl_days = int(data.get("ttl_days", 30))
+    try:
+        deleted = cleanup_passive_obs(radio_id, ttl_days=ttl_days)
+        return jsonify({"ok": True, "deleted": deleted})
+    except Exception as e:
+        log.warning(f"[MC] passive_obs cleanup error: {e}")
+        return jsonify({"error": str(e)}), 500

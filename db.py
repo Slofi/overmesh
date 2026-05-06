@@ -56,6 +56,132 @@ def mc_msgs_db_path(radio_id):
     return os.path.join(DATA_DIR, f"overmesh_mc_msgs_{_safe_radio_id(radio_id)}.db")
 
 
+def mc_passive_db_path(radio_id):
+    return os.path.join(DATA_DIR, f"overmesh_mc_passive_{_safe_radio_id(radio_id)}.db")
+
+
+@contextmanager
+def get_mc_passive_db(radio_id):
+    db_path = mc_passive_db_path(radio_id)
+    _init_mc_passive_db(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _init_mc_passive_db(db_path):
+    conn = sqlite3.connect(db_path)
+    try:
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS passive_obs (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            pubkey_pre   TEXT NOT NULL,
+            obs_type     TEXT NOT NULL,
+            ts           INTEGER NOT NULL,
+            rssi         REAL,
+            snr          REAL,
+            path_len     INTEGER,
+            path         TEXT,
+            path_hash_size INTEGER,
+            payload_type TEXT,
+            route_type   TEXT,
+            lat          REAL,
+            lon          REAL
+        )''')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_passive_pubkey ON passive_obs (pubkey_pre, ts DESC)')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_passive_ts ON passive_obs (ts DESC)')
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def save_passive_obs(radio_id, pubkey_pre, obs_type, rssi=None, snr=None,
+                     path_len=None, path=None, path_hash_size=None,
+                     payload_type=None, route_type=None, lat=None, lon=None,
+                     max_per_contact=50):
+    ts = int(time.time())
+    with get_mc_passive_db(radio_id) as conn:
+        c = conn.cursor()
+        c.execute(
+            '''INSERT INTO passive_obs
+               (pubkey_pre, obs_type, ts, rssi, snr, path_len, path,
+                path_hash_size, payload_type, route_type, lat, lon)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
+            (pubkey_pre, obs_type, ts, rssi, snr, path_len, path,
+             path_hash_size, payload_type, route_type, lat, lon)
+        )
+        # Enforce per-contact cap: keep only the most recent max_per_contact rows
+        c.execute(
+            '''DELETE FROM passive_obs WHERE pubkey_pre=? AND id NOT IN (
+               SELECT id FROM passive_obs WHERE pubkey_pre=?
+               ORDER BY ts DESC LIMIT ?)''',
+            (pubkey_pre, pubkey_pre, max_per_contact)
+        )
+
+
+def load_passive_obs(radio_id, pubkey_pre=None, limit=100):
+    with get_mc_passive_db(radio_id) as conn:
+        c = conn.cursor()
+        if pubkey_pre:
+            c.execute(
+                'SELECT * FROM passive_obs WHERE pubkey_pre=? ORDER BY ts DESC LIMIT ?',
+                (pubkey_pre, limit)
+            )
+        else:
+            c.execute(
+                'SELECT * FROM passive_obs ORDER BY ts DESC LIMIT ?',
+                (limit,)
+            )
+        cols = [d[0] for d in c.description]
+        return [dict(zip(cols, row)) for row in c.fetchall()]
+
+
+def load_passive_obs_summary(radio_id, pubkey_prefixes):
+    """Return best obs (latest RSSI/SNR, obs count) keyed by pubkey_pre."""
+    if not pubkey_prefixes:
+        return {}
+    placeholders = ','.join('?' * len(pubkey_prefixes))
+    with get_mc_passive_db(radio_id) as conn:
+        c = conn.cursor()
+        c.execute(
+            f'''SELECT pubkey_pre,
+                       COUNT(*) as obs_count,
+                       MAX(ts) as last_ts,
+                       MAX(rssi) as best_rssi,
+                       MAX(snr) as best_snr,
+                       MIN(path_len) as min_path_len
+                FROM passive_obs
+                WHERE pubkey_pre IN ({placeholders})
+                GROUP BY pubkey_pre''',
+            pubkey_prefixes
+        )
+        cols = [d[0] for d in c.description]
+        return {row[0]: dict(zip(cols, row)) for row in c.fetchall()}
+
+
+def delete_passive_obs(radio_id, pubkey_pre=None):
+    with get_mc_passive_db(radio_id) as conn:
+        c = conn.cursor()
+        if pubkey_pre:
+            c.execute('DELETE FROM passive_obs WHERE pubkey_pre=?', (pubkey_pre,))
+        else:
+            c.execute('DELETE FROM passive_obs')
+
+
+def cleanup_passive_obs(radio_id, ttl_days=30):
+    cutoff = int(time.time()) - ttl_days * 86400
+    with get_mc_passive_db(radio_id) as conn:
+        c = conn.cursor()
+        c.execute('DELETE FROM passive_obs WHERE ts < ?', (cutoff,))
+        return conn.total_changes
+
+
 @contextmanager
 def get_mc_msgs_db(radio_id):
     db_path = mc_msgs_db_path(radio_id)

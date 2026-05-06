@@ -24,7 +24,7 @@ from meshcore.packets import BinaryReqType
 from config import CONFIG, CONFIG_LOCK, DATA_DIR, save_config
 from cross import maybe_forward_mc_message
 from bridge import publish_inbound_message
-from db import log_position, save_mc_message
+from db import log_position, save_mc_message, save_passive_obs
 from helpers import push_to_sse
 from state import mc_connections, mc_connections_lock
 
@@ -446,6 +446,23 @@ def _rx_sender_prefix(entry):
         if value:
             return str(value)
     return ""
+
+
+def _latlon_for_prefix(config_id, pubkey_pre):
+    """Return (lat, lon) from the contact archive for a pubkey prefix, or (None, None)."""
+    if not pubkey_pre:
+        return None, None
+    try:
+        archive = get_mc_contact_archive(config_id)
+        for pubkey, c in archive.items():
+            if str(pubkey).startswith(str(pubkey_pre)):
+                lat = c.get("adv_lat") or c.get("latitude")
+                lon = c.get("adv_lon") or c.get("longitude")
+                if lat and lon:
+                    return float(lat), float(lon)
+    except Exception:
+        pass
+    return None, None
 
 
 def _payload_matches_subtype(payload_typename, subtype):
@@ -1369,6 +1386,7 @@ def _subscribe_mc_events(mc, config_id, name):
         try:
             p = event.payload
             path = p.get("path", [])
+            path_hash_size = p.get("path_hash_size")
             log.info(f"[MC:{name}] TRACE_DATA tag={p.get('tag')} hops={p.get('path_len',0)} "
                      f"path={[{'hash':n.get('hash','?'),'snr':n.get('snr')} for n in path]}")
             push_to_sse({
@@ -1376,17 +1394,47 @@ def _subscribe_mc_events(mc, config_id, name):
                 "radio_id": config_id,
                 "tag":      p.get("tag"),
                 "path_len": p.get("path_len", 0),
-                "path_hash_size": p.get("path_hash_size"),
+                "path_hash_size": path_hash_size,
                 "path":     path,   # [{hash, snr}, ...], last entry has only snr (our radio)
                 "flags":    p.get("flags", 0),
                 "auth_hex": p.get("auth", 0).to_bytes(4, 'little').hex(),  # responding node's 4-byte hash (wire byte order)
             })
+            # Passive intel: store per-hop observations (quality filter: must have a hash)
+            for hop in path:
+                hop_hash = hop.get("hash")
+                hop_snr  = hop.get("snr")
+                if hop_hash and hop_snr is not None:
+                    lat, lon = _latlon_for_prefix(config_id, str(hop_hash))
+                    save_passive_obs(
+                        config_id, str(hop_hash), "trace",
+                        snr=hop_snr,
+                        path_len=p.get("path_len"),
+                        path_hash_size=path_hash_size,
+                        lat=lat, lon=lon,
+                    )
         except Exception as e:
             log.warning(f"[MC:{name}] on_trace_data error: {e}")
 
     def on_rx_log_data(event):
         try:
-            _remember_rx_log(config_id, event.payload)
+            p = event.payload or {}
+            _remember_rx_log(config_id, p)
+            pubkey_pre = _rx_sender_prefix(p)
+            rssi = p.get("rssi")
+            snr  = p.get("snr")
+            # Quality filter: only store if we have a sender ID and signal data
+            if pubkey_pre and (rssi is not None or snr is not None):
+                lat, lon = _latlon_for_prefix(config_id, pubkey_pre)
+                save_passive_obs(
+                    config_id, pubkey_pre, "rx",
+                    rssi=rssi, snr=snr,
+                    path_len=p.get("path_len"),
+                    path=p.get("path"),
+                    path_hash_size=p.get("path_hash_size"),
+                    payload_type=p.get("payload_typename"),
+                    route_type=p.get("route_typename"),
+                    lat=lat, lon=lon,
+                )
         except Exception as e:
             log.warning(f"[MC:{name}] on_rx_log_data error: {e}")
 

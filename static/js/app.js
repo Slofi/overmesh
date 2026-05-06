@@ -2113,6 +2113,7 @@ if (targetEl) {
             loadGpsSettings();
           }
           if (localStorage.getItem('sensePanelOpen') === '1') toggleSensePanel(true);
+          settleMapLayout();
         };
         if (!leafletMap) {
           // rAF 2: init map only AFTER browser has painted with the correct heights
@@ -13827,6 +13828,16 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   }
 
   // ---- Map container height (Leaflet needs explicit pixel height) ----
+  function settleMapLayout() {
+    const run = () => {
+      resizeMapView();
+      leafletMap && leafletMap.invalidateSize();
+    };
+    requestAnimationFrame(run);
+    requestAnimationFrame(() => requestAnimationFrame(run));
+    setTimeout(run, 120);
+  }
+
   function resizeMapView() {
     // Defer measurement until after flex layout has settled
     requestAnimationFrame(() => {
@@ -13876,6 +13887,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       switchSenseNet(_senseNet);
       _updateMapNodeCount();
       if (_senseNet === 'mt') senseInit();
+      settleMapLayout();
     } else {
       // Clean up MC sense state — restore legend
       const _leg   = document.querySelector('.map-legend');
@@ -13901,6 +13913,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       renderMcMapMarkers();
       _updateScanBtnVisibility?.();
       _updateMapNodeCount();
+      settleMapLayout();
     }
   }
 

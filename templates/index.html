@@ -352,7 +352,7 @@
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
               <button id="sense-btn" onclick="triggerSense()" title="One-shot: broadcast position request to entire mesh and collect responses for 60s" style="background:var(--accent);color:#0a0f1e;border:none;border-radius:6px;padding:8px 18px;font-weight:700;font-size:13px;cursor:pointer">Sense Mesh</button>
               <div id="sense-mt-toggle" class="view-toggle">
-                <div class="btn" id="sense-passive-btn" onclick="toggleSensePassive()" title="Continuously capture any heard packets — no broadcast. Each radio tracks its own nodes independently. Nodes are kept for 2h after last heard, then expire. Clear only happens on a manual Sense Mesh run.">Passive</div>
+                <div class="btn active" id="sense-passive-btn" onclick="toggleSensePassive()" title="Continuously capture any heard packets — no broadcast. Each radio tracks its own nodes independently. Nodes are kept for 2h after last heard, then expire. Clear only happens on a manual Sense Mesh run.">Passive</div>
                 <div class="btn" id="sense-active-btn"  onclick="toggleSenseActive()"  title="Periodically broadcast position requests at cooldown interval">Active</div>
               </div>
             </div>

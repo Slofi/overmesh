@@ -1115,7 +1115,7 @@
     /* ── Bot ─────────────────────────────────────────────────────────────── */
     /* Map toolbar */
     #map-toolbar { background: var(--bg2); border-bottom: 1px solid var(--border); margin-bottom: 0; }
-    #map-view-map { position: relative; }
+    #map-view-map { position: relative; min-height: 0; }
     /* Sense */
     .sense-card-stat {
       background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;

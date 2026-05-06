@@ -20,8 +20,8 @@ from cross import maybe_forward_mc_message
 from helpers import push_to_sse
 from mesh_mc import (send_chan_msg, send_dm, send_advert, refresh_contacts,
                      get_device_info, set_radio_params, set_tx_power,
-                     set_device_name, set_device_coords, reboot_device,
-                     reboot_device_dtr, get_channels, set_channel,
+                     set_device_name, set_device_coords, set_advert_loc_policy,
+                     reboot_device, reboot_device_dtr, get_channels, set_channel,
                      req_node_status, get_stats, remove_mc_contact,
                      send_trace_broadcast, import_mc_contact, enable_mc_debug,
                      get_mc_contact_archive,
@@ -209,6 +209,7 @@ def api_mc_status():
             "max_channels": info.get("max_channels"),
             "lat":        info.get("adv_lat"),
             "lon":        info.get("adv_lon"),
+            "adv_loc_policy": info.get("adv_loc_policy"),
             "contacts":   len(live_contacts),
             "stored_contacts": len(merged_contacts),
             "live_contacts": len(live_contacts),
@@ -784,6 +785,25 @@ def api_mc_set_coords(radio_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     return jsonify({"ok": True})
+
+
+@bp.route("/api/mc/<radio_id>/loc_policy", methods=["POST"])
+def api_mc_set_loc_policy(radio_id):
+    """Set advertisement location policy on the MC device (0=disabled, 1=enabled)."""
+    data = request.get_json(silent=True) or {}
+    try:
+        policy = int(data["policy"])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({"error": "policy required (0 or 1)"}), 400
+    if policy not in (0, 1):
+        return jsonify({"error": "policy must be 0 or 1"}), 400
+    try:
+        set_advert_loc_policy(radio_id, policy)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 503
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"ok": True, "adv_loc_policy": policy})
 
 
 @bp.route("/api/mc/<radio_id>/reboot", methods=["POST"])

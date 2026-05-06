@@ -1142,6 +1142,10 @@
         <button class="btn" onclick="startMcMapPick()" title="Click on the map to set position">Select on map</button>
         <button class="btn" onclick="saveMcCoords(this)" title="Set GPS coordinates on MC device">Set Coords</button>
       </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+        <label class="settings-label" style="margin-bottom:0">Share position in adverts:</label>
+        <button id="mc-loc-policy-btn" class="btn" onclick="toggleMcAdvertLoc(this)" title="Enable or disable broadcasting your position in mesh advertisements">—</button>
+      </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn" style="color:var(--red);border-color:var(--red)" onclick="rebootMcNode(this)" title="Send reboot command — may not be supported by all firmware versions">Reboot Device</button>
         <button class="btn" id="mc-debug-btn" onclick="startMcDebugEvents()" title="Log all serial events for 60s — check the server log to diagnose ping/status issues">Debug Events</button>

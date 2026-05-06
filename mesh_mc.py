@@ -2012,6 +2012,28 @@ async def _set_coords_async(config_id, lat, lon):
             mc_connections[config_id]["node_info"]["adv_lon"] = float(lon)
     push_to_sse({"type": "mc_coords_updated", "radio_id": config_id,
                  "lat": float(lat), "lon": float(lon)})
+    # Re-advertise so the new position reaches the mesh immediately
+    try:
+        await mc.commands.send_advert()
+    except Exception:
+        pass
+    return r
+
+
+async def _set_advert_loc_policy_async(config_id, policy):
+    mc, _ = _get_mc(config_id)
+    r = await mc.commands.set_advert_loc_policy(int(policy))
+    if r.type == EventType.ERROR:
+        raise RuntimeError(f"Device rejected loc policy: {getattr(r, 'payload', r)}")
+    with mc_connections_lock:
+        if config_id in mc_connections and mc_connections[config_id].get("node_info") is not None:
+            mc_connections[config_id]["node_info"]["adv_loc_policy"] = int(policy)
+    push_to_sse({"type": "mc_loc_policy_updated", "radio_id": config_id, "adv_loc_policy": int(policy)})
+    # Re-advertise so the change reaches the mesh immediately
+    try:
+        await mc.commands.send_advert()
+    except Exception:
+        pass
     return r
 
 
@@ -2466,6 +2488,10 @@ def set_device_name(config_id, name, timeout=10):
 
 def set_device_coords(config_id, lat, lon, timeout=10):
     return run_mc(_set_coords_async(config_id, lat, lon), timeout=timeout)
+
+
+def set_advert_loc_policy(config_id, policy, timeout=10):
+    return run_mc(_set_advert_loc_policy_async(config_id, int(policy)), timeout=timeout)
 
 
 def reboot_device(config_id, timeout=10):

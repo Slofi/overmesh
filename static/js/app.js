@@ -9044,6 +9044,20 @@ if (btn) btn.style.display = mcConnected ? '' : 'none';
       renderMcMapMarkers();
       return;
     }
+    if (data.type === 'mc_loc_policy_updated') {
+      if (!mcLastStatus[data.radio_id]) mcLastStatus[data.radio_id] = {};
+      mcLastStatus[data.radio_id].adv_loc_policy = data.adv_loc_policy;
+      if (mcSettingsRadioId === data.radio_id) {
+        const btn = document.getElementById('mc-loc-policy-btn');
+        if (btn) {
+          const pol = parseInt(data.adv_loc_policy);
+          btn.dataset.policy = String(pol);
+          btn.textContent = pol === 1 ? 'Enabled' : 'Disabled';
+          btn.style.color = pol === 1 ? 'var(--accent)' : '';
+        }
+      }
+      return;
+    }
     if (data.type === 'mc_scan_started') {
       _mcScanActive   = true;
       _mcScanRadioId  = data.radio_id;
@@ -13069,6 +13083,13 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const lonEl = document.getElementById('mc-coords-lon');
     if (latEl && s.lat != null && !(s.lat === 0 && s.lon === 0)) latEl.value = s.lat;
     if (lonEl && s.lon != null && !(s.lat === 0 && s.lon === 0)) lonEl.value = s.lon;
+    const locPolicyBtn = document.getElementById('mc-loc-policy-btn');
+    if (locPolicyBtn) {
+      const pol = s.adv_loc_policy != null ? parseInt(s.adv_loc_policy) : null;
+      locPolicyBtn.dataset.policy = String(pol ?? 0);
+      locPolicyBtn.textContent = pol == null ? '—' : (pol === 1 ? 'Enabled' : 'Disabled');
+      locPolicyBtn.style.color = pol === 1 ? 'var(--accent)' : '';
+    }
     // Only query device if connected
     if (s.status === 'connected') {
       loadMcDeviceInfo(radioId);
@@ -13368,6 +13389,30 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
           ? '<span style="color:var(--accent)">Coords set.</span>'
           : `<span style="color:var(--red)">${escHtml(d.error || 'Failed')}</span>`;
         if (d.ok) btnFeedback(btn, '✓ Saved');
+        setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
+      }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
+  }
+
+  function toggleMcAdvertLoc(btn) {
+    const radioId = mcSettingsRadioId || activeMcRadioId;
+    if (!radioId) return;
+    const current = parseInt(btn.dataset.policy ?? '0');
+    const newPolicy = current === 1 ? 0 : 1;
+    const statusEl = document.getElementById('mc-actions-status');
+    if (statusEl) statusEl.textContent = 'Saving…';
+    fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/loc_policy`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({policy: newPolicy}),
+    }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || 'HTTP ' + r.status); }))
+      .then(d => {
+        if (d.ok) {
+          btn.dataset.policy = String(newPolicy);
+          btn.textContent = newPolicy === 1 ? 'Enabled' : 'Disabled';
+          btn.style.color = newPolicy === 1 ? 'var(--accent)' : '';
+          if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent)">Position sharing updated.</span>';
+        } else {
+          if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Failed')}</span>`;
+        }
         setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
       }).catch(e => { if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`; });
   }

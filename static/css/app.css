@@ -42,11 +42,12 @@
       background-size: cover;
       background-position: center;
       background-repeat: no-repeat;
-      opacity: 0.05;
+      opacity: 0.5;
       z-index: 0;
     }
 
-    #header, #content { position: relative; z-index: 1; }
+    #header { position: relative; z-index: 2; }
+    #content { position: relative; z-index: 1; }
 
     /* Silent Running banner */
     #silent-banner {

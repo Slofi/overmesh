@@ -3,7 +3,9 @@ import hashlib
 import logging
 import math
 import os
+import shutil
 import sqlite3
+import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime
@@ -54,6 +56,23 @@ def _safe_radio_id(radio_id):
 
 def mc_msgs_db_path(radio_id):
     return os.path.join(DATA_DIR, f"overmesh_mc_msgs_{_safe_radio_id(radio_id)}.db")
+
+
+# Registry: config_id -> stable db path (populated at connection time by mesh_mc)
+_mc_msgs_db_registry: dict = {}
+_mc_msgs_db_registry_lock = threading.Lock()
+
+
+def register_mc_msgs_db(config_id: str, stable_db_path: str) -> None:
+    """Register a stable hardware-keyed DB path for a given MC config_id."""
+    with _mc_msgs_db_registry_lock:
+        _mc_msgs_db_registry[config_id] = stable_db_path
+
+
+def _resolved_mc_msgs_db_path(radio_id: str) -> str:
+    """Return stable path if registered, else fall back to config-id path."""
+    with _mc_msgs_db_registry_lock:
+        return _mc_msgs_db_registry.get(radio_id) or mc_msgs_db_path(radio_id)
 
 
 def mc_passive_db_path(radio_id):
@@ -184,7 +203,7 @@ def cleanup_passive_obs(radio_id, ttl_days=30):
 
 @contextmanager
 def get_mc_msgs_db(radio_id):
-    db_path = mc_msgs_db_path(radio_id)
+    db_path = _resolved_mc_msgs_db_path(radio_id)
     init_mc_msgs_db(db_path)
     conn = sqlite3.connect(db_path)
     try:

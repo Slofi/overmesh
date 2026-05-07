@@ -24,7 +24,7 @@ from meshcore.packets import BinaryReqType
 from config import CONFIG, CONFIG_LOCK, DATA_DIR, save_config
 from cross import maybe_forward_mc_message
 from bridge import publish_inbound_message
-from db import log_position, save_mc_message, save_passive_obs
+from db import log_position, save_mc_message, save_passive_obs, mc_msgs_db_path, register_mc_msgs_db, init_mc_msgs_db
 from helpers import push_to_sse
 from state import mc_connections, mc_connections_lock
 
@@ -740,6 +740,45 @@ def _dtr_reset_port(port, name=""):
         log.warning(f"[MC:{name}] DTR reset failed on {port}: {e}")
 
 
+def _stable_mc_msgs_db_path(config_id: str, node_cfg: dict) -> str:
+    """Derive a stable DB path from hardware identity (USB serial, TCP addr, or BLE addr).
+    Falls back to config-id path if no stable identifier is available."""
+    import re
+    node_type = (node_cfg.get("type") or "serial").lower()
+    if node_type in ("bt", "bluetooth"):
+        node_type = "ble"
+
+    if node_type == "serial":
+        usb_serial = (node_cfg.get("usb_serial") or "").strip()
+        if usb_serial:
+            safe = re.sub(r'[^a-zA-Z0-9]', '_', usb_serial)
+            stable_id = f"usb_{safe}"
+        else:
+            stable_id = None
+    elif node_type == "tcp":
+        host = (node_cfg.get("host") or "").strip()
+        port = node_cfg.get("tcp_port") or node_cfg.get("port") or ""
+        if host and port:
+            safe = re.sub(r'[^a-zA-Z0-9]', '_', f"{host}_{port}")
+            stable_id = f"tcp_{safe}"
+        else:
+            stable_id = None
+    elif node_type == "ble":
+        addr = (node_cfg.get("bt_address") or node_cfg.get("address") or "").strip()
+        if addr:
+            safe = re.sub(r'[^a-zA-Z0-9]', '_', addr)
+            stable_id = f"ble_{safe}"
+        else:
+            stable_id = None
+    else:
+        stable_id = None
+
+    if not stable_id:
+        return mc_msgs_db_path(config_id)
+
+    return os.path.join(DATA_DIR, f"overmesh_mc_msgs_{stable_id}.db")
+
+
 async def _connect_mc_node_async(node_cfg):
     config_id = node_cfg["id"]
     name      = node_cfg.get("name", config_id)
@@ -788,6 +827,17 @@ async def _connect_mc_node_async(node_cfg):
     if node_type not in ("serial", "tcp", "ble"):
         log.warning(f"[MC:{name}] Unsupported connection type {node_type!r}, skipping connect")
         return
+
+    # Register stable hardware-keyed DB path so message archive survives config changes.
+    # If stable DB doesn't exist yet but an old config-id DB does, migrate it over.
+    stable_db = _stable_mc_msgs_db_path(config_id, node_cfg)
+    old_db = mc_msgs_db_path(config_id)
+    if stable_db != old_db and not os.path.exists(stable_db) and os.path.exists(old_db):
+        import shutil
+        shutil.copy2(old_db, stable_db)
+        log.info(f"[MC:{name}] Migrated message archive to stable path: {os.path.basename(stable_db)}")
+    init_mc_msgs_db(stable_db)
+    register_mc_msgs_db(config_id, stable_db)
 
     log.info(f"[MC:{name}] Connecting via {node_type} on {connect_label}")
     with mc_connections_lock:

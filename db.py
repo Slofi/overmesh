@@ -836,6 +836,26 @@ def delete_channel_messages(radio_id, channel):
     return removed
 
 
+def delete_mt_all_messages(radio_id):
+    if radio_id is None:
+        return 0
+    with get_msgs_db(radio_id) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM messages")
+        removed = int(cur.fetchone()[0] or 0)
+        cur.execute("DELETE FROM messages")
+    return removed
+
+
+def delete_mc_all_messages(radio_id):
+    with get_mc_msgs_db(radio_id) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM messages")
+        removed = int(cur.fetchone()[0] or 0)
+        cur.execute("DELETE FROM messages")
+    return removed
+
+
 def _mc_message_dedupe_key(msg):
     explicit = msg.get("dedupe_key") or msg.get("id")
     if explicit:

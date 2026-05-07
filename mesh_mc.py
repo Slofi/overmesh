@@ -1816,6 +1816,39 @@ def remove_mc_contact(config_id, pubkey_prefix, timeout=10):
     return run_mc(_remove_contact_async(config_id, pubkey_prefix), timeout=timeout)
 
 
+async def _clear_mc_all_contacts_async(config_id):
+    mc, _ = _get_mc(config_id)
+    with mc_connections_lock:
+        live_contacts = dict(mc_connections.get(config_id, {}).get("live_contacts", {}) or {})
+    removed = 0
+    errors = 0
+    for full_key in list(live_contacts.keys()):
+        try:
+            result = await mc.commands.remove_contact(full_key)
+            if result and result.type.name == "OK":
+                _mc_remove_local_contact(config_id, full_key)
+                removed += 1
+            else:
+                errors += 1
+        except Exception:
+            errors += 1
+    # Clear remaining local state and archive even if some removes failed
+    with mc_connections_lock:
+        state = mc_connections.get(config_id, {})
+        state["contacts"] = {}
+        state["live_contacts"] = {}
+    with _mc_contact_archive_lock:
+        archive = _mc_archive_load_locked()
+        archive.pop(str(config_id), None)
+        _mc_archive_save_locked()
+    log.info(f"[MC:{config_id}] clear_all_contacts: removed={removed} errors={errors}")
+    return {"removed": removed, "errors": errors}
+
+
+def clear_mc_all_contacts(config_id, timeout=120):
+    return run_mc(_clear_mc_all_contacts_async(config_id), timeout=timeout)
+
+
 def enable_mc_debug(config_id, duration=60):
     """Enable verbose event logging for one MC radio for `duration` seconds.
     Logs EVERY event dispatched from the serial reader at INFO level so it appears

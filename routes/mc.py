@@ -26,9 +26,10 @@ from mesh_mc import (send_chan_msg, send_dm, send_advert, refresh_contacts,
                      send_trace_broadcast, import_mc_contact, enable_mc_debug,
                      get_mc_contact_archive,
                      set_contact_path, reset_all_paths, remote_repeater_read,
-                     remote_repeater_command)
+                     remote_repeater_command, clear_mc_all_contacts)
 from db import (
     delete_mc_channel_messages,
+    delete_mc_all_messages,
     delete_passive_obs,
     cleanup_passive_obs,
     get_mc_ignored,
@@ -456,6 +457,22 @@ def api_mc_delete_message_channel(radio_id, idx):
     if not (0 <= idx <= 15):
         return jsonify({"error": "channel index must be 0–15"}), 400
     return jsonify({"ok": True, "removed_db": delete_mc_channel_messages(radio_id, idx)})
+
+
+@bp.route("/api/mc/<radio_id>/messages", methods=["DELETE"])
+def api_mc_delete_all_messages(radio_id):
+    removed = delete_mc_all_messages(radio_id)
+    return jsonify({"ok": True, "removed_db": removed})
+
+
+@bp.route("/api/mc/<radio_id>/contacts/all", methods=["DELETE"])
+def api_mc_delete_all_contacts(radio_id):
+    try:
+        result = clear_mc_all_contacts(radio_id)
+        return jsonify({"ok": True, **(result or {})})
+    except Exception as e:
+        log.warning(f"[MC] clear_all_contacts {radio_id}: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @bp.route("/api/mc/<radio_id>/send_chan", methods=["POST"])

@@ -8919,6 +8919,9 @@ if (targetEl) {
           <span class="radio-row-name">${escHtml(n.name)}</span>
           <span class="radio-row-port" title="${escHtml(n.usb_serial || n.port)}">${escHtml(n.usb_serial ? n.port + ' ⬡' : n.port)}</span>
           <span class="radio-row-status" style="${!n.enabled ? 'color:var(--muted)' : ''}">${n.enabled ? n.status : 'disabled'}</span>
+          <button class="btn-secondary" style="font-size:11px;padding:3px 8px;margin-left:4px"
+            title="Clear message history for this radio"
+            onclick="settingsMtClearHistory('${jsSafe(n.id)}','${jsSafe(n.name)}')">Clear History</button>
           ${canRemove ? `
             <button class="btn-secondary" style="font-size:11px;padding:3px 8px;${n.enabled ? '' : 'color:var(--accent);border-color:var(--accent)'}"
               title="${n.enabled ? 'Pause scanning for this device — keeps config and message history intact' : 'Resume scanning and connecting to this device'}"
@@ -9031,6 +9034,34 @@ if (targetEl) {
           if (data.error) { showAlert(data.error); return; }
           settingsLoadNodes();
         }).catch(e => console.error('deleteNode failed:', e));
+    });
+  }
+
+  function settingsMtClearHistory(id, name) {
+    // Build channel options from known channels for this radio
+    const nodeList = Object.values(lastStatus || {}).filter(n => n.radio_id === id || n.node_id === id);
+    const channels = [...new Set((nodeList || []).map(n => n.channel).filter(c => c != null))].sort();
+    let opts = `<label style="display:block;margin:4px 0;cursor:pointer"><input type="radio" name="mtclrch" value="all" checked> All messages</label>`;
+    for (const ch of channels) {
+      opts += `<label style="display:block;margin:4px 0;cursor:pointer"><input type="radio" name="mtclrch" value="${ch}"> Channel ${ch}</label>`;
+    }
+    // Always show at least channels 0–7 as options
+    if (!channels.length) {
+      for (let i = 0; i <= 7; i++) {
+        opts += `<label style="display:block;margin:4px 0;cursor:pointer"><input type="radio" name="mtclrch" value="${i}"> Channel ${i}</label>`;
+      }
+    }
+    document.getElementById('confirm-ok').textContent = 'Clear';
+    showConfirm(`<b>Clear history for ${escHtml(name)}</b><br><br>${opts}`, () => {
+      const picked = document.querySelector('input[name="mtclrch"]:checked');
+      const val = picked ? picked.value : 'all';
+      const url = val === 'all'
+        ? BASE_PATH + `/api/nodes/${encodeURIComponent(id)}/messages`
+        : BASE_PATH + `/api/nodes/${encodeURIComponent(id)}/messages/channel/${val}`;
+      fetch(url, {method: 'DELETE'})
+        .then(r => r.json())
+        .then(d => { if (d.error) showAlert(d.error); })
+        .catch(e => console.error('clearMtHistory failed:', e));
     });
   }
 
@@ -12710,6 +12741,12 @@ if (targetEl) {
           <button class="btn-secondary" style="font-size:11px;padding:3px 8px;${n.enabled ? '' : 'color:var(--accent);border-color:var(--accent)'}"
             title="${n.enabled ? 'Pause scanning for this radio — keeps config and message history intact' : 'Resume scanning and connecting to this radio'}"
             onclick="settingsMcToggleNode('${jsSafe(n.id)}',${!n.enabled})">${n.enabled ? 'Disable' : 'Enable'}</button>
+          <button class="btn-secondary" style="font-size:11px;padding:3px 8px;margin-left:4px"
+            title="Clear message history for this radio"
+            onclick="settingsMcClearHistory('${jsSafe(n.id)}','${jsSafe(n.name)}')">Clear History</button>
+          <button class="btn-secondary" style="font-size:11px;padding:3px 8px;margin-left:4px"
+            title="Clear all contacts for this radio (removes from node flash and OM)"
+            onclick="settingsMcClearContacts('${jsSafe(n.id)}','${jsSafe(n.name)}')">Clear Contacts</button>
           <button class="btn-secondary" style="font-size:11px;padding:3px 8px;color:var(--red);border-color:var(--red);margin-left:4px"
             title="Remove this MeshCore radio from OverMesh"
             onclick="settingsMcRemoveNode('${jsSafe(n.id)}','${jsSafe(n.name)}')">Remove</button>
@@ -14117,6 +14154,58 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
           if (data.error) { showAlert(data.error); return; }
           loadMcSettingsNodes();
         }).catch(e => console.error('removeMcNode failed:', e));
+    });
+  }
+
+  function settingsMcClearHistory(id, name) {
+    // Fetch channels first, then show a picker modal
+    fetch(BASE_PATH + `/api/mc/${encodeURIComponent(id)}/channels`)
+      .then(r => r.json())
+      .then(data => {
+        const channels = (data.channels || []).filter(c => c.name);
+        const opts = [
+          {label: 'All messages', value: 'all'},
+          ...channels.map(c => ({label: `${escHtml(c.name)} (ch ${c.idx})`, value: c.idx}))
+        ];
+        const sel = opts.map((o, i) =>
+          `<label style="display:block;margin:4px 0;cursor:pointer"><input type="radio" name="clrch" value="${o.value}"${i===0?' checked':''}> ${o.label}</label>`
+        ).join('');
+        showConfirm(
+          `<b>Clear history for ${escHtml(name)}</b><br><br>${sel}`,
+          () => {
+            const picked = document.querySelector('input[name="clrch"]:checked');
+            const val = picked ? picked.value : 'all';
+            const url = val === 'all'
+              ? BASE_PATH + `/api/mc/${encodeURIComponent(id)}/messages`
+              : BASE_PATH + `/api/mc/${encodeURIComponent(id)}/messages/channel/${val}`;
+            fetch(url, {method: 'DELETE'})
+              .then(r => r.json())
+              .then(d => { if (d.error) showAlert(d.error); })
+              .catch(e => console.error('clearMcHistory failed:', e));
+          }
+        );
+        document.getElementById('confirm-ok').textContent = 'Clear';
+      })
+      .catch(() => {
+        // Fallback: just clear all
+        document.getElementById('confirm-ok').textContent = 'Clear';
+        showConfirm(`Clear all message history for "${escHtml(name)}"?`, () => {
+          fetch(BASE_PATH + `/api/mc/${encodeURIComponent(id)}/messages`, {method: 'DELETE'})
+            .catch(e => console.error('clearMcHistory failed:', e));
+        });
+      });
+  }
+
+  function settingsMcClearContacts(id, name) {
+    document.getElementById('confirm-ok').textContent = 'Clear';
+    showConfirm(`Clear all contacts for "${escHtml(name)}"?<br><small style="color:var(--muted)">Removes from node flash and OM. Cannot be undone.</small>`, () => {
+      fetch(BASE_PATH + `/api/mc/${encodeURIComponent(id)}/contacts/all`, {method: 'DELETE'})
+        .then(r => r.json())
+        .then(d => {
+          if (d.error) { showAlert(d.error); return; }
+          showAlert(`Contacts cleared: ${d.removed || 0} removed${d.errors ? ', ' + d.errors + ' errors' : ''}.`);
+        })
+        .catch(e => console.error('clearMcContacts failed:', e));
     });
   }
 

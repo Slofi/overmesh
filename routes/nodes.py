@@ -8,7 +8,7 @@ from flask import Blueprint, jsonify, request
 from pubsub import pub
 from meshtastic.protobuf import mesh_pb2, portnums_pb2
 from config import CONFIG, _valid_node_id
-from db import get_db_nodes, get_position_history, get_prefs_db, get_traceroute_history, save_message, save_traceroute
+from db import get_db_nodes, get_position_history, get_prefs_db, get_traceroute_history, save_message, save_traceroute, delete_channel_messages, delete_mt_all_messages
 from helpers import (
     _format_last_heard, _next_msg_id, _node_ts, _radio_id_for_iface,
     get_node_data, get_node_name, push_to_sse,
@@ -732,6 +732,19 @@ def api_traceroute_history():
     limit = request.args.get("limit", 20, type=int)
     limit = max(1, min(limit, 50))
     return jsonify(get_traceroute_history(limit))
+
+
+@bp.route("/api/nodes/<radio_id>/messages", methods=["DELETE"])
+def api_mt_delete_all_messages(radio_id):
+    removed = delete_mt_all_messages(radio_id)
+    return jsonify({"ok": True, "removed_db": removed})
+
+
+@bp.route("/api/nodes/<radio_id>/messages/channel/<int:idx>", methods=["DELETE"])
+def api_mt_delete_channel_messages(radio_id, idx):
+    if not (0 <= idx <= 7):
+        return jsonify({"error": "channel index must be 0–7"}), 400
+    return jsonify({"ok": True, "removed_db": delete_channel_messages(radio_id, idx)})
 
 
 @bp.route("/api/db/gps_history/clear", methods=["POST"])

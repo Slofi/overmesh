@@ -1255,7 +1255,7 @@
   }
 
   function showConfirm(msg, onOk) {
-    document.getElementById('confirm-msg').textContent = msg;
+    document.getElementById('confirm-msg').innerHTML = msg;
     document.getElementById('confirm-modal').classList.add('open');
     _confirmCallback = onOk;
   }

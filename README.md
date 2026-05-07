@@ -50,19 +50,23 @@ OverMesh covers the main things you actually need in daily use: maps, chat, dire
 
 - multi-radio MeshCore support
 - MC contacts on the Nodes tab and on the map
-- MC chat with channel tabs, DM tabs, delivery state, unread indicators, and local saved history
-- MC radio settings, channel management, device info, coordinates, TX power, and reboot tools
+- MC chat with channel tabs, DM tabs, delivery state, unread indicators, and local saved message history
+- route and hop-count badges on received MC messages, with path visualization on the map
+- MC radio settings, channel management, device info, coordinates, TX power, path-hash mode, and reboot tools
+- MC advert controls (local or flood) directly from the chat toolbar
 - MC bot support, MC Sense activity integration, and per-channel history cleanup from Settings
 
 ### Shared / app-wide
 
 - MT and MC visible together in one app
 - map and Nodes views designed to stay as similar as possible across both systems
-- Mesh Sense
+- Mesh Sense with route/hop path visualization
 - offline maps
-- in-app notifications for messages, new nodes, and nodes seen again after a long gap
-- browser notifications
+- in-app notifications for messages, new nodes, and nodes seen again after a long gap, with per-type sound toggles
+- browser notifications and tab unread message count
 - accent color and zoom settings
+- searchable in-app manual
+- Settings → App update checker
 
 ---
 
@@ -88,6 +92,27 @@ For now, native installs are the priority. Docker and similar deployment options
 
 ### Linux
 
+The easiest path for Linux, especially for long-running or service installs, is the included install script:
+
+```bash
+git clone https://github.com/Slofi/overmesh.git
+cd overmesh
+chmod +x install.sh
+./install.sh
+```
+
+The script installs Python dependencies, copies the config template, and sets up and enables a systemd user service with the correct paths substituted. After it finishes:
+
+```bash
+systemctl --user start overmesh
+```
+
+Then open `http://localhost:8082` and add your radios from Settings.
+
+**Manual install (venv)**
+
+If you prefer a virtual environment or just want to run it directly:
+
 ```bash
 git clone https://github.com/Slofi/overmesh.git
 cd overmesh
@@ -95,53 +120,58 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 cp config.example.json config.json
-```
-
-> A virtual environment is recommended, modern Linux distros often block system-wide `pip install`, and there is no reason to run this with `sudo`.
-
-Run it with:
-
-```bash
 python3 app.py
 ```
 
-Then open:
+> A virtual environment is recommended. Modern Linux distros often block system-wide `pip install`.
 
-- `http://localhost:8082`
-
-You can add radios from the UI after startup in `Settings`.
+Then open `http://localhost:8082`. You can add radios from the UI in `Settings`.
 
 ### Windows
 
-1. Install Python 3.9 or newer
-2. Clone or download this repo
-3. Open the repo folder in Command Prompt or PowerShell
-4. Create a virtual environment:
+1. Install Python 3.9 or newer from [python.org](https://www.python.org/downloads/) — check **Add Python to PATH** during install
+2. Clone or download this repo and open the folder in Command Prompt or PowerShell
+3. Set up the environment:
 
 ```powershell
 py -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
 copy config.example.json config.json
+```
+
+4. Run it:
+
+```powershell
 py app.py
 ```
 
-You can also use `start-overmesh.bat` if you want a simple local launch.
+Then open `http://localhost:8082` and add your radios from Settings.
+
+For subsequent launches you can use `start-overmesh.bat` — it automatically uses the venv if present, or falls back to system Python.
+
+> Serial ports on Windows appear as `COM3`, `COM4`, etc. — not `/dev/tty...` paths. Use Device Manager to find the right port for your radio.
 
 ### macOS
 
 1. Install Python 3.9 or newer
-2. Clone or download this repo
-3. Open Terminal in the repo folder
-4. Create a virtual environment:
+2. Clone or download this repo and open Terminal in the repo folder
+3. Set up the environment:
 
 ```bash
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 cp config.example.json config.json
+```
+
+4. Run it:
+
+```bash
 python3 app.py
 ```
+
+Then open `http://localhost:8082` and add your radios from Settings.
 
 ### First run notes
 
@@ -170,33 +200,43 @@ If you only use one system, that is fine. If you use both, OverMesh keeps them t
 
 Key values include:
 
-- `nodes` for Meshtastic radios
-- `mc_nodes` for MeshCore radios
-- `port`, default `8082`
-- `host`
-- `app.zoom`
-- `app.accent_color`
-- `sense_passive`
-- `gps`
+- `nodes` — list of Meshtastic radios
+- `mc_nodes` — list of MeshCore radios
+- `port` — default `8082`
+- `host` — default `0.0.0.0`
+- `app.zoom` — UI zoom level
+- `app.accent_color` — accent color hex
+- `sense_passive` — enable passive Sense logging
+- `sense_active_auto` — auto-run active Sense on connect
+- `cross.rules` — cross-system forwarding rules
+- `bridge` — webhook, ingest, and MQTT bridge settings
+- `gps` — optional GPS receiver config (`enabled`, `port`); not included in the example config, disabled by default
 
-Environment variables:
+Environment variables override config file values:
 
-- `OVERMESH_CONFIG`
-- `OVERMESH_DATA_DIR`
-- `OVERMESH_HOST`
-- `OVERMESH_PORT`
+- `OVERMESH_CONFIG` — path to a custom config file
+- `OVERMESH_DATA_DIR` — directory for data files (DBs, etc.)
+- `OVERMESH_HOST` — bind host
+- `OVERMESH_PORT` — bind port
 
 ---
 
 ## Running as a service
 
-If you want it as a user service on Linux:
+The recommended way to set up the service on Linux is `./install.sh`, which handles path substitution automatically.
+
+If you prefer to do it manually, the `overmesh.service` file contains placeholder tokens that must be replaced before copying:
 
 ```bash
-cp overmesh.service ~/.config/systemd/user/
+sed \
+    -e "s#APP_DIR#$(pwd)#g" \
+    -e "s#PYTHON_BIN#$(command -v python3)#g" \
+    overmesh.service > ~/.config/systemd/user/overmesh.service
 systemctl --user daemon-reload
 systemctl --user enable --now overmesh.service
 ```
+
+> Do not `cp` the service file directly — the placeholders will not resolve and the service will fail to start.
 
 Logs:
 
@@ -204,7 +244,7 @@ Logs:
 journalctl --user -u overmesh -f
 ```
 
-This is mainly a Linux convenience option, not the default install method for Windows or macOS.
+This is a Linux convenience option. Windows and macOS users run it directly with `py app.py` or `python3 app.py`.
 
 ---
 

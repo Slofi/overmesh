@@ -79,9 +79,24 @@ def mc_passive_db_path(radio_id):
     return os.path.join(DATA_DIR, f"overmesh_mc_passive_{_safe_radio_id(radio_id)}.db")
 
 
+_mc_passive_db_registry: dict = {}
+_mc_passive_db_registry_lock = threading.Lock()
+
+
+def register_mc_passive_db(config_id: str, stable_db_path: str) -> None:
+    """Register a stable hardware-keyed passive DB path for a given MC config_id."""
+    with _mc_passive_db_registry_lock:
+        _mc_passive_db_registry[config_id] = stable_db_path
+
+
+def _resolved_mc_passive_db_path(radio_id: str) -> str:
+    with _mc_passive_db_registry_lock:
+        return _mc_passive_db_registry.get(radio_id) or mc_passive_db_path(radio_id)
+
+
 @contextmanager
 def get_mc_passive_db(radio_id):
-    db_path = mc_passive_db_path(radio_id)
+    db_path = _resolved_mc_passive_db_path(radio_id)
     _init_mc_passive_db(db_path)
     conn = sqlite3.connect(db_path)
     try:

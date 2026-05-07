@@ -13048,7 +13048,9 @@ if (targetEl) {
 
   function mcSendAdvert(flood) {
     if (flood === undefined) flood = true;
-    document.getElementById('mc-advert-menu')?.style && (document.getElementById('mc-advert-menu').style.display = 'none');
+    const _advertMenu = document.getElementById('mc-advert-menu');
+    if (_advertMenu) { _advertMenu.style.display = 'none'; }
+    document.activeElement?.blur();
     if (!activeMcRadioId) return;
     const doSend = () => {
       const btn = document.getElementById('mc-advert-btn');

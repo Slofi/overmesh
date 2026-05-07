@@ -12,6 +12,17 @@
       --yellow:      #d29922;
       --red:         #f85149;
     }
+    .mc-advert-item {
+      display: flex; width: 100%; background: none; border: none;
+      color: var(--text); cursor: pointer; font-size: 12px;
+      align-items: center; gap: 8px; padding: 12px 14px;
+      transition: background 0.1s; outline: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .mc-advert-item:hover,
+    .mc-advert-item:active { background: var(--bg3); }
+    .mc-advert-item:focus { outline: none; background: none; }
+
     * { scrollbar-width: thin; scrollbar-color: #30363d #0d1117; }
     *::-webkit-scrollbar { width: 6px; height: 6px; }
     *::-webkit-scrollbar-track { background: #0d1117; border-radius: 3px; }

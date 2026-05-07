@@ -24,7 +24,7 @@ from meshcore.packets import BinaryReqType
 from config import CONFIG, CONFIG_LOCK, DATA_DIR, save_config
 from cross import maybe_forward_mc_message
 from bridge import publish_inbound_message
-from db import log_position, save_mc_message, save_passive_obs, mc_msgs_db_path, register_mc_msgs_db, init_mc_msgs_db
+from db import log_position, save_mc_message, save_passive_obs, mc_msgs_db_path, register_mc_msgs_db, init_mc_msgs_db, mc_passive_db_path, register_mc_passive_db
 from helpers import push_to_sse
 from state import mc_connections, mc_connections_lock
 
@@ -828,7 +828,7 @@ async def _connect_mc_node_async(node_cfg):
         log.warning(f"[MC:{name}] Unsupported connection type {node_type!r}, skipping connect")
         return
 
-    # Register stable hardware-keyed DB path so message archive survives config changes.
+    # Register stable hardware-keyed DB paths so archives survive config changes.
     # If stable DB doesn't exist yet but an old config-id DB does, migrate it over.
     stable_db = _stable_mc_msgs_db_path(config_id, node_cfg)
     old_db = mc_msgs_db_path(config_id)
@@ -838,6 +838,14 @@ async def _connect_mc_node_async(node_cfg):
         log.info(f"[MC:{name}] Migrated message archive to stable path: {os.path.basename(stable_db)}")
     init_mc_msgs_db(stable_db)
     register_mc_msgs_db(config_id, stable_db)
+
+    stable_passive_db = stable_db.replace("overmesh_mc_msgs_", "overmesh_mc_passive_")
+    old_passive_db = mc_passive_db_path(config_id)
+    if stable_passive_db != old_passive_db and not os.path.exists(stable_passive_db) and os.path.exists(old_passive_db):
+        import shutil
+        shutil.copy2(old_passive_db, stable_passive_db)
+        log.info(f"[MC:{name}] Migrated passive archive to stable path: {os.path.basename(stable_passive_db)}")
+    register_mc_passive_db(config_id, stable_passive_db)
 
     log.info(f"[MC:{name}] Connecting via {node_type} on {connect_label}")
     with mc_connections_lock:

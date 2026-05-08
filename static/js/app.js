@@ -738,6 +738,29 @@
     return Object.values(mcLastStatus).some(s => s && s.status === 'connected');
   }
 
+  function _statusAgeSec(s) {
+    const ts = Number(s?.status_ts || 0);
+    return ts > 0 ? Math.max(0, (Date.now() / 1000) - ts) : 0;
+  }
+
+  function _radioStatusDotClass(s) {
+    if (s?.status === 'connected') return 'dot-connected';
+    if (s?.status === 'connecting') {
+      return _statusAgeSec(s) >= 60 ? 'dot-connecting dot-connecting-stale' : 'dot-connecting';
+    }
+    return 'dot-disconnected';
+  }
+
+  function _radioStatusTitle(s, fallbackDisconnected) {
+    if (s?.status === 'connected') return '';
+    if (s?.status === 'connecting') {
+      const age = Math.floor(_statusAgeSec(s));
+      const suffix = age >= 60 ? ` for ${age}s` : '';
+      return ` title="Connecting${suffix}"`;
+    }
+    return ` title="${fallbackDisconnected || 'Not connected'}"`;
+  }
+
   function normalizeChatNetwork(preferred) {
     const wantMc = preferred === 'mc';
     const hasMt = hasConnectedMtRadios();
@@ -762,11 +785,12 @@
 
   function updateRadioSelector(status) {
     if (status) lastStatus = status;
-    const entries = Object.entries(lastStatus).filter(([, s]) => s.enabled !== false && s.status === 'connected');
+    const visibleEntries = Object.entries(lastStatus).filter(([, s]) => s.enabled !== false && (s.status === 'connected' || s.status === 'connecting'));
+    const connectedEntries = visibleEntries.filter(([, s]) => s.status === 'connected');
     const sel = document.getElementById('radio-selector');
     const mtCount = document.getElementById('header-node-count');
     if (!sel) return;
-    if (!entries.length) {
+    if (!visibleEntries.length) {
       if (hasConnectedMcRadios()) {
         sel.innerHTML = '';
         sel.style.display = 'none';
@@ -790,12 +814,13 @@
     setHeaderNodeCountDivider(false);
     if (mtCount) mtCount.style.display = '';
     // Auto-set activeRadioId if not set or no longer visible
-    if (!activeRadioId || !entries.find(([id]) => id === activeRadioId)) {
-      activeRadioId = entries[0][0];
-      localStorage.setItem('activeRadioId', activeRadioId);
+    if (!activeRadioId || !connectedEntries.find(([id]) => id === activeRadioId)) {
+      activeRadioId = connectedEntries[0]?.[0] || null;
+      if (activeRadioId) localStorage.setItem('activeRadioId', activeRadioId);
+      else localStorage.removeItem('activeRadioId');
     }
-    // Remove stale MT radio IDs from selectedRadioIds (MC IDs are managed separately)
-    const mtIds = new Set(entries.map(([id]) => id));
+    // Remove non-connected MT radio IDs from selectedRadioIds (MC IDs are managed separately)
+    const mtIds = new Set(connectedEntries.map(([id]) => id));
     let mtSelectionChanged = false;
     [...selectedRadioIds].filter(id => !id.startsWith('mc_')).forEach(id => {
       if (!mtIds.has(id)) {
@@ -807,17 +832,17 @@
       }
     });
     if (mtSelectionChanged) saveSelectedRadioIds();
-    // Auto-select all radios only if nothing is selected yet (fresh start)
-    if (selectedRadioIds.size === 0) {
-      entries.forEach(([id]) => selectedRadioIds.add(id));
+    // Auto-select connected radios only if nothing is selected yet (fresh start)
+    if (selectedRadioIds.size === 0 && connectedEntries.length) {
+      connectedEntries.forEach(([id]) => selectedRadioIds.add(id));
       saveSelectedRadioIds();
     }
-    sel.innerHTML = entries.map(([id, s]) => {
-      const cls     = s.status === 'connected' ? 'dot-connected' : s.status === 'connecting' ? 'dot-connecting' : 'dot-disconnected';
+    sel.innerHTML = visibleEntries.map(([id, s]) => {
+      const cls     = _radioStatusDotClass(s);
       const active  = selectedRadioIds.has(id) ? ' active' : '';
       const primary = id === activeRadioId ? ' primary' : '';
       const unread  = inactiveRadioUnread.has(id) ? ' has-unread' : '';
-      const title   = s.status !== 'connected' ? ` title="Not connected — disable in Settings if not in use"` : '';
+      const title   = _radioStatusTitle(s, 'Not connected — disable in Settings if not in use');
       return `<button class="radio-btn${active}${primary}${unread}"${title} onclick="toggleRadioSelection('${jsSafe(id)}')">`
            + `<span class="mt-badge">MT</span><span class="status-dot ${cls}"></span>${escHtml(s.name)}</button>`;
     }).join('');
@@ -826,6 +851,8 @@
 
   function toggleRadioSelection(id) {
     const isMc = id.startsWith('mc_');
+    const status = isMc ? mcLastStatus[id]?.status : lastStatus[id]?.status;
+    if (status !== 'connected') return;
     if (selectedRadioIds.has(id)) {
       // Only deselect if at least 1 other radio remains selected
       if (selectedRadioIds.size > 1) {
@@ -976,11 +1003,18 @@
       }
       if (data.type === 'node_status') {
         const prevStatus = lastStatus[data.radio_id]?.status;
-        if (lastStatus[data.radio_id]) {
-          lastStatus[data.radio_id].status = data.status;
-        } else if (data.status === 'connected') {
-          lastStatus[data.radio_id] = {status: 'connected', name: data.name, enabled: true};
-        }
+      if (lastStatus[data.radio_id]) {
+        lastStatus[data.radio_id].status = data.status;
+        lastStatus[data.radio_id].status_ts = data.status_ts || Math.floor(Date.now() / 1000);
+        if (data.name) lastStatus[data.radio_id].name = data.name;
+      } else if (data.status === 'connected' || data.status === 'connecting') {
+        lastStatus[data.radio_id] = {
+          status: data.status,
+          status_ts: data.status_ts || Math.floor(Date.now() / 1000),
+          name: data.name,
+          enabled: true,
+        };
+      }
         if (_mtStatusSoundPrimed && data.status === 'connected' && prevStatus !== 'connected') {
           playNotificationSound('radio');
         }
@@ -9379,6 +9413,7 @@ if (targetEl) {
     const netToggle = document.getElementById('chat-net-toggle');
     if (!sel) return;
     const allEntries       = Object.entries(mcLastStatus);
+    const visibleEntries   = allEntries.filter(([, s]) => s.status === 'connected' || s.status === 'connecting');
     const connectedEntries = allEntries.filter(([, s]) => s.status === 'connected');
     const mcIds = new Set(connectedEntries.map(([id]) => id));
     let mcSelectionChanged = false;
@@ -9402,8 +9437,8 @@ if (targetEl) {
       _updateNetworkPillVisibility();
       return;
     }
-    // MC radios exist but none connected — hide the MC selector instead of stacking another empty-state label
-    if (!connectedEntries.length) {
+    // MC radios exist but none are connected/connecting — hide the MC selector instead of stacking another empty-state label
+    if (!visibleEntries.length) {
       activeMcRadioId = null;
       localStorage.removeItem('activeMcRadioId');
       const hasMt = hasConnectedMtRadios();
@@ -9416,32 +9451,40 @@ if (targetEl) {
       _updateNetworkPillVisibility();
       return;
     }
-    // At least one MC radio connected — show pills for connected ones only
+    // At least one MC radio is live or trying to connect — show an honest status pill.
     const bothChatNetworks = hasConnectedMtRadios() && connectedEntries.length > 0;
     if (netToggle) netToggle.style.display = bothChatNetworks ? '' : 'none';
-    if (!bothChatNetworks && chatNetwork === 'mt') setChatNetwork('mc');
+    if (!bothChatNetworks && connectedEntries.length && chatNetwork === 'mt') setChatNetwork('mc');
     if (sep) sep.style.display = hasConnectedMtRadios() ? '' : 'none';
     sel.style.display = '';
-    // Sync activeMcRadioId — use first connected MC radio if current is gone
+    // Sync activeMcRadioId — use first connected MC radio if current is gone.
+    // Connecting radios are visible but not selected for send/chat actions.
     if (!activeMcRadioId || !connectedEntries.find(([id]) => id === activeMcRadioId)) {
-      activeMcRadioId = connectedEntries[0][0];
-      localStorage.setItem('activeMcRadioId', activeMcRadioId);
+      activeMcRadioId = connectedEntries[0]?.[0] || null;
+      if (activeMcRadioId) localStorage.setItem('activeMcRadioId', activeMcRadioId);
+      else localStorage.removeItem('activeMcRadioId');
     }
     // Auto-select MC radios if none are currently selected (handles refresh/reconnect)
     const hasMcSelected = [...selectedRadioIds].some(id => id.startsWith('mc_'));
-    if (!hasMcSelected) {
+    if (!hasMcSelected && connectedEntries.length) {
       connectedEntries.forEach(([id]) => selectedRadioIds.add(id));
       saveSelectedRadioIds();
     }
-    sel.innerHTML = connectedEntries.map(([id, s]) => {
-      const cls    = s.status === 'connected' ? 'dot-connected' : s.status === 'connecting' ? 'dot-connecting' : 'dot-disconnected';
+    sel.innerHTML = visibleEntries.map(([id, s]) => {
+      const cls    = _radioStatusDotClass(s);
       const active = selectedRadioIds.has(id) ? ' active' : '';
-      return `<button class="radio-btn mc-btn${active}" onclick="toggleRadioSelection('${jsSafe(id)}')">`
+      const title  = _radioStatusTitle(s, 'MC radio disconnected');
+      return `<button class="radio-btn mc-btn${active}"${title} onclick="toggleRadioSelection('${jsSafe(id)}')">`
            + `<span class="mc-badge">MC</span><span class="status-dot ${cls}"></span>${escHtml(s.name)}</button>`;
     }).join('');
     applyMcVisibility();
     _updateNetworkPillVisibility();
   }
+
+  setInterval(() => {
+    updateRadioSelector();
+    updateMcPills();
+  }, 5000);
 
   function _updateScanBtnVisibility() {
     const mcConnected = Object.values(mcLastStatus).some(s => s.status === 'connected')
@@ -9559,7 +9602,10 @@ if (targetEl) {
       const prevStatus = mcLastStatus[data.radio_id]?.status;
       if (!mcLastStatus[data.radio_id]) mcLastStatus[data.radio_id] = {};
       Object.assign(mcLastStatus[data.radio_id], {
-        name: data.name, status: data.status, radio_id: data.radio_id,
+        name: data.name,
+        status: data.status,
+        status_ts: data.status_ts || Math.floor(Date.now() / 1000),
+        radio_id: data.radio_id,
       });
       if (data.status === 'disconnected') delete mcLastStatus[data.radio_id].node_id;
       if (_mcStatusSoundPrimed && data.status === 'connected' && prevStatus !== 'connected') {

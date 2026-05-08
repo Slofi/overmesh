@@ -19,7 +19,10 @@ import threading
 import time
 
 from meshcore import MeshCore, EventType
+from meshcore.ble_cx import BLEConnection
 from meshcore.packets import BinaryReqType
+from meshcore.serial_cx import SerialConnection
+from meshcore.tcp_cx import TCPConnection
 
 from config import CONFIG, CONFIG_LOCK, DATA_DIR, save_config
 from cross import maybe_forward_mc_message
@@ -60,6 +63,87 @@ def _mc_bg_task(coro, label=""):
                 pass
     task.add_done_callback(_cb)
     return task
+
+
+async def _force_close_meshcore(mc):
+    """Close a MeshCore transport even if connect failed before normal state was set."""
+    if mc is None:
+        return
+    connection = getattr(getattr(mc, "connection_manager", None), "connection", None)
+    transport = getattr(connection, "transport", None)
+    try:
+        await mc.disconnect()
+    except Exception:
+        pass
+    try:
+        if connection is not None:
+            await connection.disconnect()
+    except Exception:
+        pass
+    if transport is not None:
+        try:
+            transport.close()
+        except Exception:
+            pass
+        serial_obj = getattr(transport, "serial", None)
+        if serial_obj is not None:
+            try:
+                serial_obj.close()
+            except Exception:
+                pass
+        try:
+            connection.transport = None
+        except Exception:
+            pass
+    for task in list(getattr(connection, "_background_tasks", set()) or set()):
+        try:
+            task.cancel()
+        except Exception:
+            pass
+
+
+async def _create_meshcore(connection, *, default_timeout=75.0):
+    """Create MeshCore and always release the transport when appstart/connect fails.
+
+    meshcore_py returns/raises from connect paths after the serial/TCP/BLE transport
+    may already be open. Without this guard, every reconnect attempt can leak an fd.
+    """
+    mc = MeshCore(
+        connection,
+        default_timeout=default_timeout,
+        auto_reconnect=False,
+        max_reconnect_attempts=3,
+    )
+    try:
+        res = await mc.connect()
+        if res is None:
+            await _force_close_meshcore(mc)
+            return None
+        return mc
+    except BaseException:
+        cleanup = asyncio.create_task(_force_close_meshcore(mc))
+        try:
+            await asyncio.shield(cleanup)
+        except BaseException:
+            pass
+        raise
+
+
+class OMSerialConnection(SerialConnection):
+    """Serial connection that does not fail the whole connect on RTS ioctl errors."""
+
+    class MCSerialClientProtocol(SerialConnection.MCSerialClientProtocol):
+        def connection_made(self, transport):
+            self.cx.transport = transport
+            meshcore_log = logging.getLogger("meshcore")
+            meshcore_log.debug("port opened")
+            serial_obj = getattr(transport, "serial", None)
+            if serial_obj is not None:
+                try:
+                    serial_obj.rts = False
+                except Exception as e:
+                    log.warning(f"[MC] Serial RTS release failed during connect; continuing: {e!r}")
+            self.cx._connected_event.set()
 
 
 def _mc_disable_debug_logging_locked(meshcore_log):
@@ -855,6 +939,9 @@ async def _connect_mc_node_async(node_cfg):
         mc_connections[config_id]["status"] = "connecting"
         mc_connections[config_id]["status_ts"] = time.time()
         mc_connections[config_id]["port"] = connect_label
+        status_ts = mc_connections[config_id]["status_ts"]
+    push_to_sse({"type": "mc_status", "radio_id": config_id,
+                 "status": "connecting", "status_ts": status_ts, "name": name})
 
     try:
         # default_timeout=75: send_appstart will wait 75s for a response.
@@ -862,20 +949,28 @@ async def _connect_mc_node_async(node_cfg):
         # Holding the port open avoids the HUPCL reset that repeated open/close causes.
         if node_type == "tcp":
             mc = await asyncio.wait_for(
-                MeshCore.create_tcp(host, tcp_port, default_timeout=75.0),
-                timeout=80,
+                _create_meshcore(TCPConnection(host, tcp_port), default_timeout=75.0),
+                timeout=100,
             )
         elif node_type == "ble":
             mc = await asyncio.wait_for(
-                MeshCore.create_ble(
-                    address=bt_address,
-                    pin=(node_cfg.get("bt_pin") or node_cfg.get("pin") or None),
+                _create_meshcore(
+                    BLEConnection(
+                        address=bt_address,
+                        pin=(node_cfg.get("bt_pin") or node_cfg.get("pin") or None),
+                    ),
                     default_timeout=75.0,
                 ),
-                timeout=80,
+                timeout=100,
             )
         else:
-            mc = await asyncio.wait_for(MeshCore.create_serial(port, 115200, default_timeout=75.0, cx_dly=3.0), timeout=85)
+            mc = await asyncio.wait_for(
+                _create_meshcore(
+                    OMSerialConnection(port, 115200, cx_dly=3.0),
+                    default_timeout=75.0,
+                ),
+                timeout=105,
+            )
     except Exception as e:
         log.warning(f"[MC:{name}] Connect failed: {e}")
         _mark_mc_disconnected(config_id)
@@ -1001,7 +1096,7 @@ async def _connect_mc_node_async(node_cfg):
              f"contacts={len(contacts)} (stored={len(stored_contacts)})")
 
     push_to_sse({"type": "mc_status", "radio_id": config_id,
-                 "status": "connected", "name": name})
+                 "status": "connected", "status_ts": time.time(), "name": name})
 
     # Subscribe to live events
     _subscribe_mc_events(mc, config_id, name)
@@ -1334,7 +1429,7 @@ def _subscribe_mc_events(mc, config_id, name):
             log.warning(f"[MC:{name}] Disconnected event received")
             _mark_mc_disconnected(config_id)
             push_to_sse({"type": "mc_status", "radio_id": config_id,
-                         "status": "disconnected", "name": name})
+                         "status": "disconnected", "status_ts": time.time(), "name": name})
         except Exception as e:
             log.warning(f"[MC:{name}] on_disconnected error: {e}")
 
@@ -1536,7 +1631,7 @@ def connect_mc_node(node_cfg):
         if not mc_connections[config_id].get("contacts"):
             mc_connections[config_id]["contacts"] = dict(archived_contacts)
     try:
-        run_mc(_connect_mc_node_async(node_cfg), timeout=90)
+        run_mc(_connect_mc_node_async(node_cfg), timeout=120)
     except Exception as e:
         log.warning(f"[MC:{node_cfg.get('name', config_id)}] connect_mc_node failed: {e}")
         _mark_mc_disconnected(config_id)
@@ -1614,7 +1709,7 @@ def mc_watchdog_loop():
                 log.warning(f"[MC:{name}] USB device gone — marking disconnected")
                 _mark_mc_disconnected(config_id)
                 push_to_sse({"type": "mc_status", "radio_id": config_id,
-                             "status": "disconnected", "name": name})
+                             "status": "disconnected", "status_ts": time.time(), "name": name})
 
 
 # ---------------------------------------------------------------------------
@@ -2897,6 +2992,7 @@ def reboot_device_dtr(config_id):
     with mc_connections_lock:
         if config_id in mc_connections:
             mc_connections[config_id]["status"] = "disconnected"
+            mc_connections[config_id]["status_ts"] = time.time()
             mc_connections[config_id]["mc"]     = None
     time.sleep(0.3)
     # Toggle RTS — pulls ESP32 EN low → reset

@@ -204,6 +204,7 @@ def api_mc_status():
             "id":         cid,
             "name":       cfg.get("name", cid),
             "status":     v.get("status", "disconnected"),
+            "status_ts":  v.get("status_ts"),
             "node_id":    v.get("node_id", ""),
             "node_name":  info.get("name", ""),
             "freq":       info.get("radio_freq"),

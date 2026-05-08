@@ -314,7 +314,12 @@ def api_debug_raw_node(node_hex):
 def api_status():
     with connections_lock:
         status = {
-            nid: {"status": s["status"], "name": s["config"]["name"], "enabled": s["config"].get("enabled", True)}
+            nid: {
+                "status": s["status"],
+                "status_ts": s.get("status_ts"),
+                "name": s["config"]["name"],
+                "enabled": s["config"].get("enabled", True),
+            }
             for nid, s in connections.items()
         }
     return jsonify(status)

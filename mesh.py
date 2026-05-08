@@ -311,13 +311,14 @@ def on_connection_lost(interface, topic=pub.AUTO_TOPIC):
                 else:
                     log.warning(f"[{node_id}] Connection lost.")
                 state["status"] = "disconnected"
+                state["status_ts"] = time.time()
                 state["iface"] = None
                 lost_id = node_id
                 lost_name = state.get("config", {}).get("name", node_id)
                 break
     if lost_id and not sense_active:
         push_to_sse(json.dumps({"type": "node_status", "radio_id": lost_id,
-                                "status": "disconnected", "name": lost_name}))
+                                "status": "disconnected", "status_ts": time.time(), "name": lost_name}))
     try:
         interface.close()
     except Exception:
@@ -379,7 +380,11 @@ def _release_port_fds(port):
 def connect_node(node_cfg):
     node_id = node_cfg["id"]
     with connections_lock:
-        connections[node_id] = {"iface": None, "status": "connecting", "config": node_cfg}
+        connections[node_id] = {"iface": None, "status": "connecting", "status_ts": time.time(), "config": node_cfg}
+        status_ts = connections[node_id]["status_ts"]
+    push_to_sse(json.dumps({"type": "node_status", "radio_id": node_id,
+                            "status": "connecting", "status_ts": status_ts,
+                            "name": node_cfg.get("name", node_id)}))
     node_type = node_cfg.get("type", "serial")
     iface = None
     if node_type == "tcp":
@@ -397,6 +402,7 @@ def connect_node(node_cfg):
             log.warning(f"[{node_id}] TCP connection failed: {e}")
             with connections_lock:
                 connections[node_id]["status"] = "disconnected"
+                connections[node_id]["status_ts"] = time.time()
             return
     else:
         usb_serial = node_cfg.get("usb_serial")
@@ -406,6 +412,7 @@ def connect_node(node_cfg):
                 log.info(f"[{node_id}] Device (USB serial {usb_serial}) not found, will retry")
                 with connections_lock:
                     connections[node_id]["status"] = "disconnected"
+                    connections[node_id]["status_ts"] = time.time()
                 return
         else:
             port = node_cfg.get("port", "")
@@ -426,6 +433,7 @@ def connect_node(node_cfg):
             _release_port_fds(port)
             with connections_lock:
                 connections[node_id]["status"] = "disconnected"
+                connections[node_id]["status_ts"] = time.time()
             return
     try:
         msgs_db = None
@@ -440,10 +448,11 @@ def connect_node(node_cfg):
         with connections_lock:
             connections[node_id]["iface"] = iface
             connections[node_id]["status"] = "connected"
+            connections[node_id]["status_ts"] = time.time()
             if msgs_db:
                 connections[node_id]["msgs_db"] = msgs_db
         push_to_sse(json.dumps({"type": "node_status", "radio_id": node_id,
-                                "status": "connected", "name": node_cfg.get("name", node_id)}))
+                                "status": "connected", "status_ts": time.time(), "name": node_cfg.get("name", node_id)}))
         if msgs_db:
             node_cfg_live = next((n for n in CONFIG.get("nodes", []) if n["id"] == node_id), None)
             if node_cfg_live and node_cfg_live.get("msgs_db") != msgs_db:
@@ -509,8 +518,10 @@ def _check_and_reconnect_iface(iface):
             if state.get("iface") is iface and state.get("status") == "connected":
                 log.warning(f"[{node_id}] Post-Sense: silent disconnect detected, forcing reconnect.")
                 state["status"] = "disconnected"
+                state["status_ts"] = time.time()
                 state["iface"] = None
                 push_to_sse(json.dumps({"type": "node_status", "radio_id": node_id,
+                                        "status_ts": state["status_ts"],
                                         "status": "disconnected",
                                         "name": state.get("config", {}).get("name", node_id)}))
                 break
@@ -548,6 +559,7 @@ def health_check_loop():
                 if connections.get(node_id, {}).get("iface") is not iface:
                     continue  # another thread already handled this iface
                 connections[node_id]["status"] = "disconnected"
+                connections[node_id]["status_ts"] = time.time()
                 connections[node_id]["iface"] = None
                 node_name = connections[node_id].get("config", {}).get("name", node_id)
             reconnect_needed = True
@@ -555,6 +567,7 @@ def health_check_loop():
                 "type": "node_status",
                 "radio_id": node_id,
                 "status": "disconnected",
+                "status_ts": time.time(),
                 "name": node_name,
             }))
             try:

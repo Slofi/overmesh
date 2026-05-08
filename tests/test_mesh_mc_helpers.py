@@ -47,6 +47,121 @@ class MeshMcPathHelperTests(unittest.TestCase):
         size = mesh_mc._mc_path_hash_size_from_msg({}, {"path_hash_mode": 1})
         self.assertEqual(size, 2)
 
+    def test_create_meshcore_closes_transport_when_connect_raises(self):
+        class FakeConnection:
+            def __init__(self):
+                self.closed = 0
+                self.transport = None
+
+            async def disconnect(self):
+                self.closed += 1
+
+        class FakeMeshCore:
+            def __init__(self, connection, **_kwargs):
+                self.connection_manager = SimpleNamespace(connection=connection)
+                self.disconnect_called = 0
+
+            async def connect(self):
+                raise RuntimeError("appstart timeout")
+
+            async def disconnect(self):
+                self.disconnect_called += 1
+
+        conn = FakeConnection()
+        with mock.patch.object(mesh_mc, "MeshCore", FakeMeshCore):
+            with self.assertRaises(RuntimeError):
+                asyncio.run(mesh_mc._create_meshcore(conn, default_timeout=0.01))
+
+        self.assertEqual(conn.closed, 1)
+
+    def test_create_meshcore_closes_transport_when_connect_returns_none(self):
+        class FakeConnection:
+            def __init__(self):
+                self.closed = 0
+                self.transport = None
+
+            async def disconnect(self):
+                self.closed += 1
+
+        class FakeMeshCore:
+            def __init__(self, connection, **_kwargs):
+                self.connection_manager = SimpleNamespace(connection=connection)
+
+            async def connect(self):
+                return None
+
+            async def disconnect(self):
+                pass
+
+        conn = FakeConnection()
+        with mock.patch.object(mesh_mc, "MeshCore", FakeMeshCore):
+            result = asyncio.run(mesh_mc._create_meshcore(conn, default_timeout=0.01))
+
+        self.assertIsNone(result)
+        self.assertEqual(conn.closed, 1)
+
+    def test_force_close_meshcore_closes_raw_serial_transport(self):
+        class FakeSerial:
+            def __init__(self):
+                self.closed = 0
+
+            def close(self):
+                self.closed += 1
+
+        class FakeTransport:
+            def __init__(self):
+                self.closed = 0
+                self.serial = FakeSerial()
+
+            def close(self):
+                self.closed += 1
+
+        class FakeConnection:
+            def __init__(self):
+                self.transport = FakeTransport()
+                self._background_tasks = set()
+
+            async def disconnect(self):
+                self.transport = None
+
+        class FakeMeshCore:
+            def __init__(self):
+                self.connection_manager = SimpleNamespace(connection=FakeConnection())
+
+            async def disconnect(self):
+                pass
+
+        mc = FakeMeshCore()
+        transport = mc.connection_manager.connection.transport
+
+        asyncio.run(mesh_mc._force_close_meshcore(mc))
+
+        self.assertEqual(transport.closed, 1)
+        self.assertEqual(transport.serial.closed, 1)
+        self.assertIsNone(mc.connection_manager.connection.transport)
+
+    def test_om_serial_connection_keeps_connecting_when_rts_release_fails(self):
+        async def run_case():
+            class FakeSerial:
+                @property
+                def rts(self):
+                    return False
+
+                @rts.setter
+                def rts(self, _value):
+                    raise TimeoutError("rts stuck")
+
+            transport = SimpleNamespace(serial=FakeSerial())
+            conn = mesh_mc.OMSerialConnection("/dev/test", 115200)
+            proto = conn.MCSerialClientProtocol(conn)
+
+            proto.connection_made(transport)
+
+            self.assertIs(conn.transport, transport)
+            self.assertTrue(conn._connected_event.is_set())
+
+        asyncio.run(run_case())
+
     def test_mc_contact_seen_ts_does_not_default_to_now(self):
         self.assertEqual(mesh_mc._mc_contact_seen_ts({"adv_name": "Remote"}), 0)
 

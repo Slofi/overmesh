@@ -10900,10 +10900,12 @@ if (targetEl) {
     const pw = panel.offsetWidth  || 290;
     const ph = panel.offsetHeight || 160;
     const margin = 8;
-    let x = Math.min(evt.clientX + margin, window.innerWidth  - pw - margin);
-    let y = evt.clientY > window.innerHeight / 2
-      ? Math.max(evt.clientY - ph - margin, margin)
-      : evt.clientY + margin;
+    const cx = evt?.clientX ?? window.innerWidth  / 2;
+    const cy = evt?.clientY ?? window.innerHeight / 2;
+    let x = Math.min(cx + margin, window.innerWidth  - pw - margin);
+    let y = cy > window.innerHeight / 2
+      ? Math.max(cy - ph - margin, margin)
+      : cy + margin;
     y = Math.max(margin, Math.min(y, window.innerHeight - ph - margin));
     panel.style.left = x + 'px';
     panel.style.top  = y + 'px';
@@ -17319,21 +17321,22 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   // ── Mention rendering ────────────────────────────────────────────────────
 
-  const _TOC_MENTION_RE = /#\[([^\]]+)\]\((mt|mc):([^)]+)\)/g;
+  const _TOC_MENTION_RE = /#\[((?:[^\[\]]|\[[^\]]*\])+)\]\((mt|mc):([^)]+)\)/g;
   const _TOC_MT_COLOR   = '#4a9e6f';  // muted green
   const _TOC_MC_COLOR   = '#4a7cba';  // muted steel blue
 
   function _tocEscape(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
 
   function _tocRenderMentions(text) {
-    const parts = text.split(/(?=#\[[^\]]+\]\((?:mt|mc):[^)]+\))/);
+    const parts = text.split(/(?=#\[(?:[^\[\]]|\[[^\]]*\])+\]\((?:mt|mc):[^)]+\))/);
     return parts.map(part => {
-      const m = part.match(/^(#\[([^\]]+)\]\((mt|mc):([^)]+)\))([\s\S]*)$/);
+      const m = part.match(/^(#\[((?:[^\[\]]|\[[^\]]*\])+)\]\((mt|mc):([^)]+)\))([\s\S]*)$/);
       if (m) {
         const [, , name, type, rest, tail] = m;
         const color = type === 'mt' ? _TOC_MT_COLOR : _TOC_MC_COLOR;
         const safeRest = rest.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
-        const badge = `<button onclick="tocOpenMention('${type}','${safeRest}')" style="background:${color}22;color:${color};border:1px solid ${color}55;border-radius:4px;padding:1px 6px;font-size:11px;font-weight:600;cursor:pointer">#${_tocEscape(name)}</button>`;
+        const safeName = name.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+        const badge = `<button onclick="tocOpenMention('${type}','${safeRest}','${safeName}',event)" style="background:${color}22;color:${color};border:1px solid ${color}55;border-radius:4px;padding:1px 6px;font-size:11px;font-weight:600;cursor:pointer">#${_tocEscape(name)}</button>`;
         return badge + _tocEscape(tail);
       }
       return _tocEscape(part);
@@ -17427,14 +17430,89 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     setTimeout(() => document.getElementById(templateKey ? 'toc-fields' : 'toc-body')?.scrollIntoView({block:'center', behavior:'smooth'}), 40);
   }
 
-  function tocOpenMention(type, rest) {
-    if (type === 'mt') {
-      openMtNodeDetails(rest);
+  function _tocShowMtMentionPopup(evt, nodeId, storedName) {
+    const n = allNodes.find(x => x.id === nodeId);
+    const name = n ? (n.long_name || n.short_name || storedName || nodeId) : (storedName || nodeId);
+    const hasMarker = !!mapMarkers[nodeId];
+    const col = _TOC_MT_COLOR;
+
+    let panel = document.getElementById('toc-mt-mention-popup');
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = 'toc-mt-mention-popup';
+      panel.style.cssText = 'position:fixed;z-index:3000;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px;min-width:180px;max-width:280px;box-shadow:0 2px 12px rgba(0,0,0,.6)';
+      document.body.appendChild(panel);
+    }
+    const hide    = `document.getElementById('toc-mt-mention-popup').style.display='none'`;
+    const safeId  = jsSafe(nodeId);
+    const safeNm  = jsSafe(name);
+    const safeRid = n ? jsSafe(n.radio_id || '') : '';
+    const btns    = [];
+
+    if (n) {
+      btns.push(`<button class="map-popup-btn" onclick="showNodeInList('${safeId}');${hide}">List</button>`);
+      if (!n.is_local) {
+        btns.push(`<button class="map-popup-btn" onclick="openMapDM('${safeId}','${safeNm}');${hide}">DM</button>`);
+        btns.push(`<button class="map-popup-btn" onclick="openMapTR('${safeId}','${safeNm}','${safeRid}');${hide}">TR</button>`);
+        btns.push(`<button class="map-popup-btn" onclick="openMapInfo('${safeId}','${safeNm}');${hide}">Info</button>`);
+      }
+      if (hasMarker) {
+        btns.push(`<button class="map-popup-btn" onclick="switchTab('map');${hide};setTimeout(()=>{const m=mapMarkers['${safeId}'];if(m&&leafletMap){leafletMap.setView(m.getLatLng(),Math.max(leafletMap.getZoom(),14));m.openPopup();}},100)">Map</button>`);
+      } else {
+        btns.push(`<button class="map-popup-btn" style="opacity:0.35;cursor:default" disabled title="No GPS position">Map</button>`);
+      }
+      btns.push(`<button class="map-popup-btn" onclick="tocFromMtNode('${safeId}');${hide}">Log</button>`);
+      btns.push(`<button class="map-popup-btn" onclick="openGpsTrail('${safeId}','${safeNm}');${hide}">Trail</button>`);
     } else {
-      const parts = rest.split(':');
-      const contactId = parts[0];
+      btns.push(`<button class="map-popup-btn" onclick="showNodeInList('${safeId}');${hide}" title="Look up in node history">List</button>`);
+      btns.push(`<button class="map-popup-btn" onclick="openMapDM('${safeId}','${safeNm}');${hide}">DM</button>`);
+      btns.push(`<button class="map-popup-btn" style="opacity:0.35;cursor:default" disabled title="No GPS position">Map</button>`);
+      btns.push(`<button class="map-popup-btn" onclick="openMtNodeDetails('${safeId}');${hide}">Info</button>`);
+      btns.push(`<button class="map-popup-btn" onclick="tocFromMtNode('${safeId}');${hide}">Log</button>`);
+      btns.push(`<button class="map-popup-btn" onclick="openGpsTrail('${safeId}','${safeNm}');${hide}">Trail</button>`);
+    }
+
+    const nodeInfo = n
+      ? `<div style="color:var(--muted);font-size:10px;margin-bottom:2px">${escHtml(nodeId)}</div>
+         <div style="color:var(--muted)">SNR ${snrStr(n.snr)} · Batt ${battStr(n.battery)}</div>
+         <div style="color:var(--muted);font-size:10px;margin-top:2px">Last heard: ${nodeLastHeardLabel(n)}</div>`
+      : `<div style="color:var(--muted);font-size:10px;margin-bottom:2px">${escHtml(nodeId)}</div>
+         <div style="color:var(--muted);font-size:11px;margin-top:2px">Not in live data</div>`;
+
+    panel.innerHTML = `
+      <div style="font-weight:600;color:${col};margin-bottom:2px">${escHtml(name)}</div>
+      ${nodeInfo}
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${btns.join('')}</div>
+    `;
+
+    panel.style.display = 'block';
+    const pw = panel.offsetWidth  || 260;
+    const ph = panel.offsetHeight || 150;
+    const margin = 8;
+    const cx = evt?.clientX ?? window.innerWidth  / 2;
+    const cy = evt?.clientY ?? window.innerHeight / 2;
+    let x = Math.min(cx + margin, window.innerWidth  - pw - margin);
+    let y = cy > window.innerHeight / 2
+      ? Math.max(cy - ph - margin, margin)
+      : cy + margin;
+    y = Math.max(margin, Math.min(y, window.innerHeight - ph - margin));
+    panel.style.left = x + 'px';
+    panel.style.top  = y + 'px';
+
+    setTimeout(() => {
+      document.addEventListener('click', () => { if (panel) panel.style.display = 'none'; }, { once: true });
+    }, 0);
+  }
+
+  function tocOpenMention(type, rest, name, evt) {
+    if (evt && evt.stopPropagation) evt.stopPropagation();
+    if (type === 'mt') {
+      _tocShowMtMentionPopup(evt, rest, name);
+    } else {
+      const parts     = rest.split(':');
+      const contactId = parts[0] || null;
       const radioId   = parts.slice(1).join(':');
-      showMcContactPopup({stopPropagation:()=>{}}, contactId, radioId, null);
+      showMcContactPopup(evt || {stopPropagation:()=>{}}, contactId, radioId, name || null);
     }
   }
 

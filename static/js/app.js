@@ -3971,6 +3971,7 @@ if (targetEl) {
     _timeFormat = format === '12h' ? '12h' : '24h';
     const sel = document.getElementById('settings-time-format');
     if (sel) sel.value = _timeFormat;
+    _tocBuildTimeControl(_tocGetTimeHHMM());
     _refreshFormattedDisplays();
   }
 
@@ -17156,17 +17157,52 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     };
   }
 
+  function _tocBuildTimeControl(currentHHMM) {
+    const wrap = document.getElementById('toc-time-wrap');
+    if (!wrap) return;
+    const [hStr, mStr] = (currentHHMM || '00:00').split(':');
+    const totalH = parseInt(hStr || '0', 10);
+    const totalM = parseInt(mStr || '0', 10);
+    const inputStyle = 'background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:12px;width:44px;text-align:center';
+    const selStyle   = 'background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:12px';
+    if (_timeFormat === '12h') {
+      const ampm = totalH >= 12 ? 'PM' : 'AM';
+      const h12  = totalH % 12 || 12;
+      wrap.innerHTML =
+        `<input id="toc-h" type="number" min="1" max="12" value="${h12}" style="${inputStyle}" title="Hour">` +
+        `<span style="color:var(--text);font-size:13px">:</span>` +
+        `<input id="toc-m" type="number" min="0" max="59" value="${_tocPad(totalM)}" style="${inputStyle}" title="Minute">` +
+        `<select id="toc-ampm" style="${selStyle}"><option${ampm==='AM'?' selected':''}>AM</option><option${ampm==='PM'?' selected':''}>PM</option></select>`;
+    } else {
+      wrap.innerHTML =
+        `<input id="toc-h" type="number" min="0" max="23" value="${_tocPad(totalH)}" style="${inputStyle}" title="Hour">` +
+        `<span style="color:var(--text);font-size:13px">:</span>` +
+        `<input id="toc-m" type="number" min="0" max="59" value="${_tocPad(totalM)}" style="${inputStyle}" title="Minute">`;
+    }
+  }
+
+  function _tocGetTimeHHMM() {
+    const h = parseInt(document.getElementById('toc-h')?.value || '0', 10);
+    const m = parseInt(document.getElementById('toc-m')?.value || '0', 10);
+    if (_timeFormat === '12h') {
+      const ampm = document.getElementById('toc-ampm')?.value || 'AM';
+      let h24 = h % 12;
+      if (ampm === 'PM') h24 += 12;
+      return `${_tocPad(h24)}:${_tocPad(m)}`;
+    }
+    return `${_tocPad(Math.min(h, 23))}:${_tocPad(Math.min(m, 59))}`;
+  }
+
   function _tocSetDateTimeFields(ts = null) {
     const parts = _tocLocalDateTimeParts(ts);
     const dateEl = document.getElementById('toc-date');
-    const timeEl = document.getElementById('toc-time');
     if (dateEl) dateEl.value = parts.date;
-    if (timeEl) timeEl.value = parts.time;
+    _tocBuildTimeControl(parts.time);
   }
 
   function _tocDatetimeTs() {
     const date = document.getElementById('toc-date')?.value;
-    const time = document.getElementById('toc-time')?.value || '00:00';
+    const time = _tocGetTimeHHMM();
     if (!date) return Math.floor(Date.now() / 1000);
     const dt = new Date(`${date}T${time}`);
     const ts = Math.floor(dt.getTime() / 1000);
@@ -17175,12 +17211,6 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   function tocSetNow() {
     _tocSetDateTimeFields();
-  }
-
-  function tocTimeInput(el) {
-    let v = el.value.replace(/[^0-9]/g, '');
-    if (v.length >= 3) v = v.slice(0, 2) + ':' + v.slice(2, 4);
-    el.value = v;
   }
 
   function _tocSetSubmitMode() {
@@ -17606,8 +17636,9 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   function tocLoad() {
     fetch('/api/toc').then(r => r.json()).then(entries => {
       const dateEl = document.getElementById('toc-date');
-      const timeEl = document.getElementById('toc-time');
-      if (dateEl && timeEl && (!dateEl.value || !timeEl.value) && !_tocEditingId) _tocSetDateTimeFields();
+      const wrap = document.getElementById('toc-time-wrap');
+      if (wrap && !wrap.children.length) _tocBuildTimeControl(null);
+      if (dateEl && !dateEl.value && !_tocEditingId) _tocSetDateTimeFields();
       _tocAllEntries = Array.isArray(entries) ? entries : [];
       _tocRenderMentionFilter();
       tocRenderPinnedTemplates();

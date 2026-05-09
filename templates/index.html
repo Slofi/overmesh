@@ -650,9 +650,7 @@
         <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">
           <input id="toc-date" type="date" title="Entry date"
                  style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;width:130px">
-          <input id="toc-time" type="text" maxlength="5" placeholder="HH:MM" title="Entry time (24h)"
-                 oninput="tocTimeInput(this)"
-                 style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;width:70px">
+          <span id="toc-time-wrap" style="display:flex;gap:3px;align-items:center"></span>
           <button class="btn" onclick="tocSetNow()" title="Use current date and time" style="padding:4px 8px;font-size:12px">Now</button>
         </div>
         <select id="toc-template" onchange="tocApplyTemplate(this.value)" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;flex:1;min-width:140px">

@@ -467,7 +467,7 @@
   }
 
   function saveDateFormat(format) {
-    format = format === 'us' ? 'us' : 'eu';
+    format = ['eu', 'us', 'iso'].includes(format) ? format : 'eu';
     Object.assign(_appSettings, {date_format: format});
     _setDateFormat(format);
     fetch(BASE_PATH + '/api/settings/app', {
@@ -505,9 +505,11 @@
     const d = _appDate(value);
     if (Number.isNaN(d.getTime())) return '';
     const pad = n => String(n).padStart(2, '0');
-    const date = _dateFormat === 'us'
-      ? `${pad(d.getMonth() + 1)}/${pad(d.getDate())}/${d.getFullYear()}`
-      : `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
+    const date = _dateFormat === 'iso'
+      ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+      : _dateFormat === 'us'
+        ? `${pad(d.getMonth() + 1)}/${pad(d.getDate())}/${d.getFullYear()}`
+        : `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
     if (!opts.weekday) return date;
     const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
     return `${days[d.getDay()]}, ${date}`;
@@ -3973,7 +3975,7 @@ if (targetEl) {
   }
 
   function _setDateFormat(format) {
-    _dateFormat = format === 'us' ? 'us' : 'eu';
+    _dateFormat = ['eu', 'us', 'iso'].includes(format) ? format : 'eu';
     const sel = document.getElementById('settings-date-format');
     if (sel) sel.value = _dateFormat;
     _refreshFormattedDisplays();

@@ -42,6 +42,7 @@ assert(distanceLabelMatch, '_distanceLabel() no longer uses app distance units')
 assert(/id="settings-distance-unit"/.test(templateSrc), 'App settings distance unit selector missing');
 assert(/id="settings-time-format"/.test(templateSrc), 'App settings time format selector missing');
 assert(/id="settings-date-format"/.test(templateSrc), 'App settings date format selector missing');
+assert(/value="iso">ISO \(YYYY-MM-DD\)/.test(templateSrc), 'App settings ISO date option missing');
 assert(/distance_unit/.test(src), 'distance_unit preference handling missing from template');
 assert(/time_format/.test(src), 'time_format preference handling missing from app.js');
 assert(/date_format/.test(src), 'date_format preference handling missing from app.js');

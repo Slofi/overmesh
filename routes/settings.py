@@ -577,8 +577,8 @@ def api_settings_app_set():
             CONFIG["app"]["time_format"] = fmt
         if "date_format" in data:
             fmt = str(data["date_format"]).lower()
-            if fmt not in ("eu", "us"):
-                return jsonify({"error": "date_format must be 'eu' or 'us'"}), 400
+            if fmt not in ("eu", "us", "iso"):
+                return jsonify({"error": "date_format must be 'eu', 'us', or 'iso'"}), 400
             CONFIG["app"]["date_format"] = fmt
         for key in (
             "inapp_notify_messages",

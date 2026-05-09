@@ -3971,8 +3971,6 @@ if (targetEl) {
     _timeFormat = format === '12h' ? '12h' : '24h';
     const sel = document.getElementById('settings-time-format');
     if (sel) sel.value = _timeFormat;
-    const tocTime = document.getElementById('toc-time');
-    if (tocTime) tocTime.lang = _timeFormat === '12h' ? 'en-US' : 'en-GB';
     _refreshFormattedDisplays();
   }
 
@@ -17177,6 +17175,12 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   function tocSetNow() {
     _tocSetDateTimeFields();
+  }
+
+  function tocTimeInput(el) {
+    let v = el.value.replace(/[^0-9]/g, '');
+    if (v.length >= 3) v = v.slice(0, 2) + ':' + v.slice(2, 4);
+    el.value = v;
   }
 
   function _tocSetSubmitMode() {

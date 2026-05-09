@@ -52,6 +52,8 @@
   let _historyNodes = [];
   let dbSort        = { col: 'last_seen', dir: 'desc' };
   let _appSettings  = {};
+  let _timeFormat   = '24h';
+  let _dateFormat   = 'eu';
   let favFirst      = true;
   let dbFavFirst    = true;
   let showIgnored   = false;
@@ -451,6 +453,81 @@
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({distance_unit: unit})
     }).catch(e => console.error('saveDistanceUnit failed:', e));
+  }
+
+  function saveTimeFormat(format) {
+    format = format === '12h' ? '12h' : '24h';
+    Object.assign(_appSettings, {time_format: format});
+    _setTimeFormat(format);
+    fetch(BASE_PATH + '/api/settings/app', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({time_format: format})
+    }).catch(e => console.error('saveTimeFormat failed:', e));
+  }
+
+  function saveDateFormat(format) {
+    format = format === 'us' ? 'us' : 'eu';
+    Object.assign(_appSettings, {date_format: format});
+    _setDateFormat(format);
+    fetch(BASE_PATH + '/api/settings/app', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({date_format: format})
+    }).catch(e => console.error('saveDateFormat failed:', e));
+  }
+
+  function _appDate(value) {
+    if (value instanceof Date) return value;
+    if (typeof value === 'number') return new Date(value > 10000000000 ? value : value * 1000);
+    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      const [y, m, d] = value.split('-').map(Number);
+      return new Date(y, m - 1, d);
+    }
+    if (value) return new Date(value);
+    return new Date();
+  }
+
+  function _formatAppTime(value, opts = {}) {
+    const d = _appDate(value);
+    if (Number.isNaN(d.getTime())) return '';
+    const pad = n => String(n).padStart(2, '0');
+    const seconds = opts.seconds === true;
+    if (_timeFormat === '12h') {
+      const suffix = d.getHours() >= 12 ? 'PM' : 'AM';
+      const hour = d.getHours() % 12 || 12;
+      return `${hour}:${pad(d.getMinutes())}${seconds ? `:${pad(d.getSeconds())}` : ''} ${suffix}`;
+    }
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}${seconds ? `:${pad(d.getSeconds())}` : ''}`;
+  }
+
+  function _formatAppDate(value, opts = {}) {
+    const d = _appDate(value);
+    if (Number.isNaN(d.getTime())) return '';
+    const pad = n => String(n).padStart(2, '0');
+    const date = _dateFormat === 'us'
+      ? `${pad(d.getMonth() + 1)}/${pad(d.getDate())}/${d.getFullYear()}`
+      : `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
+    if (!opts.weekday) return date;
+    const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    return `${days[d.getDay()]}, ${date}`;
+  }
+
+  function _formatAppDateTime(value, opts = {}) {
+    const d = _appDate(value);
+    if (Number.isNaN(d.getTime())) return '';
+    return `${_formatAppDate(d, opts)} ${_formatAppTime(d, opts)}`;
+  }
+
+  function _formatAppDayDivider(value) {
+    const d = _appDate(value);
+    const now = new Date();
+    const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    if (sameDay(d, now)) return 'Today';
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    if (sameDay(d, yesterday)) return 'Yesterday';
+    return _formatAppDate(d, {weekday: true});
   }
 
   function _notificationSoundEnabled(kind) {
@@ -1990,9 +2067,7 @@
   }
 
   function buildMsgEl(m) {
-    const pad = n => String(n).padStart(2, '0');
-    const d   = new Date(m.ts * 1000);
-    const t   = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const t   = _formatAppTime(m.ts);
     const snrStr = (!m.sent && m.snr != null) ? ` · ${m.snr} dB` : '';
     // Clickable sender name for received non-bot messages
     const senderSpan = (nodeId, name) =>
@@ -2071,8 +2146,6 @@
     }
     container.innerHTML = '';
     let lastDay = null;
-    const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-    const pad = n => String(n).padStart(2,'0');
     filtered.forEach(m => {
       // Emoji reaction — try to attach to the original message element
       if (m.is_emoji && m.reply_pkt_id) {
@@ -2085,11 +2158,7 @@
       const d = new Date(m.ts * 1000);
       const dayKey = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
       if (dayKey !== lastDay) {
-        const now = new Date();
-        const isToday = d.getFullYear()===now.getFullYear() && d.getMonth()===now.getMonth() && d.getDate()===now.getDate();
-        const yesterday = new Date(now); yesterday.setDate(now.getDate()-1);
-        const isYesterday = d.getFullYear()===yesterday.getFullYear() && d.getMonth()===yesterday.getMonth() && d.getDate()===yesterday.getDate();
-        const label = isToday ? 'Today' : isYesterday ? 'Yesterday' : `${days[d.getDay()]}, ${pad(d.getDate())}.${pad(d.getMonth()+1)}.${d.getFullYear()}`;
+        const label = _formatAppDayDivider(d);
         const div = document.createElement('div');
         div.className = 'chat-date-divider';
         div.innerHTML = `<span>${label}</span>`;
@@ -2628,7 +2697,7 @@ if (targetEl) {
       _refreshMcPassiveSummary(_pRids, _pPres);
     }
 
-    document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false});
+    document.getElementById('last-updated').textContent = 'Updated ' + _formatAppTime(new Date(), {seconds: true});
     const countEl = document.getElementById('nodes-count');
     const parts = [];
     if (mapShowMt) parts.push(`MT: ${real.length}`);
@@ -2968,13 +3037,8 @@ if (targetEl) {
   // ── Clock ──────────────────────────────────────────────────────────────────
   function updateClock() {
     const now  = new Date();
-    const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-    const pad  = n => String(n).padStart(2, '0');
-    document.getElementById('clock-time').textContent =
-      `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
-    const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-    document.getElementById('clock-date').textContent =
-      `${days[now.getDay()]}, ${now.getDate()} ${months[now.getMonth()]}`;
+    document.getElementById('clock-time').textContent = _formatAppTime(now, {seconds: true});
+    document.getElementById('clock-date').textContent = _formatAppDate(now, {weekday: true});
   }
   updateClock();
   setInterval(updateClock, 1000);
@@ -3146,7 +3210,7 @@ if (targetEl) {
           return;
         }
         const rows = obs.map(o => {
-          const t  = o.ts ? new Date(o.ts * 1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}) : '?';
+          const t  = o.ts ? _formatAppTime(o.ts, {seconds: true}) : '?';
           const dt = o.ts ? senseTimeAgo(o.ts) : '';
           const sig = [
             o.snr  != null ? `SNR ${o.snr > 0 ? '+' : ''}${o.snr.toFixed(1)}` : '',
@@ -3314,7 +3378,7 @@ if (targetEl) {
         // Last 3 observations inline (most recent first, across all radios)
         const recent = [...entries].sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 3);
         const recentHtml = recent.map(o => {
-          const t   = o.ts ? new Date(o.ts * 1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}) : '?';
+          const t   = o.ts ? _formatAppTime(o.ts, {seconds: true}) : '?';
           const sig = [
             o.snr  != null ? `SNR ${o.snr > 0 ? '+' : ''}${o.snr.toFixed(1)}` : '',
             o.rssi != null ? `RSSI ${o.rssi}` : '',
@@ -3886,6 +3950,34 @@ if (targetEl) {
     if (_showPolarGrid) _drawPolarGrid();
   }
 
+  function _refreshFormattedDisplays() {
+    updateClock();
+    renderMessages();
+    renderMcMessages();
+    renderMcSenseLog();
+    renderLive();
+    if (currentView === 'history') loadHistory();
+    renderMcMapMarkers();
+    updateMapMarkers(allNodes);
+    if (typeof loadNotes === 'function') loadNotes();
+    if (typeof loadWaypoints === 'function') loadWaypoints();
+    if (currentTab === 'log' && typeof tocLoad === 'function') tocLoad();
+  }
+
+  function _setTimeFormat(format) {
+    _timeFormat = format === '12h' ? '12h' : '24h';
+    const sel = document.getElementById('settings-time-format');
+    if (sel) sel.value = _timeFormat;
+    _refreshFormattedDisplays();
+  }
+
+  function _setDateFormat(format) {
+    _dateFormat = format === 'us' ? 'us' : 'eu';
+    const sel = document.getElementById('settings-date-format');
+    if (sel) sel.value = _dateFormat;
+    _refreshFormattedDisplays();
+  }
+
   function _normalizeCoordPair(lat, lon) {
     const latNum = Number(lat);
     const lonNum = Number(lon);
@@ -4400,7 +4492,7 @@ if (targetEl) {
       || allNodes.find(n => n.id === entry.from_id)
       || {};
     const ts = entry.ts
-      ? new Date(entry.ts * 1000).toLocaleString([], {hour12: false})
+      ? _formatAppDateTime(entry.ts, {seconds: true})
       : '';
     const position = entry.lat != null && entry.lon != null
       ? `${Number(entry.lat).toFixed(5)}, ${Number(entry.lon).toFixed(5)}`
@@ -4869,7 +4961,7 @@ if (targetEl) {
             <span style="font-size:13px;font-weight:500">${escHtml(r.name)}</span>
             <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:var(--bg);border:1px solid var(--border);color:var(--muted);white-space:nowrap">${escHtml(r.layerLabel || 'OpenStreetMap')}</span>
           </div>
-          <div style="font-size:11px;color:var(--muted)">zoom ${r.minZ}–${r.maxZ} · ${r.tiles.toLocaleString()} tiles · ≈${Math.round(r.tiles * 12 / 1024)} MB · ${r.date}</div>
+          <div style="font-size:11px;color:var(--muted)">zoom ${r.minZ}–${r.maxZ} · ${r.tiles.toLocaleString()} tiles · ≈${Math.round(r.tiles * 12 / 1024)} MB · ${_formatAppDate(r.date)}</div>
         </div>
         <button class="btn-sm" title="Re-download this region with current tile layer" style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:22px;padding:0;flex-shrink:0" onclick="redownloadRegion('${jsSafe(r.id)}')">↻</button>
         <button class="btn-sm" title="Remove this saved region" style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:22px;padding:0;flex-shrink:0;color:var(--danger,#f87171)" onclick="deleteRegion('${jsSafe(r.id)}')">✕</button>
@@ -6711,7 +6803,7 @@ if (targetEl) {
       html: `<div style="font-size:20px;line-height:1;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.5));opacity:0.85">${escHtml(emoji)}</div>`,
       className: '', iconSize: [24, 24], iconAnchor: [6, 22]
     });
-    const ts = note.ts ? new Date(note.ts * 1000).toLocaleString([], {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit', hour12: false}) : '';
+    const ts = note.ts ? _formatAppDateTime(note.ts) : '';
     const popupHtml = `
       <div style="min-width:160px;max-width:220px">
         <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Self Note</div>
@@ -6872,7 +6964,7 @@ if (targetEl) {
       ? `https://maps.google.com/?q=${encodeURIComponent(wp.lat + ',' + wp.lon)}`
       : `https://www.openstreetmap.org/?mlat=${wp.lat}&mlon=${wp.lon}&zoom=15#map=15/${wp.lat}/${wp.lon}`;
     const fromName = wp.from_id === 'local' ? 'You' : escHtml(wp.from_id || '?');
-    const ts = wp.ts ? new Date(wp.ts * 1000).toLocaleString([], {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit', hour12: false}) : '';
+    const ts = wp.ts ? _formatAppDateTime(wp.ts) : '';
     const markerEmoji = wp.marker_emoji || '📍';
     const icon = L.divIcon({
       html: `<div style="font-size:20px;line-height:1;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.6))">${escHtml(markerEmoji)}</div>`,
@@ -7231,11 +7323,9 @@ if (targetEl) {
       container.innerHTML = '<div style="color:var(--muted);font-size:12px;text-align:center;margin-top:20px">No messages yet</div>';
       return;
     }
-    const pad = n => String(n).padStart(2, '0');
     const wasAtBottom = container.scrollHeight - container.scrollTop <= container.clientHeight + 30;
     container.innerHTML = msgs.map(m => {
-      const d = new Date(m.ts * 1000);
-      const t = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      const t = _formatAppTime(m.ts);
       const statusHtml = m.sent
         ? `<span class="msg-status ${m.status || 'pending'}" data-msgid="${m.id}" style="font-size:10px">${m.status === 'delivered' ? '✓' : m.status === 'failed' ? '✗' : '·'}</span>`
         : '';
@@ -7478,8 +7568,7 @@ if (targetEl) {
             radius: isEnd ? 6 : 3, color: '#111', fillColor: col,
             fillOpacity: 1, weight: 1, interactive: true,
           });
-          const d = new Date(p.ts * 1000);
-          dot.bindTooltip(d.toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}), {direction:'top', sticky:false});
+          dot.bindTooltip(_formatAppDateTime(p.ts), {direction:'top', sticky:false});
           dot.addTo(leafletMap);
           layers.push(dot);
         });
@@ -8027,8 +8116,7 @@ if (targetEl) {
     // Clear placeholder
     const placeholder = log.querySelector('.bot-no-activity');
     if (placeholder) placeholder.remove();
-    const ts = new Date(entry.ts * 1000);
-    const timeStr = ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    const timeStr = _formatAppTime(entry.ts, {seconds: true});
     const div = document.createElement('div');
     div.className = 'bot-entry';
     div.innerHTML = `
@@ -8651,6 +8739,8 @@ if (targetEl) {
     loadSoundPrefs(cfg);
     loadBridgeSettings(cfg);
     _setDistanceUnit(cfg.distance_unit || 'km');
+    _setTimeFormat(cfg.time_format || '24h');
+    _setDateFormat(cfg.date_format || 'eu');
     settingsApplyZoom(cfg.zoom || 100);
     const cd = cfg.sense_cooldown || 180;
     document.getElementById('settings-sense-cooldown').value = cd;
@@ -9769,9 +9859,10 @@ if (targetEl) {
       if (st)  { st.style.display = ''; st.textContent = `${_mcScanRemaining}s`; }
       // Log scan start in MC activity
       if (_senseNet === 'mc' && document.getElementById('sense-panel')?.style.display !== 'none') {
-        const ts = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
+        const ts_epoch = Math.floor(Date.now() / 1000);
+        const ts = _formatAppTime(ts_epoch, {seconds: true});
         const radioName = mcLastStatus[data.radio_id]?.name || data.radio_id;
-        const entry = { kind: 'scan', ts, radioId: data.radio_id, radioName };
+        const entry = { kind: 'scan', ts, ts_epoch, radioId: data.radio_id, radioName };
         _mcSenseLogEntries.unshift(entry);
         if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
         renderMcSenseLog();
@@ -10848,10 +10939,9 @@ if (targetEl) {
       if (m.ts) {
         const d = new Date(m.ts * 1000);
         const now = new Date();
-        const pad = n => String(n).padStart(2, '0');
         const isToday = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-        const datePrefix = isToday ? '' : `${pad(d.getDate())}.${pad(d.getMonth()+1)}. `;
-        ts = `${datePrefix}${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        const datePrefix = isToday ? '' : `${_formatAppDate(d)} `;
+        ts = `${datePrefix}${_formatAppTime(d)}`;
       }
       if (m.subtype === 'system') {
         if (m.from_id === 'bot') {
@@ -11964,7 +12054,8 @@ if (targetEl) {
     const candidateName = cached?.long_name || data.long_name || data.name;
     const isHexFallback = !candidateName || !!candidateName.match(/^[0-9a-f]{6,}$/i);
     const name = isHexFallback ? (data.id ? data.id.slice(0, 4) + '…' : '?') : candidateName;
-    const ts      = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
+    const ts_epoch = Math.floor(Date.now() / 1000);
+    const ts      = _formatAppTime(ts_epoch, {seconds: true});
     const typeRaw = cached?.type ?? data.contact_type;  // data.type is event type string "mc_node", not contact type
     const typeIdx = (typeof typeRaw === 'number' ? typeRaw : parseInt(typeRaw)) || 0;
     const contact = mcContacts[data.radio_id]?.[data.id] || data;
@@ -11977,7 +12068,7 @@ if (targetEl) {
     }
     // Reverse: advert is incoming (contact → relays → our radio), but decodeMcPath builds radio→contact
     if (pathResult?.points) pathResult = _mcReversePathResult(pathResult);
-    const entry = { kind: 'advert', name, ts, hopStr, hopLen, typeIdx, pathResult, lat, lon, id: data.id, radioId: data.radio_id };
+    const entry = { kind: 'advert', name, ts, ts_epoch, hopStr, hopLen, typeIdx, pathResult, lat, lon, id: data.id, radioId: data.radio_id };
     if (_mcLogPinnedIdx !== null) _mcLogPinnedIdx++;
     _mcSenseLogEntries.unshift(entry);
     if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
@@ -12011,6 +12102,11 @@ if (targetEl) {
     return parts.filter(Boolean).join(' ').toLowerCase();
   }
 
+  function _mcLogTs(entry) {
+    if (entry?.ts_epoch) return _formatAppTime(entry.ts_epoch, {seconds: true});
+    return entry?.ts || '';
+  }
+
   function renderMcSenseLog() {
     const el = document.getElementById('sense-mc-log');
     if (!el) return;
@@ -12037,7 +12133,7 @@ if (targetEl) {
           onclick="_mcLogClick(${e._i})"
           onmouseenter="_mcLogHover(${e._i},true)"
           onmouseleave="_mcLogHover(${e._i},false)">
-          <span style="color:var(--muted)">${e.ts}</span>
+          <span style="color:var(--muted)">${_mcLogTs(e)}</span>
           <span style="color:${iconColor};margin-left:4px">⟳</span>
           <span style="margin-left:4px">${rLabel}</span>
           <span style="color:${hopColor};margin-left:4px;font-size:10px">${e.hopStr}${snrLabel}</span>
@@ -12046,7 +12142,7 @@ if (targetEl) {
       }
       if (e.kind === 'scan') {
         return `<div style="padding:2px 0;border-bottom:1px solid var(--border)">
-          <span style="color:var(--muted)">${e.ts}</span>
+          <span style="color:var(--muted)">${_mcLogTs(e)}</span>
           <span style="margin-left:4px;color:#94a3b8;font-size:10px;font-style:italic">Scan started · ${escHtml(e.radioName)}</span>
         </div>`;
       }
@@ -12058,7 +12154,7 @@ if (targetEl) {
           onclick="_mcLogClick(${e._i})"
           onmouseenter="_mcLogHover(${e._i},true)"
           onmouseleave="_mcLogHover(${e._i},false)">
-          <span style="color:var(--muted)">${e.ts}</span>
+          <span style="color:var(--muted)">${_mcLogTs(e)}</span>
           <span style="color:#22c55e;font-size:9px;font-weight:600;background:rgba(34,197,94,0.15);border:1px solid rgba(34,197,94,0.3);border-radius:3px;padding:0 3px;margin-left:4px">ping</span>
           <span style="margin-left:4px;font-weight:600">${escHtml(e.name)}</span>
           <span style="color:var(--muted);margin-left:4px;font-size:10px">${e.hopStr}${snr}</span>
@@ -12067,7 +12163,7 @@ if (targetEl) {
       }
       if (e.kind === 'self_advert') {
         return `<div style="padding:2px 0;border-bottom:1px solid var(--border)">
-          <span style="color:var(--muted)">${e.ts}</span>
+          <span style="color:var(--muted)">${_mcLogTs(e)}</span>
           <span style="color:#94a3b8;font-size:9px;font-weight:600;background:rgba(148,163,184,0.15);border:1px solid rgba(148,163,184,0.3);border-radius:3px;padding:0 3px;margin-left:4px">adv</span>
           <span style="margin-left:4px">${escHtml(e.radioName)}</span>
           <span style="color:#94a3b8;font-size:10px;margin-left:4px">(self)</span>
@@ -12075,7 +12171,7 @@ if (targetEl) {
       }
       if (e.kind === 'bot_reply') {
         return `<div style="padding:2px 0;border-bottom:1px solid var(--border)">
-          <span style="color:var(--muted)">${e.ts}</span>
+          <span style="color:var(--muted)">${_mcLogTs(e)}</span>
           <span style="color:#a78bfa;font-size:9px;font-weight:600;background:rgba(167,139,250,0.15);border:1px solid rgba(167,139,250,0.3);border-radius:3px;padding:0 3px;margin-left:4px">bot</span>
           <span style="color:var(--muted);font-size:10px;margin-left:4px">→</span>
           <span style="margin-left:4px;font-weight:600">${escHtml(e.name)}</span>
@@ -12098,7 +12194,7 @@ if (targetEl) {
           onclick="_mcLogClick(${e._i})"
           onmouseenter="_mcLogHover(${e._i},true)"
           onmouseleave="_mcLogHover(${e._i},false)">
-          <span style="color:var(--muted)">${e.ts}</span>
+          <span style="color:var(--muted)">${_mcLogTs(e)}</span>
           <span style="margin-left:4px;font-weight:600">${escHtml(e.name)}</span>
           ${hopMeta ? `<span style="margin-left:4px;font-size:10px;color:${hopMeta.color}">${escHtml(hopMeta.label)}</span>` : ''}
           ${showQ ? `<span title="Route source" style="margin-left:4px;font-size:9px;color:${qColor};background:${qBg};border:1px solid ${qBorder};border-radius:3px;padding:0 3px">${q}</span>` : ''}
@@ -12109,7 +12205,7 @@ if (targetEl) {
       }
       if (e.kind === 'sent_message') {
         return `<div style="padding:2px 0;border-bottom:1px solid var(--border)">
-          <span style="color:var(--muted)">${e.ts}</span>
+          <span style="color:var(--muted)">${_mcLogTs(e)}</span>
           <span style="color:#3b82f6;font-size:9px;font-weight:600;background:rgba(59,130,246,0.12);border:1px solid rgba(59,130,246,0.3);border-radius:3px;padding:0 3px;margin-left:4px">→ msg</span>
           <span style="margin-left:4px;font-weight:600">${escHtml(e.chanName)}</span>
           <span style="color:var(--muted);margin-left:4px;font-size:10px">${escHtml(e.text)}</span>
@@ -12128,7 +12224,7 @@ if (targetEl) {
         onclick="_mcLogClick(${e._i})"
         onmouseenter="_mcLogHover(${e._i},true)"
         onmouseleave="_mcLogHover(${e._i},false)">
-        <span style="color:var(--muted)">${e.ts}</span>
+        <span style="color:var(--muted)">${_mcLogTs(e)}</span>
         <span style="color:#94a3b8;margin-left:4px;font-size:9px;vertical-align:middle">adv</span>
         <span style="color:${nameColor};margin-left:3px;font-weight:600">${escHtml(e.name)}</span>
         <span style="color:${hopColor};margin-left:4px;font-size:10px">${hopLabel}</span>
@@ -12670,7 +12766,8 @@ if (targetEl) {
     const name    = isHex ? (data.from_id ? data.from_id.slice(0, 4) + '…' : '?') : rawName;
     const full    = _mcMsgText(data, name);
     const text    = full.length > 60 ? full.slice(0, 60) + '…' : full;
-    const ts      = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
+    const ts_epoch = Math.floor(Date.now() / 1000);
+    const ts      = _formatAppTime(ts_epoch, {seconds: true});
     const msgSnr  = data.rx_snr ?? data.snr ?? data.last_snr ?? data.observed_snr ?? null;
     // Capture sender's path at message time so clicking the row shows it on the map
     const contact = realContact || cached;
@@ -12697,7 +12794,7 @@ if (targetEl) {
     if (pathResult && !pathResult.flood) pathResult = { ...pathResult, kind: 'message', snr: msgSnr };
     // Reverse: message is incoming (sender → relays → our radio), but decodeMcPath builds radio→contact
     if (pathResult?.points) pathResult = _mcReversePathResult(pathResult);
-    return { kind: 'message', name, text, rawText: full, ts, msgTs: data.ts, msgId: data.id || null, radioId: data.radio_id, channel: data.channel ?? 0, fromId: data.from_id, lat, lon, hopLen, pathResult, routeQuality, pathHashSize: data.path_hash_size ?? pathResult?.inferredPathHashSize ?? null, pathHashMode: data.path_hash_mode ?? null, routeType: data.route_type ?? null, rawPath: data.path ?? null, snr: msgSnr };
+    return { kind: 'message', name, text, rawText: full, ts, ts_epoch, msgTs: data.ts, msgId: data.id || null, radioId: data.radio_id, channel: data.channel ?? 0, fromId: data.from_id, lat, lon, hopLen, pathResult, routeQuality, pathHashSize: data.path_hash_size ?? pathResult?.inferredPathHashSize ?? null, pathHashMode: data.path_hash_mode ?? null, routeType: data.route_type ?? null, rawPath: data.path ?? null, snr: msgSnr };
   }
 
   function addMcSenseMessageEntry(data) {
@@ -13030,9 +13127,10 @@ if (targetEl) {
       _saveMcMessages();
       renderMcMessages();
       if (kind === 'channel') {
-        const ts = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
+        const ts_epoch = Math.floor(Date.now() / 1000);
+        const ts = _formatAppTime(ts_epoch, {seconds: true});
         const chanName = mcKnownChannels[opts.channel] || (opts.channel === 0 ? 'Public' : `CH${opts.channel}`);
-        const entry = { kind: 'sent_message', name: mcLastStatus[activeMcRadioId]?.name || 'You', text: chunk.length > 60 ? chunk.slice(0,60)+'…' : chunk, ts, radioId: activeMcRadioId, channel: opts.channel, chanName };
+        const entry = { kind: 'sent_message', name: mcLastStatus[activeMcRadioId]?.name || 'You', text: chunk.length > 60 ? chunk.slice(0,60)+'…' : chunk, ts, ts_epoch, radioId: activeMcRadioId, channel: opts.channel, chanName };
         _mcSenseLogEntries.unshift(entry);
         if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
         try { localStorage.setItem('mcSenseLog', JSON.stringify(_mcSenseLogEntries.slice(0,100))); } catch(_e) {}
@@ -13121,9 +13219,10 @@ if (targetEl) {
       }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
         if (btn) { btn.disabled = false; btn.innerHTML = 'Advert &#9650;'; }
         if (!d.error) {
-          const ts = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
+          const ts_epoch = Math.floor(Date.now() / 1000);
+          const ts = _formatAppTime(ts_epoch, {seconds: true});
           const radioName = mcLastStatus[activeMcRadioId]?.name || activeMcRadioId;
-          const entry = { kind: 'self_advert', name: radioName, ts, radioId: activeMcRadioId, radioName };
+          const entry = { kind: 'self_advert', name: radioName, ts, ts_epoch, radioId: activeMcRadioId, radioName };
           _mcSenseLogEntries.unshift(entry);
           if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
           try { localStorage.setItem('mcSenseLog', JSON.stringify(_mcSenseLogEntries.slice(0, 100))); } catch(e) {}
@@ -13826,10 +13925,11 @@ if (targetEl) {
   }
 
   function _mcAddBotReplyLogEntry(data) {
-    const ts = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
+    const ts_epoch = Math.floor(Date.now() / 1000);
+    const ts = _formatAppTime(ts_epoch, {seconds: true});
     const text = data.text || '';
     const short = text.length > 60 ? text.slice(0, 60) + '…' : text;
-    const entry = { kind: 'bot_reply', name: data.to_name || '?', cmd: data.cmd || '', text: short, ts, radioId: data.radio_id };
+    const entry = { kind: 'bot_reply', name: data.to_name || '?', cmd: data.cmd || '', text: short, ts, ts_epoch, radioId: data.radio_id };
     if (_mcLogPinnedIdx !== null) _mcLogPinnedIdx++;
     _mcSenseLogEntries.unshift(entry);
     if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
@@ -13848,7 +13948,8 @@ if (targetEl) {
   }
 
   function _mcAddPingLogEntry(data, contact, pathResult) {
-    const ts = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
+    const ts_epoch = Math.floor(Date.now() / 1000);
+    const ts = _formatAppTime(ts_epoch, {seconds: true});
     const name = contact ? (contact.long_name || contact.name || data.pubkey_pre || '?') : (data.pubkey_pre || '?');
     const snr  = data.last_snr ?? data.observed_snr ?? null;
     const snrLabel = snr != null ? snr.toFixed(1) + 'dB' : null;
@@ -13879,6 +13980,7 @@ if (targetEl) {
       kind: 'ping',
       name,
       ts,
+      ts_epoch,
       hopStr,
       hopLen,
       snrLabel,
@@ -14090,7 +14192,8 @@ if (targetEl) {
     const path = data.path || [];
     const hops = data.path_len || 0;
     const hopStr = hops === 0 ? 'direct' : `${hops} hop${hops !== 1 ? 's' : ''}`;
-    const ts = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
+    const ts_epoch = Math.floor(Date.now() / 1000);
+    const ts = _formatAppTime(ts_epoch, {seconds: true});
 
     // Identify the actual responding node via auth_hex (4-byte hash from TRACE_DATA packet)
     const authHex = (data.auth_hex && data.auth_hex !== '00000000') ? data.auth_hex : null;
@@ -14102,7 +14205,7 @@ if (targetEl) {
 
     const finalSnr = trace.finalSnr;
     const pathResult = trace.pathResult;
-    const entry = { kind: 'trace', name: 'Broadcast Trace', ts, hopStr, hopLen: hops, typeIdx: 0, pathResult, lat: responderContact?.latitude ?? null, lon: responderContact?.longitude ?? null, radioId: data.radio_id, responderName, finalSnr, path, ours, pathHashSize: data.path_hash_size ?? null };
+    const entry = { kind: 'trace', name: 'Broadcast Trace', ts, ts_epoch, hopStr, hopLen: hops, typeIdx: 0, pathResult, lat: responderContact?.latitude ?? null, lon: responderContact?.longitude ?? null, radioId: data.radio_id, responderName, finalSnr, path, ours, pathHashSize: data.path_hash_size ?? null };
     if (_mcLogPinnedIdx !== null) _mcLogPinnedIdx++;
     _mcSenseLogEntries.unshift(entry);
     if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
@@ -15448,8 +15551,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const empty = document.getElementById('sense-log-empty');
     if (empty) empty.remove();
     const ts = n.ts
-      ? new Date(n.ts * 1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit', hour12: false})
-      : new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit', hour12: false});
+      ? _formatAppTime(n.ts, {seconds: true})
+      : _formatAppTime(new Date(), {seconds: true});
     const shortName = (n.short_name && n.short_name !== 'null') ? n.short_name : label;
     let dataRow = '';
     dataRow += (n.snr     != null ? ` · SNR ${n.snr.toFixed ? n.snr.toFixed(1) : n.snr}` : '');
@@ -17107,15 +17210,11 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   }
 
   function tocFmtTime(ts) {
-    const d = new Date(ts * 1000);
-    const pad = n => String(n).padStart(2,'0');
-    return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return _formatAppTime(ts);
   }
 
   function tocFmtDate(ts) {
-    const d = new Date(ts * 1000);
-    const pad = n => String(n).padStart(2,'0');
-    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return _formatAppDateTime(ts);
   }
 
   // ── Mention rendering ────────────────────────────────────────────────────

@@ -109,17 +109,40 @@ class AppSettingsOmPositionTests(unittest.TestCase):
         self.assertEqual(get_resp.status_code, 200)
         self.assertEqual(get_resp.get_json()["distance_unit"], "mi")
 
+    def test_saves_display_format_preferences(self):
+        resp = self.client.post("/api/settings/app", json={"time_format": "12h", "date_format": "us"})
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(settings_routes.CONFIG["app"]["time_format"], "12h")
+        self.assertEqual(settings_routes.CONFIG["app"]["date_format"], "us")
+
+        get_resp = self.client.get("/api/settings/app")
+        self.assertEqual(get_resp.status_code, 200)
+        self.assertEqual(get_resp.get_json()["time_format"], "12h")
+        self.assertEqual(get_resp.get_json()["date_format"], "us")
+
     def test_app_settings_include_default_accent_color(self):
         resp = self.client.get("/api/settings/app")
 
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.get_json()["accent_color"], "#4ade80")
+        self.assertEqual(resp.get_json()["time_format"], "24h")
+        self.assertEqual(resp.get_json()["date_format"], "eu")
 
     def test_rejects_invalid_distance_unit_preference(self):
         resp = self.client.post("/api/settings/app", json={"distance_unit": "yards"})
 
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.get_json()["error"], "distance_unit must be 'km' or 'mi'")
+
+    def test_rejects_invalid_display_format_preferences(self):
+        resp = self.client.post("/api/settings/app", json={"time_format": "evening"})
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.get_json()["error"], "time_format must be '24h' or '12h'")
+
+        resp = self.client.post("/api/settings/app", json={"date_format": "iso"})
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.get_json()["error"], "date_format must be 'eu' or 'us'")
 
     def test_ports_marks_direct_serial_ports_in_use(self):
         settings_routes.CONFIG["nodes"] = [

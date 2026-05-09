@@ -1454,11 +1454,23 @@
 
       <div style="border-top:1px solid var(--border);margin:14px 0 10px 0"></div>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <span class="settings-label" style="margin:0;white-space:nowrap">Distance units</span>
+        <span class="settings-label" style="margin:0;white-space:nowrap">Units</span>
         <select id="settings-distance-unit" onchange="saveDistanceUnit(this.value)"
                 style="padding:4px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:13px">
-          <option value="km">Kilometres</option>
-          <option value="mi">Miles</option>
+          <option value="km">Standard (km)</option>
+          <option value="mi">Imperial (mi)</option>
+        </select>
+        <span class="settings-label" style="margin:0 0 0 10px;white-space:nowrap">Time</span>
+        <select id="settings-time-format" onchange="saveTimeFormat(this.value)"
+                style="padding:4px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:13px">
+          <option value="24h">24-hour</option>
+          <option value="12h">AM/PM</option>
+        </select>
+        <span class="settings-label" style="margin:0 0 0 10px;white-space:nowrap">Date</span>
+        <select id="settings-date-format" onchange="saveDateFormat(this.value)"
+                style="padding:4px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:13px">
+          <option value="eu">Day-first (DD.MM.YYYY)</option>
+          <option value="us">Month-first (MM/DD/YYYY)</option>
         </select>
       </div>
 

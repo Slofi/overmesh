@@ -50,6 +50,8 @@ def _app_settings_payload():
     app_cfg.setdefault("sound_notify_radio_connected", True)
     app_cfg.setdefault("sound_notify_nodes", True)
     app_cfg.setdefault("distance_unit", "km")
+    app_cfg.setdefault("time_format", "24h")
+    app_cfg.setdefault("date_format", "eu")
     app_cfg.setdefault("bridge_webhooks_enabled", bool(webhook_cfg.get("enabled")))
     app_cfg.setdefault("bridge_webhook_urls", urls_text)
     app_cfg.setdefault("bridge_webhook_secret", webhook_cfg.get("secret") or "")
@@ -568,6 +570,16 @@ def api_settings_app_set():
             if unit not in ("km", "mi"):
                 return jsonify({"error": "distance_unit must be 'km' or 'mi'"}), 400
             CONFIG["app"]["distance_unit"] = unit
+        if "time_format" in data:
+            fmt = str(data["time_format"]).lower()
+            if fmt not in ("24h", "12h"):
+                return jsonify({"error": "time_format must be '24h' or '12h'"}), 400
+            CONFIG["app"]["time_format"] = fmt
+        if "date_format" in data:
+            fmt = str(data["date_format"]).lower()
+            if fmt not in ("eu", "us"):
+                return jsonify({"error": "date_format must be 'eu' or 'us'"}), 400
+            CONFIG["app"]["date_format"] = fmt
         for key in (
             "inapp_notify_messages",
             "inapp_notify_nodes",

@@ -40,6 +40,10 @@ assert(haversineMatch, '_haversineMeters() no longer clamps haversine input');
 const distanceLabelMatch = src.match(/function _distanceLabel\(km\) \{[\s\S]*?return `\$\{Math\.round\(value\)\} \$\{unit\}`;\n  }/);
 assert(distanceLabelMatch, '_distanceLabel() no longer uses app distance units');
 assert(/id="settings-distance-unit"/.test(templateSrc), 'App settings distance unit selector missing');
+assert(/id="settings-time-format"/.test(templateSrc), 'App settings time format selector missing');
+assert(/id="settings-date-format"/.test(templateSrc), 'App settings date format selector missing');
 assert(/distance_unit/.test(src), 'distance_unit preference handling missing from template');
+assert(/time_format/.test(src), 'time_format preference handling missing from app.js');
+assert(/date_format/.test(src), 'date_format preference handling missing from app.js');
 
 console.log('MC path template checks passed');

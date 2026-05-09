@@ -97,6 +97,7 @@ from routes.mc        import bp as mc_bp
 from routes.map_layers import bp as map_layers_bp
 from routes.silent     import bp as silent_bp
 from bridge            import bp as bridge_bp
+from routes.toc        import bp as toc_bp
 
 app.register_blueprint(nodes_bp)
 app.register_blueprint(chat_bp)
@@ -111,6 +112,7 @@ app.register_blueprint(mc_bp)
 app.register_blueprint(map_layers_bp)
 app.register_blueprint(silent_bp)
 app.register_blueprint(bridge_bp)
+app.register_blueprint(toc_bp)
 
 
 # ---------------------------------------------------------------------------

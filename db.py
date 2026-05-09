@@ -400,6 +400,13 @@ def init_prefs_db():
             value TEXT NOT NULL DEFAULT ''
         )''')
 
+        c.execute('''CREATE TABLE IF NOT EXISTS toc_log (
+            id       INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts       INTEGER NOT NULL,
+            category TEXT NOT NULL DEFAULT 'NOTE',
+            body     TEXT NOT NULL
+        )''')
+
 
 def init_msgs_db(db_path):
     conn = sqlite3.connect(db_path)

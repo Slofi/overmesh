@@ -2180,11 +2180,12 @@ if (targetEl) {
   function switchTab(name) {
     currentTab = name;
     localStorage.setItem('activeTab', name);
-    const names = ['nodes','chat','map','bot','settings'];
+    const names = ['nodes','chat','map','bot','log','settings'];
     document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', names[i] === name));
     document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + name));
     if (name === 'nodes')    { initNodesFilterPills(); renderLive(); }
     if (name === 'chat')     { initChat(); updateUnreadDots(); }
+    if (name === 'log')      { tocLoad(); }
     if (name === 'map')      {
       initMapFilterPills();
       if (!window._mapResizeObserver) { window._mapResizeObserver = new ResizeObserver(() => leafletMap && leafletMap.invalidateSize()); window._mapResizeObserver.observe(document.getElementById('map')); }
@@ -16946,3 +16947,107 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     if (e.target.classList.contains('emoji-btn')) return;
     picker.style.display = 'none';
   }, true);
+
+  // ── TOC Log ──────────────────────────────────────────────────────────────
+
+  const TOC_TEMPLATES = {
+    sitrep:    'SITREP\nDTG: \nLOC: \nSIT: \nPERS: \nEQP: \nINTENT: ',
+    contact:   'FIRST CONTACT\nNODE: \nCALLSIGN: \nCH/FREQ: \nSIGNAL: \nNOTES: ',
+    commscheck:'COMMS CHECK\nFROM: \nTO: \nSIGNAL: \nRESULT: ',
+    alert:     'ALERT\nTYPE: \nDETAILS: \nACTION TAKEN: ',
+    action:    'ACTION\nACTION: \nBY: \nRESULT: ',
+    casrep:    'CASREP\nITEM: \nSTATUS: \nNOTES: ',
+    position:  'POSITION UPDATE\nNODE: \nGRID/COORDS: \nNOTES: ',
+    netopen:   'NET OPEN\nNET: \nFREQ/CH: \nMEMBERS: ',
+    netclose:  'NET CLOSE\nNET: \nDURATION: \nNOTES: ',
+  };
+
+  const TOC_CAT_MAP = {
+    sitrep:'SITREP', contact:'CONTACT', commscheck:'COMMS',
+    alert:'ALERT', action:'ACTION', casrep:'CASREP',
+    position:'POSITION', netopen:'NET', netclose:'NET',
+  };
+
+  function tocApplyTemplate(key) {
+    if (!key) return;
+    const body = document.getElementById('toc-body');
+    const cat  = document.getElementById('toc-category');
+    if (body) body.value = TOC_TEMPLATES[key] || '';
+    if (cat && TOC_CAT_MAP[key]) cat.value = TOC_CAT_MAP[key];
+    document.getElementById('toc-template').value = '';
+    if (body) body.focus();
+  }
+
+  function tocFmtDate(ts) {
+    const d = new Date(ts * 1000);
+    const pad = n => String(n).padStart(2,'0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
+
+  const TOC_CAT_COLORS = {
+    SITREP:'#3b82f6', ALERT:'#ef4444', ACTION:'#f59e0b',
+    COMMS:'#10b981', CONTACT:'#8b5cf6', CASREP:'#f97316',
+    POSITION:'#06b6d4', NET:'#84cc16', NOTE:'var(--muted)',
+  };
+
+  function tocRenderEntry(e) {
+    const color = TOC_CAT_COLORS[e.category] || 'var(--muted)';
+    const div = document.createElement('div');
+    div.dataset.tocId = e.id;
+    div.style.cssText = 'background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:12px;position:relative';
+    div.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        <span style="background:${color};color:#fff;border-radius:4px;padding:1px 7px;font-size:11px;font-weight:600;letter-spacing:.5px">${e.category}</span>
+        <span style="color:var(--muted);font-size:11px;font-family:monospace">${tocFmtDate(e.ts)}</span>
+        <button onclick="tocDelete(${e.id},this)" title="Delete entry" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:0 2px;line-height:1" onmouseover="this.style.color='#ef4444'" onmouseout="this.style.color='var(--muted)'">✕</button>
+      </div>
+      <pre style="margin:0;white-space:pre-wrap;font-family:monospace;font-size:12px;color:var(--text)">${e.body.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</pre>`;
+    return div;
+  }
+
+  function tocLoad() {
+    fetch('/api/toc').then(r => r.json()).then(entries => {
+      const list  = document.getElementById('toc-log-list');
+      const empty = document.getElementById('toc-empty');
+      list.querySelectorAll('[data-toc-id]').forEach(el => el.remove());
+      if (!entries.length) { if (empty) empty.style.display = ''; return; }
+      if (empty) empty.style.display = 'none';
+      entries.forEach(e => list.appendChild(tocRenderEntry(e)));
+    }).catch(() => {});
+  }
+
+  function tocSubmit() {
+    const body = (document.getElementById('toc-body').value || '').trim();
+    if (!body) return;
+    const category = document.getElementById('toc-category').value;
+    fetch('/api/toc', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({body, category})
+    }).then(r => r.json()).then(data => {
+      if (!data.ok) return;
+      document.getElementById('toc-body').value = '';
+      const list  = document.getElementById('toc-log-list');
+      const empty = document.getElementById('toc-empty');
+      if (empty) empty.style.display = 'none';
+      list.insertBefore(tocRenderEntry(data), list.firstChild);
+    }).catch(() => {});
+  }
+
+  function tocDelete(id, btn) {
+    if (!confirm('Delete this log entry?')) return;
+    fetch(`/api/toc/${id}`, {method:'DELETE'}).then(r => r.json()).then(data => {
+      if (!data.ok) return;
+      const el = btn.closest('[data-toc-id]');
+      if (el) el.remove();
+      const list = document.getElementById('toc-log-list');
+      if (!list.querySelector('[data-toc-id]')) {
+        const empty = document.getElementById('toc-empty');
+        if (empty) empty.style.display = '';
+      }
+    }).catch(() => {});
+  }
+
+  function tocExport(fmt) {
+    window.location.href = `/api/toc/export?fmt=${fmt}`;
+  }

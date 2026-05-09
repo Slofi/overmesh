@@ -16981,14 +16981,15 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     if (!tmpl) return;
     _tocActiveTemplate = key;
     if (catEl) catEl.value = tmpl.cat;
-    // build field inputs
     fieldsDiv.innerHTML = '';
     tmpl.fields.forEach(f => {
       const row = document.createElement('div');
       row.style.cssText = 'display:flex;align-items:center;gap:8px';
       row.innerHTML = `<label style="font-size:11px;color:var(--muted);min-width:90px;text-align:right;flex-shrink:0">${f}</label>
-        <input type="text" data-toc-field="${f}" placeholder="${f}…"
+        <input type="text" data-toc-field="${f}" placeholder="${f}… (# to mention node)"
           style="flex:1;background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:5px 8px;font-size:12px">`;
+      row.querySelector('input').addEventListener('input', tocInputHandler);
+      row.querySelector('input').addEventListener('keydown', tocInputKeydown);
       fieldsDiv.appendChild(row);
     });
     fieldsDiv.style.display = 'flex';
@@ -17018,19 +17019,143 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
+  // ── Mention rendering ────────────────────────────────────────────────────
+
+  const _TOC_MENTION_RE = /#\[([^\]]+)\]\((mt|mc):([^)]+)\)/g;
+
+  function _tocEscape(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+
+  function _tocRenderMentions(text) {
+    const parts = text.split(/(?=#\[[^\]]+\]\((?:mt|mc):[^)]+\))/);
+    return parts.map(part => {
+      const m = part.match(/^(#\[([^\]]+)\]\((mt|mc):([^)]+)\))([\s\S]*)$/);
+      if (m) {
+        const [, , name, type, rest, tail] = m;
+        const color = type === 'mt' ? '#3b82f6' : '#8b5cf6';
+        const safeRest = rest.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+        const badge = `<button onclick="tocOpenMention('${type}','${safeRest}')" style="background:${color}22;color:${color};border:1px solid ${color}55;border-radius:4px;padding:1px 6px;font-size:11px;font-weight:600;cursor:pointer">#${_tocEscape(name)}</button>`;
+        return badge + _tocEscape(tail);
+      }
+      return _tocEscape(part);
+    }).join('');
+  }
+
   function tocRenderBody(body) {
     try {
       const obj = JSON.parse(body);
       if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
         return '<table style="border-collapse:collapse;width:100%">' +
           Object.entries(obj).map(([k,v]) =>
-            `<tr><td style="color:var(--muted);padding:1px 10px 1px 0;white-space:nowrap;font-size:11px;vertical-align:top">${k}</td>` +
-            `<td style="color:var(--text);font-size:12px;word-break:break-word">${(v||'—').replace(/&/g,'&amp;').replace(/</g,'&lt;')}</td></tr>`
+            `<tr><td style="color:var(--muted);padding:1px 10px 1px 0;white-space:nowrap;font-size:11px;vertical-align:top">${_tocEscape(k)}</td>` +
+            `<td style="color:var(--text);font-size:12px;word-break:break-word">${_tocRenderMentions(v||'—')}</td></tr>`
           ).join('') + '</table>';
       }
     } catch(e) { /* plain text */ }
-    return `<span style="font-size:12px;white-space:pre-wrap">${body.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</span>`;
+    return `<span style="font-size:12px;white-space:pre-wrap">${_tocRenderMentions(body)}</span>`;
   }
+
+  function tocOpenMention(type, rest) {
+    if (type === 'mt') {
+      openMtNodeDetails(rest);
+    } else {
+      const parts = rest.split(':');
+      const contactId = parts[0];
+      const radioId   = parts.slice(1).join(':');
+      showMcContactPopup({stopPropagation:()=>{}}, contactId, radioId, null);
+    }
+  }
+
+  // ── Mention autocomplete ──────────────────────────────────────────────────
+
+  let _tocMentionTarget = null;
+  let _tocMentionStart  = -1;
+
+  function _tocNodeList() {
+    const nodes = [];
+    const seen  = new Set();
+    (allNodes || []).forEach(n => {
+      const name = n.long_name || n.short_name || n.id;
+      nodes.push({type:'mt', id: n.id, name, radioId: n.radio_id || ''});
+      seen.add('mt:' + name);
+    });
+    Object.entries(mcContacts || {}).forEach(([rid, contacts]) => {
+      Object.values(contacts || {}).forEach(c => {
+        const name = c.long_name || c.id?.slice(0,10) || '?';
+        const key  = 'mc:' + name + ':' + rid;
+        if (!seen.has(key)) { seen.add(key); nodes.push({type:'mc', id: c.id, name, radioId: rid}); }
+      });
+    });
+    return nodes;
+  }
+
+  function tocInputHandler(e) {
+    const target = e.target;
+    const val    = target.value;
+    const cursor = target.selectionStart;
+    const before = val.slice(0, cursor);
+    const match  = before.match(/#(\w*)$/);
+    if (match) {
+      const startPos = cursor - match[0].length;
+      const query    = match[1].toLowerCase();
+      const results  = _tocNodeList().filter(n => n.name.toLowerCase().includes(query)).slice(0, 10);
+      _tocMentionTarget = target;
+      _tocMentionStart  = startPos;
+      const dd = document.getElementById('toc-mention-dropdown');
+      if (!results.length) { dd.style.display = 'none'; return; }
+      dd.innerHTML = '';
+      results.forEach(node => {
+        const item = document.createElement('div');
+        item.style.cssText = 'padding:6px 10px;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:12px';
+        item.onmouseover = () => item.style.background = 'var(--bg3)';
+        item.onmouseout  = () => item.style.background = '';
+        const col = node.type === 'mt' ? '#3b82f6' : '#8b5cf6';
+        item.innerHTML = `<span style="background:${col};color:#fff;border-radius:3px;padding:1px 5px;font-size:10px;font-weight:600">${node.type.toUpperCase()}</span><span>${_tocEscape(node.name)}</span>`;
+        item.onmousedown = ev => { ev.preventDefault(); _tocInsertMention(node); };
+        dd.appendChild(item);
+      });
+      const rect = target.getBoundingClientRect();
+      dd.style.left    = rect.left + 'px';
+      dd.style.top     = (rect.bottom + 4) + 'px';
+      dd.style.display = 'block';
+    } else {
+      _tocHideMentionDropdown();
+    }
+  }
+
+  function tocInputKeydown(e) {
+    const dd = document.getElementById('toc-mention-dropdown');
+    if (dd.style.display === 'none') return;
+    if (e.key === 'Escape') { _tocHideMentionDropdown(); e.preventDefault(); }
+  }
+
+  function _tocInsertMention(node) {
+    const target = _tocMentionTarget;
+    if (!target) return;
+    const token  = node.type === 'mt'
+      ? `#[${node.name}](mt:${node.id})`
+      : `#[${node.name}](mc:${node.id}:${node.radioId})`;
+    const val    = target.value;
+    const cursor = target.selectionStart;
+    const before = val.slice(0, _tocMentionStart);
+    const after  = val.slice(cursor);
+    target.value = before + token + ' ' + after;
+    const newPos = before.length + token.length + 1;
+    target.setSelectionRange(newPos, newPos);
+    target.focus();
+    _tocHideMentionDropdown();
+  }
+
+  function _tocHideMentionDropdown() {
+    const dd = document.getElementById('toc-mention-dropdown');
+    if (dd) dd.style.display = 'none';
+    _tocMentionTarget = null;
+    _tocMentionStart  = -1;
+  }
+
+  document.addEventListener('pointerdown', e => {
+    const dd = document.getElementById('toc-mention-dropdown');
+    if (dd && !dd.contains(e.target)) _tocHideMentionDropdown();
+  }, true);
 
   function tocRenderRow(e) {
     const color = TOC_CAT_COLORS[e.category] || '#64748b';

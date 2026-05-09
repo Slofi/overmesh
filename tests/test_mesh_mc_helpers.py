@@ -47,6 +47,23 @@ class MeshMcPathHelperTests(unittest.TestCase):
         size = mesh_mc._mc_path_hash_size_from_msg({}, {"path_hash_mode": 1})
         self.assertEqual(size, 2)
 
+    def test_passive_collection_defaults_enabled(self):
+        CONFIG["mc_nodes"] = [{"id": "mc1", "name": "MC One"}]
+
+        self.assertTrue(mesh_mc._mc_passive_collection_enabled("mc1"))
+
+    def test_passive_collection_can_be_disabled_from_config(self):
+        CONFIG["mc_nodes"] = [{"id": "mc1", "name": "MC One", "passive_collection": False}]
+
+        self.assertFalse(mesh_mc._mc_passive_collection_enabled("mc1"))
+
+    def test_passive_collection_prefers_runtime_config(self):
+        CONFIG["mc_nodes"] = [{"id": "mc1", "name": "MC One", "passive_collection": True}]
+        with mc_connections_lock:
+            mc_connections["mc1"] = {"config": {"passive_collection": False}}
+
+        self.assertFalse(mesh_mc._mc_passive_collection_enabled("mc1"))
+
     def test_create_meshcore_closes_transport_when_connect_raises(self):
         class FakeConnection:
             def __init__(self):

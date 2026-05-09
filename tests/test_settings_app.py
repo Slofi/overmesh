@@ -245,6 +245,16 @@ class AppSettingsOmPositionTests(unittest.TestCase):
         self.assertTrue(settings_routes.CONFIG["mc_nodes"][0]["force_flood"])
         self.save_mock.assert_called_once()
 
+    def test_sets_mc_passive_collection_option(self):
+        settings_routes.CONFIG["mc_nodes"] = [{"id": "mc1", "name": "MC One", "passive_collection": True}]
+
+        resp = self.client.post("/api/settings/mc_nodes/mc1/passive_collection", json={"passive_collection": False})
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.get_json()["passive_collection"])
+        self.assertFalse(settings_routes.CONFIG["mc_nodes"][0]["passive_collection"])
+        self.save_mock.assert_called_once()
+
     def test_settings_mc_nodes_returns_force_flood(self):
         settings_routes.CONFIG["mc_nodes"] = [{"id": "mc1", "name": "MC One", "force_flood": True}]
 
@@ -252,6 +262,14 @@ class AppSettingsOmPositionTests(unittest.TestCase):
 
         self.assertEqual(resp.status_code, 200)
         self.assertTrue(resp.get_json()["mc_nodes"][0]["force_flood"])
+
+    def test_settings_mc_nodes_returns_passive_collection_default_true(self):
+        settings_routes.CONFIG["mc_nodes"] = [{"id": "mc1", "name": "MC One"}]
+
+        resp = self.client.get("/api/settings/mc_nodes")
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.get_json()["mc_nodes"][0]["passive_collection"])
 
     def test_rejects_mc_tcp_without_host(self):
         resp = self.client.post(

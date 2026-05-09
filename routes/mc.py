@@ -224,6 +224,7 @@ def api_mc_status():
             "enabled":    cfg.get("enabled", True),
             "path_hash_mode": cfg.get("path_hash_mode", info.get("path_hash_mode")),
             "force_flood": bool(cfg.get("force_flood", False)),
+            "passive_collection": cfg.get("passive_collection", True) is not False,
         })
     return jsonify({"mc_nodes": result})
 
@@ -706,6 +707,8 @@ def api_mc_device_info(radio_id):
     for k, v in dev.items():
         if isinstance(v, (bytes, bytearray)):
             dev[k] = v.hex()
+    with mc_connections_lock:
+        result["node_info"] = dict((mc_connections.get(radio_id, {}) or {}).get("node_info", {}) or {})
     return jsonify(result)
 
 

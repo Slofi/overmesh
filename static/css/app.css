@@ -1054,8 +1054,13 @@
       box-shadow: 0 2px 12px rgba(0,0,0,0.6);
       min-width: 150px; z-index: 5000;
       display: none; flex-direction: column; gap: 2px;
-      max-height: calc(100vh - 120px); overflow-y: auto;
+      max-height: min(420px, calc(100vh - 180px)); overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
     }
+    #map-layer-panel::-webkit-scrollbar { width: 8px; }
+    #map-layer-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
     #map-layer-panel.open { display: flex; }
     /* Ensure top-left controls (including the layer panel) render above bottom controls (legend) */
     .leaflet-top { z-index: 1001 !important; }

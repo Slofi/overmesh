@@ -629,6 +629,8 @@
     <div class="toolbar">
       <span class="section-title">TOC Log</span>
       <div class="toolbar-spacer"></div>
+      <input id="toc-import-file" type="file" accept=".json,.txt,application/json,text/plain" onchange="tocImportFile(this)" style="display:none">
+      <button class="btn" onclick="document.getElementById('toc-import-file').click()" title="Import a previously exported TOC JSON or TXT file">Import</button>
       <button class="btn" onclick="tocExport('text')" title="Export log as plain text">Export TXT</button>
       <button class="btn" onclick="tocExport('json')" title="Export log as JSON" style="margin-left:4px">Export JSON</button>
     </div>
@@ -645,6 +647,13 @@
           <option value="CONTACT">CONTACT</option>
           <option value="POSITION">POSITION</option>
         </select>
+        <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">
+          <input id="toc-date" type="date" title="Entry date"
+                 style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;width:130px">
+          <input id="toc-time" type="time" step="60" title="Entry time"
+                 style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;width:92px">
+          <button class="btn" onclick="tocSetNow()" title="Use current date and time" style="padding:4px 8px;font-size:12px">Now</button>
+        </div>
         <select id="toc-template" onchange="tocApplyTemplate(this.value)" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;flex:1;min-width:140px">
           <option value="">— template —</option>
           <option value="sitrep">SITREP</option>
@@ -660,8 +669,9 @@
       <div id="toc-fields" style="display:none;flex-direction:column;gap:6px"></div>
       <!-- Free-text note (shown when no template) -->
       <textarea id="toc-body" rows="3" placeholder="Note… (# to mention a node)" oninput="tocInputHandler(event)" onkeydown="tocInputKeydown(event)" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:13px;resize:vertical;width:100%;box-sizing:border-box"></textarea>
-      <div style="display:flex;justify-content:flex-end">
-        <button class="btn" onclick="tocSubmit()" style="min-width:80px" title="Add log entry">Add Entry</button>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <span id="toc-edit-status" style="font-size:12px;color:var(--muted);min-height:16px"></span>
+        <button class="btn" id="toc-submit-btn" onclick="tocSubmit()" style="min-width:80px" title="Add log entry">Add Entry</button>
       </div>
     </div>
 
@@ -1320,6 +1330,16 @@
       </p>
 
       <!-- Controls row -->
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+        <label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;max-width:620px">
+          <input type="checkbox" id="mc-passive-collection" onchange="saveMcPassiveCollection(this.checked)" style="margin-top:2px">
+          <span>
+            <b>Passive collection</b><br>
+            <span style="color:var(--muted)">Store new passive MC observations for the selected radio. Turning this off keeps existing observations but stops recording new ones.</span>
+          </span>
+        </label>
+        <span id="mc-passive-collection-status" style="font-size:12px;color:var(--muted);min-height:16px"></span>
+      </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
         <button class="btn" onclick="passiveIntelRunCleanup(this)" title="Delete observations older than the configured TTL">Run TTL cleanup</button>
         <label style="display:flex;align-items:center;gap:6px;font-size:12px">

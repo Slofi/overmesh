@@ -3979,12 +3979,20 @@ if (targetEl) {
   }
 
   const TILE_LAYERS = {
-    osm:      { label: 'OpenStreetMap', url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 19 },
-    voyager:  { label: 'Voyager',       url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
-    positron: { label: 'Positron',      url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
-    esri_sat: { label: 'Esri Satellite', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles © Esri', maxZoom: 18 },
-    esri_topo:{ label: 'Esri Topo',     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles © Esri', maxZoom: 18 },
-    topo:     { label: 'OpenTopoMap',   url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, © <a href="https://opentopomap.org">OpenTopoMap</a>', maxZoom: 17 },
+    osm:              { label: 'OpenStreetMap',   url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 19 },
+    voyager:          { label: 'Voyager',         url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
+    voyager_nolabels: { label: 'Voyager No Labels', url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
+    positron:         { label: 'Positron',        url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
+    dark_matter:      { label: 'Dark Matter',     url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
+    dark_nolabels:    { label: 'Dark No Labels',  url: 'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
+    esri_gray_dark:   { label: 'Esri Dark Gray',  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles © Esri, HERE, Garmin, © OpenStreetMap contributors, and the GIS User Community', maxZoom: 16 },
+    stamen_toner_lite:{ label: 'Toner Lite',      url: 'https://tiles.stadiamaps.com/tiles/stamen_toner_lite/{z}/{x}/{y}{r}.png', attribution: '© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://stamen.com/">Stamen Design</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', maxZoom: 20 },
+    stamen_toner_dark:{ label: 'Toner Dark',      url: 'https://tiles.stadiamaps.com/tiles/stamen_toner_dark/{z}/{x}/{y}{r}.png', attribution: '© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://stamen.com/">Stamen Design</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', maxZoom: 20 },
+    stamen_terrain:   { label: 'Stamen Terrain',  url: 'https://tiles.stadiamaps.com/tiles/stamen_terrain/{z}/{x}/{y}{r}.png', attribution: '© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://stamen.com/">Stamen Design</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', maxZoom: 20 },
+    esri_sat:         { label: 'Esri Satellite',  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles © Esri', maxZoom: 18 },
+    esri_streets:     { label: 'Esri Streets',    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles © Esri, DeLorme, NAVTEQ, USGS, Intermap, NRCAN', maxZoom: 19 },
+    esri_topo:        { label: 'Esri Topo',       url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles © Esri', maxZoom: 18 },
+    topo:             { label: 'OpenTopoMap',     url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, © <a href="https://opentopomap.org">OpenTopoMap</a>', maxZoom: 17 },
   };
 
   // ── Polar grid ─────────────────────────────────────────────────────────────
@@ -10017,6 +10025,10 @@ if (targetEl) {
     return 2;
   }
 
+  function _mcPassiveCollectionEnabled(radioId) {
+    return mcLastStatus[radioId]?.passive_collection !== false;
+  }
+
   function _mcPathHashModeLabel(mode) {
     const m = Number(mode);
     if (m === 0) return '1B/hop';
@@ -12764,6 +12776,7 @@ if (targetEl) {
         if (!mcLastStatus[n.id]) mcLastStatus[n.id] = {};
         mcLastStatus[n.id].path_hash_mode = n.path_hash_mode ?? mcLastStatus[n.id].path_hash_mode ?? 2;
         mcLastStatus[n.id].force_flood = !!n.force_flood;
+        mcLastStatus[n.id].passive_collection = n.passive_collection !== false;
       });
       if (!data.mc_nodes.length) {
         list.innerHTML = '<p style="color:var(--muted);font-size:12px;margin:0">No MC radios configured.</p>';
@@ -12784,6 +12797,7 @@ if (targetEl) {
           <span class="radio-row-status">${escHtml(transport)}</span>
           <span class="radio-row-status" title="Preferred MC path hash size">${escHtml(_mcPathHashModeLabel(n.path_hash_mode ?? 2))}</span>
           ${n.force_flood ? '<span class="radio-row-status" title="MC DMs and pings force flood routing" style="color:var(--yellow)">Flood</span>' : ''}
+          ${n.passive_collection === false ? '<span class="radio-row-status" title="Passive collection disabled" style="color:var(--yellow)">Passive off</span>' : ''}
           <span class="radio-row-status" style="${!n.enabled ? 'color:var(--muted)' : ''}">${n.enabled ? n.status : 'disabled'}</span>
           <button class="btn-secondary" style="font-size:11px;padding:3px 8px;${n.enabled ? '' : 'color:var(--accent);border-color:var(--accent)'}"
             title="${n.enabled ? 'Pause scanning for this radio — keeps config and message history intact' : 'Resume scanning and connecting to this radio'}"
@@ -14283,6 +14297,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const maxEl  = document.getElementById('mc-tx-power-max');
     const hashSel = document.getElementById('mc-path-hash-mode');
     const forceFloodEl = document.getElementById('mc-force-flood');
+    const passiveCollectionEl = document.getElementById('mc-passive-collection');
     if (freqEl && s.freq != null) freqEl.value = s.freq;
     if (bwSel  && s.bw   != null) bwSel.value  = String(s.bw);
     if (sfSel  && s.sf   != null) sfSel.value  = String(s.sf);
@@ -14290,6 +14305,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     if (txEl   && s.tx_power   != null) txEl.value = s.tx_power;
     if (hashSel) hashSel.value = String(_mcPreferredPathHashMode(radioId));
     if (forceFloodEl) forceFloodEl.checked = !!s.force_flood;
+    if (passiveCollectionEl) passiveCollectionEl.checked = s.passive_collection !== false;
     if (maxEl  && s.max_tx_power != null) maxEl.textContent = `max ${s.max_tx_power} dBm`;
     if (maxEl  && s.max_tx_power != null && txEl) txEl.max = s.max_tx_power;
     const latEl = document.getElementById('mc-coords-lat');
@@ -14331,6 +14347,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         if (!ok || d.error) { el.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Request failed.')}</span>`; return; }
         const data = d;
         const dev = data.device || {};
+        const nodeInfo = data.node_info || {};
         const bat = data.battery || {};
         const batV   = bat.level     != null ? (bat.level / 1000).toFixed(2) + ' V' : '—';
         const used   = bat.used_kb   != null ? bat.used_kb  + ' KB' : '—';
@@ -14340,7 +14357,13 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         const maxCon = dev.max_contacts != null ? dev.max_contacts : '—';
         const maxCh  = dev.max_channels != null ? dev.max_channels : '—';
         const rep    = dev.repeat    != null ? (dev.repeat ? 'Yes' : 'No') : '—';
+        const pubKey = nodeInfo.public_key || nodeInfo.pubkey || '';
+        const keyHtml = pubKey
+          ? `<span style="font-family:monospace;word-break:break-all">${escHtml(pubKey)}</span>`
+          : '—';
         el.innerHTML = `<table style="border-collapse:collapse;font-size:12px">
+          <tr><td style="color:var(--muted);padding:2px 16px 2px 0">Radio key</td><td>${keyHtml}</td></tr>
+          <tr><td style="color:var(--muted);padding:2px 16px 2px 0">Key prefix</td><td style="font-family:monospace">${escHtml(pubKey ? pubKey.slice(0, 12) : (nodeInfo.id || data.node_id || '—'))}</td></tr>
           <tr><td style="color:var(--muted);padding:2px 16px 2px 0">Firmware</td><td>${escHtml(String(fwVer))}</td></tr>
           <tr><td style="color:var(--muted);padding:2px 16px 2px 0">Build</td><td style="font-family:monospace">${escHtml(String(fwBld))}</td></tr>
           <tr><td style="color:var(--muted);padding:2px 16px 2px 0">Battery</td><td>${escHtml(batV)}</td></tr>
@@ -14547,6 +14570,34 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         }
       }).catch(e => {
         const cb = document.getElementById('mc-force-flood');
+        if (cb) cb.checked = !enabled;
+        if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`;
+      });
+  }
+
+  function saveMcPassiveCollection(enabled) {
+    const radioId = mcSettingsRadioId || activeMcRadioId;
+    const statusEl = document.getElementById('mc-passive-collection-status');
+    if (!radioId) return;
+    if (statusEl) statusEl.textContent = 'Saving...';
+    fetch(BASE_PATH + `/api/settings/mc_nodes/${encodeURIComponent(radioId)}/passive_collection`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({passive_collection: !!enabled}),
+    }).then(r => r.json().then(d => ({ok: r.ok, d})))
+      .then(({ok, d}) => {
+        if (!ok || d.error) throw new Error(d.error || 'Request failed.');
+        if (!mcLastStatus[radioId]) mcLastStatus[radioId] = {};
+        mcLastStatus[radioId].passive_collection = !!d.passive_collection;
+        loadMcSettingsNodes();
+        const cb = document.getElementById('mc-passive-collection');
+        if (cb) cb.checked = !!d.passive_collection;
+        if (statusEl) {
+          statusEl.innerHTML = `<span style="color:var(--accent)">${d.passive_collection ? 'Passive collection enabled.' : 'Passive collection disabled.'}</span>`;
+          setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 5000);
+        }
+      }).catch(e => {
+        const cb = document.getElementById('mc-passive-collection');
         if (cb) cb.checked = !enabled;
         if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`;
       });
@@ -16966,6 +17017,49 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   };
 
   let _tocActiveTemplate = null;
+  let _tocEditingId = null;
+  const _tocEntries = new Map();
+
+  function _tocPad(n) { return String(n).padStart(2, '0'); }
+
+  function _tocLocalDateTimeParts(ts = null) {
+    const d = ts ? new Date(ts * 1000) : new Date();
+    return {
+      date: `${d.getFullYear()}-${_tocPad(d.getMonth()+1)}-${_tocPad(d.getDate())}`,
+      time: `${_tocPad(d.getHours())}:${_tocPad(d.getMinutes())}`,
+    };
+  }
+
+  function _tocSetDateTimeFields(ts = null) {
+    const parts = _tocLocalDateTimeParts(ts);
+    const dateEl = document.getElementById('toc-date');
+    const timeEl = document.getElementById('toc-time');
+    if (dateEl) dateEl.value = parts.date;
+    if (timeEl) timeEl.value = parts.time;
+  }
+
+  function _tocDatetimeTs() {
+    const date = document.getElementById('toc-date')?.value;
+    const time = document.getElementById('toc-time')?.value || '00:00';
+    if (!date) return Math.floor(Date.now() / 1000);
+    const dt = new Date(`${date}T${time}`);
+    const ts = Math.floor(dt.getTime() / 1000);
+    return Number.isFinite(ts) ? ts : Math.floor(Date.now() / 1000);
+  }
+
+  function tocSetNow() {
+    _tocSetDateTimeFields();
+  }
+
+  function _tocSetSubmitMode() {
+    const btn = document.getElementById('toc-submit-btn');
+    const st = document.getElementById('toc-edit-status');
+    if (btn) {
+      btn.textContent = _tocEditingId ? 'Save Entry' : 'Add Entry';
+      btn.title = _tocEditingId ? 'Save changes to this log entry' : 'Add log entry';
+    }
+    if (st) st.textContent = _tocEditingId ? `Editing entry #${_tocEditingId}` : '';
+  }
 
   function tocApplyTemplate(key) {
     const fieldsDiv = document.getElementById('toc-fields');
@@ -17002,11 +17096,14 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   function tocClear() {
     document.getElementById('toc-template').value = '';
     document.getElementById('toc-category').value = 'NOTE';
+    _tocSetDateTimeFields();
     document.getElementById('toc-body').value      = '';
     document.getElementById('toc-body').style.display = '';
     document.getElementById('toc-fields').style.display = 'none';
     document.getElementById('toc-fields').innerHTML = '';
     _tocActiveTemplate = null;
+    _tocEditingId = null;
+    _tocSetSubmitMode();
   }
 
   function tocFmtTime(ts) {
@@ -17027,7 +17124,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   const _TOC_MT_COLOR   = '#4a9e6f';  // muted green
   const _TOC_MC_COLOR   = '#4a7cba';  // muted steel blue
 
-  function _tocEscape(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+  function _tocEscape(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
 
   function _tocRenderMentions(text) {
     const parts = text.split(/(?=#\[[^\]]+\]\((?:mt|mc):[^)]+\))/);
@@ -17162,6 +17259,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   }, true);
 
   function tocRenderRow(e) {
+    _tocEntries.set(Number(e.id), e);
     const color = TOC_CAT_COLORS[e.category] || '#64748b';
     const tr = document.createElement('tr');
     tr.dataset.tocId = e.id;
@@ -17173,6 +17271,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       </td>
       <td style="padding:6px 8px;vertical-align:top;width:100%">${tocRenderBody(e.body)}</td>
       <td style="padding:6px 4px;vertical-align:top">
+        <button onclick="tocEdit(${e.id})" title="Edit" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:0 3px"
+          onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--muted)'">✎</button>
         <button onclick="tocDelete(${e.id},this)" title="Delete" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:0 3px"
           onmouseover="this.style.color='#ef4444'" onmouseout="this.style.color='var(--muted)'">✕</button>
       </td>`;
@@ -17183,7 +17283,11 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     fetch('/api/toc').then(r => r.json()).then(entries => {
       const tbody = document.getElementById('toc-tbody');
       const emptyRow = document.getElementById('toc-empty-row');
+      _tocEntries.clear();
       tbody.querySelectorAll('[data-toc-id]').forEach(el => el.remove());
+      const dateEl = document.getElementById('toc-date');
+      const timeEl = document.getElementById('toc-time');
+      if (dateEl && timeEl && (!dateEl.value || !timeEl.value) && !_tocEditingId) _tocSetDateTimeFields();
       if (!entries.length) { if (emptyRow) emptyRow.style.display = ''; return; }
       if (emptyRow) emptyRow.style.display = 'none';
       entries.forEach(e => tbody.appendChild(tocRenderRow(e)));
@@ -17205,18 +17309,62 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       bodyStr = (document.getElementById('toc-body').value || '').trim();
       if (!bodyStr) return;
     }
-    fetch('/api/toc', {
-      method: 'POST',
+    const isEdit = !!_tocEditingId;
+    const url = isEdit ? `/api/toc/${_tocEditingId}` : '/api/toc';
+    fetch(url, {
+      method: isEdit ? 'PUT' : 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({body: bodyStr, category})
+      body: JSON.stringify({body: bodyStr, category, ts: _tocDatetimeTs()})
     }).then(r => r.json()).then(data => {
       if (!data.ok) return;
       tocClear();
       const tbody    = document.getElementById('toc-tbody');
       const emptyRow = document.getElementById('toc-empty-row');
       if (emptyRow) emptyRow.style.display = 'none';
-      tbody.insertBefore(tocRenderRow(data), tbody.firstChild);
+      const oldRow = isEdit ? tbody.querySelector(`[data-toc-id="${data.id}"]`) : null;
+      if (oldRow) oldRow.remove();
+      const row = tocRenderRow(data);
+      const rows = [...tbody.querySelectorAll('[data-toc-id]')];
+      const before = rows.find(r => {
+        const entry = _tocEntries.get(Number(r.dataset.tocId));
+        return entry && Number(entry.ts) < Number(data.ts);
+      });
+      tbody.insertBefore(row, before || null);
     }).catch(() => {});
+  }
+
+  function tocEdit(id) {
+    const entry = _tocEntries.get(Number(id));
+    if (!entry) return;
+    _tocEditingId = Number(id);
+    document.getElementById('toc-category').value = entry.category || 'NOTE';
+    _tocSetDateTimeFields(entry.ts);
+    const tmplKey = (() => {
+      try {
+        const obj = JSON.parse(entry.body);
+        if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return '';
+        const keys = Object.keys(obj);
+        return Object.entries(TOC_TEMPLATES).find(([, t]) =>
+          t.fields.length === keys.length && t.fields.every(f => Object.prototype.hasOwnProperty.call(obj, f))
+        )?.[0] || '';
+      } catch(e) {
+        return '';
+      }
+    })();
+    const templateEl = document.getElementById('toc-template');
+    templateEl.value = tmplKey;
+    if (tmplKey) {
+      tocApplyTemplate(tmplKey);
+      const obj = JSON.parse(entry.body);
+      document.querySelectorAll('#toc-fields input[data-toc-field]').forEach(inp => {
+        inp.value = obj[inp.dataset.tocField] || '';
+      });
+    } else {
+      tocApplyTemplate('');
+      document.getElementById('toc-body').value = entry.body || '';
+    }
+    _tocSetSubmitMode();
+    document.getElementById('toc-category').scrollIntoView({block: 'center', behavior: 'smooth'});
   }
 
   function tocDelete(id, btn) {
@@ -17225,6 +17373,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         if (!data.ok) return;
         const row = btn.closest('[data-toc-id]');
         if (row) row.remove();
+        _tocEntries.delete(Number(id));
         const tbody = document.getElementById('toc-tbody');
         if (!tbody.querySelector('[data-toc-id]')) {
           const emptyRow = document.getElementById('toc-empty-row');
@@ -17236,4 +17385,26 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   function tocExport(fmt) {
     window.location.href = `/api/toc/export?fmt=${fmt}`;
+  }
+
+  function tocImportFile(input) {
+    const file = input?.files?.[0];
+    if (!file) return;
+    file.text().then(content => {
+      fetch('/api/toc/import', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({filename: file.name, content})
+      }).then(r => r.json().then(d => ({ok: r.ok, d})))
+        .then(({ok, d}) => {
+          if (!ok || d.error) throw new Error(d.error || 'Import failed.');
+          showToast('TOC Log', `Imported ${d.imported || 0} entries.`, 'node');
+          tocLoad();
+        })
+        .catch(e => showToast('TOC Log', `Import failed: ${e.message}`, 'node'))
+        .finally(() => { input.value = ''; });
+    }).catch(e => {
+      showToast('TOC Log', `Import failed: ${e.message}`, 'node');
+      input.value = '';
+    });
   }

@@ -445,6 +445,16 @@ def _ensure_mc_tx_allowed(action="MC transmission"):
         raise RuntimeError(f"Silent Running active — {action} blocked")
 
 
+def _mc_passive_collection_enabled(config_id):
+    with mc_connections_lock:
+        cfg = (mc_connections.get(config_id, {}) or {}).get("config", {}) or {}
+    if cfg:
+        return cfg.get("passive_collection", True) is not False
+    with CONFIG_LOCK:
+        node = next((n for n in CONFIG.get("mc_nodes", []) if n.get("id") == config_id), None)
+    return not node or node.get("passive_collection", True) is not False
+
+
 def _mc_text_bytes(text):
     return len((text or "").encode("utf-8"))
 
@@ -1552,19 +1562,20 @@ def _subscribe_mc_events(mc, config_id, name):
                 "flags":    p.get("flags", 0),
                 "auth_hex": p.get("auth", 0).to_bytes(4, 'little').hex(),  # responding node's 4-byte hash (wire byte order)
             })
-            # Passive intel: store per-hop observations (quality filter: must have a hash)
-            for hop in path:
-                hop_hash = hop.get("hash")
-                hop_snr  = hop.get("snr")
-                if hop_hash and hop_snr is not None:
-                    lat, lon = _latlon_for_prefix(config_id, str(hop_hash))
-                    save_passive_obs(
-                        config_id, str(hop_hash), "trace",
-                        snr=hop_snr,
-                        path_len=p.get("path_len"),
-                        path_hash_size=path_hash_size,
-                        lat=lat, lon=lon,
-                    )
+            if _mc_passive_collection_enabled(config_id):
+                # Passive intel: store per-hop observations (quality filter: must have a hash)
+                for hop in path:
+                    hop_hash = hop.get("hash")
+                    hop_snr  = hop.get("snr")
+                    if hop_hash and hop_snr is not None:
+                        lat, lon = _latlon_for_prefix(config_id, str(hop_hash))
+                        save_passive_obs(
+                            config_id, str(hop_hash), "trace",
+                            snr=hop_snr,
+                            path_len=p.get("path_len"),
+                            path_hash_size=path_hash_size,
+                            lat=lat, lon=lon,
+                        )
         except Exception as e:
             log.warning(f"[MC:{name}] on_trace_data error: {e}")
 
@@ -1576,7 +1587,7 @@ def _subscribe_mc_events(mc, config_id, name):
             rssi = p.get("rssi")
             snr  = p.get("snr")
             # Quality filter: only store if we have a sender ID and signal data
-            if pubkey_pre and (rssi is not None or snr is not None):
+            if _mc_passive_collection_enabled(config_id) and pubkey_pre and (rssi is not None or snr is not None):
                 lat, lon = _latlon_for_prefix(config_id, pubkey_pre)
                 save_passive_obs(
                     config_id, pubkey_pre, "rx",

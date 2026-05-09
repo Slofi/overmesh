@@ -698,6 +698,7 @@ def api_settings_mc_nodes():
             "status":     statuses.get(n["id"], "disconnected"),
             "path_hash_mode": n.get("path_hash_mode", 2),
             "force_flood": bool(n.get("force_flood", False)),
+            "passive_collection": n.get("passive_collection", True) is not False,
         }
         for n in CONFIG.get("mc_nodes", [])
     ]
@@ -718,7 +719,7 @@ def api_settings_mc_nodes_add():
         return jsonify({"error": "Name is required"}), 400
     mc_nodes = CONFIG.setdefault("mc_nodes", [])
     node_id  = f"mc_node_{uuid.uuid4().hex[:12]}"
-    new_node = {"id": node_id, "name": name, "enabled": True, "path_hash_mode": 2, "force_flood": False, "type": node_type}
+    new_node = {"id": node_id, "name": name, "enabled": True, "path_hash_mode": 2, "force_flood": False, "passive_collection": True, "type": node_type}
     if node_type == "tcp":
         host = (data.get("host") or "").strip()
         try:
@@ -920,6 +921,23 @@ def api_settings_mc_nodes_force_flood(node_id):
         if node_id in mc_connections:
             mc_connections[node_id].setdefault("config", {})["force_flood"] = enabled
     return jsonify({"ok": True, "force_flood": enabled})
+
+
+@bp.route("/api/settings/mc_nodes/<node_id>/passive_collection", methods=["POST"])
+def api_settings_mc_nodes_passive_collection(node_id):
+    data = request.get_json(silent=True) or {}
+    enabled = bool(data.get("passive_collection", True))
+    with CONFIG_LOCK:
+        mc_nodes = CONFIG.get("mc_nodes", [])
+        node = next((n for n in mc_nodes if n["id"] == node_id), None)
+        if not node:
+            return jsonify({"error": "MC node not found"}), 404
+        node["passive_collection"] = enabled
+        save_config()
+    with mc_connections_lock:
+        if node_id in mc_connections:
+            mc_connections[node_id].setdefault("config", {})["passive_collection"] = enabled
+    return jsonify({"ok": True, "passive_collection": enabled})
 
 
 

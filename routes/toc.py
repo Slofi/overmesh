@@ -6,7 +6,7 @@ from db import get_prefs_db
 
 bp = Blueprint('toc', __name__)
 
-VALID_CATEGORIES = {'NOTE', 'SITREP', 'ALERT', 'ACTION', 'COMMS', 'CONTACT', 'CASREP', 'POSITION', 'NET'}
+VALID_CATEGORIES = {'NOTE', 'SITREP', 'ALERT', 'ACTION', 'COMMS', 'CONTACT', 'POSITION'}
 
 
 @bp.route('/api/toc')

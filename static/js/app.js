@@ -16951,101 +16951,158 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   // ── TOC Log ──────────────────────────────────────────────────────────────
 
   const TOC_TEMPLATES = {
-    sitrep:    'SITREP\nDTG: \nLOC: \nSIT: \nPERS: \nEQP: \nINTENT: ',
-    contact:   'FIRST CONTACT\nNODE: \nCALLSIGN: \nCH/FREQ: \nSIGNAL: \nNOTES: ',
-    commscheck:'COMMS CHECK\nFROM: \nTO: \nSIGNAL: \nRESULT: ',
-    alert:     'ALERT\nTYPE: \nDETAILS: \nACTION TAKEN: ',
-    action:    'ACTION\nACTION: \nBY: \nRESULT: ',
-    casrep:    'CASREP\nITEM: \nSTATUS: \nNOTES: ',
-    position:  'POSITION UPDATE\nNODE: \nGRID/COORDS: \nNOTES: ',
-    netopen:   'NET OPEN\nNET: \nFREQ/CH: \nMEMBERS: ',
-    netclose:  'NET CLOSE\nNET: \nDURATION: \nNOTES: ',
+    sitrep:     { cat:'SITREP',   label:'SITREP',          fields:['Date/Time','Location','Situation','Intent/Plan','Notes'] },
+    contact:    { cat:'CONTACT',  label:'First Contact',    fields:['Node','Callsign','Channel/Freq','Signal','Notes'] },
+    commscheck: { cat:'COMMS',    label:'COMMS CHECK',      fields:['From','To','Signal','Result','Notes'] },
+    alert:      { cat:'ALERT',    label:'ALERT',            fields:['Type','Details','Action Taken','Notes'] },
+    action:     { cat:'ACTION',   label:'ACTION',           fields:['Action','By','Result','Notes'] },
+    position:   { cat:'POSITION', label:'POSITION UPDATE',  fields:['Node','Coordinates','Notes'] },
   };
 
-  const TOC_CAT_MAP = {
-    sitrep:'SITREP', contact:'CONTACT', commscheck:'COMMS',
-    alert:'ALERT', action:'ACTION', casrep:'CASREP',
-    position:'POSITION', netopen:'NET', netclose:'NET',
+  const TOC_CAT_COLORS = {
+    SITREP:'#3b82f6', ALERT:'#ef4444', ACTION:'#f59e0b',
+    COMMS:'#10b981',  CONTACT:'#8b5cf6', POSITION:'#06b6d4',
+    NOTE:'#64748b',
   };
+
+  let _tocActiveTemplate = null;
 
   function tocApplyTemplate(key) {
-    if (!key) return;
-    const body = document.getElementById('toc-body');
-    const cat  = document.getElementById('toc-category');
-    if (body) body.value = TOC_TEMPLATES[key] || '';
-    if (cat && TOC_CAT_MAP[key]) cat.value = TOC_CAT_MAP[key];
+    const fieldsDiv = document.getElementById('toc-fields');
+    const bodyEl    = document.getElementById('toc-body');
+    const catEl     = document.getElementById('toc-category');
+    if (!key) {
+      _tocActiveTemplate = null;
+      fieldsDiv.style.display = 'none';
+      bodyEl.style.display    = '';
+      return;
+    }
+    const tmpl = TOC_TEMPLATES[key];
+    if (!tmpl) return;
+    _tocActiveTemplate = key;
+    if (catEl) catEl.value = tmpl.cat;
+    // build field inputs
+    fieldsDiv.innerHTML = '';
+    tmpl.fields.forEach(f => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px';
+      row.innerHTML = `<label style="font-size:11px;color:var(--muted);min-width:90px;text-align:right;flex-shrink:0">${f}</label>
+        <input type="text" data-toc-field="${f}" placeholder="${f}…"
+          style="flex:1;background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:5px 8px;font-size:12px">`;
+      fieldsDiv.appendChild(row);
+    });
+    fieldsDiv.style.display = 'flex';
+    bodyEl.style.display    = 'none';
+    fieldsDiv.querySelector('input') && fieldsDiv.querySelector('input').focus();
+  }
+
+  function tocClear() {
     document.getElementById('toc-template').value = '';
-    if (body) body.focus();
+    document.getElementById('toc-category').value = 'NOTE';
+    document.getElementById('toc-body').value      = '';
+    document.getElementById('toc-body').style.display = '';
+    document.getElementById('toc-fields').style.display = 'none';
+    document.getElementById('toc-fields').innerHTML = '';
+    _tocActiveTemplate = null;
+  }
+
+  function tocFmtTime(ts) {
+    const d = new Date(ts * 1000);
+    const pad = n => String(n).padStart(2,'0');
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
   function tocFmtDate(ts) {
     const d = new Date(ts * 1000);
     const pad = n => String(n).padStart(2,'0');
-    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
-  const TOC_CAT_COLORS = {
-    SITREP:'#3b82f6', ALERT:'#ef4444', ACTION:'#f59e0b',
-    COMMS:'#10b981', CONTACT:'#8b5cf6', CASREP:'#f97316',
-    POSITION:'#06b6d4', NET:'#84cc16', NOTE:'var(--muted)',
-  };
+  function tocRenderBody(body) {
+    try {
+      const obj = JSON.parse(body);
+      if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+        return '<table style="border-collapse:collapse;width:100%">' +
+          Object.entries(obj).map(([k,v]) =>
+            `<tr><td style="color:var(--muted);padding:1px 10px 1px 0;white-space:nowrap;font-size:11px;vertical-align:top">${k}</td>` +
+            `<td style="color:var(--text);font-size:12px;word-break:break-word">${(v||'—').replace(/&/g,'&amp;').replace(/</g,'&lt;')}</td></tr>`
+          ).join('') + '</table>';
+      }
+    } catch(e) { /* plain text */ }
+    return `<span style="font-size:12px;white-space:pre-wrap">${body.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</span>`;
+  }
 
-  function tocRenderEntry(e) {
-    const color = TOC_CAT_COLORS[e.category] || 'var(--muted)';
-    const div = document.createElement('div');
-    div.dataset.tocId = e.id;
-    div.style.cssText = 'background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:12px;position:relative';
-    div.innerHTML = `
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-        <span style="background:${color};color:#fff;border-radius:4px;padding:1px 7px;font-size:11px;font-weight:600;letter-spacing:.5px">${e.category}</span>
-        <span style="color:var(--muted);font-size:11px;font-family:monospace">${tocFmtDate(e.ts)}</span>
-        <button onclick="tocDelete(${e.id},this)" title="Delete entry" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:0 2px;line-height:1" onmouseover="this.style.color='#ef4444'" onmouseout="this.style.color='var(--muted)'">✕</button>
-      </div>
-      <pre style="margin:0;white-space:pre-wrap;font-family:monospace;font-size:12px;color:var(--text)">${e.body.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</pre>`;
-    return div;
+  function tocRenderRow(e) {
+    const color = TOC_CAT_COLORS[e.category] || '#64748b';
+    const tr = document.createElement('tr');
+    tr.dataset.tocId = e.id;
+    tr.style.borderBottom = '1px solid var(--border)';
+    tr.innerHTML = `
+      <td style="padding:6px 8px;color:var(--muted);font-size:11px;font-family:monospace;white-space:nowrap;vertical-align:top">${tocFmtDate(e.ts)}</td>
+      <td style="padding:6px 8px;vertical-align:top">
+        <span style="background:${color};color:#fff;border-radius:4px;padding:2px 6px;font-size:10px;font-weight:600;letter-spacing:.4px;white-space:nowrap">${e.category}</span>
+      </td>
+      <td style="padding:6px 8px;vertical-align:top;width:100%">${tocRenderBody(e.body)}</td>
+      <td style="padding:6px 4px;vertical-align:top">
+        <button onclick="tocDelete(${e.id},this)" title="Delete" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:0 3px"
+          onmouseover="this.style.color='#ef4444'" onmouseout="this.style.color='var(--muted)'">✕</button>
+      </td>`;
+    return tr;
   }
 
   function tocLoad() {
     fetch('/api/toc').then(r => r.json()).then(entries => {
-      const list  = document.getElementById('toc-log-list');
-      const empty = document.getElementById('toc-empty');
-      list.querySelectorAll('[data-toc-id]').forEach(el => el.remove());
-      if (!entries.length) { if (empty) empty.style.display = ''; return; }
-      if (empty) empty.style.display = 'none';
-      entries.forEach(e => list.appendChild(tocRenderEntry(e)));
+      const tbody = document.getElementById('toc-tbody');
+      const emptyRow = document.getElementById('toc-empty-row');
+      tbody.querySelectorAll('[data-toc-id]').forEach(el => el.remove());
+      if (!entries.length) { if (emptyRow) emptyRow.style.display = ''; return; }
+      if (emptyRow) emptyRow.style.display = 'none';
+      entries.forEach(e => tbody.appendChild(tocRenderRow(e)));
     }).catch(() => {});
   }
 
   function tocSubmit() {
-    const body = (document.getElementById('toc-body').value || '').trim();
-    if (!body) return;
     const category = document.getElementById('toc-category').value;
+    let bodyStr;
+    if (_tocActiveTemplate) {
+      const fields = document.getElementById('toc-fields');
+      const obj = {};
+      fields.querySelectorAll('input[data-toc-field]').forEach(inp => {
+        obj[inp.dataset.tocField] = inp.value.trim();
+      });
+      if (!Object.values(obj).some(v => v)) return;
+      bodyStr = JSON.stringify(obj);
+    } else {
+      bodyStr = (document.getElementById('toc-body').value || '').trim();
+      if (!bodyStr) return;
+    }
     fetch('/api/toc', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({body, category})
+      body: JSON.stringify({body: bodyStr, category})
     }).then(r => r.json()).then(data => {
       if (!data.ok) return;
-      document.getElementById('toc-body').value = '';
-      const list  = document.getElementById('toc-log-list');
-      const empty = document.getElementById('toc-empty');
-      if (empty) empty.style.display = 'none';
-      list.insertBefore(tocRenderEntry(data), list.firstChild);
+      tocClear();
+      const tbody    = document.getElementById('toc-tbody');
+      const emptyRow = document.getElementById('toc-empty-row');
+      if (emptyRow) emptyRow.style.display = 'none';
+      tbody.insertBefore(tocRenderRow(data), tbody.firstChild);
     }).catch(() => {});
   }
 
   function tocDelete(id, btn) {
-    if (!confirm('Delete this log entry?')) return;
-    fetch(`/api/toc/${id}`, {method:'DELETE'}).then(r => r.json()).then(data => {
-      if (!data.ok) return;
-      const el = btn.closest('[data-toc-id]');
-      if (el) el.remove();
-      const list = document.getElementById('toc-log-list');
-      if (!list.querySelector('[data-toc-id]')) {
-        const empty = document.getElementById('toc-empty');
-        if (empty) empty.style.display = '';
-      }
-    }).catch(() => {});
+    showConfirm('Delete this log entry?', () => {
+      fetch(`/api/toc/${id}`, {method:'DELETE'}).then(r => r.json()).then(data => {
+        if (!data.ok) return;
+        const row = btn.closest('[data-toc-id]');
+        if (row) row.remove();
+        const tbody = document.getElementById('toc-tbody');
+        if (!tbody.querySelector('[data-toc-id]')) {
+          const emptyRow = document.getElementById('toc-empty-row');
+          if (emptyRow) emptyRow.style.display = '';
+        }
+      }).catch(() => {});
+    });
   }
 
   function tocExport(fmt) {

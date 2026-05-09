@@ -16956,7 +16956,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     commscheck: { cat:'COMMS',    label:'COMMS CHECK',      fields:['From','To','Signal','Result','Notes'] },
     alert:      { cat:'ALERT',    label:'ALERT',            fields:['Type','Details','Action Taken','Notes'] },
     action:     { cat:'ACTION',   label:'ACTION',           fields:['Action','By','Result','Notes'] },
-    position:   { cat:'POSITION', label:'POSITION UPDATE',  fields:['Node','Coordinates','Notes'] },
+    position:   { cat:'POSITION', label:'POSITION UPDATE',  fields:['Node','Coordinates/Pos','Notes'] },
   };
 
   const TOC_CAT_COLORS = {
@@ -16985,8 +16985,10 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     tmpl.fields.forEach(f => {
       const row = document.createElement('div');
       row.style.cssText = 'display:flex;align-items:center;gap:8px';
+      const _nodeFields = new Set(['node','callsign','from','to','by','members']);
+      const _hint = _nodeFields.has(f.toLowerCase()) ? `${f}… (# to mention node)` : `${f}…`;
       row.innerHTML = `<label style="font-size:11px;color:var(--muted);min-width:90px;text-align:right;flex-shrink:0">${f}</label>
-        <input type="text" data-toc-field="${f}" placeholder="${f}… (# to mention node)"
+        <input type="text" data-toc-field="${f}" placeholder="${_hint}"
           style="flex:1;background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:5px 8px;font-size:12px">`;
       row.querySelector('input').addEventListener('input', tocInputHandler);
       row.querySelector('input').addEventListener('keydown', tocInputKeydown);
@@ -17022,6 +17024,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   // ── Mention rendering ────────────────────────────────────────────────────
 
   const _TOC_MENTION_RE = /#\[([^\]]+)\]\((mt|mc):([^)]+)\)/g;
+  const _TOC_MT_COLOR   = '#4a9e6f';  // muted green
+  const _TOC_MC_COLOR   = '#4a7cba';  // muted steel blue
 
   function _tocEscape(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
 
@@ -17031,7 +17035,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       const m = part.match(/^(#\[([^\]]+)\]\((mt|mc):([^)]+)\))([\s\S]*)$/);
       if (m) {
         const [, , name, type, rest, tail] = m;
-        const color = type === 'mt' ? '#3b82f6' : '#8b5cf6';
+        const color = type === 'mt' ? _TOC_MT_COLOR : _TOC_MC_COLOR;
         const safeRest = rest.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
         const badge = `<button onclick="tocOpenMention('${type}','${safeRest}')" style="background:${color}22;color:${color};border:1px solid ${color}55;border-radius:4px;padding:1px 6px;font-size:11px;font-weight:600;cursor:pointer">#${_tocEscape(name)}</button>`;
         return badge + _tocEscape(tail);
@@ -17108,7 +17112,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         item.style.cssText = 'padding:6px 10px;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:12px';
         item.onmouseover = () => item.style.background = 'var(--bg3)';
         item.onmouseout  = () => item.style.background = '';
-        const col = node.type === 'mt' ? '#3b82f6' : '#8b5cf6';
+        const col = node.type === 'mt' ? _TOC_MT_COLOR : _TOC_MC_COLOR;
         item.innerHTML = `<span style="background:${col};color:#fff;border-radius:3px;padding:1px 5px;font-size:10px;font-weight:600">${node.type.toUpperCase()}</span><span>${_tocEscape(node.name)}</span>`;
         item.onmousedown = ev => { ev.preventDefault(); _tocInsertMention(node); };
         dd.appendChild(item);

@@ -659,7 +659,7 @@
       <!-- Structured fields (shown when template active) -->
       <div id="toc-fields" style="display:none;flex-direction:column;gap:6px"></div>
       <!-- Free-text note (shown when no template) -->
-      <textarea id="toc-body" rows="3" placeholder="Note… type # to mention a node" oninput="tocInputHandler(event)" onkeydown="tocInputKeydown(event)" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:13px;resize:vertical;width:100%;box-sizing:border-box"></textarea>
+      <textarea id="toc-body" rows="3" placeholder="Note… (# to mention a node)" oninput="tocInputHandler(event)" onkeydown="tocInputKeydown(event)" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:13px;resize:vertical;width:100%;box-sizing:border-box"></textarea>
       <div style="display:flex;justify-content:flex-end">
         <button class="btn" onclick="tocSubmit()" style="min-width:80px" title="Add log entry">Add Entry</button>
       </div>

@@ -3971,6 +3971,8 @@ if (targetEl) {
     _timeFormat = format === '12h' ? '12h' : '24h';
     const sel = document.getElementById('settings-time-format');
     if (sel) sel.value = _timeFormat;
+    const tocTime = document.getElementById('toc-time');
+    if (tocTime) tocTime.lang = _timeFormat === '12h' ? 'en-US' : 'en-GB';
     _refreshFormattedDisplays();
   }
 

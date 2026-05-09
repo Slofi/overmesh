@@ -663,8 +663,11 @@
           <option value="action">ACTION</option>
           <option value="position">POSITION UPDATE</option>
         </select>
+        <button class="btn" id="toc-pin-template-btn" onclick="tocTogglePinnedTemplate()" title="Pin or unpin selected template" style="padding:4px 8px;font-size:12px">☆</button>
+        <button class="btn" onclick="tocAttachLocalPosition()" title="Attach local/manual position to the entry" style="padding:4px 8px;font-size:12px">+ GPS</button>
         <button class="btn" onclick="tocClear()" title="Clear all fields" style="flex-shrink:0">Clear</button>
       </div>
+      <div id="toc-pinned-templates" style="display:none;gap:6px;flex-wrap:wrap;align-items:center"></div>
       <!-- Structured fields (shown when template active) -->
       <div id="toc-fields" style="display:none;flex-direction:column;gap:6px"></div>
       <!-- Free-text note (shown when no template) -->
@@ -673,6 +676,35 @@
         <span id="toc-edit-status" style="font-size:12px;color:var(--muted);min-height:16px"></span>
         <button class="btn" id="toc-submit-btn" onclick="tocSubmit()" style="min-width:80px" title="Add log entry">Add Entry</button>
       </div>
+    </div>
+
+    <!-- Filters -->
+    <div style="padding:8px 12px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input id="toc-filter-text" type="text" placeholder="Search log…" oninput="tocRenderLog()"
+             style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;min-width:160px;flex:1">
+      <select id="toc-filter-category" onchange="tocRenderLog()" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px">
+        <option value="">All categories</option>
+        <option value="NOTE">NOTE</option>
+        <option value="SITREP">SITREP</option>
+        <option value="ALERT">ALERT</option>
+        <option value="ACTION">ACTION</option>
+        <option value="COMMS">COMMS</option>
+        <option value="CONTACT">CONTACT</option>
+        <option value="POSITION">POSITION</option>
+      </select>
+      <select id="toc-filter-mention" onchange="tocRenderLog()" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;max-width:170px">
+        <option value="">Any node</option>
+      </select>
+      <input id="toc-filter-from" type="date" title="From date" onchange="tocRenderLog()"
+             style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;width:130px">
+      <input id="toc-filter-to" type="date" title="To date" onchange="tocRenderLog()"
+             style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;width:130px">
+      <select id="toc-view-mode" onchange="tocRenderLog()" title="Log layout" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px">
+        <option value="grouped">Grouped</option>
+        <option value="flat">Flat</option>
+      </select>
+      <button class="btn" onclick="tocClearFilters()" title="Clear log filters" style="padding:4px 8px;font-size:12px">Clear filters</button>
+      <span id="toc-filter-count" style="font-size:12px;color:var(--muted);margin-left:auto"></span>
     </div>
 
     <!-- Log table -->

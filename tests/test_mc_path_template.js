@@ -45,5 +45,13 @@ assert(/id="settings-date-format"/.test(templateSrc), 'App settings date format 
 assert(/distance_unit/.test(src), 'distance_unit preference handling missing from template');
 assert(/time_format/.test(src), 'time_format preference handling missing from app.js');
 assert(/date_format/.test(src), 'date_format preference handling missing from app.js');
+assert(/id="toc-filter-text"/.test(templateSrc), 'TOC Log search filter missing');
+assert(/id="toc-filter-category"/.test(templateSrc), 'TOC Log category filter missing');
+assert(/id="toc-filter-mention"/.test(templateSrc), 'TOC Log mention filter missing');
+assert(/id="toc-view-mode"/.test(templateSrc), 'TOC Log view mode selector missing');
+assert(/tocTogglePinnedTemplate/.test(src), 'TOC Log pinned templates handling missing');
+assert(/tocDuplicate/.test(src), 'TOC Log duplicate action missing');
+assert(/tocFromMtMessage/.test(src) && /tocFromMcMessage/.test(src), 'TOC Log message prefill actions missing');
+assert(/tocFromMtNode/.test(src) && /tocFromMcNode/.test(src), 'TOC Log node prefill actions missing');
 
 console.log('MC path template checks passed');

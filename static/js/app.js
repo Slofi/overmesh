@@ -2109,6 +2109,7 @@
     const replyBtn = !m.sent
       ? `<button class="msg-reply-btn" onclick="replyToMt('${jsSafe(m.from_name || '')}')">↩ Reply</button>`
       : '';
+    const logBtn = `<button class="msg-reply-btn" onclick="event.stopPropagation();tocFromMtMessage('${jsSafe(m.id || m.pkt_id || '')}')" title="Prefill TOC Log from this message">Log</button>`;
     const routeMeta = _mtMessageRouteMeta(m);
     const routeBtn = routeMeta
       ? `<button class="mt-route-badge ${routeMeta.cached ? 'cached' : ''}" title="${escHtml(routeMeta.detail)}" onclick="event.stopPropagation();showMtMessageRoute('${jsSafe(m.id)}')">${escHtml(routeMeta.label)}</button>`
@@ -2116,7 +2117,7 @@
     const el = document.createElement('div');
     el.className = `chat-msg ${m.sent ? 'sent' : 'received'}`;
     if (m.pkt_id) el.dataset.pktId = m.pkt_id;
-    el.innerHTML = `<div class="msg-meta">${meta}${routeBtn}${replyBtn}</div><div class="msg-bubble">${escHtml(m.text)}</div>${statusHtml}`;
+    el.innerHTML = `<div class="msg-meta">${meta}${routeBtn}${replyBtn}${logBtn}</div><div class="msg-bubble">${escHtml(m.text)}</div>${statusHtml}`;
     return el;
   }
 
@@ -7736,6 +7737,7 @@ if (targetEl) {
         ${!n.is_local ? `<button class="map-popup-btn" title="Traceroute to this node" onclick="openMapTR('${jsSafe(n.id)}','${jsSafe(n.long_name)}','${jsSafe(n.radio_id || '')}')">TR</button>` : ''}
         ${!n.is_local ? `<button class="map-popup-btn" title="Set position" onclick="openMapPos('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Pos</button>` : ''}
         ${!n.is_local ? `<button class="map-popup-btn" title="Node info &amp; settings" onclick="openMapInfo('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Info</button>` : ''}
+        <button class="map-popup-btn" title="Prefill TOC Log from this node" onclick="tocFromMtNode('${jsSafe(n.id)}')">Log</button>
         <button class="map-popup-btn" title="GPS movement trail" onclick="openGpsTrail('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Trail</button>
         ${!n.is_local ? `<button class="map-popup-btn danger" title="Delete from device" onclick="deleteNode('${jsSafe(n.id)}','${jsSafe(n.long_name)}','${jsSafe(n.radio_id || '')}')">Delete</button>` : ''}
       </div>`;
@@ -7823,6 +7825,7 @@ if (targetEl) {
                   ${!x.is_local ? `<button class="map-popup-btn" title="Send direct message" onclick="openMapDM('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">DM</button>` : ''}
                   ${!x.is_local ? `<button class="map-popup-btn" title="Traceroute to this node" onclick="openMapTR('${jsSafe(x.id)}','${jsSafe(x.long_name)}','${jsSafe(x.radio_id || '')}')">TR</button>` : ''}
                   ${!x.is_local ? `<button class="map-popup-btn" title="Node info &amp; settings" onclick="openMapInfo('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">Info</button>` : ''}
+                  <button class="map-popup-btn" title="Prefill TOC Log from this node" onclick="tocFromMtNode('${jsSafe(x.id)}')">Log</button>
                   <button class="map-popup-btn" title="GPS movement trail" onclick="openGpsTrail('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">Trail</button>
                   ${!x.is_local ? `<button class="map-popup-btn danger" title="Delete from device" onclick="deleteNode('${jsSafe(x.id)}','${jsSafe(x.long_name)}','${jsSafe(x.radio_id || '')}')">Delete</button>` : ''}
                 </div>
@@ -7856,6 +7859,7 @@ if (targetEl) {
                 ${!x.is_local ? `<button class="map-popup-btn" title="Send direct message" onclick="openMapDM('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">DM</button>` : ''}
                 ${!x.is_local ? `<button class="map-popup-btn" title="Traceroute to this node" onclick="openMapTR('${jsSafe(x.id)}','${jsSafe(x.long_name)}','${jsSafe(x.radio_id || '')}')">TR</button>` : ''}
                 ${!x.is_local ? `<button class="map-popup-btn" title="Node info &amp; settings" onclick="openMapInfo('${jsSafe(x.id)}','${jsSafe(x.long_name)}')">Info</button>` : ''}
+                <button class="map-popup-btn" title="Prefill TOC Log from this node" onclick="tocFromMtNode('${jsSafe(x.id)}')">Log</button>
                 ${!x.is_local ? `<button class="map-popup-btn danger" title="Delete from device" onclick="deleteNode('${jsSafe(x.id)}','${jsSafe(x.long_name)}','${jsSafe(x.radio_id || '')}')">Delete</button>` : ''}
               </div>
             </div>`).join('')}`;
@@ -10429,6 +10433,7 @@ if (targetEl) {
           <button class="map-popup-btn" title="Ping (request status)" onclick="leafletMap.closePopup();doMcPing('${safePk}','${safeRid}','${safeName}')">Ping</button>
           ${mcCanRemoteManage(item) ? `<button class="map-popup-btn" title="Remote repeater/room management" onclick="leafletMap.closePopup();openMcRemoteManage('${safePk}','${safeRid}','${safeName}')">Manage</button>` : ''}
           <button class="map-popup-btn" title="Select in Sense panel" onclick="leafletMap.closePopup();switchTab('map');toggleSensePanel(true);switchSenseNet('mc');selectMcSenseContact('${jsSafe(item.id || '')}','${safeRid}')">Sense</button>
+          <button class="map-popup-btn" title="Prefill TOC Log from this contact" onclick="leafletMap.closePopup();tocFromMcNode('${safePk}','${safeRid}')">Log</button>
           ${item.latitude != null ? `<button class="map-popup-btn" title="GPS movement trail" onclick="openGpsTrail('${jsSafe(item.id || '')}','${safeName}')">Trail</button>` : ''}
           <button class="map-popup-btn danger" title="Delete from device" onclick="deleteMcContact('${safePk}','${safeName}','${safeRid}')">Delete</button>
         </div>
@@ -10591,6 +10596,7 @@ if (targetEl) {
         + popupPingButton
         + popupManageButton
         + `<button class="map-popup-btn" title="Select in Sense panel" onclick="leafletMap.closePopup();switchTab('map');toggleSensePanel(true);switchSenseNet('mc');selectMcSenseContact('${jsSafe(c.id || '')}','${safeRid}')">Sense</button>`
+        + `<button class="map-popup-btn" title="Prefill TOC Log from this contact" onclick="leafletMap.closePopup();tocFromMcNode('${safePk}','${safeRid}')">Log</button>`
         + `<button class="map-popup-btn" title="GPS movement trail" onclick="openGpsTrail('${jsSafe(c.id || '')}','${safeName}')">Trail</button>`
         + `<button class="map-popup-btn danger" title="Delete from device" onclick="deleteMcContact('${safePk}','${safeName}','${safeRid}')">Delete</button>`
         + `</div>`,
@@ -10860,8 +10866,10 @@ if (targetEl) {
       btns.push(`<button class="map-popup-btn" onclick="doMcDm('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}">DM</button>`);
       if (c.type !== 2) btns.push(`<button class="map-popup-btn" onclick="doMcPing('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}">Ping</button>`);
       if (mcCanRemoteManage(c)) btns.push(`<button class="map-popup-btn" onclick="openMcRemoteManage('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}">Manage</button>`);
+      btns.push(`<button class="map-popup-btn" onclick="tocFromMcNode('${jsSafe(actionId)}','${jsSafe(actionRid)}');${hide}" title="Prefill TOC Log from this contact">Log</button>`);
     } else if (!c && actionId) {
       btns.push(`<button class="map-popup-btn" onclick="doMcPing('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}" title="Request status from this node — may trigger it to send an advert">Ping</button>`);
+      btns.push(`<button class="map-popup-btn" onclick="tocFromMcNode('${jsSafe(actionId)}','${jsSafe(actionRid)}');${hide}" title="Prefill TOC Log from this contact">Log</button>`);
     } else if (!c && !actionId) {
       btns.push(`<button class="map-popup-btn" style="opacity:0.4;cursor:default" disabled title="No pubkey in message — cannot send targeted ping. Sender's firmware may not include pubkey in channel messages.">Ping</button>`);
     }
@@ -10935,6 +10943,11 @@ if (targetEl) {
     const wasAtBottom = hadNoContent || container.scrollHeight - container.scrollTop <= container.clientHeight + 40;
     _mcChatRouteByKey = {};
     container.innerHTML = msgs.map(m => {
+      const routeKey = _mcChatRouteKey(m);
+      if (routeKey) _mcChatRouteByKey[routeKey] = m;
+      const logBtn = routeKey
+        ? `<button class="msg-reply-btn" onclick="event.stopPropagation();tocFromMcMessage('${jsSafe(routeKey)}')" title="Prefill TOC Log from this message">Log</button>`
+        : '';
       let ts = '';
       if (m.ts) {
         const d = new Date(m.ts * 1000);
@@ -10947,7 +10960,7 @@ if (targetEl) {
         if (m.from_id === 'bot') {
           const radioLabel = mcLastStatus[m.radio_id]?.name || m.radio_id || '';
           return `<div class="chat-msg sent" style="align-items:flex-end">
-            <div class="msg-meta"><span class="mc-msg-tag" style="background:rgba(167,139,250,0.18);color:#a78bfa;border-color:rgba(167,139,250,0.4)">Bot</span>${escHtml(radioLabel)} → ${escHtml(m.to_name || '?')} · ${ts}</div>
+            <div class="msg-meta"><span class="mc-msg-tag" style="background:rgba(167,139,250,0.18);color:#a78bfa;border-color:rgba(167,139,250,0.4)">Bot</span>${escHtml(radioLabel)} → ${escHtml(m.to_name || '?')} · ${ts}${logBtn}</div>
             <div class="msg-bubble" style="background:rgba(167,139,250,0.15);border:1px solid rgba(167,139,250,0.3)">${escHtml(m.text)}</div>
           </div>`;
         }
@@ -10958,7 +10971,7 @@ if (targetEl) {
         const radioLabel = mcLastStatus[m.radio_id]?.name || m.radio_name || m.radio_id || '';
         const statusHtml = `<div class="msg-status ${m.status || 'pending'}" data-msgid="${escHtml(m.id || '')}">${m.status === 'delivered' ? '✓' : m.status === 'failed' ? '✗' : '·'}</div>`;
         return `<div class="chat-msg sent">
-          <div class="msg-meta">${escHtml(radioLabel)} · Me · ${ts}</div>
+          <div class="msg-meta">${escHtml(radioLabel)} · Me · ${ts}${logBtn}</div>
           <div class="msg-bubble">${_mcFormatMessageBody(m.text)}</div>
           ${statusHtml}
         </div>`;
@@ -10969,13 +10982,12 @@ if (targetEl) {
       const senderHtml = `<span class="msg-sender-link" onclick="showMcContactPopup(event,'${jsSafe(m.from_id || '')}','${jsSafe(m.radio_id || '')}','${jsSafe(name)}')" title="Contact info">${mcContactNameHtml(contact, name, m.radio_id || null)}</span>`;
       const mcReplyBtn = `<button class="msg-reply-btn" onclick="replyToMc('${jsSafe(m.from_id || '')}','${jsSafe(name)}','${m.subtype || 'channel'}')">↩ Reply</button>`;
       const routeMeta = _mcChatRouteMeta(m);
-      const routeKey = _mcChatRouteKey(m);
       if (routeMeta) _mcChatRouteByKey[routeKey] = m;
       const routeBtn = routeMeta
         ? `<button class="mc-route-badge" title="${escHtml(routeMeta.detail)}" onclick="event.stopPropagation();showMcChatMessageRoute('${jsSafe(routeKey)}')">${escHtml(routeMeta.label)}</button>`
         : '';
       return `<div class="chat-msg received">
-        <div class="msg-meta">${escHtml(m.radio_name || '')} · ${senderHtml}${escHtml(obsSnr)} · ${ts}${routeBtn}${mcReplyBtn}</div>
+        <div class="msg-meta">${escHtml(m.radio_name || '')} · ${senderHtml}${escHtml(obsSnr)} · ${ts}${routeBtn}${mcReplyBtn}${logBtn}</div>
         <div class="msg-bubble">${_mcFormatMessageBody(bodyText)}</div>
       </div>`;
     }).join('');
@@ -17122,6 +17134,15 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   let _tocActiveTemplate = null;
   let _tocEditingId = null;
   const _tocEntries = new Map();
+  let _tocAllEntries = [];
+  let _tocPinnedTemplates = (() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem('tocPinnedTemplates') || '[]');
+      return Array.isArray(raw) ? raw.filter(k => TOC_TEMPLATES[k]) : [];
+    } catch(e) {
+      return [];
+    }
+  })();
 
   function _tocPad(n) { return String(n).padStart(2, '0'); }
 
@@ -17164,6 +17185,44 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     if (st) st.textContent = _tocEditingId ? `Editing entry #${_tocEditingId}` : '';
   }
 
+  function _tocSavePinnedTemplates() {
+    try { localStorage.setItem('tocPinnedTemplates', JSON.stringify(_tocPinnedTemplates)); } catch(e) {}
+  }
+
+  function tocRenderPinnedTemplates() {
+    const row = document.getElementById('toc-pinned-templates');
+    if (!row) return;
+    const current = document.getElementById('toc-template')?.value || '';
+    const pinBtn = document.getElementById('toc-pin-template-btn');
+    if (pinBtn) {
+      pinBtn.textContent = current && _tocPinnedTemplates.includes(current) ? '★' : '☆';
+      pinBtn.style.color = current && _tocPinnedTemplates.includes(current) ? 'var(--accent)' : 'var(--muted)';
+    }
+    if (!_tocPinnedTemplates.length) {
+      row.style.display = 'none';
+      row.innerHTML = '';
+      return;
+    }
+    row.style.display = 'flex';
+    row.innerHTML = `<span style="font-size:11px;color:var(--muted)">Pinned:</span>` +
+      _tocPinnedTemplates.map(key => {
+        const tmpl = TOC_TEMPLATES[key];
+        return `<button class="btn" onclick="document.getElementById('toc-template').value='${jsSafe(key)}';tocApplyTemplate('${jsSafe(key)}')" title="Use pinned template" style="padding:3px 8px;font-size:11px">${_tocEscape(tmpl.label)}</button>`;
+      }).join('');
+  }
+
+  function tocTogglePinnedTemplate() {
+    const key = document.getElementById('toc-template')?.value || '';
+    if (!key || !TOC_TEMPLATES[key]) return;
+    if (_tocPinnedTemplates.includes(key)) {
+      _tocPinnedTemplates = _tocPinnedTemplates.filter(k => k !== key);
+    } else {
+      _tocPinnedTemplates = [key, ..._tocPinnedTemplates.filter(k => k !== key)].slice(0, 5);
+    }
+    _tocSavePinnedTemplates();
+    tocRenderPinnedTemplates();
+  }
+
   function tocApplyTemplate(key) {
     const fieldsDiv = document.getElementById('toc-fields');
     const bodyEl    = document.getElementById('toc-body');
@@ -17172,6 +17231,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       _tocActiveTemplate = null;
       fieldsDiv.style.display = 'none';
       bodyEl.style.display    = '';
+      tocRenderPinnedTemplates();
       return;
     }
     const tmpl = TOC_TEMPLATES[key];
@@ -17194,6 +17254,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     fieldsDiv.style.display = 'flex';
     bodyEl.style.display    = 'none';
     fieldsDiv.querySelector('input') && fieldsDiv.querySelector('input').focus();
+    tocRenderPinnedTemplates();
   }
 
   function tocClear() {
@@ -17207,6 +17268,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     _tocActiveTemplate = null;
     _tocEditingId = null;
     _tocSetSubmitMode();
+    tocRenderPinnedTemplates();
   }
 
   function tocFmtTime(ts) {
@@ -17252,6 +17314,79 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       }
     } catch(e) { /* plain text */ }
     return `<span style="font-size:12px;white-space:pre-wrap">${_tocRenderMentions(body)}</span>`;
+  }
+
+  function _tocPlainText(body) {
+    try {
+      const obj = JSON.parse(body);
+      if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+        return Object.entries(obj).map(([k, v]) => `${k}: ${v || ''}`).join('\n');
+      }
+    } catch(e) {}
+    return String(body || '');
+  }
+
+  function _tocMentionTokens(body) {
+    const out = [];
+    String(body || '').replace(_TOC_MENTION_RE, (_m, name, type, rest) => {
+      out.push({name, type, rest, key: `${type}:${rest}`});
+      return _m;
+    });
+    return out;
+  }
+
+  function _tocMentionToken(type, name, id, radioId = '') {
+    if (!id) return name || '?';
+    return type === 'mt'
+      ? `#[${name || id}](mt:${id})`
+      : `#[${name || id}](mc:${id}:${radioId || ''})`;
+  }
+
+  function _tocSetBodyText(text) {
+    if (_tocActiveTemplate) tocApplyTemplate('');
+    const bodyEl = document.getElementById('toc-body');
+    if (bodyEl) bodyEl.value = text || '';
+  }
+
+  function _tocAppendToBody(line) {
+    if (!line) return;
+    if (_tocActiveTemplate) {
+      const notes = [...document.querySelectorAll('#toc-fields input[data-toc-field]')]
+        .find(inp => inp.dataset.tocField.toLowerCase() === 'notes');
+      if (notes) {
+        notes.value = [notes.value.trim(), line].filter(Boolean).join('\n');
+        return;
+      }
+    }
+    const bodyEl = document.getElementById('toc-body');
+    if (!bodyEl) return;
+    bodyEl.value = [bodyEl.value.trim(), line].filter(Boolean).join('\n');
+  }
+
+  function tocAttachLocalPosition() {
+    const origin = typeof _omLocalOrigin === 'function' ? _omLocalOrigin() : null;
+    if (!origin || origin.lat == null || origin.lon == null) {
+      showToast('TOC Log', 'No local/manual position available.', 'node');
+      return;
+    }
+    _tocAppendToBody(`Position: ${Number(origin.lat).toFixed(5)}, ${Number(origin.lon).toFixed(5)}`);
+  }
+
+  function _tocPrefill(category, body, ts = null, templateKey = '') {
+    switchTab('log');
+    document.getElementById('toc-category').value = category || 'NOTE';
+    _tocSetDateTimeFields(ts);
+    const templateEl = document.getElementById('toc-template');
+    if (templateEl) templateEl.value = templateKey;
+    if (templateKey) {
+      tocApplyTemplate(templateKey);
+    } else {
+      tocApplyTemplate('');
+      _tocSetBodyText(body || '');
+    }
+    _tocEditingId = null;
+    _tocSetSubmitMode();
+    setTimeout(() => document.getElementById(templateKey ? 'toc-fields' : 'toc-body')?.scrollIntoView({block:'center', behavior:'smooth'}), 40);
   }
 
   function tocOpenMention(type, rest) {
@@ -17357,19 +17492,101 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     if (dd && !dd.contains(e.target)) _tocHideMentionDropdown();
   }, true);
 
+  function _tocEntryMatchesFilters(entry) {
+    const q = (document.getElementById('toc-filter-text')?.value || '').trim().toLowerCase();
+    const cat = document.getElementById('toc-filter-category')?.value || '';
+    const mention = document.getElementById('toc-filter-mention')?.value || '';
+    const from = document.getElementById('toc-filter-from')?.value || '';
+    const to = document.getElementById('toc-filter-to')?.value || '';
+    if (cat && entry.category !== cat) return false;
+    if (q) {
+      const hay = `${entry.category} ${_tocPlainText(entry.body)}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    if (mention && !_tocMentionTokens(entry.body).some(t => t.key === mention)) return false;
+    if (from) {
+      const fromTs = Math.floor(new Date(`${from}T00:00`).getTime() / 1000);
+      if (Number.isFinite(fromTs) && Number(entry.ts) < fromTs) return false;
+    }
+    if (to) {
+      const toTs = Math.floor(new Date(`${to}T23:59:59`).getTime() / 1000);
+      if (Number.isFinite(toTs) && Number(entry.ts) > toTs) return false;
+    }
+    return true;
+  }
+
+  function _tocRenderMentionFilter() {
+    const sel = document.getElementById('toc-filter-mention');
+    if (!sel) return;
+    const current = sel.value;
+    const mentions = new Map();
+    _tocAllEntries.forEach(e => _tocMentionTokens(e.body).forEach(t => mentions.set(t.key, t)));
+    sel.innerHTML = '<option value="">Any node</option>' + [...mentions.values()]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(t => `<option value="${_tocEscape(t.key)}">${t.type.toUpperCase()} · ${_tocEscape(t.name)}</option>`)
+      .join('');
+    if ([...mentions.keys()].includes(current)) sel.value = current;
+  }
+
+  function tocClearFilters() {
+    ['toc-filter-text', 'toc-filter-category', 'toc-filter-mention', 'toc-filter-from', 'toc-filter-to'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    tocRenderLog();
+  }
+
+  function tocRenderLog() {
+    const tbody = document.getElementById('toc-tbody');
+    const emptyRow = document.getElementById('toc-empty-row');
+    if (!tbody) return;
+    _tocEntries.clear();
+    tbody.querySelectorAll('[data-toc-id], [data-toc-group]').forEach(el => el.remove());
+    const entries = _tocAllEntries.filter(_tocEntryMatchesFilters);
+    const countEl = document.getElementById('toc-filter-count');
+    if (countEl) countEl.textContent = `${entries.length}/${_tocAllEntries.length}`;
+    if (!entries.length) {
+      if (emptyRow) {
+        emptyRow.style.display = '';
+        emptyRow.querySelector('td').textContent = _tocAllEntries.length ? 'No matching log entries.' : 'No log entries yet.';
+      }
+      return;
+    }
+    if (emptyRow) emptyRow.style.display = 'none';
+    let lastGroup = '';
+    const grouped = (document.getElementById('toc-view-mode')?.value || 'grouped') === 'grouped';
+    entries.forEach(e => {
+      if (grouped) {
+        const d = _appDate(e.ts);
+        const group = _formatAppDate(d, {weekday: true});
+        if (group !== lastGroup) {
+          const gr = document.createElement('tr');
+          gr.dataset.tocGroup = group;
+          gr.innerHTML = `<td colspan="4" style="padding:8px 8px 4px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">${_tocEscape(group)}</td>`;
+          tbody.appendChild(gr);
+          lastGroup = group;
+        }
+      }
+      tbody.appendChild(tocRenderRow(e));
+    });
+  }
+
   function tocRenderRow(e) {
     _tocEntries.set(Number(e.id), e);
     const color = TOC_CAT_COLORS[e.category] || '#64748b';
     const tr = document.createElement('tr');
     tr.dataset.tocId = e.id;
     tr.style.borderBottom = '1px solid var(--border)';
+    const grouped = (document.getElementById('toc-view-mode')?.value || 'grouped') === 'grouped';
     tr.innerHTML = `
-      <td style="padding:6px 8px;color:var(--muted);font-size:11px;font-family:monospace;white-space:nowrap;vertical-align:top">${tocFmtDate(e.ts)}</td>
+      <td style="padding:6px 8px;color:var(--muted);font-size:11px;font-family:monospace;white-space:nowrap;vertical-align:top">${grouped ? tocFmtTime(e.ts) : tocFmtDate(e.ts)}</td>
       <td style="padding:6px 8px;vertical-align:top">
         <span style="background:${color};color:#fff;border-radius:4px;padding:2px 6px;font-size:10px;font-weight:600;letter-spacing:.4px;white-space:nowrap">${e.category}</span>
       </td>
       <td style="padding:6px 8px;vertical-align:top;width:100%">${tocRenderBody(e.body)}</td>
       <td style="padding:6px 4px;vertical-align:top">
+        <button onclick="tocDuplicate(${e.id})" title="Duplicate" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:0 3px"
+          onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--muted)'">⧉</button>
         <button onclick="tocEdit(${e.id})" title="Edit" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:0 3px"
           onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--muted)'">✎</button>
         <button onclick="tocDelete(${e.id},this)" title="Delete" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:0 3px"
@@ -17380,16 +17597,13 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   function tocLoad() {
     fetch('/api/toc').then(r => r.json()).then(entries => {
-      const tbody = document.getElementById('toc-tbody');
-      const emptyRow = document.getElementById('toc-empty-row');
-      _tocEntries.clear();
-      tbody.querySelectorAll('[data-toc-id]').forEach(el => el.remove());
       const dateEl = document.getElementById('toc-date');
       const timeEl = document.getElementById('toc-time');
       if (dateEl && timeEl && (!dateEl.value || !timeEl.value) && !_tocEditingId) _tocSetDateTimeFields();
-      if (!entries.length) { if (emptyRow) emptyRow.style.display = ''; return; }
-      if (emptyRow) emptyRow.style.display = 'none';
-      entries.forEach(e => tbody.appendChild(tocRenderRow(e)));
+      _tocAllEntries = Array.isArray(entries) ? entries : [];
+      _tocRenderMentionFilter();
+      tocRenderPinnedTemplates();
+      tocRenderLog();
     }).catch(() => {});
   }
 
@@ -17417,18 +17631,11 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     }).then(r => r.json()).then(data => {
       if (!data.ok) return;
       tocClear();
-      const tbody    = document.getElementById('toc-tbody');
-      const emptyRow = document.getElementById('toc-empty-row');
-      if (emptyRow) emptyRow.style.display = 'none';
-      const oldRow = isEdit ? tbody.querySelector(`[data-toc-id="${data.id}"]`) : null;
-      if (oldRow) oldRow.remove();
-      const row = tocRenderRow(data);
-      const rows = [...tbody.querySelectorAll('[data-toc-id]')];
-      const before = rows.find(r => {
-        const entry = _tocEntries.get(Number(r.dataset.tocId));
-        return entry && Number(entry.ts) < Number(data.ts);
-      });
-      tbody.insertBefore(row, before || null);
+      _tocAllEntries = _tocAllEntries.filter(e => Number(e.id) !== Number(data.id));
+      _tocAllEntries.push(data);
+      _tocAllEntries.sort((a, b) => Number(b.ts) - Number(a.ts));
+      _tocRenderMentionFilter();
+      tocRenderLog();
     }).catch(() => {});
   }
 
@@ -17466,20 +17673,110 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     document.getElementById('toc-category').scrollIntoView({block: 'center', behavior: 'smooth'});
   }
 
+  function tocDuplicate(id) {
+    const entry = _tocEntries.get(Number(id)) || _tocAllEntries.find(e => Number(e.id) === Number(id));
+    if (!entry) return;
+    _tocPrefill(entry.category || 'NOTE', entry.body || '', Math.floor(Date.now() / 1000));
+    const tmplKey = (() => {
+      try {
+        const obj = JSON.parse(entry.body);
+        if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return '';
+        const keys = Object.keys(obj);
+        return Object.entries(TOC_TEMPLATES).find(([, t]) =>
+          t.fields.length === keys.length && t.fields.every(f => Object.prototype.hasOwnProperty.call(obj, f))
+        )?.[0] || '';
+      } catch(e) {
+        return '';
+      }
+    })();
+    if (tmplKey) {
+      document.getElementById('toc-template').value = tmplKey;
+      tocApplyTemplate(tmplKey);
+      const obj = JSON.parse(entry.body);
+      document.querySelectorAll('#toc-fields input[data-toc-field]').forEach(inp => {
+        inp.value = obj[inp.dataset.tocField] || '';
+      });
+    }
+    const st = document.getElementById('toc-edit-status');
+    if (st) st.textContent = `Duplicating entry #${id}`;
+  }
+
   function tocDelete(id, btn) {
     showConfirm('Delete this log entry?', () => {
       fetch(`/api/toc/${id}`, {method:'DELETE'}).then(r => r.json()).then(data => {
         if (!data.ok) return;
-        const row = btn.closest('[data-toc-id]');
-        if (row) row.remove();
+        _tocAllEntries = _tocAllEntries.filter(e => Number(e.id) !== Number(id));
         _tocEntries.delete(Number(id));
-        const tbody = document.getElementById('toc-tbody');
-        if (!tbody.querySelector('[data-toc-id]')) {
-          const emptyRow = document.getElementById('toc-empty-row');
-          if (emptyRow) emptyRow.style.display = '';
-        }
+        _tocRenderMentionFilter();
+        tocRenderLog();
       }).catch(() => {});
     });
+  }
+
+  function tocFromMtMessage(msgId) {
+    const msg = (chatMsgs || []).find(m => String(m.id || m.pkt_id || '') === String(msgId));
+    if (!msg) return;
+    const sender = msg.sent ? 'You' : (msg.from_name || msg.from_id || '?');
+    const target = msg.is_dm ? (msg.sent ? (msg.to_name || msg.to_id || '?') : 'You') : `CH${msg.channel ?? 0}`;
+    const mention = !msg.sent && msg.from_id && msg.from_id !== 'bot'
+      ? _tocMentionToken('mt', msg.from_name || msg.from_id, msg.from_id)
+      : sender;
+    const body = [
+      `MT message: ${mention} -> ${target}`,
+      `Time: ${_formatAppDateTime(msg.ts || Math.floor(Date.now() / 1000))}`,
+      msg.snr != null ? `Signal: SNR ${msg.snr} dB` : '',
+      `Text: ${msg.text || ''}`,
+    ].filter(Boolean).join('\n');
+    _tocPrefill('COMMS', body, msg.ts || Math.floor(Date.now() / 1000));
+  }
+
+  function tocFromMcMessage(routeKey) {
+    const msg = _mcChatRouteByKey[routeKey] || mcMessages.find(m => _mcChatRouteKey(m) === routeKey);
+    if (!msg) return;
+    const { name } = _mcSenderInfo(msg);
+    const sent = msg.sent || msg.from_id === 'me';
+    const mention = !sent && msg.from_id
+      ? _tocMentionToken('mc', name || msg.from_id, msg.from_id, msg.radio_id || '')
+      : 'You';
+    const target = sent ? (msg.to_name || msg.to_id || `CH${msg.channel ?? 0}`) : (msg.subtype === 'dm' ? 'You' : `CH${msg.channel ?? 0}`);
+    const body = [
+      `MC message: ${mention} -> ${target}`,
+      `Time: ${_formatAppDateTime(msg.ts || Math.floor(Date.now() / 1000))}`,
+      msg.rx_snr != null ? `Signal: SNR ${msg.rx_snr} dB` : '',
+      `Text: ${_mcMsgText(msg, name)}`,
+    ].filter(Boolean).join('\n');
+    _tocPrefill('COMMS', body, msg.ts || Math.floor(Date.now() / 1000));
+  }
+
+  function tocFromMtNode(nodeId) {
+    const n = (allNodes || []).find(x => x.id === nodeId);
+    if (!n) return;
+    const name = n.long_name || n.short_name || n.id;
+    const lines = [
+      `Node: ${_tocMentionToken('mt', name, n.id)}`,
+      n.latitude != null && n.longitude != null ? `Position: ${Number(n.latitude).toFixed(5)}, ${Number(n.longitude).toFixed(5)}` : '',
+      n.snr != null ? `Signal: SNR ${n.snr} dB` : '',
+      n.last_heard_ts ? `Last heard: ${_formatAppDateTime(n.last_heard_ts)}` : '',
+      'Notes: ',
+    ].filter(Boolean);
+    _tocPrefill(n.latitude != null && n.longitude != null ? 'POSITION' : 'CONTACT', lines.join('\n'));
+  }
+
+  function tocFromMcNode(contactId, radioId) {
+    const c = (mcContacts[radioId] || {})[contactId] || Object.values(mcContacts || {}).map(m => m?.[contactId]).find(Boolean);
+    if (!c) return;
+    const name = c.long_name || c.name || c.id || contactId;
+    const lat = c.latitude ?? c.lat;
+    const lon = c.longitude ?? c.lon;
+    const seenTs = _mcContactSeenTs(c);
+    const lines = [
+      `Node: ${_tocMentionToken('mc', name, c.id || contactId, radioId || '')}`,
+      lat != null && lon != null ? `Position: ${Number(lat).toFixed(5)}, ${Number(lon).toFixed(5)}` : '',
+      c.last_snr != null ? `Signal: SNR ${c.last_snr} dB` : '',
+      seenTs ? `Last seen: ${_formatAppDateTime(seenTs)}` : '',
+      'Notes: ',
+    ].filter(Boolean);
+    _tocPrefill(lat != null && lon != null ? 'POSITION' : 'CONTACT', lines.join('\n'));
   }
 
   function tocExport(fmt) {

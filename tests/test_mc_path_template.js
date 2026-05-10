@@ -57,5 +57,11 @@ assert(/tocFromMtNode/.test(src) && /tocFromMcNode/.test(src), 'TOC Log node pre
 assert(/commscheck:[\s\S]*name:'Hops'[\s\S]*name:'Distance'/.test(src), 'TOC COMMS CHECK template missing Hops/Distance fields');
 assert(/_tocStructuredMarkdown/.test(src), 'TOC structured Markdown formatter missing');
 assert(/tocFromMtMessage/.test(src) && /map-dm-msgs/.test(src), 'MT message Log prefill handling missing');
+assert(/OM_LOG_SHARE_PREFIX = 'OMLOG1'/.test(src), 'OM Log MC share wire prefix missing');
+assert(/function _omLogShareEncode/.test(src), 'OM Log MC share chunk encoder missing');
+assert(/const shareId = _omSimpleHash\(`\$\{entry\.id \|\| ''\}\|\$\{payload\}`\)/.test(src), 'OM Log share ID is not deterministic for resend completion');
+assert(/function _omLogShareProcessMessages/.test(src), 'OM Log MC share receiver reassembly missing');
+assert(/fetch\(BASE_PATH \+ '\/api\/toc'/.test(src), 'OM Log MC share does not import into TOC API');
+assert(/tocShareViaMc/.test(src), 'TOC Log Share via MC action missing');
 
 console.log('MC path template checks passed');

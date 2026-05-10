@@ -9227,8 +9227,20 @@ if (targetEl) {
     try { const s = JSON.parse(localStorage.getItem('mcMessages') || '[]'); return Array.isArray(s) ? s.slice(-500) : []; }
     catch(e) { return []; }
   })();
+  const _omLogShareImporting = new Set();
+  let _omLogShareImported = (() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem('omLogShareImported') || '[]');
+      return new Set(Array.isArray(raw) ? raw : []);
+    } catch(e) {
+      return new Set();
+    }
+  })();
   function _saveMcMessages() {
     try { localStorage.setItem('mcMessages', JSON.stringify(mcMessages.slice(-300))); } catch(e) {}
+  }
+  function _saveOmLogShareImported() {
+    try { localStorage.setItem('omLogShareImported', JSON.stringify([..._omLogShareImported].slice(-500))); } catch(e) {}
   }
   function _mcMessageKey(m) {
     return [
@@ -9258,6 +9270,7 @@ if (targetEl) {
     if (mcMessages.length !== before) {
       _mcRebuildMessageTabs();
       _saveMcMessages();
+      _omLogShareProcessMessages();
       if (!opts.silent && currentTab === 'chat' && chatNetwork === 'mc') renderMcMessages();
     }
     return mcMessages.length - before;
@@ -10976,9 +10989,10 @@ if (targetEl) {
       if (sent) {
         const radioLabel = mcLastStatus[m.radio_id]?.name || m.radio_name || m.radio_id || '';
         const statusHtml = `<div class="msg-status ${m.status || 'pending'}" data-msgid="${escHtml(m.id || '')}">${m.status === 'delivered' ? '✓' : m.status === 'failed' ? '✗' : '·'}</div>`;
+        const shareHtml = _omLogShareDisplay(m.text);
         return `<div class="chat-msg sent">
           <div class="msg-meta">${escHtml(radioLabel)} · Me · ${ts}${logBtn}</div>
-          <div class="msg-bubble">${_mcFormatMessageBody(m.text)}</div>
+          <div class="msg-bubble">${shareHtml || _mcFormatMessageBody(m.text)}</div>
           ${statusHtml}
         </div>`;
       }
@@ -10992,9 +11006,10 @@ if (targetEl) {
       const routeBtn = routeMeta
         ? `<button class="mc-route-badge" title="${escHtml(routeMeta.detail)}" onclick="event.stopPropagation();showMcChatMessageRoute('${jsSafe(routeKey)}')">${escHtml(routeMeta.label)}</button>`
         : '';
+      const shareHtml = _omLogShareDisplay(bodyText);
       return `<div class="chat-msg received">
         <div class="msg-meta">${escHtml(m.radio_name || '')} · ${senderHtml}${escHtml(obsSnr)} · ${ts}${routeBtn}${mcReplyBtn}${logBtn}</div>
-        <div class="msg-bubble">${_mcFormatMessageBody(bodyText)}</div>
+        <div class="msg-bubble">${shareHtml || _mcFormatMessageBody(bodyText)}</div>
       </div>`;
     }).join('');
     if (wasAtBottom) {
@@ -13011,6 +13026,7 @@ if (targetEl) {
   const MC_CHANNEL_SCOPE_HEADROOM_BYTES = 10;
   const MC_MAX_AUTO_SPLIT_PARTS = 6;
   const MC_SPLIT_SEND_DELAY_MS = 1800;
+  const OM_LOG_SHARE_PREFIX = 'OMLOG1';
 
   function _sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -13083,6 +13099,161 @@ if (targetEl) {
       chunks = next;
     }
     throw new Error('MC message could not be split into safe chunks.');
+  }
+
+  function _omBase64UrlEncode(text) {
+    const bytes = new TextEncoder().encode(String(text || ''));
+    let bin = '';
+    bytes.forEach(b => { bin += String.fromCharCode(b); });
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  }
+
+  function _omBase64UrlDecode(text) {
+    const b64 = String(text || '').replace(/-/g, '+').replace(/_/g, '/');
+    const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+    const bin = atob(padded);
+    const bytes = Uint8Array.from(bin, ch => ch.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  }
+
+  function _omSimpleHash(text) {
+    let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+    for (let i = 0, ch; i < String(text || '').length; i++) {
+      ch = String(text).charCodeAt(i);
+      h1 = Math.imul(h1 ^ ch, 2654435761);
+      h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return ((h2 >>> 0).toString(36) + (h1 >>> 0).toString(36)).slice(0, 12);
+  }
+
+  function _omLogShareParseChunk(text) {
+    const m = String(text || '').trim().match(/^OMLOG1\s+([a-z0-9]{8,18})\s+(\d{1,3})\/(\d{1,3})\s+([a-z0-9]{6,16})\s+([A-Za-z0-9_-]+)$/);
+    if (!m) return null;
+    return {
+      shareId: m[1],
+      index: parseInt(m[2], 10),
+      total: parseInt(m[3], 10),
+      checksum: m[4],
+      part: m[5],
+    };
+  }
+
+  function _omLogShareEncode(entry, limit) {
+    const payload = JSON.stringify({
+      v: 1,
+      ts: Number(entry.ts) || Math.floor(Date.now() / 1000),
+      category: entry.category || 'NOTE',
+      body: entry.body || '',
+    });
+    const encoded = _omBase64UrlEncode(payload);
+    const checksum = _omSimpleHash(encoded);
+    const shareId = _omSimpleHash(`${entry.id || ''}|${payload}`).slice(0, 16);
+    let total = Math.max(1, Math.ceil(encoded.length / Math.max(1, limit - 42)));
+    let partLen = 0;
+    for (let tries = 0; tries < 4; tries++) {
+      const header = `${OM_LOG_SHARE_PREFIX} ${shareId} ${total}/${total} ${checksum} `;
+      partLen = limit - _mcByteLen(header);
+      if (partLen < 32) throw new Error('MC message limit is too small for Log sharing.');
+      const nextTotal = Math.ceil(encoded.length / partLen);
+      if (nextTotal === total) break;
+      total = nextTotal;
+    }
+    if (total > 99) throw new Error('Log entry is too large to share over MC.');
+    const chunks = [];
+    for (let i = 0; i < total; i++) {
+      chunks.push(`${OM_LOG_SHARE_PREFIX} ${shareId} ${i + 1}/${total} ${checksum} ${encoded.slice(i * partLen, (i + 1) * partLen)}`);
+    }
+    return { shareId, chunks };
+  }
+
+  function _omLogShareImportKey(msg, chunk) {
+    return [msg.radio_id || '', msg.from_id || '', chunk.shareId, chunk.checksum].join('|');
+  }
+
+  function _omLogShareProcessMessages() {
+    const groups = new Map();
+    (mcMessages || []).forEach(msg => {
+      if (!msg || msg.sent || msg.from_id === 'me') return;
+      const sender = _mcSenderInfo(msg);
+      const chunk = _omLogShareParseChunk(_mcMsgText(msg, sender?.name || ''));
+      if (!chunk || !chunk.shareId || chunk.total < 1 || chunk.index < 1 || chunk.index > chunk.total) return;
+      const key = _omLogShareImportKey(msg, chunk);
+      if (_omLogShareImported.has(key) || _omLogShareImporting.has(key)) return;
+      if (!groups.has(key)) groups.set(key, { msg, chunk, parts: new Map() });
+      const group = groups.get(key);
+      group.parts.set(chunk.index, chunk.part);
+      group.chunk.total = Math.max(group.chunk.total, chunk.total);
+    });
+    groups.forEach((group, key) => {
+      const total = group.chunk.total;
+      if (group.parts.size < total) return;
+      const encoded = Array.from({ length: total }, (_, idx) => group.parts.get(idx + 1) || '').join('');
+      if (_omSimpleHash(encoded) !== group.chunk.checksum) {
+        console.warn('OM Log share checksum mismatch:', group.chunk.shareId);
+        return;
+      }
+      let payload;
+      try {
+        payload = JSON.parse(_omBase64UrlDecode(encoded));
+      } catch(e) {
+        console.warn('OM Log share decode failed:', e);
+        return;
+      }
+      if (!payload || payload.v !== 1 || !payload.body) return;
+      _omLogShareImporting.add(key);
+      fetch(BASE_PATH + '/api/toc')
+        .then(r => r.ok ? r.json() : [])
+        .then(entries => {
+          const exists = Array.isArray(entries) && entries.some(e =>
+            Number(e.ts) === Number(payload.ts || 0)
+            && String(e.category || 'NOTE') === String(payload.category || 'NOTE')
+            && String(e.body || '') === String(payload.body || '')
+          );
+          if (exists) return { ok: true, d: null, already: true };
+          return fetch(BASE_PATH + '/api/toc', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          category: payload.category || 'NOTE',
+          body: payload.body,
+          ts: payload.ts || Math.floor(Date.now() / 1000),
+        }),
+          }).then(r => r.json().then(d => ({ ok: r.ok, d })));
+        })
+        .then(({ ok, d }) => {
+          if (!ok || d.error) throw new Error(d.error || 'Log import failed.');
+          _omLogShareImported.add(key);
+          _saveOmLogShareImported();
+          if (d && Array.isArray(_tocAllEntries)) {
+            _tocAllEntries = _tocAllEntries.filter(e => Number(e.id) !== Number(d.id));
+            _tocAllEntries.push(d);
+            _tocAllEntries.sort((a, b) => Number(b.ts) - Number(a.ts));
+            _tocRenderTagFilter();
+            _tocRenderMentionFilter();
+            tocRenderLog();
+          } else if (d) {
+            tocLoad();
+          }
+          if (d) showToast('TOC Log', `Imported shared ${payload.category || 'Log'} entry from MC.`, 'node', `omlog-${key}`);
+        })
+        .catch(e => {
+          console.warn('OM Log share import failed:', e);
+          showToast('TOC Log', `Shared Log import failed: ${e.message}`, 'node');
+        })
+        .finally(() => _omLogShareImporting.delete(key));
+    });
+  }
+
+  function _omLogShareDisplay(text) {
+    const chunk = _omLogShareParseChunk(text);
+    if (!chunk) return null;
+    return `<span style="display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap">` +
+      `<span class="mc-msg-tag" style="background:rgba(168,85,247,0.18);color:#c084fc;border-color:rgba(168,85,247,0.45)">Log Share</span>` +
+      `<span>chunk ${chunk.index}/${chunk.total}</span>` +
+      `<span style="color:var(--muted);font-size:10px">${escHtml(chunk.shareId)}</span>` +
+      `</span>`;
   }
 
   function _mcUpdateByteCount() {
@@ -18006,6 +18177,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       </td>
       <td style="padding:6px 8px;vertical-align:top;width:100%">${tocRenderBody(e.body)}</td>
       <td style="padding:6px 4px;vertical-align:top">
+        <button onclick="tocShareViaMc(${e.id})" title="Share via active MC chat target" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:0 3px"
+          onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--muted)'">⇄</button>
         <button onclick="tocDuplicate(${e.id})" title="Duplicate" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:0 3px"
           onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--muted)'">⧉</button>
         <button onclick="tocEdit(${e.id})" title="Edit" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:0 3px"
@@ -18113,6 +18286,38 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         _tocRenderMentionFilter();
         tocRenderLog();
       }).catch(() => {});
+    });
+  }
+
+  async function _tocShareViaMcSend(entry) {
+    if (!activeMcRadioId) throw new Error('No active MC radio.');
+    const kind = mcChatTab.startsWith('dm:') ? 'dm' : 'channel';
+    const opts = kind === 'dm'
+      ? { target: mcChatTab.slice(3) }
+      : { channel: parseInt(mcChatTab.slice(5), 10) || 0 };
+    const limit = _mcTargetMsgLimit(kind, activeMcRadioId);
+    const { chunks } = _omLogShareEncode(entry, limit);
+    for (let i = 0; i < chunks.length; i++) {
+      await _sendMcChatChunk(kind, chunks[i], opts);
+      if (i < chunks.length - 1) await _sleep(MC_SPLIT_SEND_DELAY_MS);
+    }
+    return chunks.length;
+  }
+
+  function tocShareViaMc(id) {
+    const entry = _tocEntries.get(Number(id)) || _tocAllEntries.find(e => Number(e.id) === Number(id));
+    if (!entry) return;
+    if (!activeMcRadioId) {
+      showAlert('No active MC radio is connected.');
+      return;
+    }
+    const targetLabel = mcChatTab.startsWith('dm:')
+      ? `DM to ${mcDmContacts[mcChatTab.slice(3)] || mcChatTab.slice(3)}`
+      : `${mcKnownChannels[parseInt(mcChatTab.slice(5), 10) || 0] || 'Public'} channel`;
+    showConfirm(`Share this Log entry over MC ${targetLabel}?`, () => {
+      _tocShareViaMcSend(entry)
+        .then(count => showToast('TOC Log', `Shared Log entry as ${count} MC message${count === 1 ? '' : 's'}.`, 'node'))
+        .catch(e => showAlert(String(e?.message || e || 'MC Log share failed.')));
     });
   }
 

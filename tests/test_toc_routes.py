@@ -71,6 +71,18 @@ class TocRoutesTests(unittest.TestCase):
         self.assertIn("**Hops:** 2", body)
         self.assertIn("**Distance:** 4.2 km", body)
 
+    def test_intel_category_is_accepted(self):
+        resp = self.client.post("/api/toc", json={
+            "category": "INTEL",
+            "body": {"Who / Source": "Alpha", "Intel Tags": "Personnel, Recon"},
+            "ts": 35,
+        })
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertEqual(data["category"], "INTEL")
+        self.assertIn("**Intel Tags:** Personnel, Recon", data["body"])
+
     def test_text_export_formats_legacy_json_body_as_markdown(self):
         created = self.client.post("/api/toc", json={
             "category": "SITREP",

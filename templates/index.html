@@ -646,6 +646,7 @@
           <option value="COMMS">COMMS</option>
           <option value="CONTACT">CONTACT</option>
           <option value="POSITION">POSITION</option>
+          <option value="INTEL">INTEL</option>
         </select>
         <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">
           <input id="toc-date" type="date" title="Entry date"
@@ -661,12 +662,26 @@
           <option value="alert">ALERT</option>
           <option value="action">ACTION</option>
           <option value="position">POSITION UPDATE</option>
+          <option value="intel">INTEL</option>
         </select>
         <button class="btn" id="toc-pin-template-btn" onclick="tocTogglePinnedTemplate()" title="Pin or unpin selected template" style="padding:4px 8px;font-size:12px">☆</button>
         <button class="btn" onclick="tocAttachLocalPosition()" title="Attach local/manual position to the entry" style="padding:4px 8px;font-size:12px">+ GPS</button>
         <button class="btn" onclick="tocClear()" title="Clear all fields" style="flex-shrink:0">Clear</button>
       </div>
       <div id="toc-pinned-templates" style="display:none;gap:6px;flex-wrap:wrap;align-items:center"></div>
+      <div id="toc-tag-tools" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <span style="font-size:11px;color:var(--muted)">Tags:</span>
+        <button class="btn" onclick="tocAddTag('Personnel')" title="Add Personnel tag" style="padding:3px 8px;font-size:11px">Personnel</button>
+        <button class="btn" onclick="tocAddTag('Recon')" title="Add Recon tag" style="padding:3px 8px;font-size:11px">Recon</button>
+        <button class="btn" onclick="tocAddTag('Location')" title="Add Location tag" style="padding:3px 8px;font-size:11px">Location</button>
+        <button class="btn" onclick="tocAddTag('Signal')" title="Add Signal tag" style="padding:3px 8px;font-size:11px">Signal</button>
+        <button class="btn" onclick="tocAddTag('Movement')" title="Add Movement tag" style="padding:3px 8px;font-size:11px">Movement</button>
+        <button class="btn" onclick="tocAddTag('Infrastructure')" title="Add Infrastructure tag" style="padding:3px 8px;font-size:11px">Infrastructure</button>
+        <input id="toc-custom-tag" type="text" placeholder="Custom tag"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();tocAddCustomTag()}"
+               style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:11px;width:120px">
+        <button class="btn" onclick="tocAddCustomTag()" title="Add custom tag" style="padding:3px 8px;font-size:11px">Add tag</button>
+      </div>
       <!-- Structured fields (shown when template active) -->
       <div id="toc-fields" style="display:none;flex-direction:column;gap:6px"></div>
       <!-- Free-text note (shown when no template) -->
@@ -690,6 +705,10 @@
         <option value="COMMS">COMMS</option>
         <option value="CONTACT">CONTACT</option>
         <option value="POSITION">POSITION</option>
+        <option value="INTEL">INTEL</option>
+      </select>
+      <select id="toc-filter-tag" onchange="tocRenderLog()" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;max-width:170px">
+        <option value="">Any tag</option>
       </select>
       <select id="toc-filter-mention" onchange="tocRenderLog()" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;max-width:170px">
         <option value="">Any node</option>

@@ -17205,12 +17205,29 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         {name:'Notes', hint:'Extra position context', multiline:true},
       ],
     },
+    intel: {
+      cat:'INTEL', label:'INTEL',
+      fields:[
+        {name:'Who / Source', hint:'Person, node, station, team, or reporting source (# to mention node)'},
+        {name:'Where / Location', hint:'Place, coordinates, grid, route, or area'},
+        {name:'When Observed', hint:'Exact time, time window, or age of report'},
+        {name:'What Happened', hint:'Observed activity, object, contact, change, or report', multiline:true},
+        {name:'Intel Tags', hint:'Personnel, Recon, Location, Signal, Movement, Infrastructure, custom...'},
+        {name:'Reliability / Confidence', hint:'Confirmed, likely, possible, unconfirmed, stale'},
+        {name:'Source Type', hint:'Direct observation, radio report, relay, passive RF, map, inference'},
+        {name:'Direction / Movement', hint:'Static, moving, heading, route, speed, unknown'},
+        {name:'Related Nodes / Assets', hint:'Nodes, contacts, vehicles, sites (# to mention node)'},
+        {name:'Assessment', hint:'Why it matters or likely meaning', multiline:true},
+        {name:'Required Action', hint:'Monitor, verify, contact, avoid, dispatch, none'},
+        {name:'Notes', hint:'Extra context', multiline:true},
+      ],
+    },
   };
 
   const TOC_CAT_COLORS = {
     SITREP:'#3b82f6', ALERT:'#ef4444', ACTION:'#f59e0b',
     COMMS:'#10b981',  CONTACT:'#8b5cf6', POSITION:'#06b6d4',
-    NOTE:'#64748b',
+    INTEL:'#a855f7', NOTE:'#64748b',
   };
 
   let _tocActiveTemplate = null;
@@ -17369,6 +17386,61 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       .join('\n');
   }
 
+  function _tocNormalizeTag(tag) {
+    const clean = String(tag || '')
+      .replace(/^#+/, '')
+      .replace(/[,\n;]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return clean ? clean.slice(0, 40) : '';
+  }
+
+  function _tocSplitTags(value) {
+    const tags = [];
+    String(value || '').split(/[,\n;]+/).forEach(part => {
+      const tag = _tocNormalizeTag(part);
+      if (tag && !tags.some(t => t.toLowerCase() === tag.toLowerCase())) tags.push(tag);
+    });
+    return tags;
+  }
+
+  function _tocTagsFromBody(body) {
+    const out = [];
+    const add = tag => {
+      const clean = _tocNormalizeTag(tag);
+      if (clean && !out.some(t => t.toLowerCase() === clean.toLowerCase())) out.push(clean);
+    };
+    const obj = _tocStructuredObject(body);
+    if (obj && typeof obj === 'object') {
+      Object.entries(obj).forEach(([key, value]) => {
+        const lk = String(key || '').toLowerCase();
+        if (lk === 'tags' || lk === 'intel tags' || lk.endsWith(' tags')) {
+          _tocSplitTags(value).forEach(add);
+        }
+      });
+    }
+    String(body || '').replace(/(^|\s)#([A-Za-z][A-Za-z0-9_-]{1,31})\b/g, (_m, _sp, tag) => {
+      add(tag);
+      return _m;
+    });
+    return out;
+  }
+
+  function _tocTagHtml(tag, active = false) {
+    const safe = _tocEscape(tag);
+    const value = jsSafe(tag);
+    const bg = active ? 'var(--accent)' : '#a855f722';
+    const color = active ? 'var(--accent-contrast,#000)' : '#c084fc';
+    return `<button onclick="tocFilterByTag('${value}')" title="Filter by tag" style="background:${bg};color:${color};border:1px solid #a855f755;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:600;cursor:pointer">#${safe}</button>`;
+  }
+
+  function _tocRenderTags(value) {
+    const tags = _tocSplitTags(value);
+    return tags.length
+      ? `<span style="display:flex;gap:4px;flex-wrap:wrap">${tags.map(t => _tocTagHtml(t)).join('')}</span>`
+      : _tocRenderMentions(value || '—');
+  }
+
   function _tocMarkdownFields(body) {
     const obj = {};
     let current = null;
@@ -17497,10 +17569,11 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   function _tocRenderStructuredLines(entries) {
     return '<table style="border-collapse:collapse;width:100%">' +
-      entries.map(([k,v]) =>
-        `<tr><td style="color:var(--muted);padding:1px 10px 1px 0;white-space:nowrap;font-size:11px;vertical-align:top">${_tocEscape(k)}</td>` +
-        `<td style="color:var(--text);font-size:12px;word-break:break-word;white-space:pre-wrap">${_tocRenderMentions(v||'—')}</td></tr>`
-      ).join('') + '</table>';
+      entries.map(([k,v]) => {
+        const isTagField = String(k || '').toLowerCase().includes('tag');
+        return `<tr><td style="color:var(--muted);padding:1px 10px 1px 0;white-space:nowrap;font-size:11px;vertical-align:top">${_tocEscape(k)}</td>` +
+          `<td style="color:var(--text);font-size:12px;word-break:break-word;white-space:pre-wrap">${isTagField ? _tocRenderTags(v) : _tocRenderMentions(v||'—')}</td></tr>`;
+      }).join('') + '</table>';
   }
 
   function _tocRenderMarkdownBody(body) {
@@ -17583,6 +17656,51 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       return;
     }
     _tocAppendToBody(`Position: ${Number(origin.lat).toFixed(5)}, ${Number(origin.lon).toFixed(5)}`);
+  }
+
+  function _tocFindTagInput() {
+    return [...document.querySelectorAll('#toc-fields [data-toc-field]')]
+      .find(inp => String(inp.dataset.tocField || '').toLowerCase().includes('tag'));
+  }
+
+  function tocAddTag(tag) {
+    const clean = _tocNormalizeTag(tag);
+    if (!clean) return;
+    const tagInput = _tocFindTagInput();
+    if (tagInput) {
+      const tags = _tocSplitTags(tagInput.value);
+      if (!tags.some(t => t.toLowerCase() === clean.toLowerCase())) tags.push(clean);
+      tagInput.value = tags.join(', ');
+      tagInput.focus();
+      return;
+    }
+    const bodyEl = document.getElementById('toc-body');
+    if (!bodyEl) return;
+    const obj = _tocMarkdownFields(bodyEl.value) || {};
+    const existingKey = Object.keys(obj).find(k => String(k).toLowerCase().includes('tag')) || 'Tags';
+    const tags = _tocSplitTags(obj[existingKey] || '');
+    if (!tags.some(t => t.toLowerCase() === clean.toLowerCase())) tags.push(clean);
+    obj[existingKey] = tags.join(', ');
+    bodyEl.value = Object.keys(obj).length > 1 || bodyEl.value.trim().startsWith('**')
+      ? _tocStructuredMarkdown(obj)
+      : [bodyEl.value.trim(), `#${clean.replace(/\s+/g, '-')}`].filter(Boolean).join('\n');
+    bodyEl.focus();
+  }
+
+  function tocAddCustomTag() {
+    const input = document.getElementById('toc-custom-tag');
+    const value = input?.value || '';
+    tocAddTag(value);
+    if (input) input.value = '';
+  }
+
+  function tocFilterByTag(tag) {
+    const sel = document.getElementById('toc-filter-tag');
+    if (sel) {
+      const clean = _tocNormalizeTag(tag);
+      sel.value = clean;
+      tocRenderLog();
+    }
   }
 
   function _tocPrefill(category, body, ts = null, templateKey = '') {
@@ -17783,6 +17901,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   function _tocEntryMatchesFilters(entry) {
     const q = (document.getElementById('toc-filter-text')?.value || '').trim().toLowerCase();
     const cat = document.getElementById('toc-filter-category')?.value || '';
+    const tag = (document.getElementById('toc-filter-tag')?.value || '').trim().toLowerCase();
     const mention = document.getElementById('toc-filter-mention')?.value || '';
     const from = document.getElementById('toc-filter-from')?.value || '';
     const to = document.getElementById('toc-filter-to')?.value || '';
@@ -17791,6 +17910,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       const hay = `${entry.category} ${_tocPlainText(entry.body)}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
+    if (tag && !_tocTagsFromBody(entry.body).some(t => t.toLowerCase() === tag)) return false;
     if (mention && !_tocMentionTokens(entry.body).some(t => t.key === mention)) return false;
     if (from) {
       const fromTs = Math.floor(new Date(`${from}T00:00`).getTime() / 1000);
@@ -17801,6 +17921,19 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       if (Number.isFinite(toTs) && Number(entry.ts) > toTs) return false;
     }
     return true;
+  }
+
+  function _tocRenderTagFilter() {
+    const sel = document.getElementById('toc-filter-tag');
+    if (!sel) return;
+    const current = sel.value;
+    const tags = new Map();
+    _tocAllEntries.forEach(e => _tocTagsFromBody(e.body).forEach(tag => tags.set(tag.toLowerCase(), tag)));
+    sel.innerHTML = '<option value="">Any tag</option>' + [...tags.values()]
+      .sort((a, b) => a.localeCompare(b))
+      .map(tag => `<option value="${_tocEscape(tag)}">#${_tocEscape(tag)}</option>`)
+      .join('');
+    if ([...tags.keys()].includes(String(current || '').toLowerCase())) sel.value = current;
   }
 
   function _tocRenderMentionFilter() {
@@ -17817,7 +17950,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   }
 
   function tocClearFilters() {
-    ['toc-filter-text', 'toc-filter-category', 'toc-filter-mention', 'toc-filter-from', 'toc-filter-to'].forEach(id => {
+    ['toc-filter-text', 'toc-filter-category', 'toc-filter-tag', 'toc-filter-mention', 'toc-filter-from', 'toc-filter-to'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.value = '';
     });
@@ -17890,6 +18023,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       if (wrap && !wrap.children.length) _tocBuildTimeControl(null);
       if (dateEl && !dateEl.value && !_tocEditingId) _tocSetDateTimeFields();
       _tocAllEntries = Array.isArray(entries) ? entries : [];
+      _tocRenderTagFilter();
       _tocRenderMentionFilter();
       tocRenderPinnedTemplates();
       tocRenderLog();
@@ -17923,6 +18057,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       _tocAllEntries = _tocAllEntries.filter(e => Number(e.id) !== Number(data.id));
       _tocAllEntries.push(data);
       _tocAllEntries.sort((a, b) => Number(b.ts) - Number(a.ts));
+      _tocRenderTagFilter();
       _tocRenderMentionFilter();
       tocRenderLog();
     }).catch(() => {});
@@ -17974,6 +18109,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         if (!data.ok) return;
         _tocAllEntries = _tocAllEntries.filter(e => Number(e.id) !== Number(id));
         _tocEntries.delete(Number(id));
+        _tocRenderTagFilter();
         _tocRenderMentionFilter();
         tocRenderLog();
       }).catch(() => {});

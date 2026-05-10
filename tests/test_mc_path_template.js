@@ -63,5 +63,10 @@ assert(/const shareId = _omSimpleHash\(`\$\{entry\.id \|\| ''\}\|\$\{payload\}`\
 assert(/function _omLogShareProcessMessages/.test(src), 'OM Log MC share receiver reassembly missing');
 assert(/fetch\(BASE_PATH \+ '\/api\/toc'/.test(src), 'OM Log MC share does not import into TOC API');
 assert(/tocShareViaMc/.test(src), 'TOC Log Share via MC action missing');
+assert(/tocRenderMcSharePicker/.test(src) && /tocShareViaMcTarget/.test(src), 'TOC Log MC share contact picker missing');
+assert(/tocConfirmMcShareTarget/.test(src), 'TOC Log MC share confirmation step missing');
+assert(/Share this Log entry to/.test(src), 'TOC Log MC share confirmation copy missing');
+assert(/Log shares are sent as direct messages only/.test(src), 'TOC Log MC share does not explain DM-only behavior');
+assert(!/Share this Log entry over MC \$\{targetLabel\}/.test(src), 'TOC Log MC share still defaults to active channel/tab');
 
 console.log('MC path template checks passed');

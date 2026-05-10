@@ -18289,16 +18289,48 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     });
   }
 
-  async function _tocShareViaMcSend(entry) {
+  function _tocMcShareContactList(query = '') {
+    const rid = activeMcRadioId;
+    const q = String(query || '').trim().toLowerCase();
+    if (!rid) return [];
+    return Object.values(mcContacts[rid] || {})
+      .filter(c => c && (c.id || c.full_key))
+      .map(c => {
+        const id = c.id || c.full_key;
+        const name = c.long_name || c.name || c.short_name || id;
+        return { id, name, type: c.type, seen: _mcContactSeenLabel(c), hops: c.out_path_len ?? -1 };
+      })
+      .filter(c => !q || [c.name, c.id].some(v => String(v || '').toLowerCase().includes(q)))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, 30);
+  }
+
+  function tocRenderMcSharePicker(entryId) {
+    const input = document.getElementById('toc-mc-share-search');
+    const list = document.getElementById('toc-mc-share-list');
+    if (!list) return;
+    const hits = _tocMcShareContactList(input?.value || '');
+    if (!hits.length) {
+      list.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:10px 0">No matching MC contacts.</div>';
+      return;
+    }
+    list.innerHTML = hits.map(c => {
+      const hop = c.hops >= 0 ? mcPathHopLabel(c.hops) : 'Path unknown';
+      return `<button class="btn" style="display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;text-align:left;padding:7px 9px" onclick="tocShareViaMcTarget(${entryId},'${jsSafe(c.id)}','${jsSafe(c.name)}')">` +
+        `<span style="min-width:0"><span style="display:block;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis">${escHtml(c.name)}</span>` +
+        `<span style="display:block;font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis">${escHtml(c.id)} · ${escHtml(hop)} · ${escHtml(c.seen || '—')}</span></span>` +
+        `<span style="color:var(--mc-color);font-size:11px;flex-shrink:0">DM</span>` +
+      `</button>`;
+    }).join('');
+  }
+
+  async function _tocShareViaMcSend(entry, targetId) {
     if (!activeMcRadioId) throw new Error('No active MC radio.');
-    const kind = mcChatTab.startsWith('dm:') ? 'dm' : 'channel';
-    const opts = kind === 'dm'
-      ? { target: mcChatTab.slice(3) }
-      : { channel: parseInt(mcChatTab.slice(5), 10) || 0 };
-    const limit = _mcTargetMsgLimit(kind, activeMcRadioId);
+    if (!targetId) throw new Error('Pick an MC contact to share to.');
+    const limit = _mcTargetMsgLimit('dm', activeMcRadioId);
     const { chunks } = _omLogShareEncode(entry, limit);
     for (let i = 0; i < chunks.length; i++) {
-      await _sendMcChatChunk(kind, chunks[i], opts);
+      await _sendMcChatChunk('dm', chunks[i], { target: targetId });
       if (i < chunks.length - 1) await _sleep(MC_SPLIT_SEND_DELAY_MS);
     }
     return chunks.length;
@@ -18311,14 +18343,50 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       showAlert('No active MC radio is connected.');
       return;
     }
-    const targetLabel = mcChatTab.startsWith('dm:')
-      ? `DM to ${mcDmContacts[mcChatTab.slice(3)] || mcChatTab.slice(3)}`
-      : `${mcKnownChannels[parseInt(mcChatTab.slice(5), 10) || 0] || 'Public'} channel`;
-    showConfirm(`Share this Log entry over MC ${targetLabel}?`, () => {
-      _tocShareViaMcSend(entry)
-        .then(count => showToast('TOC Log', `Shared Log entry as ${count} MC message${count === 1 ? '' : 's'}.`, 'node'))
-        .catch(e => showAlert(String(e?.message || e || 'MC Log share failed.')));
-    });
+    openModal('Share Log via MC', `
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div style="font-size:12px;color:var(--muted)">Search an MC contact. Log shares are sent as direct messages only.</div>
+        <input id="toc-mc-share-search" type="text" placeholder="Contact name or pubkey..." oninput="tocRenderMcSharePicker(${id})"
+               style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:7px 9px;font-size:13px">
+        <div id="toc-mc-share-list" style="display:flex;flex-direction:column;gap:6px;max-height:320px;overflow-y:auto"></div>
+        <div id="toc-mc-share-status" style="font-size:12px;color:var(--muted);min-height:16px"></div>
+      </div>
+    `);
+    tocRenderMcSharePicker(id);
+    setTimeout(() => document.getElementById('toc-mc-share-search')?.focus(), 50);
+  }
+
+  function tocShareViaMcTarget(id, targetId, targetName) {
+    const entry = _tocEntries.get(Number(id)) || _tocAllEntries.find(e => Number(e.id) === Number(id));
+    if (!entry) return;
+    const status = document.getElementById('toc-mc-share-status');
+    const label = targetName || targetId;
+    if (status) {
+      status.innerHTML = `
+        <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap">
+          <span>Share this Log entry to <b>${escHtml(label)}</b>?</span>
+          <span style="display:flex;gap:6px">
+            <button class="btn" onclick="tocRenderMcSharePicker(${id})" style="padding:3px 8px;font-size:11px">Cancel</button>
+            <button class="btn-primary" onclick="tocConfirmMcShareTarget(${id},'${jsSafe(targetId)}','${jsSafe(label)}')" style="padding:3px 10px;font-size:11px">Send</button>
+          </span>
+        </div>`;
+    }
+  }
+
+  function tocConfirmMcShareTarget(id, targetId, targetName) {
+    const entry = _tocEntries.get(Number(id)) || _tocAllEntries.find(e => Number(e.id) === Number(id));
+    if (!entry) return;
+    const status = document.getElementById('toc-mc-share-status');
+    const label = targetName || targetId;
+    if (status) status.innerHTML = `Sending to ${escHtml(label)}...`;
+    _tocShareViaMcSend(entry, targetId)
+      .then(count => {
+        closeModal();
+        showToast('TOC Log', `Shared Log entry to ${label} as ${count} MC DM${count === 1 ? '' : 's'}.`, 'node');
+      })
+      .catch(e => {
+        if (status) status.innerHTML = `<span style="color:var(--red)">Failed: ${escHtml(String(e?.message || e || 'MC Log share failed.'))}</span>`;
+      });
   }
 
   function tocFromMtMessage(msgId) {

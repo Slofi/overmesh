@@ -2071,6 +2071,7 @@
   function buildMsgEl(m) {
     const t   = _formatAppTime(m.ts);
     const snrStr = (!m.sent && m.snr != null) ? ` · ${m.snr} dB` : '';
+    const logBtn = `<button class="msg-reply-btn" onclick="event.stopPropagation();tocFromMtMessage('${jsSafe(m.id || m.pkt_id || '')}')" title="Prefill TOC Log from this message">Log</button>`;
     // Clickable sender name for received non-bot messages
     const senderSpan = (nodeId, name) =>
       nodeId && nodeId !== 'bot'
@@ -2084,7 +2085,7 @@
       const el = document.createElement('div');
       el.className = 'chat-msg received';
       if (m.pkt_id) el.dataset.pktId = m.pkt_id;
-      el.innerHTML = `<div class="msg-meta">${meta}</div><div class="msg-bubble" style="background:rgba(167,139,250,0.15);border:1px solid rgba(167,139,250,0.3)">${escHtml(m.text)}</div>`;
+      el.innerHTML = `<div class="msg-meta">${meta}${logBtn}</div><div class="msg-bubble" style="background:rgba(167,139,250,0.15);border:1px solid rgba(167,139,250,0.3)">${escHtml(m.text)}</div>`;
       return el;
     }
     // Emoji reaction — fallback standalone render (used only when target message not found in DOM)
@@ -2092,7 +2093,7 @@
       const sender = m.sent ? 'You' : escHtml(m.from_name || m.from_id);
       const el = document.createElement('div');
       el.className = 'chat-msg received';
-      el.innerHTML = `<div class="msg-meta">${radioPart}${sender} · ${t}${snrStr}</div><div class="emoji-chip">${escHtml(m.text)}<span class="emoji-label">reaction</span></div>`;
+      el.innerHTML = `<div class="msg-meta">${radioPart}${sender} · ${t}${snrStr}${logBtn}</div><div class="emoji-chip">${escHtml(m.text)}<span class="emoji-label">reaction</span></div>`;
       return el;
     }
     let meta;
@@ -2111,7 +2112,6 @@
     const replyBtn = !m.sent
       ? `<button class="msg-reply-btn" onclick="replyToMt('${jsSafe(m.from_name || '')}')">↩ Reply</button>`
       : '';
-    const logBtn = `<button class="msg-reply-btn" onclick="event.stopPropagation();tocFromMtMessage('${jsSafe(m.id || m.pkt_id || '')}')" title="Prefill TOC Log from this message">Log</button>`;
     const routeMeta = _mtMessageRouteMeta(m);
     const routeBtn = routeMeta
       ? `<button class="mt-route-badge ${routeMeta.cached ? 'cached' : ''}" title="${escHtml(routeMeta.detail)}" onclick="event.stopPropagation();showMtMessageRoute('${jsSafe(m.id)}')">${escHtml(routeMeta.label)}</button>`
@@ -7333,8 +7333,9 @@ if (targetEl) {
       const statusHtml = m.sent
         ? `<span class="msg-status ${m.status || 'pending'}" data-msgid="${m.id}" style="font-size:10px">${m.status === 'delivered' ? '✓' : m.status === 'failed' ? '✗' : '·'}</span>`
         : '';
+      const logHtml = `<button onclick="event.stopPropagation();tocFromMtMessage('${jsSafe(m.id || m.pkt_id || '')}')" title="Prefill TOC Log from this message" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:10px;padding:0 2px">Log</button>`;
       return `<div style="display:flex;flex-direction:column;align-items:${m.sent ? 'flex-end' : 'flex-start'}">
-        <div style="font-size:10px;color:var(--muted);margin-bottom:2px">${m.sent ? 'You' : escHtml(m.from_name)} · ${t} ${statusHtml}</div>
+        <div style="font-size:10px;color:var(--muted);margin-bottom:2px">${m.sent ? 'You' : escHtml(m.from_name)} · ${t} ${statusHtml} ${logHtml}</div>
         <div style="background:${m.sent ? 'var(--accent-dim)' : 'var(--bg3)'};border:1px solid ${m.sent ? 'var(--accent)' : 'var(--border)'};border-radius:6px;padding:5px 9px;font-size:12px;max-width:90%">${escHtml(m.text)}</div>
       </div>`;
     }).join('');
@@ -17122,12 +17123,88 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   // ── TOC Log ──────────────────────────────────────────────────────────────
 
   const TOC_TEMPLATES = {
-    sitrep:     { cat:'SITREP',   label:'SITREP',          fields:['Date/Time','Location','Situation','Intent/Plan','Notes'] },
-    contact:    { cat:'CONTACT',  label:'First Contact',    fields:['Node','Callsign','Channel/Freq','Signal','Notes'] },
-    commscheck: { cat:'COMMS',    label:'COMMS CHECK',      fields:['From','To','Signal','Result','Notes'] },
-    alert:      { cat:'ALERT',    label:'ALERT',            fields:['Type','Details','Action Taken','Notes'] },
-    action:     { cat:'ACTION',   label:'ACTION',           fields:['Action','By','Result','Notes'] },
-    position:   { cat:'POSITION', label:'POSITION UPDATE',  fields:['Node','Coordinates/Pos','Notes'] },
+    sitrep: {
+      cat:'SITREP', label:'SITREP',
+      fields:[
+        {name:'Location / Area', hint:'Site, route, grid, or operating area'},
+        {name:'Situation', hint:'What is happening now', multiline:true},
+        {name:'Status', hint:'Normal, degraded, blocked, urgent...'},
+        {name:'Known Nodes / Assets', hint:'Nodes, teams, vehicles, stations (# to mention node)'},
+        {name:'Issues / Risks', hint:'Outages, safety issues, weather, access, interference'},
+        {name:'Intent / Plan', hint:'Next steps or operating plan', multiline:true},
+        {name:'Next Update', hint:'When another report is expected'},
+        {name:'Notes', hint:'Extra context', multiline:true},
+      ],
+    },
+    contact: {
+      cat:'CONTACT', label:'First Contact',
+      fields:[
+        {name:'Node / Station', hint:'Node or station heard (# to mention node)'},
+        {name:'Callsign / Handle', hint:'Operator, callsign, or informal handle'},
+        {name:'Network / Channel', hint:'MT channel, MC contact, frequency, or room'},
+        {name:'First Heard', hint:'Time first heard or observed'},
+        {name:'Signal', hint:'SNR/RSSI/quality report'},
+        {name:'Hops', hint:'Direct, 1 hop, 2 hops, flood, unknown'},
+        {name:'Distance', hint:'Estimated distance if known'},
+        {name:'Position', hint:'Coordinates, place, grid, or unknown'},
+        {name:'Action / Follow-up', hint:'DM sent, pinged, added to contacts, monitor...'},
+        {name:'Notes', hint:'Extra contact details', multiline:true},
+      ],
+    },
+    commscheck: {
+      cat:'COMMS', label:'COMMS CHECK',
+      fields:[
+        {name:'From', hint:'Calling station (# to mention node)'},
+        {name:'To', hint:'Receiving station or group (# to mention node)'},
+        {name:'Network / Channel', hint:'MT channel, MC room/contact, or frequency'},
+        {name:'Message / Check', hint:'What was sent or tested', multiline:true},
+        {name:'Signal', hint:'SNR/RSSI/readability'},
+        {name:'Hops', hint:'Direct, 1 hop, 2 hops, flood, unknown'},
+        {name:'Distance', hint:'Estimated distance if known'},
+        {name:'Result', hint:'Good copy, weak, no ack, delayed, failed...'},
+        {name:'Follow-up', hint:'Retry, change channel, move antenna, monitor...'},
+        {name:'Notes', hint:'Extra RF/path context', multiline:true},
+      ],
+    },
+    alert: {
+      cat:'ALERT', label:'ALERT',
+      fields:[
+        {name:'Priority', hint:'Low, medium, high, urgent'},
+        {name:'Type', hint:'Safety, weather, power, comms, security, other'},
+        {name:'Location', hint:'Place, grid, coordinates, or affected area'},
+        {name:'Affected Node(s) / People', hint:'Who or what is affected (# to mention node)'},
+        {name:'Details', hint:'What happened and why it matters', multiline:true},
+        {name:'Immediate Action', hint:'Action already taken or needed now', multiline:true},
+        {name:'Status', hint:'Open, monitoring, contained, resolved'},
+        {name:'Follow-up', hint:'Who checks next and when'},
+        {name:'Notes', hint:'Extra details', multiline:true},
+      ],
+    },
+    action: {
+      cat:'ACTION', label:'ACTION',
+      fields:[
+        {name:'Task / Action', hint:'Specific action to perform', multiline:true},
+        {name:'Assigned To', hint:'Person, node, or team (# to mention node)'},
+        {name:'Location', hint:'Where the action applies'},
+        {name:'Due / Time', hint:'Deadline or execution time'},
+        {name:'Status', hint:'Planned, in progress, blocked, complete'},
+        {name:'Result', hint:'Outcome after action', multiline:true},
+        {name:'Follow-up', hint:'Next action or check-in'},
+        {name:'Notes', hint:'Extra context', multiline:true},
+      ],
+    },
+    position: {
+      cat:'POSITION', label:'POSITION UPDATE',
+      fields:[
+        {name:'Node / Asset', hint:'Node, person, vehicle, station (# to mention node)'},
+        {name:'Coordinates / Place', hint:'Lat/lon, grid, landmark, or route point'},
+        {name:'Source', hint:'GPS, manual, report, map pick, inferred'},
+        {name:'Accuracy / Confidence', hint:'Exact, approximate, stale, unknown'},
+        {name:'Movement / Heading', hint:'Static, moving, heading/speed if known'},
+        {name:'Last Heard / Seen', hint:'Time or age of position'},
+        {name:'Notes', hint:'Extra position context', multiline:true},
+      ],
+    },
   };
 
   const TOC_CAT_COLORS = {
@@ -17263,6 +17340,67 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     tocRenderPinnedTemplates();
   }
 
+  function _tocFieldName(field) {
+    return typeof field === 'string' ? field : field.name;
+  }
+
+  function _tocFieldHint(field) {
+    if (typeof field === 'string') {
+      const nodeFields = new Set(['node','callsign','from','to','by','members']);
+      return nodeFields.has(field.toLowerCase()) ? `${field}… (# to mention node)` : `${field}…`;
+    }
+    return field.hint || `${field.name}…`;
+  }
+
+  function _tocFieldMultiline(field) {
+    return typeof field === 'object' && field.multiline === true;
+  }
+
+  function _tocTemplateFieldNames(tmpl) {
+    return (tmpl?.fields || []).map(_tocFieldName);
+  }
+
+  function _tocStructuredMarkdown(obj) {
+    return Object.entries(obj || {})
+      .map(([key, value]) => {
+        const val = String(value || '').trim();
+        return val ? `**${key}:** ${val}` : `**${key}:**`;
+      })
+      .join('\n');
+  }
+
+  function _tocMarkdownFields(body) {
+    const obj = {};
+    let current = null;
+    String(body || '').split(/\n/).forEach(line => {
+      const m = line.match(/^\*\*([^:*]+):\*\*\s*(.*)$/);
+      if (m) {
+        current = m[1].trim();
+        obj[current] = m[2] || '';
+      } else if (current && line.trim()) {
+        obj[current] = [obj[current], line].filter(Boolean).join('\n');
+      }
+    });
+    return Object.keys(obj).length ? obj : null;
+  }
+
+  function _tocStructuredObject(body) {
+    try {
+      const obj = JSON.parse(body);
+      if (obj && typeof obj === 'object' && !Array.isArray(obj)) return obj;
+    } catch(e) {}
+    return _tocMarkdownFields(body);
+  }
+
+  function _tocTemplateKeyForObject(obj, category = '') {
+    if (!obj || typeof obj !== 'object') return '';
+    const keys = Object.keys(obj);
+    return Object.entries(TOC_TEMPLATES).find(([, t]) => {
+      const names = _tocTemplateFieldNames(t);
+      return (!category || t.cat === category) && keys.length > 0 && keys.every(k => names.includes(k));
+    })?.[0] || '';
+  }
+
   function tocApplyTemplate(key) {
     const fieldsDiv = document.getElementById('toc-fields');
     const bodyEl    = document.getElementById('toc-body');
@@ -17280,15 +17418,19 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     if (catEl) catEl.value = tmpl.cat;
     fieldsDiv.innerHTML = '';
     tmpl.fields.forEach(f => {
+      const name = _tocFieldName(f);
+      const hint = _tocFieldHint(f);
       const row = document.createElement('div');
-      row.style.cssText = 'display:flex;align-items:center;gap:8px';
-      const _nodeFields = new Set(['node','callsign','from','to','by','members']);
-      const _hint = _nodeFields.has(f.toLowerCase()) ? `${f}… (# to mention node)` : `${f}…`;
-      row.innerHTML = `<label style="font-size:11px;color:var(--muted);min-width:90px;text-align:right;flex-shrink:0">${f}</label>
-        <input type="text" data-toc-field="${f}" placeholder="${_hint}"
+      row.style.cssText = 'display:flex;align-items:flex-start;gap:8px';
+      const control = _tocFieldMultiline(f)
+        ? `<textarea data-toc-field="${escHtml(name)}" placeholder="${escHtml(hint)}" rows="2"
+          style="flex:1;background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:5px 8px;font-size:12px;resize:vertical;min-height:32px"></textarea>`
+        : `<input type="text" data-toc-field="${escHtml(name)}" placeholder="${escHtml(hint)}"
           style="flex:1;background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:5px 8px;font-size:12px">`;
-      row.querySelector('input').addEventListener('input', tocInputHandler);
-      row.querySelector('input').addEventListener('keydown', tocInputKeydown);
+      row.innerHTML = `<label style="font-size:11px;color:var(--muted);min-width:120px;text-align:right;flex-shrink:0;padding-top:6px">${escHtml(name)}</label>${control}`;
+      const fieldEl = row.querySelector('[data-toc-field]');
+      fieldEl.addEventListener('input', tocInputHandler);
+      fieldEl.addEventListener('keydown', tocInputKeydown);
       fieldsDiv.appendChild(row);
     });
     fieldsDiv.style.display = 'flex';
@@ -17347,13 +17489,43 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     try {
       const obj = JSON.parse(body);
       if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
-        return '<table style="border-collapse:collapse;width:100%">' +
-          Object.entries(obj).map(([k,v]) =>
-            `<tr><td style="color:var(--muted);padding:1px 10px 1px 0;white-space:nowrap;font-size:11px;vertical-align:top">${_tocEscape(k)}</td>` +
-            `<td style="color:var(--text);font-size:12px;word-break:break-word">${_tocRenderMentions(v||'—')}</td></tr>`
-          ).join('') + '</table>';
+        return _tocRenderStructuredLines(Object.entries(obj));
       }
     } catch(e) { /* plain text */ }
+    return _tocRenderMarkdownBody(body);
+  }
+
+  function _tocRenderStructuredLines(entries) {
+    return '<table style="border-collapse:collapse;width:100%">' +
+      entries.map(([k,v]) =>
+        `<tr><td style="color:var(--muted);padding:1px 10px 1px 0;white-space:nowrap;font-size:11px;vertical-align:top">${_tocEscape(k)}</td>` +
+        `<td style="color:var(--text);font-size:12px;word-break:break-word;white-space:pre-wrap">${_tocRenderMentions(v||'—')}</td></tr>`
+      ).join('') + '</table>';
+  }
+
+  function _tocRenderMarkdownBody(body) {
+    const rows = [];
+    const plain = [];
+    let currentRow = null;
+    String(body || '').split(/\n/).forEach(line => {
+      const m = line.match(/^\*\*([^:*]+):\*\*\s*(.*)$/);
+      if (m) {
+        if (plain.length) {
+          rows.push(['', plain.splice(0).join('\n')]);
+        }
+        currentRow = [m[1].trim(), m[2] || ''];
+        rows.push(currentRow);
+      } else if (currentRow && line.trim()) {
+        currentRow[1] = [currentRow[1], line].filter(Boolean).join('\n');
+      } else {
+        currentRow = null;
+        plain.push(line);
+      }
+    });
+    if (rows.length) {
+      if (plain.length) rows.push(['', plain.join('\n')]);
+      return _tocRenderStructuredLines(rows);
+    }
     return `<span style="font-size:12px;white-space:pre-wrap">${_tocRenderMentions(body)}</span>`;
   }
 
@@ -17392,7 +17564,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   function _tocAppendToBody(line) {
     if (!line) return;
     if (_tocActiveTemplate) {
-      const notes = [...document.querySelectorAll('#toc-fields input[data-toc-field]')]
+      const notes = [...document.querySelectorAll('#toc-fields [data-toc-field]')]
         .find(inp => inp.dataset.tocField.toLowerCase() === 'notes');
       if (notes) {
         notes.value = [notes.value.trim(), line].filter(Boolean).join('\n');
@@ -17730,11 +17902,11 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     if (_tocActiveTemplate) {
       const fields = document.getElementById('toc-fields');
       const obj = {};
-      fields.querySelectorAll('input[data-toc-field]').forEach(inp => {
+      fields.querySelectorAll('[data-toc-field]').forEach(inp => {
         obj[inp.dataset.tocField] = inp.value.trim();
       });
       if (!Object.values(obj).some(v => v)) return;
-      bodyStr = JSON.stringify(obj);
+      bodyStr = _tocStructuredMarkdown(obj);
     } else {
       bodyStr = (document.getElementById('toc-body').value || '').trim();
       if (!bodyStr) return;
@@ -17762,24 +17934,13 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     _tocEditingId = Number(id);
     document.getElementById('toc-category').value = entry.category || 'NOTE';
     _tocSetDateTimeFields(entry.ts);
-    const tmplKey = (() => {
-      try {
-        const obj = JSON.parse(entry.body);
-        if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return '';
-        const keys = Object.keys(obj);
-        return Object.entries(TOC_TEMPLATES).find(([, t]) =>
-          t.fields.length === keys.length && t.fields.every(f => Object.prototype.hasOwnProperty.call(obj, f))
-        )?.[0] || '';
-      } catch(e) {
-        return '';
-      }
-    })();
+    const obj = _tocStructuredObject(entry.body);
+    const tmplKey = _tocTemplateKeyForObject(obj, entry.category || '');
     const templateEl = document.getElementById('toc-template');
     templateEl.value = tmplKey;
     if (tmplKey) {
       tocApplyTemplate(tmplKey);
-      const obj = JSON.parse(entry.body);
-      document.querySelectorAll('#toc-fields input[data-toc-field]').forEach(inp => {
+      document.querySelectorAll('#toc-fields [data-toc-field]').forEach(inp => {
         inp.value = obj[inp.dataset.tocField] || '';
       });
     } else {
@@ -17794,23 +17955,12 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const entry = _tocEntries.get(Number(id)) || _tocAllEntries.find(e => Number(e.id) === Number(id));
     if (!entry) return;
     _tocPrefill(entry.category || 'NOTE', entry.body || '', Math.floor(Date.now() / 1000));
-    const tmplKey = (() => {
-      try {
-        const obj = JSON.parse(entry.body);
-        if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return '';
-        const keys = Object.keys(obj);
-        return Object.entries(TOC_TEMPLATES).find(([, t]) =>
-          t.fields.length === keys.length && t.fields.every(f => Object.prototype.hasOwnProperty.call(obj, f))
-        )?.[0] || '';
-      } catch(e) {
-        return '';
-      }
-    })();
+    const obj = _tocStructuredObject(entry.body);
+    const tmplKey = _tocTemplateKeyForObject(obj, entry.category || '');
     if (tmplKey) {
       document.getElementById('toc-template').value = tmplKey;
       tocApplyTemplate(tmplKey);
-      const obj = JSON.parse(entry.body);
-      document.querySelectorAll('#toc-fields input[data-toc-field]').forEach(inp => {
+      document.querySelectorAll('#toc-fields [data-toc-field]').forEach(inp => {
         inp.value = obj[inp.dataset.tocField] || '';
       });
     }
@@ -17833,17 +17983,27 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   function tocFromMtMessage(msgId) {
     const msg = (chatMsgs || []).find(m => String(m.id || m.pkt_id || '') === String(msgId));
     if (!msg) return;
+    const node = !msg.sent && msg.from_id
+      ? (allNodes || []).find(n => n.id === msg.from_id && (!msg.radio_id || !n.radio_id || n.radio_id === msg.radio_id))
+        || (allNodes || []).find(n => n.id === msg.from_id)
+      : null;
     const sender = msg.sent ? 'You' : (msg.from_name || msg.from_id || '?');
     const target = msg.is_dm ? (msg.sent ? (msg.to_name || msg.to_id || '?') : 'You') : `CH${msg.channel ?? 0}`;
     const mention = !msg.sent && msg.from_id && msg.from_id !== 'bot'
       ? _tocMentionToken('mt', msg.from_name || msg.from_id, msg.from_id)
       : sender;
-    const body = [
-      `MT message: ${mention} -> ${target}`,
-      `Time: ${_formatAppDateTime(msg.ts || Math.floor(Date.now() / 1000))}`,
-      msg.snr != null ? `Signal: SNR ${msg.snr} dB` : '',
-      `Text: ${msg.text || ''}`,
-    ].filter(Boolean).join('\n');
+    const body = _tocStructuredMarkdown({
+      From: mention,
+      To: target,
+      'Network / Channel': msg.is_dm ? 'Meshtastic DM' : `Meshtastic CH${msg.channel ?? 0}`,
+      'Message / Check': msg.text || '',
+      Signal: msg.snr != null ? `SNR ${msg.snr} dB` : '',
+      Hops: node?.hops_away != null ? `${node.hops_away}` : '',
+      Distance: node ? _mtNodeDistanceLabel(node) : '',
+      Result: msg.sent ? (msg.status || 'sent') : 'received',
+      'Follow-up': '',
+      Notes: `Time: ${_formatAppDateTime(msg.ts || Math.floor(Date.now() / 1000))}`,
+    });
     _tocPrefill('COMMS', body, msg.ts || Math.floor(Date.now() / 1000));
   }
 
@@ -17856,12 +18016,19 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       ? _tocMentionToken('mc', name || msg.from_id, msg.from_id, msg.radio_id || '')
       : 'You';
     const target = sent ? (msg.to_name || msg.to_id || `CH${msg.channel ?? 0}`) : (msg.subtype === 'dm' ? 'You' : `CH${msg.channel ?? 0}`);
-    const body = [
-      `MC message: ${mention} -> ${target}`,
-      `Time: ${_formatAppDateTime(msg.ts || Math.floor(Date.now() / 1000))}`,
-      msg.rx_snr != null ? `Signal: SNR ${msg.rx_snr} dB` : '',
-      `Text: ${_mcMsgText(msg, name)}`,
-    ].filter(Boolean).join('\n');
+    const contact = !sent && msg.from_id ? _mcResolveMessageContact(msg) : null;
+    const body = _tocStructuredMarkdown({
+      From: mention,
+      To: target,
+      'Network / Channel': msg.subtype === 'dm' ? 'MeshCore DM' : `MeshCore CH${msg.channel ?? 0}`,
+      'Message / Check': _mcMsgText(msg, name),
+      Signal: msg.rx_snr != null ? `SNR ${msg.rx_snr} dB` : '',
+      Hops: msg.path_len != null ? mcPathHopLabel(msg.path_len, true) : '',
+      Distance: contact ? _mcNodeDistanceLabel(contact, msg.radio_id || '') : '',
+      Result: sent ? (msg.status || 'sent') : 'received',
+      'Follow-up': '',
+      Notes: `Time: ${_formatAppDateTime(msg.ts || Math.floor(Date.now() / 1000))}`,
+    });
     _tocPrefill('COMMS', body, msg.ts || Math.floor(Date.now() / 1000));
   }
 
@@ -17869,14 +18036,32 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const n = (allNodes || []).find(x => x.id === nodeId);
     if (!n) return;
     const name = n.long_name || n.short_name || n.id;
-    const lines = [
-      `Node: ${_tocMentionToken('mt', name, n.id)}`,
-      n.latitude != null && n.longitude != null ? `Position: ${Number(n.latitude).toFixed(5)}, ${Number(n.longitude).toFixed(5)}` : '',
-      n.snr != null ? `Signal: SNR ${n.snr} dB` : '',
-      n.last_heard_ts ? `Last heard: ${_formatAppDateTime(n.last_heard_ts)}` : '',
-      'Notes: ',
-    ].filter(Boolean);
-    _tocPrefill(n.latitude != null && n.longitude != null ? 'POSITION' : 'CONTACT', lines.join('\n'));
+    const hasPos = n.latitude != null && n.longitude != null;
+    const body = hasPos ? _tocStructuredMarkdown({
+      'Node / Asset': _tocMentionToken('mt', name, n.id),
+      'Coordinates / Place': `${Number(n.latitude).toFixed(5)}, ${Number(n.longitude).toFixed(5)}`,
+      Source: 'Meshtastic node report',
+      'Accuracy / Confidence': 'Reported',
+      'Movement / Heading': '',
+      'Last Heard / Seen': n.last_heard_ts ? _formatAppDateTime(n.last_heard_ts) : '',
+      Notes: [
+        n.snr != null ? `Signal: SNR ${n.snr} dB` : '',
+        n.hops_away != null ? `Hops: ${n.hops_away}` : '',
+        `Distance: ${_mtNodeDistanceLabel(n)}`,
+      ].filter(Boolean).join('\n'),
+    }) : _tocStructuredMarkdown({
+      'Node / Station': _tocMentionToken('mt', name, n.id),
+      'Callsign / Handle': name,
+      'Network / Channel': 'Meshtastic',
+      'First Heard': '',
+      Signal: n.snr != null ? `SNR ${n.snr} dB` : '',
+      Hops: n.hops_away != null ? `${n.hops_away}` : '',
+      Distance: _mtNodeDistanceLabel(n),
+      Position: '',
+      'Action / Follow-up': '',
+      Notes: n.last_heard_ts ? `Last heard: ${_formatAppDateTime(n.last_heard_ts)}` : '',
+    });
+    _tocPrefill(hasPos ? 'POSITION' : 'CONTACT', body);
   }
 
   function tocFromMcNode(contactId, radioId) {
@@ -17886,14 +18071,32 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const lat = c.latitude ?? c.lat;
     const lon = c.longitude ?? c.lon;
     const seenTs = _mcContactSeenTs(c);
-    const lines = [
-      `Node: ${_tocMentionToken('mc', name, c.id || contactId, radioId || '')}`,
-      lat != null && lon != null ? `Position: ${Number(lat).toFixed(5)}, ${Number(lon).toFixed(5)}` : '',
-      c.last_snr != null ? `Signal: SNR ${c.last_snr} dB` : '',
-      seenTs ? `Last seen: ${_formatAppDateTime(seenTs)}` : '',
-      'Notes: ',
-    ].filter(Boolean);
-    _tocPrefill(lat != null && lon != null ? 'POSITION' : 'CONTACT', lines.join('\n'));
+    const hasPos = lat != null && lon != null;
+    const body = hasPos ? _tocStructuredMarkdown({
+      'Node / Asset': _tocMentionToken('mc', name, c.id || contactId, radioId || ''),
+      'Coordinates / Place': `${Number(lat).toFixed(5)}, ${Number(lon).toFixed(5)}`,
+      Source: 'MeshCore contact data',
+      'Accuracy / Confidence': 'Reported',
+      'Movement / Heading': '',
+      'Last Heard / Seen': seenTs ? _formatAppDateTime(seenTs) : '',
+      Notes: [
+        c.last_snr != null ? `Signal: SNR ${c.last_snr} dB` : '',
+        c.out_path_len != null ? `Hops: ${mcPathHopLabel(c.out_path_len, true)}` : '',
+        `Distance: ${_mcNodeDistanceLabel(c, radioId || '')}`,
+      ].filter(Boolean).join('\n'),
+    }) : _tocStructuredMarkdown({
+      'Node / Station': _tocMentionToken('mc', name, c.id || contactId, radioId || ''),
+      'Callsign / Handle': name,
+      'Network / Channel': 'MeshCore',
+      'First Heard': '',
+      Signal: c.last_snr != null ? `SNR ${c.last_snr} dB` : '',
+      Hops: c.out_path_len != null ? mcPathHopLabel(c.out_path_len, true) : '',
+      Distance: _mcNodeDistanceLabel(c, radioId || ''),
+      Position: '',
+      'Action / Follow-up': '',
+      Notes: seenTs ? `Last seen: ${_formatAppDateTime(seenTs)}` : '',
+    });
+    _tocPrefill(hasPos ? 'POSITION' : 'CONTACT', body);
   }
 
   function tocExport(fmt) {

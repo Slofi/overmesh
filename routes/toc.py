@@ -23,8 +23,36 @@ def _normalize_category(value):
 
 def _normalize_body(value):
     if isinstance(value, (dict, list)):
-        value = json.dumps(value)
+        value = _structured_body_to_markdown(value)
     return (value or '').strip()
+
+
+def _structured_body_to_markdown(value):
+    if isinstance(value, dict):
+        lines = []
+        for key, raw in value.items():
+            val = '' if raw is None else str(raw).strip()
+            if val:
+                lines.append(f"**{key}:** {val}")
+            else:
+                lines.append(f"**{key}:**")
+        return "\n".join(lines)
+    if isinstance(value, list):
+        return "\n".join(f"- {item}" for item in value if str(item).strip())
+    return str(value or '').strip()
+
+
+def _body_for_text_export(body):
+    body = (body or '').strip()
+    if not body:
+        return ''
+    try:
+        loaded = json.loads(body)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return body
+    if isinstance(loaded, (dict, list)):
+        return _structured_body_to_markdown(loaded)
+    return body
 
 
 def _normalize_ts(value, default=None):
@@ -202,7 +230,7 @@ def api_toc_export():
     lines = []
     for e in entries:
         dt = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(e['ts']))
-        lines.append(f"[{dt}] [{e['category']}]\n{e['body']}\n")
+        lines.append(f"[{dt}] [{e['category']}]\n{_body_for_text_export(e['body'])}\n")
     from flask import Response
     return Response(
         '\n'.join(lines),

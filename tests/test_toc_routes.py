@@ -58,6 +58,34 @@ class TocRoutesTests(unittest.TestCase):
         self.assertEqual(data["category"], "ACTION")
         self.assertEqual(data["ts"], 20)
 
+    def test_structured_body_is_saved_as_markdown_fields(self):
+        resp = self.client.post("/api/toc", json={
+            "category": "COMMS",
+            "body": {"From": "Alpha", "To": "Bravo", "Hops": "2", "Distance": "4.2 km"},
+            "ts": 30,
+        })
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_json()["body"]
+        self.assertIn("**From:** Alpha", body)
+        self.assertIn("**Hops:** 2", body)
+        self.assertIn("**Distance:** 4.2 km", body)
+
+    def test_text_export_formats_legacy_json_body_as_markdown(self):
+        created = self.client.post("/api/toc", json={
+            "category": "SITREP",
+            "body": json.dumps({"Location": "Hill", "Situation": "Clear"}),
+            "ts": 40,
+        }).get_json()
+        self.assertEqual(created["category"], "SITREP")
+
+        resp = self.client.get("/api/toc/export?fmt=text")
+
+        self.assertEqual(resp.status_code, 200)
+        text = resp.get_data(as_text=True)
+        self.assertIn("**Location:** Hill", text)
+        self.assertIn("**Situation:** Clear", text)
+
     def test_json_import_round_trips_export_shape(self):
         content = json.dumps([
             {"id": 99, "ts": 111, "category": "COMMS", "body": "Radio check"},

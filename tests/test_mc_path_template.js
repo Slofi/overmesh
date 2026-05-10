@@ -54,5 +54,8 @@ assert(/tocTogglePinnedTemplate/.test(src), 'TOC Log pinned templates handling m
 assert(/tocDuplicate/.test(src), 'TOC Log duplicate action missing');
 assert(/tocFromMtMessage/.test(src) && /tocFromMcMessage/.test(src), 'TOC Log message prefill actions missing');
 assert(/tocFromMtNode/.test(src) && /tocFromMcNode/.test(src), 'TOC Log node prefill actions missing');
+assert(/commscheck:[\s\S]*name:'Hops'[\s\S]*name:'Distance'/.test(src), 'TOC COMMS CHECK template missing Hops/Distance fields');
+assert(/_tocStructuredMarkdown/.test(src), 'TOC structured Markdown formatter missing');
+assert(/tocFromMtMessage/.test(src) && /map-dm-msgs/.test(src), 'MT message Log prefill handling missing');
 
 console.log('MC path template checks passed');

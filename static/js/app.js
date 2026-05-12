@@ -9614,6 +9614,7 @@ if (targetEl) {
   let mcChatTab       = localStorage.getItem('mcChatTab') || 'chan:0';
   const mcUnreadTabs      = new Set();
   const mcUnreadCounts    = Object.create(null);
+  let _mcLastReconnectTs  = 0;  // timestamp of last MC radio connect — used to suppress archive-replay notifications
   const mcKnownChannels   = {0: 'Public'};  // idx → display name
   const mcDmContacts      = {};             // pubkey_pre → display name
   let closedMcDmTabs = (() => { try { return new Set(JSON.parse(localStorage.getItem('closedMcDmTabs') || '[]')); } catch(e) { return new Set(); } })();
@@ -9861,6 +9862,7 @@ if (targetEl) {
       else selectedRadioIds.delete(data.radio_id);
       saveSelectedRadioIds();
       if (data.status === 'connected') {
+        _mcLastReconnectTs = Date.now();
         _loadMcMessageArchive(data.radio_id);
         // Re-fetch full status to get radio params (freq/bw/sf/cr/tx_power)
         // that are only available after a successful send_appstart() on connect
@@ -10085,7 +10087,10 @@ if (targetEl) {
         rssi: data.rx_rssi,
       });
       const addedMcMessage = _mcMergeMessages([data], { silent: true });
-      if (!addedMcMessage) return;
+      // Suppress notifications only for archive replays: duplicate messages arriving within
+      // 30s of a reconnect (backend replays buffered SSE events that archive already loaded).
+      // Genuinely new messages always have addedMcMessage > 0, so notifications always fire.
+      const isArchiveReplay = !addedMcMessage && (Date.now() - _mcLastReconnectTs) < 30000;
       // Backfill contact name from embedded "Name: message" format if still showing hex fallback
       if (data.from_id && data.radio_id && data.text) {
         const c = (mcContacts[data.radio_id] || {})[data.from_id];
@@ -10115,13 +10120,13 @@ if (targetEl) {
         }
         msgTab = `dm:${fk}`;
       }
-      // Mark unread if not on this tab or not in chat/MC view
-      if (msgTab && !data.sent && (currentTab !== 'chat' || chatNetwork !== 'mc' || mcChatTab !== msgTab)) {
-        mcUnreadTabs.add(msgTab);
-        _incrementUnreadCount(mcUnreadCounts, msgTab);
-        updateUnreadDots();
-      }
-      if (!data.sent) {
+      if (!data.sent && !isArchiveReplay) {
+        // Mark unread if not on this tab or not in chat/MC view
+        if (msgTab && (currentTab !== 'chat' || chatNetwork !== 'mc' || mcChatTab !== msgTab)) {
+          mcUnreadTabs.add(msgTab);
+          _incrementUnreadCount(mcUnreadCounts, msgTab);
+          updateUnreadDots();
+        }
         playNotificationSound('message');
         const currentMcTab = (currentTab === 'chat' && chatNetwork === 'mc') ? mcChatTab : null;
         if (document.hidden || currentMcTab !== msgTab) {
@@ -10133,13 +10138,15 @@ if (targetEl) {
           _logAlert('message', title, escHtml(_mcMsgText(data, mcDmContacts[data.from_id] || '')));
         }
       }
-      renderMcMessages();
-      // Retain all heard MC activity, even if the Sense panel is not currently visible.
-      if (!data.sent && data.subtype !== 'system') {
-        try {
-          addMcSenseMessageEntry(data);
-        } catch (e) {
-          console.warn('MC activity message log failed:', e);
+      if (addedMcMessage) {
+        renderMcMessages();
+        // Retain all heard MC activity, even if the Sense panel is not currently visible.
+        if (!data.sent && data.subtype !== 'system') {
+          try {
+            addMcSenseMessageEntry(data);
+          } catch (e) {
+            console.warn('MC activity message log failed:', e);
+          }
         }
       }
       return;

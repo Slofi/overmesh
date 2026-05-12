@@ -65,6 +65,70 @@
   const INAPP_RETURNED_THRESHOLD_S = 7 * 24 * 3600;
   const INAPP_NODE_RECENT_WINDOW_S = 120;
   const _inAppToastSeen = new Map();
+
+  // ── Alert log (persistent, localStorage-backed) ───────────────────────────
+  const _ALERTS_KEY = 'om_alerts';
+  const _ALERTS_MAX = 150;
+
+  function _alertsLoad() {
+    try { return JSON.parse(localStorage.getItem(_ALERTS_KEY) || '[]'); } catch(e) { return []; }
+  }
+  function _alertsSave(arr) {
+    try { localStorage.setItem(_ALERTS_KEY, JSON.stringify(arr.slice(0, _ALERTS_MAX))); } catch(e) {}
+  }
+  function _logAlert(type, title, body) {
+    const alerts = _alertsLoad();
+    alerts.unshift({ id: `a-${Date.now()}-${Math.random().toString(36).slice(2,5)}`, type, title, body, ts: Date.now(), read: false });
+    _alertsSave(alerts);
+    _alertsBadgeUpdate();
+  }
+  function _alertsBadgeUpdate() {
+    const count = _alertsLoad().filter(a => !a.read).length;
+    const badge = document.getElementById('alerts-badge');
+    if (!badge) return;
+    badge.textContent = count > 99 ? '99+' : String(count);
+    badge.style.display = count > 0 ? 'inline-flex' : 'none';
+  }
+  function toggleAlertsPanel(ev) {
+    if (ev) ev.stopPropagation();
+    const panel = document.getElementById('alerts-panel');
+    if (!panel) return;
+    const open = panel.classList.toggle('open');
+    document.getElementById('power-menu')?.classList.remove('open');
+    if (open) {
+      const alerts = _alertsLoad().map(a => ({ ...a, read: true }));
+      _alertsSave(alerts);
+      _alertsBadgeUpdate();
+      _renderAlertsList();
+    }
+  }
+  function _renderAlertsList() {
+    const panel = document.getElementById('alerts-panel');
+    if (!panel) return;
+    const alerts = _alertsLoad();
+    if (!alerts.length) {
+      panel.innerHTML = `<div class="alerts-header"><span class="alerts-title">Alerts</span></div><div class="alerts-empty">No alerts yet.</div>`;
+      return;
+    }
+    panel.innerHTML = `
+      <div class="alerts-header">
+        <span class="alerts-title">Alerts</span>
+        <button class="alerts-clear-btn" onclick="clearAllAlerts()">Clear all</button>
+      </div>
+      <div class="alerts-list">
+        ${alerts.map(a => `
+          <div class="alert-entry alert-type-${escHtml(a.type)}">
+            <div class="alert-entry-title">${escHtml(a.title)}</div>
+            <div class="alert-entry-body">${a.body}</div>
+            <div class="alert-entry-ts">${_formatAppDateTime(a.ts)}</div>
+          </div>`).join('')}
+      </div>`;
+  }
+  function clearAllAlerts() {
+    _alertsSave([]);
+    _alertsBadgeUpdate();
+    _renderAlertsList();
+  }
   let _prevMtNodeSeen = new Map();
   const _baseDocumentTitle = document.title || 'OverMesh';
   const _notifSoundGainMultiplier = 4.0;
@@ -1105,9 +1169,11 @@
       }
         if (_mtStatusSoundPrimed && data.status === 'connected' && prevStatus !== 'connected') {
           playNotificationSound('radio');
+          _logAlert('radio', 'MT radio connected', escHtml(data.name || data.radio_id || '?'));
         }
         if (_mtStatusSoundPrimed && data.status === 'disconnected' && prevStatus === 'connected') {
           playNotificationSound('radio_disconnect');
+          _logAlert('radio', 'MT radio disconnected', escHtml(data.name || data.radio_id || '?'));
         }
         if (data.status === 'connected') selectedRadioIds.add(data.radio_id);
         else selectedRadioIds.delete(data.radio_id);
@@ -3000,6 +3066,7 @@ if (targetEl) {
             playNotificationSound('node');
           } else if (prevSeen && curSeen > prevSeen && (curSeen - prevSeen) >= _returnedGapThresholdSeconds() && (nowTs - curSeen) <= INAPP_NODE_RECENT_WINDOW_S) {
             maybeShowInAppNodeReturned('MT node seen again', `<b>${escHtml(n.long_name)}</b> returned after a long gap`, `toast-node-return-mt-${id}`);
+            _logAlert('node-return', 'MT node seen again', escHtml(n.long_name) + ' returned after a long gap');
           }
         });
       }
@@ -3845,6 +3912,7 @@ if (targetEl) {
   }
   document.addEventListener('click', () => {
     document.getElementById('power-menu')?.classList.remove('open');
+    document.getElementById('alerts-panel')?.classList.remove('open');
   });
 
   async function restartOverMeshNow(btn) {
@@ -5318,6 +5386,7 @@ if (targetEl) {
       if (gf.notify_app !== false) {
         showToast(title, body, 'node-return', `geofence-${entityKey}-${def.id}-${inside ? 'in' : 'out'}`, {persistent: true});
         playNotificationSound('geofence');
+        _logAlert('geofence', title, `${escHtml(entity.name || entity.id || '?')} ${inside ? 'entered' : 'left'} ${escHtml(def.name || 'geofence')}`);
       }
       if (gf.notify_browser !== false) {
         sendNotif(title, `${entity.name || entity.id || '?'} ${inside ? 'entered' : 'left'} ${def.name || 'geofence'}`, `geofence-${entityKey}-${def.id}-${inside ? 'in' : 'out'}`, 'node', {persistent: true});
@@ -9745,9 +9814,11 @@ if (targetEl) {
       if (data.status === 'disconnected') delete mcLastStatus[data.radio_id].node_id;
       if (_mcStatusSoundPrimed && data.status === 'connected' && prevStatus !== 'connected') {
         playNotificationSound('radio');
+        _logAlert('radio', 'MC radio connected', escHtml(data.name || data.radio_id || '?'));
       }
       if (_mcStatusSoundPrimed && data.status === 'disconnected' && prevStatus === 'connected') {
         playNotificationSound('radio_disconnect');
+        _logAlert('radio', 'MC radio disconnected', escHtml(data.name || data.radio_id || '?'));
       }
       if (data.status === 'connected') selectedRadioIds.add(data.radio_id);
       else selectedRadioIds.delete(data.radio_id);
@@ -9849,6 +9920,7 @@ if (targetEl) {
         } else if (prevSeenTs && curSeenTs > prevSeenTs && (curSeenTs - prevSeenTs) >= _returnedGapThresholdSeconds() && (nowTs - curSeenTs) <= INAPP_NODE_RECENT_WINDOW_S) {
           const label = _mcNotificationContactLabel(data.radio_id, data.id, contactLabel);
           maybeShowInAppNodeReturned('MC contact seen again', `<b>${escHtml(label)}</b> returned after a long gap`, `toast-node-return-mc-${data.radio_id}-${data.id}`);
+          _logAlert('node-return', 'MC contact seen again', escHtml(label) + ' returned after a long gap');
         }
       }
       _mcRefreshDmContactNames(data.radio_id);
@@ -16884,6 +16956,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   initMapFilterPills();
   requestNotifPermission();
   installNotificationSoundArm();
+  _alertsBadgeUpdate();
   loadLive();
   showOmIntroIfNeeded();
   setInterval(loadLive, 15000);

@@ -178,6 +178,10 @@
   <span id="last-updated" style="font-size:12px;color:var(--muted);white-space:nowrap"></span>
   <button class="btn" id="header-refresh-btn" onclick="loadCurrent(this)" title="Refresh MT and MC state from connected radios"><span class="btn-icon">↻</span><span class="btn-label">Refresh</span></button>
   <button class="btn" id="silent-btn" onclick="toggleSilentMode()" title="Enable Silent Running — suppresses all radio transmissions">Silent</button>
+  <div id="alerts-btn-wrap">
+    <button class="btn" id="alerts-btn" onclick="toggleAlertsPanel(event)" title="Alert history">&#128276;<span id="alerts-badge">0</span></button>
+    <div id="alerts-panel" onclick="event.stopPropagation()"></div>
+  </div>
   <form id="logout-form" action="{{ base_path }}/logout" method="POST" style="display:none;margin:0">
     <button type="submit" class="btn" title="Log out" style="color:var(--muted)">Log out</button>
   </form>

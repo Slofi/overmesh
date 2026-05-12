@@ -308,6 +308,7 @@
       const label = _mcNotificationContactLabel(radioId, contactId, fallbackLabel);
       maybeShowInAppNodeSeen('MC contact seen', `<b>${escHtml(label)}</b>`, tag);
       playNotificationSound('node');
+      _logAlert('node-new', 'MC contact seen', escHtml(label));
     };
 
     if (!fallbackIsHex) {
@@ -423,6 +424,7 @@
     const payload = {
       alert_log_messages:    document.getElementById('alert-log-messages')?.checked   ?? true,
       alert_log_geofence:    document.getElementById('alert-log-geofence')?.checked   ?? true,
+      alert_log_node_new:    document.getElementById('alert-log-node-new')?.checked   ?? true,
       alert_log_node_return: document.getElementById('alert-log-node-return')?.checked ?? true,
       alert_log_radio:       document.getElementById('alert-log-radio')?.checked      ?? true,
     };
@@ -435,7 +437,7 @@
   }
   function loadAlertLogPrefs(cfg = null) {
     _appSettings = Object.assign({}, _appSettings || {}, cfg || _appSettings || {});
-    const els = ['messages', 'geofence', 'node-return', 'radio'];
+    const els = ['messages', 'geofence', 'node-new', 'node-return', 'radio'];
     els.forEach(k => {
       const el = document.getElementById(`alert-log-${k}`);
       if (el) el.checked = _appPrefBool(`alert_log_${k.replace(/-/g, '_')}`, true);
@@ -3099,6 +3101,7 @@ if (targetEl) {
             maybeShowInAppNodeSeen('MT node seen', `<b>${escHtml(label)}</b>`, `toast-node-mt-${id}`);
             sendNotif('Node online', `${label} appeared on mesh`, `node-${id}`, 'node');
             playNotificationSound('node');
+            _logAlert('node-new', 'MT node seen', escHtml(label));
           } else if (prevSeen && curSeen > prevSeen && (curSeen - prevSeen) >= _returnedGapThresholdSeconds() && (nowTs - curSeen) <= INAPP_NODE_RECENT_WINDOW_S) {
             maybeShowInAppNodeReturned('MT node seen again', `<b>${escHtml(n.long_name)}</b> returned after a long gap`, `toast-node-return-mt-${id}`);
             _logAlert('node-return', 'MT node seen again', escHtml(n.long_name) + ' returned after a long gap');

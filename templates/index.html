@@ -301,7 +301,8 @@
       <div class="chat-input-bar">
         <input type="text" id="chat-input" placeholder="Message..." maxlength="200"
                autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
-               onkeydown="if(event.key==='Enter')sendChat()">
+               oninput="_mtUpdateCharCount()" onkeydown="if(event.key==='Enter')sendChat()">
+        <span id="mt-char-counter" style="font-size:11px;color:var(--muted);flex-shrink:0;min-width:28px;text-align:right">200</span>
         <button class="emoji-btn" onclick="toggleEmojiPicker('chat-input',this)" title="Emoji">😊</button>
         <button class="dm-send" onclick="sendChat()" title="Send message">Send</button>
       </div>
@@ -341,7 +342,7 @@
       <!-- Map mode: MT/MC map filter pill -->
       <div class="view-toggle" id="map-net-filter" style="margin-left:8px">
         <div id="map-mt-pill" class="btn btn-net-mt active" onclick="toggleMapFilter('mt')" title="Show/hide Meshtastic nodes on map">MT</div>
-        <div id="map-mc-pill" class="btn btn-net-mc active" onclick="toggleMapFilter('mc')" title="Show/hide MeshCore nodes on map">MC</div>
+        <div id="map-mc-pill" class="btn btn-net-mc active" onclick="toggleMapFilter('mc')" title="Show/hide MeshCore contacts on map">MC</div>
       </div>
       <!-- Sense mode: MT/MC sense selector pill (hidden when Map is active) -->
       <div class="view-toggle" id="sense-net-filter" style="margin-left:8px;display:none">
@@ -896,7 +897,7 @@
                 <span style="font-size:11px;color:var(--muted)">Current key (base64):</span>
                 <button type="button" id="btn-ch-key-eye" onclick="toggleNodeChKeyVis()"
                         style="background:none;border:1px solid var(--border);border-radius:4px;padding:1px 6px;cursor:pointer;color:var(--muted);font-size:11px">Show</button>
-                <button type="button" onclick="copyNodeChKey()"
+                <button type="button" onclick="copyNodeChKey(this)"
                         style="background:none;border:1px solid var(--border);border-radius:4px;padding:1px 6px;cursor:pointer;color:var(--muted);font-size:11px">Copy</button>
               </div>
               <input id="node-cfg-ch-key-display" type="password" readonly class="settings-input"

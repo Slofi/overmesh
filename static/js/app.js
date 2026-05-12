@@ -13256,6 +13256,15 @@ if (targetEl) {
       `</span>`;
   }
 
+  function _mtUpdateCharCount() {
+    const input = document.getElementById('chat-input');
+    const counter = document.getElementById('mt-char-counter');
+    if (!input || !counter) return;
+    const remaining = 200 - input.value.length;
+    counter.textContent = remaining;
+    counter.style.color = remaining <= 20 ? 'var(--warn, #fbbf24)' : 'var(--muted)';
+  }
+
   function _mcUpdateByteCount() {
     const input = document.getElementById('mc-chat-input');
     const counter = document.getElementById('mc-byte-counter');
@@ -16358,9 +16367,11 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     else                           { input.type = 'password'; if (btn) btn.textContent = 'Show'; }
   }
 
-  function copyNodeChKey() {
+  function copyNodeChKey(btn) {
     const val = (document.getElementById('node-cfg-ch-key-display') || {}).value || '';
-    if (val) navigator.clipboard.writeText(val).catch(() => {});
+    if (!val) return;
+    navigator.clipboard.writeText(val).catch(() => {});
+    if (btn) { const orig = btn.textContent; btn.textContent = '✓ Copied'; btn.disabled = true; setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500); }
   }
 
   function parseMtChannelLink() {
@@ -17263,6 +17274,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     input.selectionStart = input.selectionEnd = s + [...e].length;
     input.focus();
     if (_emojiInput === 'mc-chat-input') _mcUpdateByteCount();
+    if (_emojiInput === 'chat-input') _mtUpdateCharCount();
   }
 
   function toggleEmojiPicker(inputId, btn) {

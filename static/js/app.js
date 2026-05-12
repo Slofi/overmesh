@@ -660,6 +660,15 @@
         {freq: 784,  dur: 0.06, gain: 0.025, type: 'triangle', gap: 0.025},
         {freq: 1046, dur: 0.12, gain: 0.040, type: 'triangle', gap: 0.03},
       ]);
+      return;
+    }
+    if (kind === 'geofence') {
+      // alert tone — urgent three-pulse descending square wave
+      _playNotificationToneSequence([
+        {freq: 1200, dur: 0.10, gain: 0.080, type: 'square', gap: 0.05},
+        {freq: 1000, dur: 0.10, gain: 0.080, type: 'square', gap: 0.05},
+        {freq: 800,  dur: 0.18, gain: 0.090, type: 'square', gap: 0.03},
+      ]);
     }
   }
 
@@ -4600,6 +4609,9 @@ if (targetEl) {
       const targetPos = _nodeLatLon(meta.targetId);
       if (targetPos && leafletMap) leafletMap.panTo(targetPos);
     } else {
+      switchTab('map');
+      toggleSensePanel(true);
+      switchSenseNet('mt');
       showToast('MT route', escHtml(meta.detail), 'node', `mt-route-${msgId}`);
     }
   }
@@ -5305,6 +5317,7 @@ if (targetEl) {
       const body = `<b>${escHtml(entity.name || entity.id || '?')}</b> ${inside ? 'entered' : 'left'} <b>${escHtml(def.name || 'geofence')}</b>`;
       if (gf.notify_app !== false) {
         showToast(title, body, 'node-return', `geofence-${entityKey}-${def.id}-${inside ? 'in' : 'out'}`, {persistent: true});
+        playNotificationSound('geofence');
       }
       if (gf.notify_browser !== false) {
         sendNotif(title, `${entity.name || entity.id || '?'} ${inside ? 'entered' : 'left'} ${def.name || 'geofence'}`, `geofence-${entityKey}-${def.id}-${inside ? 'in' : 'out'}`, 'node', {persistent: true});
@@ -7787,6 +7800,7 @@ if (targetEl) {
         if (mapMarkers[n.id]) {
           mapMarkers[n.id].setLatLng([n.latitude, n.longitude]).setIcon(icon).setPopupContent(popup);
           mapMarkers[n.id].setTooltipContent(n.short_name || n.long_name);
+          if (!mapLabels) mapMarkers[n.id].closeTooltip();
         } else {
           const marker = L.marker([n.latitude, n.longitude], {icon})
             .bindPopup(popup)
@@ -7836,6 +7850,7 @@ if (targetEl) {
               </div>`).join('')}`;
           clusterMarkers[k].setIcon(updatedIcon).setPopupContent(updatedPopup);
           clusterMarkers[k].setTooltipContent(`${group.length} nodes`);
+          if (!mapLabels) clusterMarkers[k].closeTooltip();
           return;
         }
         const hasLocal = group.some(x => x.is_local);
@@ -15375,6 +15390,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     if (senseMarkers[n.from_id]) {
       senseMarkers[n.from_id].setLatLng([n.lat, n.lon]).setIcon(icon).setPopupContent(sensePopupContent());
       senseMarkers[n.from_id].setTooltipContent(nodeLabel);
+      if (!mapLabels) senseMarkers[n.from_id].closeTooltip();
     } else {
       const m = L.marker([n.lat, n.lon], { icon })
         .bindPopup(sensePopupContent())

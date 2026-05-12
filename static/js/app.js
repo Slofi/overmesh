@@ -11086,7 +11086,23 @@ if (targetEl) {
     const hadNoContent = !container.children.length || !!container.querySelector('.chat-empty');
     const wasAtBottom = hadNoContent || container.scrollHeight - container.scrollTop <= container.clientHeight + 40;
     _mcChatRouteByKey = {};
-    container.innerHTML = msgs.map(m => {
+    // Interleave day dividers
+    const items = [];
+    let _lastMcDay = null;
+    msgs.forEach(m => {
+      if (m.ts) {
+        const d = new Date(m.ts * 1000);
+        const dayKey = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+        if (dayKey !== _lastMcDay) {
+          items.push({ _divider: true, label: _formatAppDayDivider(d) });
+          _lastMcDay = dayKey;
+        }
+      }
+      items.push(m);
+    });
+    container.innerHTML = items.map(item => {
+      if (item._divider) return `<div class="chat-date-divider"><span>${escHtml(item.label)}</span></div>`;
+      const m = item;
       const routeKey = _mcChatRouteKey(m);
       if (routeKey) _mcChatRouteByKey[routeKey] = m;
       const logBtn = routeKey

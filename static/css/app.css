@@ -606,6 +606,10 @@
     .alert-type-geofence .alert-entry-title { color: var(--red, #ef4444); }
     .alert-entry-body { font-size: 12px; color: var(--muted); margin-bottom: 3px; }
     .alert-entry-ts { font-size: 10px; color: var(--muted); opacity: 0.7; display: flex; align-items: center; gap: 6px; }
+    .alert-node-link {
+      cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px;
+    }
+    .alert-node-link:hover { color: var(--text); }
     .alert-log-btn {
       background: none; border: 1px solid var(--border); color: var(--muted);
       border-radius: 4px; font-size: 10px; padding: 1px 5px; cursor: pointer; line-height: 1.4;

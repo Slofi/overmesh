@@ -76,10 +76,23 @@
   function _alertsSave(arr) {
     try { localStorage.setItem(_ALERTS_KEY, JSON.stringify(arr.slice(0, _ALERTS_MAX))); } catch(e) {}
   }
-  function _logAlert(type, title, body) {
+  function _alertNodePopup(evt, alertId) {
+    if (evt && evt.stopPropagation) evt.stopPropagation();
+    const a = _alertsLoad().find(x => x.id === alertId);
+    if (!a || !a.meta) return;
+    if (a.meta.nodeType === 'mt') {
+      _tocShowMtMentionPopup(evt, a.meta.nodeId, a.meta.nodeName);
+    } else {
+      showMcContactPopup(evt, a.meta.contactId, a.meta.radioId, a.meta.nodeName);
+    }
+  }
+
+  function _logAlert(type, title, body, meta = null) {
     if (!_appPrefBool(`alert_log_${type.replace(/-/g, '_')}`, true)) return;
     const alerts = _alertsLoad();
-    alerts.unshift({ id: `a-${Date.now()}-${Math.random().toString(36).slice(2,5)}`, type, title, body, ts: Date.now(), read: false });
+    const entry = { id: `a-${Date.now()}-${Math.random().toString(36).slice(2,5)}`, type, title, body, ts: Date.now(), read: false };
+    if (meta) entry.meta = meta;
+    alerts.unshift(entry);
     _alertsSave(alerts);
     _alertsBadgeUpdate();
   }
@@ -120,12 +133,16 @@
         ${alerts.map(a => {
           const canLog = a.type !== 'radio';
           const logBtn = canLog ? `<button class="alert-log-btn" onclick="event.stopPropagation();toggleAlertsPanel();tocFromAlert('${escHtml(a.id)}')" title="Send to Log tab">Log</button>` : '';
+          const isNodeAlert = (a.type === 'node-new' || a.type === 'node-return') && a.meta;
+          const bodyHtml = isNodeAlert
+            ? `<span class="alert-node-link" onclick="_alertNodePopup(event,'${escHtml(a.id)}')">${a.body}</span>`
+            : a.body;
           return `
           <div class="alert-entry alert-type-${escHtml(a.type)}">
             <div class="alert-entry-row">
               <div>
                 <div class="alert-entry-title">${escHtml(a.title)}</div>
-                <div class="alert-entry-body">${a.body}</div>
+                <div class="alert-entry-body">${bodyHtml}</div>
                 <div class="alert-entry-ts">${_formatAppDateTime(a.ts)}${logBtn}</div>
               </div>
               <button class="alert-dismiss-btn" onclick="dismissAlert('${escHtml(a.id)}')" title="Dismiss">×</button>
@@ -312,7 +329,7 @@
       const label = _mcNotificationContactLabel(radioId, contactId, fallbackLabel);
       maybeShowInAppNodeSeen('MC contact seen', `<b>${escHtml(label)}</b>`, tag);
       playNotificationSound('node');
-      _logAlert('node-new', 'MC contact seen', escHtml(label));
+      _logAlert('node-new', 'MC contact seen', escHtml(label), {nodeType:'mc', contactId, radioId, nodeName: label});
     };
 
     if (!fallbackIsHex) {
@@ -3105,10 +3122,10 @@ if (targetEl) {
             maybeShowInAppNodeSeen('MT node seen', `<b>${escHtml(label)}</b>`, `toast-node-mt-${id}`);
             sendNotif('Node online', `${label} appeared on mesh`, `node-${id}`, 'node');
             playNotificationSound('node');
-            _logAlert('node-new', 'MT node seen', escHtml(label));
+            _logAlert('node-new', 'MT node seen', escHtml(label), {nodeType:'mt', nodeId: id, nodeName: label});
           } else if (prevSeen && curSeen > prevSeen && (curSeen - prevSeen) >= _returnedGapThresholdSeconds() && (nowTs - curSeen) <= INAPP_NODE_RECENT_WINDOW_S) {
             maybeShowInAppNodeReturned('MT node seen again', `<b>${escHtml(n.long_name)}</b> returned after a long gap`, `toast-node-return-mt-${id}`);
-            _logAlert('node-return', 'MT node seen again', escHtml(n.long_name) + ' returned after a long gap');
+            _logAlert('node-return', 'MT node seen again', escHtml(n.long_name) + ' returned after a long gap', {nodeType:'mt', nodeId: id, nodeName: n.long_name});
           }
         });
       }
@@ -9966,7 +9983,7 @@ if (targetEl) {
         } else if (prevSeenTs && curSeenTs > prevSeenTs && (curSeenTs - prevSeenTs) >= _returnedGapThresholdSeconds() && (nowTs - curSeenTs) <= INAPP_NODE_RECENT_WINDOW_S) {
           const label = _mcNotificationContactLabel(data.radio_id, data.id, contactLabel);
           maybeShowInAppNodeReturned('MC contact seen again', `<b>${escHtml(label)}</b> returned after a long gap`, `toast-node-return-mc-${data.radio_id}-${data.id}`);
-          _logAlert('node-return', 'MC contact seen again', escHtml(label) + ' returned after a long gap');
+          _logAlert('node-return', 'MC contact seen again', escHtml(label) + ' returned after a long gap', {nodeType:'mc', contactId: data.id, radioId: data.radio_id, nodeName: label});
         }
       }
       _mcRefreshDmContactNames(data.radio_id);
@@ -10156,6 +10173,10 @@ if (targetEl) {
             console.warn('MC activity message log failed:', e);
           }
         }
+      } else if (!data.sent && !isArchiveReplay) {
+        // Message was already in mcMessages (archive race-loaded it silently before SSE arrived).
+        // Still need to render so it becomes visible and the tab/unread state updates.
+        renderMcMessages();
       }
       return;
     }

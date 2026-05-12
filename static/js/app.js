@@ -118,14 +118,24 @@
       <div class="alerts-list">
         ${alerts.map(a => `
           <div class="alert-entry alert-type-${escHtml(a.type)}">
-            <div class="alert-entry-title">${escHtml(a.title)}</div>
-            <div class="alert-entry-body">${a.body}</div>
-            <div class="alert-entry-ts">${_formatAppDateTime(a.ts)}</div>
+            <div class="alert-entry-row">
+              <div>
+                <div class="alert-entry-title">${escHtml(a.title)}</div>
+                <div class="alert-entry-body">${a.body}</div>
+                <div class="alert-entry-ts">${_formatAppDateTime(a.ts)}</div>
+              </div>
+              <button class="alert-dismiss-btn" onclick="dismissAlert('${escHtml(a.id)}')" title="Dismiss">×</button>
+            </div>
           </div>`).join('')}
       </div>`;
   }
   function clearAllAlerts() {
     _alertsSave([]);
+    _alertsBadgeUpdate();
+    _renderAlertsList();
+  }
+  function dismissAlert(id) {
+    _alertsSave(_alertsLoad().filter(a => a.id !== id));
     _alertsBadgeUpdate();
     _renderAlertsList();
   }

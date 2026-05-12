@@ -599,10 +599,16 @@
     .alert-type-geofence { border-left-color: var(--red, #ef4444); background: rgba(239,68,68,0.05); }
     .alert-type-node-return { border-left-color: #f59e0b; background: rgba(245,158,11,0.05); }
     .alert-type-radio { border-left-color: var(--accent); background: rgba(74,222,128,0.04); }
+    .alert-entry-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
     .alert-entry-title { font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 2px; }
     .alert-type-geofence .alert-entry-title { color: var(--red, #ef4444); }
     .alert-entry-body { font-size: 12px; color: var(--muted); margin-bottom: 3px; }
     .alert-entry-ts { font-size: 10px; color: var(--muted); opacity: 0.7; }
+    .alert-dismiss-btn {
+      flex-shrink: 0; background: none; border: none; color: var(--muted);
+      font-size: 16px; line-height: 1; cursor: pointer; padding: 0 2px; opacity: 0.5;
+    }
+    .alert-dismiss-btn:hover { opacity: 1; color: var(--text); }
     #header-refresh-btn,
     #silent-btn,
     #shutdown-btn {

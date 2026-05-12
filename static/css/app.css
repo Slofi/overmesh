@@ -605,7 +605,13 @@
     .alert-entry-title { font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 2px; }
     .alert-type-geofence .alert-entry-title { color: var(--red, #ef4444); }
     .alert-entry-body { font-size: 12px; color: var(--muted); margin-bottom: 3px; }
-    .alert-entry-ts { font-size: 10px; color: var(--muted); opacity: 0.7; }
+    .alert-entry-ts { font-size: 10px; color: var(--muted); opacity: 0.7; display: flex; align-items: center; gap: 6px; }
+    .alert-log-btn {
+      background: none; border: 1px solid var(--border); color: var(--muted);
+      border-radius: 4px; font-size: 10px; padding: 1px 5px; cursor: pointer; line-height: 1.4;
+      opacity: 0.7;
+    }
+    .alert-log-btn:hover { opacity: 1; color: var(--text); border-color: var(--accent); }
     .alert-dismiss-btn {
       flex-shrink: 0; background: none; border: none; color: var(--muted);
       font-size: 16px; line-height: 1; cursor: pointer; padding: 0 2px; opacity: 0.5;

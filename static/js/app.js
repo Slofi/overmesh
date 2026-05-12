@@ -117,17 +117,21 @@
         <button class="alerts-clear-btn" onclick="clearAllAlerts()">Clear all</button>
       </div>
       <div class="alerts-list">
-        ${alerts.map(a => `
+        ${alerts.map(a => {
+          const canLog = a.type !== 'radio';
+          const logBtn = canLog ? `<button class="alert-log-btn" onclick="event.stopPropagation();toggleAlertsPanel();tocFromAlert('${escHtml(a.id)}')" title="Send to Log tab">Log</button>` : '';
+          return `
           <div class="alert-entry alert-type-${escHtml(a.type)}">
             <div class="alert-entry-row">
               <div>
                 <div class="alert-entry-title">${escHtml(a.title)}</div>
                 <div class="alert-entry-body">${a.body}</div>
-                <div class="alert-entry-ts">${_formatAppDateTime(a.ts)}</div>
+                <div class="alert-entry-ts">${_formatAppDateTime(a.ts)}${logBtn}</div>
               </div>
               <button class="alert-dismiss-btn" onclick="dismissAlert('${escHtml(a.id)}')" title="Dismiss">×</button>
             </div>
-          </div>`).join('')}
+          </div>`;
+        }).join('')}
       </div>`;
   }
   function clearAllAlerts() {
@@ -10090,10 +10094,11 @@ if (targetEl) {
         rssi: data.rx_rssi,
       });
       const addedMcMessage = _mcMergeMessages([data], { silent: true });
-      // Suppress notifications only for archive replays: duplicate messages arriving within
-      // 30s of a reconnect (backend replays buffered SSE events that archive already loaded).
-      // Genuinely new messages always have addedMcMessage > 0, so notifications always fire.
-      const isArchiveReplay = !addedMcMessage && (Date.now() - _mcLastReconnectTs) < 30000;
+      // Suppress notifications only for true archive replays: duplicate messages that are
+      // more than 2 minutes old AND arrived within 30s of reconnect. Fresh messages (<2 min)
+      // always notify even if the archive race-loaded them before the SSE event arrived.
+      const _msgAgeSec = Date.now() / 1000 - (data.ts || 0);
+      const isArchiveReplay = !addedMcMessage && (Date.now() - _mcLastReconnectTs) < 30000 && _msgAgeSec > 120;
       // Backfill contact name from embedded "Name: message" format if still showing hex fallback
       if (data.from_id && data.radio_id && data.text) {
         const c = (mcContacts[data.radio_id] || {})[data.from_id];
@@ -10115,9 +10120,9 @@ if (targetEl) {
         msgTab = `chan:${idx}`;
       } else if (data.subtype === 'dm' && !data.sent) {
         const fk = (data.from_id || '').slice(0, 12);
+        // Reopen a previously closed DM tab when a new live message arrives
+        if (closedMcDmTabs.has(fk)) { closedMcDmTabs.delete(fk); saveMcClosedDmTabs(); }
         if (!mcDmContacts[fk]) {
-          // Reopen a previously closed DM tab when a new live message arrives
-          if (closedMcDmTabs.has(fk)) { closedMcDmTabs.delete(fk); saveMcClosedDmTabs(); }
           const c = (mcContacts[data.radio_id] || {})[fk];
           mcDmContacts[fk] = c?.long_name || data.from_id;
         }
@@ -17813,6 +17818,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const fieldsDiv = document.getElementById('toc-fields');
     const bodyEl    = document.getElementById('toc-body');
     const catEl     = document.getElementById('toc-category');
+    // Capture any existing free-form body text before switching, so we can migrate it
+    const _migrateText = (!_tocActiveTemplate && bodyEl && bodyEl.value.trim()) ? bodyEl.value.trim() : '';
     if (!key) {
       _tocActiveTemplate = null;
       fieldsDiv.style.display = 'none';
@@ -17843,6 +17850,13 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     });
     fieldsDiv.style.display = 'flex';
     bodyEl.style.display    = 'none';
+    // Migrate free-form body text into the first multiline field of the new template
+    if (_migrateText) {
+      const firstMulti = fieldsDiv.querySelector('textarea[data-toc-field]');
+      const firstAny   = fieldsDiv.querySelector('[data-toc-field]');
+      const target = firstMulti || firstAny;
+      if (target && !target.value) target.value = _migrateText;
+    }
     fieldsDiv.querySelector('input') && fieldsDiv.querySelector('input').focus();
     tocRenderPinnedTemplates();
   }
@@ -18422,6 +18436,34 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     }
     _tocSetSubmitMode();
     document.getElementById('toc-category').scrollIntoView({block: 'center', behavior: 'smooth'});
+  }
+
+  function tocFromAlert(alertId) {
+    const a = _alertsLoad().find(x => x.id === alertId);
+    if (!a) return;
+    const ts = a.ts ? Math.floor(a.ts / 1000) : Math.floor(Date.now() / 1000);
+    if (a.type === 'geofence') {
+      // body is already HTML-escaped plain text like "NodeName entered geofenceName"
+      const detail = a.body.replace(/<[^>]+>/g, '');
+      const body = _tocStructuredMarkdown({
+        Priority: 'Medium',
+        Type: 'Geofence',
+        Location: '',
+        'Affected Node(s) / People': '',
+        Details: `${detail}\nTime: ${_formatAppDateTime(ts)}`,
+        'Immediate Action': '',
+        Status: 'Open',
+        'Follow-up': '',
+        Notes: '',
+      });
+      _tocPrefill('ALERT', body, ts, 'alert');
+    } else if (a.type === 'message') {
+      _tocPrefill('COMMS', a.body.replace(/<[^>]+>/g, ''), ts);
+    } else if (a.type === 'node-new' || a.type === 'node-return') {
+      _tocPrefill('CONTACT', a.body.replace(/<[^>]+>/g, ''), ts);
+    } else {
+      _tocPrefill('NOTE', `${a.title}: ${a.body.replace(/<[^>]+>/g, '')}`, ts);
+    }
   }
 
   function tocDuplicate(id) {

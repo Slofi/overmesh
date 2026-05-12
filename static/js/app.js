@@ -77,6 +77,7 @@
     try { localStorage.setItem(_ALERTS_KEY, JSON.stringify(arr.slice(0, _ALERTS_MAX))); } catch(e) {}
   }
   function _logAlert(type, title, body) {
+    if (!_appPrefBool(`alert_log_${type.replace(/-/g, '_')}`, true)) return;
     const alerts = _alertsLoad();
     alerts.unshift({ id: `a-${Date.now()}-${Math.random().toString(36).slice(2,5)}`, type, title, body, ts: Date.now(), read: false });
     _alertsSave(alerts);
@@ -416,6 +417,29 @@
     if (msgEl) msgEl.checked = _appPrefBool('sound_notify_messages', true);
     if (radioEl) radioEl.checked = _appPrefBool('sound_notify_radio_connected', true);
     if (nodeEl) nodeEl.checked = _appPrefBool('sound_notify_nodes', true);
+  }
+
+  function saveAlertLogPrefs() {
+    const payload = {
+      alert_log_messages:    document.getElementById('alert-log-messages')?.checked   ?? true,
+      alert_log_geofence:    document.getElementById('alert-log-geofence')?.checked   ?? true,
+      alert_log_node_return: document.getElementById('alert-log-node-return')?.checked ?? true,
+      alert_log_radio:       document.getElementById('alert-log-radio')?.checked      ?? true,
+    };
+    Object.assign(_appSettings, payload);
+    fetch(BASE_PATH + '/api/settings/app', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    }).catch(e => console.error('saveAlertLogPrefs failed:', e));
+  }
+  function loadAlertLogPrefs(cfg = null) {
+    _appSettings = Object.assign({}, _appSettings || {}, cfg || _appSettings || {});
+    const els = ['messages', 'geofence', 'node-return', 'radio'];
+    els.forEach(k => {
+      const el = document.getElementById(`alert-log-${k}`);
+      if (el) el.checked = _appPrefBool(`alert_log_${k.replace(/-/g, '_')}`, true);
+    });
   }
 
   function bridgeSettingsStatus(text, ok = null) {
@@ -1365,6 +1389,7 @@
               const title = data.is_dm ? `DM from ${data.from_name}` : `${data.from_name} on CH${data.channel}`;
               maybeShowInAppMessage(title, escHtml(data.text), `toast-msg-${data.id}`);
               sendNotif(title, data.text, `msg-${data.id}`, 'message');
+              _logAlert('message', title, escHtml(data.text));
             }
           }
           if (!data.radio_id || data.radio_id === activeRadioId) renderChannelTabs();
@@ -8839,6 +8864,7 @@ if (targetEl) {
   function applyAppSettings(cfg = {}) {
     loadInAppNotifPrefs(cfg);
     loadSoundPrefs(cfg);
+    loadAlertLogPrefs(cfg);
     loadBridgeSettings(cfg);
     _setDistanceUnit(cfg.distance_unit || 'km');
     _setTimeFormat(cfg.time_format || '24h');
@@ -8903,6 +8929,7 @@ if (targetEl) {
     loadNotifPrefs();
     loadInAppNotifPrefs();
     loadSoundPrefs();
+    loadAlertLogPrefs();
     loadExtMapPref();
     loadNodeCfgRadios();
     loadMapLayers({silent: true});
@@ -10103,6 +10130,7 @@ if (targetEl) {
             : `MC ${mcKnownChannels[data.channel ?? 0] || ('CH' + (data.channel ?? 0))}`;
           maybeShowInAppMessage(title, escHtml(_mcMsgText(data, mcDmContacts[data.from_id] || '')), `toast-mc-msg-${data.radio_id}-${data.id || data.ts || Date.now()}`);
           sendNotif(title, _mcMsgText(data, mcDmContacts[data.from_id] || ''), `mc-msg-${data.radio_id}-${data.id || data.ts || Date.now()}`, 'message');
+          _logAlert('message', title, escHtml(_mcMsgText(data, mcDmContacts[data.from_id] || '')));
         }
       }
       renderMcMessages();

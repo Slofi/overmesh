@@ -1609,6 +1609,42 @@
           </label>
           <span style="font-size:13px">New node or contact discovered</span>
         </div>
+
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-top:4px">Alert Log</div>
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead>
+            <tr>
+              <th style="text-align:left;padding:4px 8px 6px 0;font-weight:600;color:var(--muted);font-size:11px;border-bottom:1px solid var(--border)">Event</th>
+              <th style="text-align:center;padding:4px 0 6px 8px;font-weight:600;color:var(--muted);font-size:11px;border-bottom:1px solid var(--border);white-space:nowrap">Log</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style="padding:7px 8px 7px 0;border-bottom:1px solid var(--border)">Incoming messages</td>
+              <td style="text-align:center;padding:7px 0 7px 8px;border-bottom:1px solid var(--border)">
+                <label class="bot-toggle"><input type="checkbox" id="alert-log-messages" onchange="saveAlertLogPrefs()"><span class="bot-toggle-slider"></span></label>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:7px 8px 7px 0;border-bottom:1px solid var(--border)">Geofence enter / leave</td>
+              <td style="text-align:center;padding:7px 0 7px 8px;border-bottom:1px solid var(--border)">
+                <label class="bot-toggle"><input type="checkbox" id="alert-log-geofence" onchange="saveAlertLogPrefs()"><span class="bot-toggle-slider"></span></label>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:7px 8px 7px 0;border-bottom:1px solid var(--border)">Node / contact seen again</td>
+              <td style="text-align:center;padding:7px 0 7px 8px;border-bottom:1px solid var(--border)">
+                <label class="bot-toggle"><input type="checkbox" id="alert-log-node-return" onchange="saveAlertLogPrefs()"><span class="bot-toggle-slider"></span></label>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:7px 8px 7px 0">Radio connected / disconnected</td>
+              <td style="text-align:center;padding:7px 0 7px 8px">
+                <label class="bot-toggle"><input type="checkbox" id="alert-log-radio" onchange="saveAlertLogPrefs()"><span class="bot-toggle-slider"></span></label>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
 
       <div style="border-top:1px solid var(--border);margin:14px 0 10px 0"></div>

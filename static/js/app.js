@@ -92,7 +92,8 @@
   }
 
   function _logAlert(type, title, body, meta = null) {
-    if (!_appPrefBool(`alert_log_${type.replace(/-/g, '_')}`, true)) return;
+    const _alertDefaults = { 'node-return': false };
+    if (!_appPrefBool(`alert_log_${type.replace(/-/g, '_')}`, _alertDefaults[type] ?? true)) return;
     const alerts = _alertsLoad();
     const entry = { id: `a-${Date.now()}-${Math.random().toString(36).slice(2,5)}`, type, title, body, ts: Date.now(), read: false };
     if (meta) entry.meta = meta;
@@ -287,7 +288,7 @@
   }
 
   function maybeShowInAppNodeReturned(title, body, tag) {
-    if (!_appPrefBool('inapp_notify_returned', true)) return;
+    if (!_appPrefBool('inapp_notify_returned', false)) return;
     showToast(title, body, 'node-return', tag);
   }
 
@@ -386,7 +387,7 @@
     const gapUnitEl = document.getElementById('inapp-notif-returned-gap-unit');
     if (msgEl) msgEl.checked = _appPrefBool('inapp_notify_messages', true);
     if (nodeEl) nodeEl.checked = _appPrefBool('inapp_notify_nodes', true);
-    if (retEl) retEl.checked = _appPrefBool('inapp_notify_returned', true);
+    if (retEl) retEl.checked = _appPrefBool('inapp_notify_returned', false);
     if (gapValueEl) gapValueEl.value = String(_returnedGapValue());
     if (gapUnitEl) gapUnitEl.value = _returnedGapUnit();
   }
@@ -466,10 +467,10 @@
   }
   function loadAlertLogPrefs(cfg = null) {
     _appSettings = Object.assign({}, _appSettings || {}, cfg || _appSettings || {});
-    const els = ['messages', 'geofence', 'node-new', 'node-return', 'radio'];
-    els.forEach(k => {
+    const defaults = { messages: true, geofence: true, 'node-new': true, 'node-return': false, radio: true };
+    Object.entries(defaults).forEach(([k, def]) => {
       const el = document.getElementById(`alert-log-${k}`);
-      if (el) el.checked = _appPrefBool(`alert_log_${k.replace(/-/g, '_')}`, true);
+      if (el) el.checked = _appPrefBool(`alert_log_${k.replace(/-/g, '_')}`, def);
     });
   }
 

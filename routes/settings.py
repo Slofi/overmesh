@@ -49,6 +49,14 @@ def _app_settings_payload():
     app_cfg.setdefault("sound_notify_messages", True)
     app_cfg.setdefault("sound_notify_radio_connected", True)
     app_cfg.setdefault("sound_notify_nodes", True)
+    app_cfg.setdefault("inapp_notify_messages", True)
+    app_cfg.setdefault("inapp_notify_nodes", True)
+    app_cfg.setdefault("inapp_notify_returned", False)
+    app_cfg.setdefault("alert_log_messages", True)
+    app_cfg.setdefault("alert_log_geofence", True)
+    app_cfg.setdefault("alert_log_node_new", True)
+    app_cfg.setdefault("alert_log_node_return", False)
+    app_cfg.setdefault("alert_log_radio", True)
     app_cfg.setdefault("distance_unit", "km")
     app_cfg.setdefault("time_format", "24h")
     app_cfg.setdefault("date_format", "eu")
@@ -610,6 +618,11 @@ def api_settings_app_set():
             "sound_notify_messages",
             "sound_notify_radio_connected",
             "sound_notify_nodes",
+            "alert_log_messages",
+            "alert_log_geofence",
+            "alert_log_node_new",
+            "alert_log_node_return",
+            "alert_log_radio",
         ):
             if key in data:
                 CONFIG["app"][key] = bool(data[key])

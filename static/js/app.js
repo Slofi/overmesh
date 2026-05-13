@@ -2738,7 +2738,7 @@ if (targetEl) {
           <button class="act-btn" title="Traceroute" onclick="doTraceroute('${jsSafe(n.id)}','${jsSafe(n.long_name)}','${jsSafe(n.radio_id || '')}')">TR</button>
           <button class="act-btn" title="Direct message" onclick="doDM('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">DM</button>
           <button class="act-btn" title="Request position" onclick="doReqPos('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Pos</button>
-          <button class="act-btn" title="Request node info exchange over the mesh" onclick="doNodeInfo('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Xchg</button>
+          <button class="act-btn" title="Request node info exchange over the mesh" onclick="doNodeInfo('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Req</button>
           <button class="act-btn" title="Contact details and share data" onclick="openMtNodeDetails('${jsSafe(n.id)}')">Info/Share</button>
           ${n.latitude != null && n.longitude != null
             ? `<button class="act-btn" title="Show on map" onclick="centerNodeOnMap('${jsSafe(n.id)}')">Map</button>`

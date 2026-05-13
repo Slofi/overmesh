@@ -281,23 +281,46 @@ def _run_update_job():
 @bp.route("/api/settings/ports")
 def api_settings_ports():
     import serial.tools.list_ports
-    known_serials = (
-        {n.get("usb_serial") for n in _active_nodes(CONFIG.get("nodes", [])) if n.get("usb_serial")} |
-        {n.get("usb_serial") for n in _active_nodes(CONFIG.get("mc_nodes", [])) if n.get("usb_serial")}
-    )
-    known_ports = (
-        {n.get("port") for n in _active_nodes(CONFIG.get("nodes", [])) if n.get("port") and not n.get("usb_serial")} |
-        {n.get("port") for n in _active_nodes(CONFIG.get("mc_nodes", [])) if n.get("port") and not n.get("usb_serial") and (n.get("type") or "serial") == "serial"}
-    )
+    all_ports = serial.tools.list_ports.comports()
+    port_by_serial = {}
+    for p in all_ports:
+        if p.serial_number and p.serial_number not in port_by_serial:
+            port_by_serial[p.serial_number] = p.device
+
+    # Resolve each active node to its actual physical device path. When multiple
+    # ports share the same usb_serial (e.g. CP2102 clones all reporting "0001"),
+    # prefer the node's configured port so each node claims a distinct device.
+    def _resolve_node_device(n):
+        serial = (n.get("usb_serial") or "").strip()
+        configured = (n.get("port") or "").strip()
+        if not serial:
+            return configured or None
+        matches = [p.device for p in all_ports if p.serial_number == serial]
+        if not matches:
+            return configured or None
+        return configured if configured in matches else matches[0]
+
+    used_devices = set()
+    for n in _active_nodes(CONFIG.get("nodes", [])):
+        if (n.get("type") or "serial") == "serial":
+            d = _resolve_node_device(n)
+            if d:
+                used_devices.add(d)
+    for n in _active_nodes(CONFIG.get("mc_nodes", [])):
+        if (n.get("type") or "serial") == "serial":
+            d = _resolve_node_device(n)
+            if d:
+                used_devices.add(d)
+
     ports = []
-    for p in serial.tools.list_ports.comports():
+    for p in all_ports:
         ports.append({
             "device":      p.device,
             "description": p.description or p.device,
             "usb_serial":  p.serial_number or "",
             "vid":         p.vid,
             "pid":         p.pid,
-            "in_use":      (p.serial_number in known_serials) if p.serial_number else (p.device in known_ports),
+            "in_use":      p.device in used_devices,
         })
     ports.sort(key=lambda x: x["device"])
     return jsonify({"ports": ports})

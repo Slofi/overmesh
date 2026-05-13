@@ -341,13 +341,20 @@ def on_connection_lost(interface, topic=pub.AUTO_TOPIC):
 # Port discovery
 # ---------------------------------------------------------------------------
 
-def find_port_by_usb_serial(usb_serial):
-    """Find the current tty device path for a given USB hardware serial number."""
+def find_port_by_usb_serial(usb_serial, preferred_port=None):
+    """Find the current tty device path for a given USB hardware serial number.
+
+    When multiple ports share the same usb_serial (e.g. cheap CP2102 clones that
+    all report "0001"), prefer the configured port if it is among the matches so
+    two nodes on different physical ports don't both resolve to the same device.
+    """
     import serial.tools.list_ports
-    for p in serial.tools.list_ports.comports():
-        if p.serial_number == usb_serial:
-            return p.device
-    return None
+    matches = [p.device for p in serial.tools.list_ports.comports() if p.serial_number == usb_serial]
+    if not matches:
+        return None
+    if preferred_port and preferred_port in matches:
+        return preferred_port
+    return matches[0]
 
 
 # ---------------------------------------------------------------------------
@@ -407,7 +414,7 @@ def connect_node(node_cfg):
     else:
         usb_serial = node_cfg.get("usb_serial")
         if usb_serial:
-            port = find_port_by_usb_serial(usb_serial)
+            port = find_port_by_usb_serial(usb_serial, preferred_port=node_cfg.get("port"))
             if not port:
                 log.info(f"[{node_id}] Device (USB serial {usb_serial}) not found, will retry")
                 with connections_lock:

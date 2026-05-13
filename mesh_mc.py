@@ -900,16 +900,16 @@ async def _connect_mc_node_async(node_cfg):
         connect_label = bt_address
     else:
         node_type = "serial"
-        # Always resolve port by USB serial if available (port in config is display-only)
+        # Resolve port by USB serial when available. When multiple ports share the
+        # same serial (e.g. CP2102 clones all reporting "0001"), prefer the
+        # configured port so two nodes don't collide on the same device.
         usb_serial = node_cfg.get("usb_serial", "")
         if usb_serial:
             import serial.tools.list_ports
-            resolved = next(
-                (p.device for p in serial.tools.list_ports.comports() if p.serial_number == usb_serial),
-                None,
-            )
-            if resolved:
-                port = resolved
+            preferred = node_cfg.get("port", "")
+            matches = [p.device for p in serial.tools.list_ports.comports() if p.serial_number == usb_serial]
+            if matches:
+                port = preferred if preferred in matches else matches[0]
             else:
                 log.warning(f"[MC:{name}] USB serial {usb_serial} not found on any port")
                 port = None

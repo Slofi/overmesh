@@ -2016,12 +2016,14 @@
     },
     {
       title: 'Overlays and Geofences',
-      tags: 'overlays geojson geofence zones area circle alerts enter leave map import split edit polygon',
+      tags: 'overlays geojson geofence zones area circle alerts enter leave map import split edit polygon log toc intel',
       body: [
         'Map overlays are local GeoJSON shapes: points, lines, areas (polygons), or circles. Use them for routes, zones, boundaries, and reference markers.',
         'Area and circle overlays can be configured as geofences. A geofence watches node/contact positions and fires an alert when a tracked node enters or leaves the zone.',
         'Geofences can watch MT, MC, or both networks independently. Alert types are enter, leave, or both.',
-        'Imported multi-feature GeoJSON renders as one combined overlay. Use Split to break it into individual editable overlays.'
+        'Imported multi-feature GeoJSON renders as one combined overlay. Use Split to break it into individual editable overlays.',
+        'Use the Log button (in the overlay sidebar list or in a feature popup on the map) to prefill a TOC INTEL entry for that overlay. The entry includes the overlay name as an @mention, the centroid/center coordinates, and feature count.',
+        'Inside the TOC Log, type @ followed by overlay name letters to search and insert an overlay @mention. Clicking the amber @[Name] badge switches to the Map tab and zooms to that overlay.'
       ],
       buttons: [
         ['Import', 'Import pasted or uploaded GeoJSON data as a new overlay.'],
@@ -2032,7 +2034,35 @@
         ['Alert on leave', 'Notify when a tracked node/contact leaves this geofence zone.'],
         ['Both', 'Track both MT and MC positions for this geofence.'],
         ['MT only', 'Track only Meshtastic positions for this geofence.'],
-        ['MC only', 'Track only MeshCore positions for this geofence.']
+        ['MC only', 'Track only MeshCore positions for this geofence.'],
+        ['Log', 'Prefill a TOC INTEL entry for this overlay (sidebar list or feature popup).']
+      ]
+    },
+    {
+      title: 'TOC Log',
+      tags: 'toc log intel position comms contact alert note entry mention @mention #mention overlay node coordinates map show coords prefill category template tag filter export import share mc',
+      body: [
+        'The TOC (Table of Contents) Log is a structured field journal: timestamped entries with a category, free-text or structured body, tags, and node/overlay mentions.',
+        'Categories: NOTE, INTEL, POSITION, COMMS, CONTACT, ALERT, TASK. Each gets a colour-coded badge. Click a badge in the log to filter by that category.',
+        'Type # in the body field to get a node/contact autocomplete dropdown. Arrow keys navigate, Enter inserts. The token #[Name](mt:id) or #[Name](mc:id:radioId) is stored and renders as a clickable chip that opens the action popup for that node. Works for both MT and MC.',
+        'Type @ in the body field to get an overlay autocomplete dropdown. Inserting an overlay creates an @[Name](overlay:id) token that renders as an amber chip. Clicking the chip switches to Map and zooms to that overlay.',
+        'When an entry body contains coordinates in lat, lon format (e.g. 46.05123, 14.50456), a ⌖ button appears in the action column. Clicking it drops a marker on the map at those coordinates.',
+        'Log entries can be prefilled from multiple sources: a node row (Log button), an MT/MC map popup (Log button), a message (Log button), an alert panel entry (Log button), and now also from overlay sidebars and feature popups.',
+        'Ctrl+Enter submits the current entry. When editing an existing entry, the Clear button becomes Cancel.',
+        'Entries can be tagged. The tag filter searches across all entry tags. The mention filter lists all nodes/contacts mentioned in any entry and lets you filter by one.',
+        'Share (⇄) sends the entry body via the active MC chat target. Export downloads all entries as JSON or CSV. Import restores from a previously exported JSON file.',
+        'The date/time field sets the timestamp for new entries — useful for backdating field notes. Leave it at now to auto-timestamp.'
+      ],
+      buttons: [
+        ['Log', 'Prefill a new TOC entry from a node, contact, message, alert, or overlay.'],
+        ['⌖', 'Show the coordinates found in this entry on the map.'],
+        ['⇄', 'Share this entry body via active MC chat target.'],
+        ['⧉', 'Duplicate this entry.'],
+        ['✎', 'Edit this entry.'],
+        ['✕', 'Delete this entry.'],
+        ['Export', 'Download all TOC entries as JSON or CSV.'],
+        ['Import', 'Restore TOC entries from a previously exported JSON file.'],
+        ['Ctrl+Enter', 'Submit the current entry without clicking the button.']
       ]
     },
     {
@@ -5484,12 +5514,15 @@ if (targetEl) {
     } });
   }
 
-  function _mapLayerPopupHtml(feature) {
+  function _mapLayerPopupHtml(feature, defId) {
     const props = feature?.properties || {};
     const title = props.name || props.title || props.label || props.id || 'Map layer item';
     const desc  = props.description || props.desc || props.notes || props.note || '';
     const parts = [`<div style="font-size:12px"><b>${escHtml(String(title))}</b>`];
     if (desc) parts.push(`<div style="color:var(--muted);margin-top:4px">${escHtml(String(desc))}</div>`);
+    if (defId != null) {
+      parts.push(`<div style="margin-top:6px"><button class="map-popup-btn" onclick="leafletMap.closePopup();tocFromMapLayer(${defId})">Log</button></div>`);
+    }
     parts.push('</div>');
     return parts.join('');
   }
@@ -5528,7 +5561,7 @@ if (targetEl) {
       }),
       onEachFeature: (feature, layer) => {
         const props = feature?.properties || {};
-        if (Object.keys(props).length) layer.bindPopup(_mapLayerPopupHtml(feature));
+        if (Object.keys(props).length) layer.bindPopup(_mapLayerPopupHtml(feature, def.id));
       }
     });
     group.addLayer(geo);
@@ -6281,6 +6314,7 @@ if (targetEl) {
           <button class="overlay-mini-btn" onclick="event.stopPropagation();toggleMapLayerEnabled(${def.id}, ${!def.enabled})" title="${def.enabled ? 'Hide overlay' : 'Show overlay'}">${def.enabled ? '◉' : '○'}</button>
           ${_isPolygonGeofence(def) || (state.editable && (def.data?.features?.[0]?.geometry?.type === 'Polygon' || def.data?.geometry?.type === 'Polygon')) ? `<button class="overlay-mini-btn" onclick="event.stopPropagation();toggleMapLayerGeofence(${def.id}, ${!def.is_geofence})" title="${def.is_geofence ? 'Disable geofence' : 'Enable geofence'}">${def.is_geofence ? '⌁' : '⊚'}</button>` : ''}
           ${actionBtn}
+          <button class="overlay-mini-btn" onclick="event.stopPropagation();tocFromMapLayer(${def.id})" title="Log this overlay in TOC">Log</button>
           <button class="overlay-mini-btn" onclick="event.stopPropagation();deleteMapLayer(${def.id}, '${jsSafe(def.name)}')" title="Delete this overlay">✕</button>
         </div>
       `;
@@ -18126,22 +18160,34 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   // ── Mention rendering ────────────────────────────────────────────────────
 
-  const _TOC_MENTION_RE = /#\[((?:[^\[\]]|\[[^\]]*\])+)\]\((mt|mc):([^)]+)\)/g;
-  const _TOC_MT_COLOR   = '#4a9e6f';  // muted green
-  const _TOC_MC_COLOR   = '#4a7cba';  // muted steel blue
+  const _TOC_MENTION_RE  = /#\[((?:[^\[\]]|\[[^\]]*\])+)\]\((mt|mc):([^)]+)\)/g;
+  const _TOC_OVERLAY_RE  = /@\[((?:[^\[\]]|\[[^\]]*\])+)\]\(overlay:([^)]+)\)/g;
+  const _TOC_MT_COLOR    = '#4a9e6f';  // muted green
+  const _TOC_MC_COLOR    = '#4a7cba';  // muted steel blue
+  const _TOC_OVL_COLOR   = '#c2710c';  // muted amber
 
   function _tocEscape(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
 
   function _tocRenderMentions(text) {
-    const parts = text.split(/(?=#\[(?:[^\[\]]|\[[^\]]*\])+\]\((?:mt|mc):[^)]+\))/);
+    const tokenRe = /(?=#\[(?:[^\[\]]|\[[^\]]*\])+\]\((?:mt|mc):[^)]+\)|@\[(?:[^\[\]]|\[[^\]]*\])+\]\(overlay:[^)]+\))/;
+    const parts = String(text || '').split(tokenRe);
     return parts.map(part => {
-      const m = part.match(/^(#\[((?:[^\[\]]|\[[^\]]*\])+)\]\((mt|mc):([^)]+)\))([\s\S]*)$/);
-      if (m) {
-        const [, , name, type, rest, tail] = m;
+      // node mention: #[Name](mt:id) or #[Name](mc:id:radioId)
+      const mn = part.match(/^(#\[((?:[^\[\]]|\[[^\]]*\])+)\]\((mt|mc):([^)]+)\))([\s\S]*)$/);
+      if (mn) {
+        const [, , name, type, rest, tail] = mn;
         const color = type === 'mt' ? _TOC_MT_COLOR : _TOC_MC_COLOR;
         const safeRest = rest.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
         const safeName = name.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
         const badge = `<button onclick="tocOpenMention('${type}','${safeRest}','${safeName}',event)" style="background:${color}22;color:${color};border:1px solid ${color}55;border-radius:4px;padding:1px 6px;font-size:11px;font-weight:600;cursor:pointer">#${_tocEscape(name)}</button>`;
+        return badge + _tocEscape(tail);
+      }
+      // overlay mention: @[Name](overlay:id)
+      const mo = part.match(/^(@\[((?:[^\[\]]|\[[^\]]*\])+)\]\(overlay:([^)]+)\))([\s\S]*)$/);
+      if (mo) {
+        const [, , name, defId, tail] = mo;
+        const c = _TOC_OVL_COLOR;
+        const badge = `<button onclick="tocShowOverlayOnMap(${Number(defId)||0})" title="Show on map" style="background:${c}22;color:${c};border:1px solid ${c}55;border-radius:4px;padding:1px 6px;font-size:11px;font-weight:600;cursor:pointer">@${_tocEscape(name)}</button>`;
         return badge + _tocEscape(tail);
       }
       return _tocEscape(part);
@@ -18405,6 +18451,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   let _tocMentionStart  = -1;
   let _tocMentionIdx    = -1;
   let _tocMentionNodes  = [];
+  let _tocMapMarker     = null;
 
   function _tocNodeList() {
     const nodes = [];
@@ -18429,14 +18476,16 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const val    = target.value;
     const cursor = target.selectionStart;
     const before = val.slice(0, cursor);
-    const match  = before.match(/#(\w*)$/);
-    if (match) {
-      const startPos = cursor - match[0].length;
-      const query    = match[1].toLowerCase();
+    const matchNode    = before.match(/#(\w*)$/);
+    const matchOverlay = before.match(/@([^@]*)$/);
+    const dd = document.getElementById('toc-mention-dropdown');
+
+    if (matchNode) {
+      const startPos = cursor - matchNode[0].length;
+      const query    = matchNode[1].toLowerCase();
       const results  = _tocNodeList().filter(n => n.name.toLowerCase().includes(query)).slice(0, 10);
       _tocMentionTarget = target;
       _tocMentionStart  = startPos;
-      const dd = document.getElementById('toc-mention-dropdown');
       if (!results.length) { dd.style.display = 'none'; return; }
       _tocMentionNodes = results;
       _tocMentionIdx   = -1;
@@ -18452,9 +18501,29 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         dd.appendChild(item);
       });
       const rect = target.getBoundingClientRect();
-      dd.style.left    = rect.left + 'px';
-      dd.style.top     = (rect.bottom + 4) + 'px';
-      dd.style.display = 'block';
+      dd.style.left = rect.left + 'px'; dd.style.top = (rect.bottom + 4) + 'px'; dd.style.display = 'block';
+    } else if (matchOverlay) {
+      const startPos = cursor - matchOverlay[0].length;
+      const query    = matchOverlay[1].toLowerCase();
+      const results  = (_mapLayerDefs || []).filter(d => (d.name || '').toLowerCase().includes(query)).slice(0, 10);
+      _tocMentionTarget = target;
+      _tocMentionStart  = startPos;
+      if (!results.length) { dd.style.display = 'none'; return; }
+      _tocMentionNodes = results.map(d => ({type: 'overlay', id: d.id, name: d.name || 'Overlay', _def: d}));
+      _tocMentionIdx   = -1;
+      dd.innerHTML = '';
+      results.forEach(def => {
+        const item = document.createElement('div');
+        item.style.cssText = 'padding:6px 10px;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:12px';
+        item.onmouseover = () => item.style.background = 'var(--bg3)';
+        item.onmouseout  = () => item.style.background = '';
+        const swatch = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${escHtml(def.color || '#f59e0b')};flex-shrink:0"></span>`;
+        item.innerHTML = `<span style="background:${_TOC_OVL_COLOR};color:#fff;border-radius:3px;padding:1px 5px;font-size:10px;font-weight:600">OVL</span>${swatch}<span>${_tocEscape(def.name || 'Overlay')}</span>`;
+        item.onmousedown = ev => { ev.preventDefault(); _tocInsertOverlayMention({type:'overlay', id: def.id, name: def.name || 'Overlay'}); };
+        dd.appendChild(item);
+      });
+      const rect = target.getBoundingClientRect();
+      dd.style.left = rect.left + 'px'; dd.style.top = (rect.bottom + 4) + 'px'; dd.style.display = 'block';
     } else {
       _tocHideMentionDropdown();
     }
@@ -18477,7 +18546,9 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       _tocMentionHighlight(_tocMentionIdx);
     } else if (e.key === 'Enter' && _tocMentionIdx >= 0 && _tocMentionNodes[_tocMentionIdx]) {
       e.preventDefault();
-      _tocInsertMention(_tocMentionNodes[_tocMentionIdx]);
+      const node = _tocMentionNodes[_tocMentionIdx];
+      if (node.type === 'overlay') _tocInsertOverlayMention(node);
+      else _tocInsertMention(node);
     }
   }
 
@@ -18487,6 +18558,21 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const token  = node.type === 'mt'
       ? `#[${node.name}](mt:${node.id})`
       : `#[${node.name}](mc:${node.id}:${node.radioId})`;
+    const val    = target.value;
+    const cursor = target.selectionStart;
+    const before = val.slice(0, _tocMentionStart);
+    const after  = val.slice(cursor);
+    target.value = before + token + ' ' + after;
+    const newPos = before.length + token.length + 1;
+    target.setSelectionRange(newPos, newPos);
+    target.focus();
+    _tocHideMentionDropdown();
+  }
+
+  function _tocInsertOverlayMention(node) {
+    const target = _tocMentionTarget;
+    if (!target) return;
+    const token  = `@[${node.name}](overlay:${node.id})`;
     const val    = target.value;
     const cursor = target.selectionStart;
     const before = val.slice(0, _tocMentionStart);
@@ -18612,6 +18698,32 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     });
   }
 
+  function _tocExtractCoords(body) {
+    const plain = _tocPlainText(body);
+    const re = /(-?\d{1,3}\.\d{3,})\s*,\s*(-?\d{1,3}\.\d{3,})/;
+    const m = plain.match(re);
+    if (!m) return null;
+    const lat = parseFloat(m[1]);
+    const lon = parseFloat(m[2]);
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+    return {lat, lon};
+  }
+
+  function tocShowOnMap(lat, lon, label) {
+    switchTab('map');
+    if (!leafletMap) return;
+    const ll = L.latLng(lat, lon);
+    leafletMap.setView(ll, Math.max(leafletMap.getZoom(), 14));
+    if (_tocMapMarker) { _tocMapMarker.remove(); _tocMapMarker = null; }
+    _tocMapMarker = L.marker(ll, {
+      icon: L.divIcon({
+        className: '',
+        html: '<div style="width:12px;height:12px;border-radius:50%;background:#f59e0b;border:2px solid #fff;box-shadow:0 1px 4px #0006"></div>',
+        iconSize: [12, 12], iconAnchor: [6, 6],
+      })
+    }).addTo(leafletMap).bindPopup(`<b>TOC</b><br>${escHtml(String(label || ''))}`, {maxWidth: 240}).openPopup();
+  }
+
   function tocRenderRow(e) {
     _tocEntries.set(Number(e.id), e);
     const color = TOC_CAT_COLORS[e.category] || '#64748b';
@@ -18619,14 +18731,19 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     tr.dataset.tocId = e.id;
     tr.style.borderBottom = '1px solid var(--border)';
     const grouped = (document.getElementById('toc-view-mode')?.value || 'grouped') === 'grouped';
+    const coords = _tocExtractCoords(e.body);
+    const mapBtn = coords
+      ? `<button onclick="tocShowOnMap(${coords.lat},${coords.lon},'${jsSafe(e.category)}')" title="Show coordinates on map" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:0 3px"
+          onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--muted)'">⌖</button>`
+      : '';
     tr.innerHTML = `
       <td style="padding:6px 8px;color:var(--muted);font-size:11px;font-family:monospace;white-space:nowrap;vertical-align:top">${grouped ? tocFmtTime(e.ts) : tocFmtDate(e.ts)}</td>
       <td style="padding:6px 8px;vertical-align:top">
         <span onclick="document.getElementById('toc-filter-category').value='${e.category}';tocRenderLog()" title="Filter by ${e.category}" style="background:${color};color:#fff;border-radius:4px;padding:2px 6px;font-size:10px;font-weight:600;letter-spacing:.4px;white-space:nowrap;cursor:pointer">${e.category}</span>
       </td>
       <td style="padding:6px 8px;vertical-align:top;width:100%">${tocRenderBody(e.body)}</td>
-      <td style="padding:6px 4px;vertical-align:top">
-        <button onclick="tocShareViaMc(${e.id})" title="Share via active MC chat target" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:0 3px"
+      <td style="padding:6px 4px;vertical-align:top;white-space:nowrap">
+        ${mapBtn}<button onclick="tocShareViaMc(${e.id})" title="Share via active MC chat target" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:0 3px"
           onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--muted)'">⇄</button>
         <button onclick="tocDuplicate(${e.id})" title="Duplicate" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:0 3px"
           onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--muted)'">⧉</button>
@@ -18984,6 +19101,54 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       Notes: seenTs ? `Last seen: ${_formatAppDateTime(seenTs)}` : '',
     });
     _tocPrefill(hasPos ? 'POSITION' : 'CONTACT', body);
+  }
+
+  function tocFromMapLayer(defId) {
+    const def = _mapLayerDefs.find(d => d.id === defId);
+    if (!def) return;
+    const features = _mapLayerFeatureList(def.data);
+    let coordStr = '';
+    if (features.length) {
+      const f = features[0];
+      const geom = f?.geometry || {};
+      const props = f?.properties || {};
+      try {
+        if (geom.type === 'Point') {
+          const [lon, lat] = geom.coordinates || [];
+          if (lat != null) coordStr = `${Number(lat).toFixed(5)}, ${Number(lon).toFixed(5)}`;
+        } else if (props.shape === 'circle' && props.center_lat != null) {
+          coordStr = `${Number(props.center_lat).toFixed(5)}, ${Number(props.center_lon).toFixed(5)} (r=${props.radius_m}m)`;
+        } else if (geom.type === 'Polygon') {
+          const ring = (geom.coordinates || [])[0] || [];
+          if (ring.length > 1) {
+            const pts = ring.slice(0, -1);
+            const avg = pts.reduce((a, [ln, lt]) => ({lat: a.lat + lt, lon: a.lon + ln}), {lat: 0, lon: 0});
+            coordStr = `${(avg.lat / pts.length).toFixed(5)}, ${(avg.lon / pts.length).toFixed(5)} (centroid)`;
+          }
+        } else if (geom.type === 'LineString') {
+          const coords = geom.coordinates || [];
+          const mid = coords[Math.floor(coords.length / 2)];
+          if (mid) coordStr = `${Number(mid[1]).toFixed(5)}, ${Number(mid[0]).toFixed(5)} (midpoint)`;
+        }
+      } catch(e) { /* skip */ }
+    }
+    const overlayToken = `@[${def.name || 'Overlay'}](overlay:${def.id})`;
+    const featureCount = features.length;
+    const category = coordStr ? 'INTEL' : 'INTEL';
+    const body = _tocStructuredMarkdown({
+      'Overlay / Zone': overlayToken,
+      'Coordinates / Center': coordStr || '',
+      Source: 'Map overlay',
+      'Features': `${featureCount} feature${featureCount === 1 ? '' : 's'}${def.is_geofence ? ' · geofence' : ''}`,
+      Description: def.description || '',
+      'Notes / Intent': '',
+    });
+    _tocPrefill('INTEL', body);
+  }
+
+  function tocShowOverlayOnMap(defId) {
+    switchTab('map');
+    zoomToMapLayer(defId);
   }
 
   function tocExport(fmt) {

@@ -413,6 +413,8 @@
     .view-toggle .btn:last-child  { border-radius: 0 6px 6px 0; border-right-width: 1px; }
     .view-toggle .btn.active { border-right-width: 1px; }
     .view-toggle .btn.active + .btn { border-left-width: 0; }
+    .view-toggle .btn:not(:last-child):not(.active):hover { border-right-width: 1px; }
+    .view-toggle .btn:not(:last-child):not(.active):hover + .btn { border-left-width: 0; }
 
     /* Sort select */
     select {

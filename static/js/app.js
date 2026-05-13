@@ -8045,7 +8045,7 @@ if (targetEl) {
     });
   }
 
-  function battStr(b) { return b != null ? `${b}%` : '—'; }
+  function battStr(b) { return b != null ? (b === 101 ? '⚡' : `${b}%`) : '—'; }
   function snrStr(s)  { return s != null ? `${s} dB` : '—'; }
 
   function nodePopupHtml(n) {
@@ -11261,7 +11261,7 @@ if (targetEl) {
     } else if (!c && actionId) {
       btns.push(`<button class="map-popup-btn" onclick="doMcPing('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}" title="Request status from this node — may trigger it to send an advert">Ping</button>`);
     } else if (!c && !actionId) {
-      btns.push(`<button class="map-popup-btn" style="opacity:0.4;cursor:default" disabled title="No pubkey in message — cannot send targeted ping. Sender's firmware may not include pubkey in channel messages.">Ping</button>`);
+      btns.push(`<button class="map-popup-btn" style="opacity:0.35;cursor:default" disabled title="No pubkey in message — cannot send targeted ping. Sender's firmware may not include pubkey in channel messages.">Ping</button>`);
     }
     // Map, Log, Note — always after action buttons, matching MT popup order
     const cLat = c?.latitude, cLon = c?.longitude;
@@ -11333,7 +11333,7 @@ if (targetEl) {
       msgs = msgs.filter(m => m.subtype !== 'system');
     }
     if (!msgs.length) {
-      container.innerHTML = '<div class="chat-empty">No messages yet.</div>';
+      container.innerHTML = '<div class="chat-empty">No messages yet</div>';
       return;
     }
     const hadNoContent = !container.children.length || !!container.querySelector('.chat-empty');

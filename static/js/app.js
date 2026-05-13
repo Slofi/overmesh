@@ -18477,7 +18477,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const cursor = target.selectionStart;
     const before = val.slice(0, cursor);
     const matchNode    = before.match(/#(\w*)$/);
-    const matchOverlay = before.match(/@([^@]*)$/);
+    const matchOverlay = before.match(/@(\w*)$/);
     const dd = document.getElementById('toc-mention-dropdown');
 
     if (matchNode) {
@@ -19134,13 +19134,13 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     }
     const overlayToken = `@[${def.name || 'Overlay'}](overlay:${def.id})`;
     const featureCount = features.length;
-    const category = coordStr ? 'INTEL' : 'INTEL';
+    const featureDesc = features[0]?.properties?.description || features[0]?.properties?.desc || '';
     const body = _tocStructuredMarkdown({
       'Overlay / Zone': overlayToken,
       'Coordinates / Center': coordStr || '',
       Source: 'Map overlay',
       'Features': `${featureCount} feature${featureCount === 1 ? '' : 's'}${def.is_geofence ? ' · geofence' : ''}`,
-      Description: def.description || '',
+      ...(featureDesc ? {Description: featureDesc} : {}),
       'Notes / Intent': '',
     });
     _tocPrefill('INTEL', body);

@@ -18403,6 +18403,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   let _tocMentionTarget = null;
   let _tocMentionStart  = -1;
+  let _tocMentionIdx    = -1;
+  let _tocMentionNodes  = [];
 
   function _tocNodeList() {
     const nodes = [];
@@ -18436,6 +18438,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       _tocMentionStart  = startPos;
       const dd = document.getElementById('toc-mention-dropdown');
       if (!results.length) { dd.style.display = 'none'; return; }
+      _tocMentionNodes = results;
+      _tocMentionIdx   = -1;
       dd.innerHTML = '';
       results.forEach(node => {
         const item = document.createElement('div');
@@ -18463,6 +18467,18 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       return;
     }
     if (e.key === 'Escape') { _tocHideMentionDropdown(); e.preventDefault(); }
+    else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      _tocMentionIdx = Math.min(_tocMentionIdx + 1, _tocMentionNodes.length - 1);
+      _tocMentionHighlight(_tocMentionIdx);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      _tocMentionIdx = Math.max(_tocMentionIdx - 1, 0);
+      _tocMentionHighlight(_tocMentionIdx);
+    } else if (e.key === 'Enter' && _tocMentionIdx >= 0 && _tocMentionNodes[_tocMentionIdx]) {
+      e.preventDefault();
+      _tocInsertMention(_tocMentionNodes[_tocMentionIdx]);
+    }
   }
 
   function _tocInsertMention(node) {
@@ -18482,11 +18498,19 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     _tocHideMentionDropdown();
   }
 
+  function _tocMentionHighlight(idx) {
+    const items = document.getElementById('toc-mention-dropdown')?.children;
+    if (!items) return;
+    [...items].forEach((item, i) => { item.style.background = i === idx ? 'var(--bg3)' : ''; });
+  }
+
   function _tocHideMentionDropdown() {
     const dd = document.getElementById('toc-mention-dropdown');
     if (dd) dd.style.display = 'none';
     _tocMentionTarget = null;
     _tocMentionStart  = -1;
+    _tocMentionIdx    = -1;
+    _tocMentionNodes  = [];
   }
 
   document.addEventListener('pointerdown', e => {
@@ -18658,6 +18682,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       _tocRenderTagFilter();
       _tocRenderMentionFilter();
       tocRenderLog();
+      document.getElementById('toc-body')?.focus();
     }).catch(() => {});
   }
 

@@ -704,8 +704,11 @@
 
     <!-- Filters -->
     <div style="padding:8px 12px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <input id="toc-filter-text" type="text" placeholder="Search log…" oninput="tocRenderLog()"
-             style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;min-width:160px;flex:1">
+      <div class="search-wrap" style="flex:1;min-width:160px">
+        <input id="toc-filter-text" type="text" placeholder="Search log…" oninput="tocRenderLog()"
+               style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;width:100%;box-sizing:border-box">
+        <button class="search-clear" onclick="clearSearch('toc-filter-text');tocRenderLog()" title="Clear search">✕</button>
+      </div>
       <select id="toc-filter-category" onchange="tocRenderLog()" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px">
         <option value="">All categories</option>
         <option value="NOTE">NOTE</option>

@@ -4383,6 +4383,8 @@ if (targetEl) {
     esri_hillshade:   { label: 'Esri Hillshade',  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles © Esri, Airbus DS, USGS, NGA, NASA, CGIAR', maxZoom: 16 },
     tf_landscape:     { label: 'TF Landscape ★',  url: 'https://tile.thunderforest.com/landscape/{z}/{x}/{y}.png?apikey={apikey}', attribution: 'Maps © <a href="https://www.thunderforest.com/">Thunderforest</a>, Data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 22 },
     tf_outdoors:      { label: 'TF Outdoors ★',   url: 'https://tile.thunderforest.com/outdoors/{z}/{x}/{y}.png?apikey={apikey}', attribution: 'Maps © <a href="https://www.thunderforest.com/">Thunderforest</a>, Data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 22 },
+    tf_pioneer:       { label: 'TF Pioneer ★',    url: 'https://tile.thunderforest.com/pioneer/{z}/{x}/{y}.png?apikey={apikey}', attribution: 'Maps © <a href="https://www.thunderforest.com/">Thunderforest</a>, Data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 22 },
+    tf_atlas:         { label: 'TF Atlas ★',      url: 'https://tile.thunderforest.com/atlas/{z}/{x}/{y}.png?apikey={apikey}', attribution: 'Maps © <a href="https://www.thunderforest.com/">Thunderforest</a>, Data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 22 },
   };
 
   // ── Polar grid ─────────────────────────────────────────────────────────────

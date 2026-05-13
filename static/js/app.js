@@ -2738,7 +2738,7 @@ if (targetEl) {
           <button class="act-btn" title="Traceroute" onclick="doTraceroute('${jsSafe(n.id)}','${jsSafe(n.long_name)}','${jsSafe(n.radio_id || '')}')">TR</button>
           <button class="act-btn" title="Direct message" onclick="doDM('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">DM</button>
           <button class="act-btn" title="Request position" onclick="doReqPos('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Pos</button>
-          <button class="act-btn" title="Exchange info" onclick="doNodeInfo('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Info</button>
+          <button class="act-btn" title="Request node info exchange over the mesh" onclick="doNodeInfo('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">Xchg</button>
           <button class="act-btn" title="Contact details and share data" onclick="openMtNodeDetails('${jsSafe(n.id)}')">Info/Share</button>
           ${n.latitude != null && n.longitude != null
             ? `<button class="act-btn" title="Show on map" onclick="centerNodeOnMap('${jsSafe(n.id)}')">Map</button>`
@@ -2748,7 +2748,10 @@ if (targetEl) {
           ${(() => { const p = _parseNotes(n.notes || ''); const s = _notesSummary(p); return s ? `<span class="note-text" title="${escHtml(s)}">${escHtml(s)}</span>` : `<span class="note-placeholder">+ note</span>`; })()}
         </td>
         <td>${escHtml(n.radio_name)}</td>
-        <td><span class="ignore-btn" onclick="ignoreNode('${jsSafe(n.id)}', false, '${jsSafe(n.radio_id || '')}')" title="Ignore node">&#128683;</span></td>
+        <td style="display:flex;gap:8px;align-items:center">
+          <span class="ignore-btn" onclick="ignoreNode('${jsSafe(n.id)}', false, '${jsSafe(n.radio_id || '')}')" title="Ignore node">&#128683;</span>
+          <span class="delete-btn" onclick="deleteNode('${jsSafe(n.id)}', '${jsSafe(n.long_name)}', '${jsSafe(n.radio_id || '')}')" title="Delete from OverMesh">&#10005;</span>
+        </td>
       </tr>`).join('') : '';
     // Append MC contacts
     const mcEnabled = mapShowMc && Object.keys(mcLastStatus).length > 0 && localStorage.getItem('mcHide') !== '1';
@@ -2987,16 +2990,17 @@ if (targetEl) {
         const pk        = jsSafe(c.full_key || c.id || '');
         const noteKey   = c.full_key || c.id || '';
         const rid       = jsSafe(c._rid);
+        const passiveBadge = _mcPassiveBadgeHtml(c._rid, shortKey);
         return `<tr class="${isFav ? 'is-favorite' : ''}${isIgnored ? ' is-ignored' : ''}">
           <td><span class="star ${isFav ? 'starred' : ''}" onclick="toggleMcFav('${jsSafe(cid)}')" title="${isFav ? 'Remove from favourites' : 'Add to favourites'}">&#9733;</span></td>
           <td>
             <div class="name-cell-main">
-              <span class="name-cell-title">${name}</span>${mcTypeBadge(c.type ?? 0)}
+              <span class="name-cell-title">${name}</span>${mcTypeBadge(c.type ?? 0)}${mcRouteIndicator(c, c._rid)}
             </div>
-            <div class="name-cell-meta">${meta}</div>
+            <div class="name-cell-meta">${meta}${passiveBadge}</div>
           </td>
           <td><span class="short-name">${sname}</span></td>
-          <td>—</td><td>${last}</td><td>—</td><td>—</td><td>${path}</td><td>—</td>
+          <td>—</td><td>${last}</td><td>—</td><td>—</td><td>${path}</td><td>${escHtml(_mcNodeDistanceLabel(c, c._rid))}</td>
           <td class="notes-cell" onclick="openMcNoteModal('${pk}','${rid}','${jsSafe(c.long_name||c.name||'')}')" title="Personal notes" style="cursor:pointer">
             ${(() => { const s = _notesSummary(_parseNotes(mcNotesCache[noteKey] || '{}')); return s ? `<span class="note-text" title="${escHtml(s)}">${escHtml(s)}</span>` : `<span class="note-placeholder">+ note</span>`; })()}
           </td>

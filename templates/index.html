@@ -232,7 +232,11 @@
             style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:4px 28px 4px 10px;border-radius:6px;font-size:12px;width:180px;">
           <button class="search-clear" onclick="clearSearch('history-search')" title="Clear search">✕</button>
         </div>
-        <button class="btn" id="db-fav-first-btn" onclick="toggleDbFavFirst()" title="Sort favourited nodes to top">&#9733; Fav first</button>
+        <div class="view-toggle" style="margin-right:2px">
+          <div id="hist-mt-pill" class="btn btn-net-mt active" onclick="toggleHistoryNet('mt')" title="Show/hide Meshtastic nodes">MT</div>
+          <div id="hist-mc-pill" class="btn btn-net-mc active" onclick="toggleHistoryNet('mc')" title="Show/hide MeshCore contacts">MC</div>
+        </div>
+        <button class="btn active" id="db-fav-first-btn" onclick="toggleDbFavFirst()" title="Sort favourited nodes to top">&#9733; Fav first</button>
         <button class="btn" id="db-show-ignored-btn" onclick="toggleShowIgnored()" title="Show only ignored Meshtastic nodes">&#128683; MT ignored</button>
         <button class="btn" id="mc-show-ignored-btn" onclick="toggleMcShowIgnored()" title="Show only ignored MeshCore contacts">&#128683; MC ignored</button>
       </div>
@@ -255,11 +259,12 @@
             <th class="sortable" data-col="_dist" onclick="setLiveSort('_dist')">Distance <span class="sort-arrow"></span></th>
             <th class="sortable" data-col="last_heard_ts" onclick="setLiveSort('last_heard_ts')">Last Seen <span class="sort-arrow"></span></th>
             <th></th>
+            <th>Note</th>
             <th>Radio</th>
             <th style="width:28px"></th>
           </tr>
         </thead>
-        <tbody id="live-tbody"><tr><td colspan="11" class="no-data">Loading...</td></tr></tbody>
+        <tbody id="live-tbody"><tr><td colspan="12" class="no-data">Loading...</td></tr></tbody>
       </table>
     </div>
 

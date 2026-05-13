@@ -329,6 +329,29 @@ def init_prefs_db():
         c.execute('''CREATE TABLE IF NOT EXISTS mc_ignored (
             pubkey_id  TEXT PRIMARY KEY
         )''')
+        c.execute('''CREATE TABLE IF NOT EXISTS mc_contact_notes (
+            pubkey_id   TEXT,
+            radio_id    TEXT,
+            notes_json  TEXT DEFAULT '{}',
+            PRIMARY KEY (pubkey_id, radio_id)
+        )''')
+        # Radio-agnostic notes tables — keyed by node/contact ID only
+        c.execute('''CREATE TABLE IF NOT EXISTS node_notes (
+            node_id    TEXT PRIMARY KEY,
+            notes_json TEXT DEFAULT '{}'
+        )''')
+        c.execute('''CREATE TABLE IF NOT EXISTS mc_notes (
+            pubkey_id  TEXT PRIMARY KEY,
+            notes_json TEXT DEFAULT '{}'
+        )''')
+        # One-time migration: copy existing per-radio notes into radio-agnostic tables
+        c.execute('''INSERT OR IGNORE INTO node_notes (node_id, notes_json)
+            SELECT id, notes FROM nodes WHERE notes IS NOT NULL AND notes != '' AND notes != '{}'
+        ''')
+        c.execute('''INSERT OR IGNORE INTO mc_notes (pubkey_id, notes_json)
+            SELECT pubkey_id, notes_json FROM mc_contact_notes
+            WHERE notes_json IS NOT NULL AND notes_json != '' AND notes_json != '{}'
+        ''')
         c.execute('''CREATE TABLE IF NOT EXISTS map_layers (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             name       TEXT NOT NULL,
@@ -734,6 +757,70 @@ def set_mc_ignored(pubkey_id, ignored):
         conn.commit()
 
 
+def get_mc_contact_notes(pubkey_id, radio_id):
+    with get_prefs_db() as conn:
+        row = conn.execute(
+            "SELECT notes_json FROM mc_contact_notes WHERE pubkey_id=? AND radio_id=?",
+            (pubkey_id, radio_id)
+        ).fetchone()
+        return row[0] if row else '{}'
+
+
+def set_mc_contact_notes(pubkey_id, radio_id, notes_json):
+    with get_prefs_db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO mc_contact_notes (pubkey_id, radio_id, notes_json) VALUES (?,?,?)",
+            (pubkey_id, radio_id, notes_json)
+        )
+        conn.commit()
+
+
+def get_node_note(node_id):
+    with get_prefs_db() as conn:
+        row = conn.execute(
+            "SELECT notes_json FROM node_notes WHERE node_id=?", (node_id,)
+        ).fetchone()
+        return row[0] if row else '{}'
+
+
+def set_node_note(node_id, notes_json):
+    with get_prefs_db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO node_notes (node_id, notes_json) VALUES (?,?)",
+            (node_id, notes_json)
+        )
+        conn.commit()
+
+
+def get_all_node_notes():
+    with get_prefs_db() as conn:
+        rows = conn.execute("SELECT node_id, notes_json FROM node_notes").fetchall()
+        return {r[0]: r[1] for r in rows}
+
+
+def get_mc_note(pubkey_id):
+    with get_prefs_db() as conn:
+        row = conn.execute(
+            "SELECT notes_json FROM mc_notes WHERE pubkey_id=?", (pubkey_id,)
+        ).fetchone()
+        return row[0] if row else '{}'
+
+
+def set_mc_note(pubkey_id, notes_json):
+    with get_prefs_db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO mc_notes (pubkey_id, notes_json) VALUES (?,?)",
+            (pubkey_id, notes_json)
+        )
+        conn.commit()
+
+
+def get_all_mc_notes():
+    with get_prefs_db() as conn:
+        rows = conn.execute("SELECT pubkey_id, notes_json FROM mc_notes").fetchall()
+        return {r[0]: r[1] for r in rows}
+
+
 def get_db_nodes(sort_by="last_seen", sort_dir="desc", fav_first=True, show_ignored=False):
     valid_cols = {"last_seen", "first_seen", "long_name", "last_snr",
                   "last_rssi", "last_battery", "hops_away"}
@@ -746,8 +833,17 @@ def get_db_nodes(sort_by="last_seen", sort_dir="desc", fav_first=True, show_igno
     with get_prefs_db() as conn:
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
-        c.execute(f"SELECT * FROM nodes {where} ORDER BY {order}")
-        raw_rows = [dict(r) for r in c.fetchall()]
+        c.execute(f"""
+            SELECT n.*, COALESCE(nn.notes_json, '') AS _nn_notes
+            FROM nodes n
+            LEFT JOIN node_notes nn ON nn.node_id = n.id
+            {where} ORDER BY {order}
+        """)
+        raw_rows = []
+        for r in c.fetchall():
+            row = dict(r)
+            row['notes'] = row.pop('_nn_notes', '')
+            raw_rows.append(row)
 
     rows = [dict(row) for row in raw_rows]
     local_by_radio = {}

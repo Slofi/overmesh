@@ -4,7 +4,7 @@ import queue as _queue
 import threading
 import time
 
-from db import get_db_node, get_favorites, get_ignored, upsert_node
+from db import get_db_node, get_favorites, get_ignored, upsert_node, get_all_node_notes
 from hw_models import hw_model_name
 from config import CONFIG, CONFIG_LOCK, save_config
 from state import (
@@ -197,6 +197,7 @@ def get_node_data():
     result    = []
     favorites = get_favorites()
     ignored   = get_ignored()
+    node_notes = get_all_node_notes()
 
     with connections_lock:
         items = list(connections.items())
@@ -306,6 +307,7 @@ def get_node_data():
                     "is_ignored":   fav_key in ignored or legacy_key in ignored,
                     "air_util":     metrics.get("airUtilTx"),
                     "ch_util":      metrics.get("channelUtilization"),
+                    "notes":        node_notes.get(node_id_str, '{}'),
                 }
 
                 if node_id_str:

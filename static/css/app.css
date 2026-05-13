@@ -496,20 +496,18 @@
       max-width: 160px; white-space: nowrap;
       overflow: hidden; position: relative;
     }
+    .notes-cell:hover { color: var(--accent); }
     .note-text {
       overflow: hidden; text-overflow: ellipsis;
-      display: inline-block; max-width: calc(100% - 22px);
+      display: inline-block; max-width: 100%;
       vertical-align: middle; font-size: 12px;
     }
-    .note-placeholder { color: var(--border); font-style: italic; font-size: 12px; vertical-align: middle; }
-    .note-edit-btn {
-      opacity: 0; cursor: pointer; font-size: 11px;
-      color: var(--muted); vertical-align: middle;
-      margin-left: 3px; transition: opacity 0.15s, color 0.15s;
-    }
-    tr:hover .note-edit-btn { opacity: 1; }
-    .note-edit-btn:hover { color: var(--accent); }
+    .note-placeholder { color: var(--muted); font-style: italic; font-size: 12px; vertical-align: middle; }
     .note-modal-actions { display:flex; gap:8px; margin-top:10px; justify-content:flex-end; }
+    .note-fields { display:flex; flex-direction:column; gap:8px; }
+    .note-field-row { display:flex; align-items:center; gap:8px; }
+    .note-field-label { width:64px; flex-shrink:0; font-size:12px; color:var(--muted); text-align:right; }
+    .note-custom-row { display:flex; align-items:center; gap:6px; }
     .note-textarea {
       width: 100%; background: var(--bg3); border: 1px solid var(--border);
       color: var(--text); border-radius: 4px; padding: 8px 10px;
@@ -1099,15 +1097,15 @@
     .map-legend-row   { display: flex; align-items: center; gap: 7px; margin-bottom: 3px; }
     .map-legend-dot   { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; border: 2px solid white; }
     .map-locate-btn {
-      background: var(--bg2); border: 1px solid var(--border);
+      background: var(--bg3); border: 1px solid var(--border);
       border-radius: 6px; width: 30px; height: 30px;
       display: flex; align-items: center; justify-content: center;
-      font-size: 18px; cursor: pointer !important; color: #fff;
+      font-size: 18px; cursor: pointer !important; color: var(--text);
       box-shadow: 0 2px 8px rgba(0,0,0,0.5);
-      transition: color 0.2s, border-color 0.2s;
+      transition: color 0.2s, border-color 0.2s, background 0.1s;
       margin-bottom: 4px; user-select: none;
     }
-    .map-locate-btn:hover  { color: #fff; border-color: var(--text); }
+    .map-locate-btn:hover  { background: var(--border); color: var(--text); border-color: var(--text); }
     .map-locate-btn.active { color: var(--accent); border-color: var(--accent); }
     #map-layer-panel {
       position: absolute; left: 38px; top: 0;
@@ -1183,11 +1181,11 @@
     }
     .highlight-flash { animation: row-flash 4s ease-out forwards !important; }
     .leaflet-control-zoom-in, .leaflet-control-zoom-out {
-      background-color: #000 !important; color: #fff !important;
-      border-radius: 6px !important;
+      background-color: var(--bg3) !important; color: var(--text) !important;
+      border: 1px solid var(--border) !important; border-radius: 6px !important;
     }
     .leaflet-control-zoom-in:hover, .leaflet-control-zoom-out:hover {
-      background-color: #1a1a1a !important; color: #fff !important;
+      background-color: var(--border) !important; color: var(--text) !important;
     }
     .leaflet-control-zoom { border: none !important; }
     .leaflet-control-zoom-in  { margin-bottom: 2px !important; }

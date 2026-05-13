@@ -8,7 +8,7 @@ from flask import Blueprint, jsonify, request
 from pubsub import pub
 from meshtastic.protobuf import mesh_pb2, portnums_pb2
 from config import CONFIG, _valid_node_id
-from db import get_db_nodes, get_position_history, get_prefs_db, get_traceroute_history, save_message, save_traceroute, delete_channel_messages, delete_mt_all_messages
+from db import get_db_nodes, get_position_history, get_prefs_db, get_traceroute_history, save_message, save_traceroute, delete_channel_messages, delete_mt_all_messages, get_mc_contact_notes, set_mc_contact_notes, get_node_note, set_node_note, get_mc_note, set_mc_note, get_all_mc_notes
 from helpers import (
     _format_last_heard, _next_msg_id, _node_ts, _radio_id_for_iface,
     get_node_data, get_node_name, push_to_sse,
@@ -380,6 +380,7 @@ def api_db_node_update(node_id):
     radio_id = data.get("radio_id") or request.args.get("radio_id")
     where = "id=? AND radio_id=?" if radio_id else "id=?"
     params = (node_id, radio_id) if radio_id else (node_id,)
+    updated = 0
     with get_prefs_db() as conn:
         c = conn.cursor()
         if "is_favorite" in data:
@@ -388,9 +389,9 @@ def api_db_node_update(node_id):
         if "is_ignored" in data:
             c.execute(f"UPDATE nodes SET is_ignored=? WHERE {where}",
                       (1 if data["is_ignored"] else 0, *params))
-        if "notes" in data:
-            c.execute(f"UPDATE nodes SET notes=? WHERE {where}", (data["notes"], *params))
         updated = c.rowcount if c.rowcount is not None else 0
+    if "notes" in data:
+        set_node_note(node_id, data["notes"])
     return jsonify({"ok": True, "updated": updated})
 
 
@@ -626,6 +627,24 @@ def api_request_position(node_id):
         # for the health_check_loop's 5-second poll.
         threading.Thread(target=_reconnect_disconnected, daemon=True).start()
         return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/api/mc/contact/<pubkey_id>/notes", methods=["GET"])
+def api_mc_contact_notes_get(pubkey_id):
+    return jsonify({"notes": get_mc_note(pubkey_id)})
+
+
+@bp.route("/api/mc/contact/<pubkey_id>/notes", methods=["PATCH"])
+def api_mc_contact_notes_set(pubkey_id):
+    data = request.get_json(silent=True) or {}
+    notes_json = data.get("notes", "{}")
+    set_mc_note(pubkey_id, notes_json)
+    return jsonify({"ok": True})
+
+
+@bp.route("/api/mc/notes", methods=["GET"])
+def api_mc_notes_all():
+    return jsonify(get_all_mc_notes())
 
 
 @bp.route("/api/node/<node_id>/info", methods=["POST"])

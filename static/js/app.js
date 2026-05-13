@@ -47,7 +47,9 @@
   let mcFavs        = (() => { try { return JSON.parse(localStorage.getItem('mcFavs') || '{}'); } catch(_) { return {}; } })();
   let mcIgnored     = new Set();
   let mcShowIgnored = false;
+  let mcNotesCache  = {};
   fetch(BASE_PATH + '/api/mc/ignored').then(r => r.ok ? r.json() : null).then(d => { if (d) { mcIgnored = new Set(d.ignored); renderLive(); } }).catch(() => {});
+  _loadMcNotesCache();
   let liveSort      = { col: 'last_heard_ts', dir: -1 };
   let _historyNodes = [];
   let dbSort        = { col: 'last_seen', dir: 'desc' };
@@ -57,6 +59,8 @@
   let favFirst      = true;
   let dbFavFirst    = true;
   let showIgnored   = false;
+  let historyShowMt = true;
+  let historyShowMc = true;
   let currentView   = 'live';
 
   // ── Notifications ──────────────────────────────────────────────────────────
@@ -2462,7 +2466,7 @@ if (targetEl) {
     document.getElementById('history-view').style.display = v === 'history' ? '' : 'none';
     document.getElementById('live-controls').style.display    = v === 'live' ? 'flex' : 'none';
     document.getElementById('history-controls').style.display = v === 'history' ? 'flex' : 'none';
-    if (v === 'history') loadHistory();
+    if (v === 'history') { _syncHistoryIgnoredBtns(); loadHistory(); }
     else renderLive();
   }
 
@@ -2543,6 +2547,22 @@ if (targetEl) {
     btn.classList.toggle('active', showIgnored);
     btn.textContent = showIgnored ? '🚫 MT: ignored only' : '🚫 MT ignored';
     loadHistory();
+  }
+
+  function _syncHistoryIgnoredBtns() {
+    const mtBtn = document.getElementById('db-show-ignored-btn');
+    const mcBtn = document.getElementById('mc-show-ignored-btn');
+    if (mtBtn) mtBtn.style.display = historyShowMt ? '' : 'none';
+    if (mcBtn) mcBtn.style.display = historyShowMc ? '' : 'none';
+  }
+
+  function toggleHistoryNet(net) {
+    if (net === 'mt') historyShowMt = !historyShowMt;
+    else historyShowMc = !historyShowMc;
+    document.getElementById('hist-mt-pill')?.classList.toggle('active', historyShowMt);
+    document.getElementById('hist-mc-pill')?.classList.toggle('active', historyShowMc);
+    _syncHistoryIgnoredBtns();
+    filterHistory();
   }
 
   function ignoreNode(nodeId, currentState, radioId='') {
@@ -2723,6 +2743,9 @@ if (targetEl) {
             ? `<button class="act-btn" title="Show on map" onclick="centerNodeOnMap('${jsSafe(n.id)}')">Map</button>`
             : `<button class="act-btn" title="No GPS position" style="opacity:0.35;cursor:default" disabled>Map</button>`}
         </td>
+        <td class="notes-cell" onclick="openNoteEdit('${jsSafe(n.id)}','${jsSafe(n.long_name)}','${jsSafe(n.radio_id || '')}')" title="Personal notes" style="cursor:pointer">
+          ${(() => { const p = _parseNotes(n.notes || ''); const s = _notesSummary(p); return s ? `<span class="note-text" title="${escHtml(s)}">${escHtml(s)}</span>` : `<span class="note-placeholder">+ note</span>`; })()}
+        </td>
         <td>${escHtml(n.radio_name)}</td>
         <td><span class="ignore-btn" onclick="ignoreNode('${jsSafe(n.id)}', false, '${jsSafe(n.radio_id || '')}')" title="Ignore node">&#128683;</span></td>
       </tr>`).join('') : '';
@@ -2739,7 +2762,7 @@ if (targetEl) {
              (c.id || '').toLowerCase().includes(query);
     });
     if (!real.length && !mcFiltered.length) {
-      tbody.innerHTML = '<tr><td colspan="11" class="no-data">No nodes found</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="12" class="no-data">No nodes found</td></tr>';
     }
     if (mcFiltered.length) {
       // Sort MC contacts: by distance when active, otherwise favourites-first
@@ -2759,7 +2782,7 @@ if (targetEl) {
           ? [...mcFiltered.filter(c => mcFavs[c.id || c.full_key]), ...mcFiltered.filter(c => !mcFavs[c.id || c.full_key])]
           : mcFiltered;
       }
-      tbody.innerHTML += `<tr><td colspan="11" style="padding:3px 8px;font-size:11px;font-weight:600;color:var(--mc-color);background:rgba(56,189,248,0.07);border-top:1px solid rgba(56,189,248,0.25)">MeshCore</td></tr>`;
+      tbody.innerHTML += `<tr><td colspan="12" style="padding:3px 8px;font-size:11px;font-weight:600;color:var(--mc-color);background:rgba(56,189,248,0.07);border-top:1px solid rgba(56,189,248,0.25)">MeshCore</td></tr>`;
       tbody.innerHTML += mcSorted.map(c => {
         const cid    = c.id || c.full_key || '';
         const isFav  = !!mcFavs[cid];
@@ -2773,7 +2796,8 @@ if (targetEl) {
         const archiveMeta = c.archived_only ? 'OM archive' : '';
         const meta   = escHtml([shortKey, metaRadio, archiveMeta].filter(Boolean).join(' · '));
         const passiveBadge = _mcPassiveBadgeHtml(c._rid, shortKey);
-        const pk     = jsSafe(c.full_key || c.id || '');
+        const pk      = jsSafe(c.full_key || c.id || '');
+        const noteKey = c.full_key || c.id || '';
         const rid    = jsSafe(c._rid);
         const lat    = c.latitude ?? c.lat;
         const lon    = c.longitude ?? c.lon;
@@ -2818,6 +2842,9 @@ if (targetEl) {
             ${pingButton}
             ${manageButton}
             <button class="act-btn" title="Contact details and share data" onclick="openMcContactShare('${jsSafe(cid)}','${rid}')">Info/Share</button>
+          </td>
+          <td class="notes-cell" onclick="openMcNoteModal('${pk}','${rid}','${jsSafe(c.long_name||c.name||'')}')" title="Personal notes" style="cursor:pointer">
+            ${(() => { const s = _notesSummary(_parseNotes(mcNotesCache[noteKey] || '{}')); return s ? `<span class="note-text" title="${escHtml(s)}">${escHtml(s)}</span>` : `<span class="note-placeholder">+ note</span>`; })()}
           </td>
           <td>${escHtml(mcLastStatus[c._rid]?.name || mcLastStatus[c._rid]?.node_name || '')}</td>
           <td style="display:flex;gap:8px;align-items:center">
@@ -2881,50 +2908,47 @@ if (targetEl) {
   // ── Render History ─────────────────────────────────────────────────────────
   function filterHistory() {
     const q = (document.getElementById('history-search')?.value || '').toLowerCase();
-    const filtered = q ? _historyNodes.filter(n =>
+    const base = historyShowMt ? _historyNodes : [];
+    const filtered = q ? base.filter(n =>
       (n.long_name || '').toLowerCase().includes(q) ||
       (n.short_name || '').toLowerCase().includes(q) ||
       (n.id || '').toLowerCase().includes(q)
-    ) : _historyNodes;
+    ) : base;
     _renderHistoryRows(filtered);
   }
 
   function renderHistory(nodes) {
     _historyNodes = nodes;
-    const q = (document.getElementById('history-search')?.value || '').toLowerCase();
-    const filtered = q ? nodes.filter(n =>
-      (n.long_name || '').toLowerCase().includes(q) ||
-      (n.short_name || '').toLowerCase().includes(q) ||
-      (n.id || '').toLowerCase().includes(q)
-    ) : nodes;
-    _renderHistoryRows(filtered);
+    filterHistory();
   }
 
-  function _renderHistoryRows(nodes) {
+  function _renderHistoryRows(mtNodes) {
     const tbody = document.getElementById('history-tbody');
 
-    // Collect MC contacts for history
-    const allMcContacts = _mcDedupeContacts({ onlyConnected: false });
-    const mcHistFiltered = mcShowIgnored
-      ? allMcContacts.filter(c => mcIgnored.has(c.id || ''))
-      : allMcContacts.filter(c => !mcIgnored.has(c.id || ''));
+    // MC contacts — filter by ignored state, then sort fav-first if enabled
+    const allMcContacts = historyShowMc ? _mcDedupeContacts({ onlyConnected: false }) : [];
+    const mcFiltered = allMcContacts.filter(c => {
+      const key = c.id || c.full_key || '';
+      return mcShowIgnored ? mcIgnored.has(key) : !mcIgnored.has(key);
+    });
+    const mcSorted = dbFavFirst
+      ? [...mcFiltered.filter(c => mcFavs[c.id || c.full_key]), ...mcFiltered.filter(c => !mcFavs[c.id || c.full_key])]
+      : mcFiltered;
 
-    if (!nodes.length && !mcHistFiltered.length) {
+    if (!mtNodes.length && !mcSorted.length) {
       tbody.innerHTML = '<tr><td colspan="11" class="no-data">No nodes in database yet</td></tr>';
       return;
     }
 
-    tbody.innerHTML = nodes.map(n => {
-      const histRadioLabel = lastStatus[n.radio_id]?.name || n.radio_name || n.radio_id || '';
-      const histMeta = [n.hw_model, histRadioLabel].filter(Boolean).join(' · ');
+    tbody.innerHTML = mtNodes.map(n => {
+      const radioLabel = lastStatus[n.radio_id]?.name || n.radio_name || n.radio_id || '';
+      const meta = [n.hw_model, radioLabel].filter(Boolean).join(' · ');
       return `
       <tr class="${n.is_favorite ? 'is-favorite' : ''} ${n.is_ignored ? 'is-ignored' : ''}">
         <td><span class="star ${n.is_favorite ? 'starred' : ''}" onclick="toggleFav('${jsSafe(n.id)}', ${!!n.is_favorite}, '${jsSafe(n.radio_id || '')}')" title="${n.is_favorite ? 'Remove from favourites' : 'Add to favourites'}">&#9733;</span></td>
         <td>
-          <div class="name-cell-main">
-            <span class="name-cell-title">${escHtml(n.long_name)}</span>
-          </div>
-          ${histMeta ? `<div class="name-cell-meta">${escHtml(histMeta)}</div>` : ''}
+          <div class="name-cell-main"><span class="name-cell-title">${escHtml(n.long_name)}</span></div>
+          ${meta ? `<div class="name-cell-meta">${escHtml(meta)}</div>` : ''}
         </td>
         <td><span class="short-name">${escHtml(n.short_name)}</span></td>
         <td>${escHtml(n.first_seen_str)}</td>
@@ -2933,11 +2957,8 @@ if (targetEl) {
         <td class="${battClass(n.last_battery)}">${battDisplay(n.last_battery)}</td>
         <td>${n.hops_away != null ? n.hops_away : '—'}</td>
         <td>${_distanceLabel(n.distance)}</td>
-        <td class="notes-cell">
-          ${n.notes
-            ? `<span class="note-text" title="${escHtml(n.notes)}">${escHtml(n.notes)}</span>`
-            : `<span class="note-placeholder">+ note</span>`}
-          <span class="note-edit-btn" onclick="openNoteEdit('${jsSafe(n.id)}','${jsSafe(n.long_name)}','${jsSafe(n.radio_id || '')}')" title="Edit note">&#9998;</span>
+        <td class="notes-cell" onclick="openNoteEdit('${jsSafe(n.id)}','${jsSafe(n.long_name)}','${jsSafe(n.radio_id || '')}')" title="Edit note" style="cursor:pointer">
+          ${(() => { const p = _parseNotes(n.notes || ''); const s = _notesSummary(p); return s ? `<span class="note-text" title="${escHtml(s)}">${escHtml(s)}</span>` : `<span class="note-placeholder">+ note</span>`; })()}
         </td>
         <td style="display:flex;gap:8px;align-items:center">
           ${n.is_ignored
@@ -2948,9 +2969,10 @@ if (targetEl) {
       </tr>`;
     }).join('');
 
-    if (mcHistFiltered.length) {
+    if (mcSorted.length) {
+      const connectedRadios = Object.values(mcLastStatus).filter(s => s?.status === 'connected').length;
       tbody.innerHTML += `<tr><td colspan="11" style="padding:3px 8px;font-size:11px;font-weight:600;color:var(--mc-color);background:rgba(56,189,248,0.07);border-top:1px solid rgba(56,189,248,0.25)">MeshCore</td></tr>`;
-      tbody.innerHTML += mcHistFiltered.map(c => {
+      tbody.innerHTML += mcSorted.map(c => {
         const cid       = c.id || c.full_key || '';
         const isFav     = !!mcFavs[cid];
         const isIgnored = mcIgnored.has(cid);
@@ -2958,11 +2980,11 @@ if (targetEl) {
         const sname     = escHtml((c.short_name || '?').slice(0,4).toUpperCase());
         const path      = c.out_path_len != null ? mcPathHopLabel(c.out_path_len, true) : '—';
         const last      = c.last_heard_ts ? senseTimeAgo(c.last_heard_ts) : escHtml(c.last_seen || '—');
-        const shortKey2  = (c.full_key || c.id || '').slice(0, 12);
-        const connRads2  = Object.values(mcLastStatus).filter(s => s?.status === 'connected').length;
-        const metaRad2   = connRads2 > 1 ? (mcLastStatus[c._rid]?.name || mcLastStatus[c._rid]?.node_name || '') : '';
-        const meta       = escHtml([shortKey2, metaRad2].filter(Boolean).join(' · '));
+        const shortKey  = (c.full_key || c.id || '').slice(0, 12);
+        const radioName = connectedRadios > 1 ? (mcLastStatus[c._rid]?.name || mcLastStatus[c._rid]?.node_name || '') : '';
+        const meta      = escHtml([shortKey, radioName].filter(Boolean).join(' · '));
         const pk        = jsSafe(c.full_key || c.id || '');
+        const noteKey   = c.full_key || c.id || '';
         const rid       = jsSafe(c._rid);
         return `<tr class="${isFav ? 'is-favorite' : ''}${isIgnored ? ' is-ignored' : ''}">
           <td><span class="star ${isFav ? 'starred' : ''}" onclick="toggleMcFav('${jsSafe(cid)}')" title="${isFav ? 'Remove from favourites' : 'Add to favourites'}">&#9733;</span></td>
@@ -2973,7 +2995,10 @@ if (targetEl) {
             <div class="name-cell-meta">${meta}</div>
           </td>
           <td><span class="short-name">${sname}</span></td>
-          <td>—</td><td>${last}</td><td>—</td><td>—</td><td>${path}</td><td>—</td><td>—</td>
+          <td>—</td><td>${last}</td><td>—</td><td>—</td><td>${path}</td><td>—</td>
+          <td class="notes-cell" onclick="openMcNoteModal('${pk}','${rid}','${jsSafe(c.long_name||c.name||'')}')" title="Personal notes" style="cursor:pointer">
+            ${(() => { const s = _notesSummary(_parseNotes(mcNotesCache[noteKey] || '{}')); return s ? `<span class="note-text" title="${escHtml(s)}">${escHtml(s)}</span>` : `<span class="note-placeholder">+ note</span>`; })()}
+          </td>
           <td style="display:flex;gap:8px;align-items:center">
             ${isIgnored
               ? `<span class="unignore-btn" onclick="ignoreMcContact('${jsSafe(cid)}',true)" title="Unignore">&#128683;</span>`
@@ -3010,27 +3035,154 @@ if (targetEl) {
     });
   }
 
-  // ── Notes inline edit ──────────────────────────────────────────────────────
-  function openNoteEdit(nodeId, nodeName, radioId='') {
-    const node = allNodes.find(n => n.id === nodeId && (!radioId || n.radio_id === radioId)) || allNodes.find(n => n.id === nodeId);
-    const current = node?.notes || '';
-    openModal('Note — ' + nodeName, `
-      <textarea class="note-textarea" id="note-ta">${escHtml(current)}</textarea>
-      <div class="note-modal-actions">
-        <button class="btn-secondary" onclick="saveNote('${jsSafe(nodeId)}', true, '${jsSafe(radioId || '')}')" title="Clear note">Clear</button>
-        <button class="dm-send" onclick="saveNote('${jsSafe(nodeId)}', false, '${jsSafe(radioId || '')}')">Save</button>
-      </div>`);
-    setTimeout(() => { const t = document.getElementById('note-ta'); if(t){t.focus();t.selectionStart=t.value.length;} }, 50);
+  // ── Structured node/contact notes ─────────────────────────────────────────
+
+  function _parseNotes(raw) {
+    if (!raw) return { alias: '', location: '', note: '', custom: [] };
+    try {
+      const obj = JSON.parse(raw);
+      if (typeof obj === 'object' && obj !== null) {
+        return { alias: obj.alias || '', location: obj.location || '', note: obj.note || '', custom: Array.isArray(obj.custom) ? obj.custom : [] };
+      }
+    } catch(e) {}
+    // Legacy: plain text → migrate to note field
+    return { alias: '', location: '', note: raw, custom: [] };
   }
 
-  function saveNote(nodeId, clear, radioId='') {
-    const val = clear ? '' : (document.getElementById('note-ta')?.value.trim() || '');
+  function _notesHasContent(n) {
+    return !!(n.alias || n.location || n.note || (n.custom && n.custom.some(c => c.label || c.value)));
+  }
+
+  function _notesSummary(n) {
+    if (n.alias) return n.alias;
+    if (n.note) return n.note.slice(0, 60);
+    if (n.location) return n.location;
+    const c = (n.custom || []).find(f => f.value);
+    return c ? `${c.label}: ${c.value}` : '';
+  }
+
+  function _buildNoteModalBody(parsed, saveCallbackStr, clearCallbackStr) {
+    const customRows = (parsed.custom || []).map((f, i) =>
+      `<div class="note-custom-row" id="ncr-${i}">
+        <input class="note-custom-label settings-input" style="width:110px;flex-shrink:0" placeholder="Field name" value="${escHtml(f.label || '')}">
+        <input class="note-custom-value settings-input" style="flex:1" placeholder="Value" value="${escHtml(f.value || '')}">
+        <button class="btn-sm" style="padding:2px 7px" onclick="removeNoteCustomRow(this)">×</button>
+      </div>`
+    ).join('');
+    return `
+      <div class="note-fields">
+        <div class="note-field-row">
+          <span class="note-field-label">Alias</span>
+          <input id="nf-alias" class="settings-input" style="flex:1" placeholder="Real name or alias" value="${escHtml(parsed.alias)}">
+        </div>
+        <div class="note-field-row">
+          <span class="note-field-label">Location</span>
+          <input id="nf-location" class="settings-input" style="flex:1" placeholder="Physical location" value="${escHtml(parsed.location)}">
+        </div>
+        <div class="note-field-row" style="align-items:flex-start">
+          <span class="note-field-label" style="margin-top:6px">Note</span>
+          <textarea id="nf-note" class="note-textarea" style="flex:1;min-height:60px">${escHtml(parsed.note)}</textarea>
+        </div>
+        <div id="note-custom-fields">${customRows}</div>
+        <button class="btn-sm" style="margin-top:6px" onclick="addNoteCustomRow()">+ Add field</button>
+      </div>
+      <div class="note-modal-actions">
+        <button class="btn-secondary" onclick="${clearCallbackStr}">Clear all</button>
+        <button class="dm-send" onclick="${saveCallbackStr}">Save</button>
+      </div>`;
+  }
+
+  function addNoteCustomRow() {
+    const container = document.getElementById('note-custom-fields');
+    if (!container) return;
+    const i = container.children.length;
+    const div = document.createElement('div');
+    div.className = 'note-custom-row';
+    div.id = `ncr-${i}`;
+    div.innerHTML = `
+      <input class="note-custom-label settings-input" style="width:110px;flex-shrink:0" placeholder="Field name" value="">
+      <input class="note-custom-value settings-input" style="flex:1" placeholder="Value" value="">
+      <button class="btn-sm" style="padding:2px 7px" onclick="removeNoteCustomRow(this)">×</button>`;
+    container.appendChild(div);
+    div.querySelector('.note-custom-label').focus();
+  }
+
+  function removeNoteCustomRow(btn) {
+    btn.closest('.note-custom-row')?.remove();
+  }
+
+  function _collectNoteFields() {
+    const alias    = document.getElementById('nf-alias')?.value.trim() || '';
+    const location = document.getElementById('nf-location')?.value.trim() || '';
+    const note     = document.getElementById('nf-note')?.value.trim() || '';
+    const custom   = [...(document.getElementById('note-custom-fields')?.querySelectorAll('.note-custom-row') || [])]
+      .map(row => ({ label: row.querySelector('.note-custom-label')?.value.trim() || '', value: row.querySelector('.note-custom-value')?.value.trim() || '' }))
+      .filter(f => f.label || f.value);
+    return { alias, location, note, custom };
+  }
+
+  // MT node notes
+  function openNoteEdit(nodeId, nodeName, radioId='') {
+    const node = allNodes.find(n => n.id === nodeId && (!radioId || n.radio_id === radioId)) || allNodes.find(n => n.id === nodeId);
+    const parsed = _parseNotes(node?.notes || '');
+    const sid = jsSafe(nodeId), srid = jsSafe(radioId || '');
+    openModal('Note — ' + nodeName, _buildNoteModalBody(parsed,
+      `saveMtNote('${sid}','${srid}',false)`,
+      `saveMtNote('${sid}','${srid}',true)`));
+  }
+
+  function saveMtNote(nodeId, radioId, clear) {
+    const notes = clear ? '{}' : JSON.stringify(_collectNoteFields());
     fetch(BASE_PATH + `/api/db/node/${encodeURIComponent(nodeId)}`, {
       method: 'PATCH',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({notes: val, radio_id: radioId || null})
-    }).then(r => { if (r.ok) { closeModal(); loadHistory(); } })
-      .catch(e => console.error('saveNote failed:', e));
+      body: JSON.stringify({notes, radio_id: radioId || null})
+    }).then(r => {
+      if (r.ok) {
+        closeModal();
+        // Update allNodes in-place so live tab reflects immediately without a full reload
+        allNodes.forEach(n => { if (n.id === nodeId) n.notes = notes; });
+        renderLive();
+        if (currentView === 'history') loadHistory();
+      }
+    }).catch(e => console.error('saveMtNote failed:', e));
+  }
+
+  // MC contact notes
+  function _loadMcNotesCache() {
+    fetch(BASE_PATH + '/api/mc/notes')
+      .then(r => r.ok ? r.json() : {})
+      .then(data => { mcNotesCache = data || {}; renderLive(); if (currentView === 'history') filterHistory(); })
+      .catch(() => {});
+  }
+
+  function openMcNoteModal(pubkeyId, _radioId, contactName) {
+    fetch(BASE_PATH + `/api/mc/contact/${encodeURIComponent(pubkeyId)}/notes`)
+      .then(r => r.json())
+      .then(data => {
+        const parsed = _parseNotes(data.notes || '{}');
+        const sid = jsSafe(pubkeyId);
+        openModal('Note — ' + contactName, _buildNoteModalBody(parsed,
+          `saveMcNote('${sid}',false)`,
+          `saveMcNote('${sid}',true)`));
+      })
+      .catch(e => console.error('openMcNoteModal failed:', e));
+  }
+
+  function saveMcNote(pubkeyId, clear) {
+    const notes = clear ? '{}' : JSON.stringify(_collectNoteFields());
+    fetch(BASE_PATH + `/api/mc/contact/${encodeURIComponent(pubkeyId)}/notes`, {
+      method: 'PATCH',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({notes})
+    }).then(r => {
+      if (r.ok) {
+        closeModal();
+        mcNotesCache[pubkeyId] = notes;
+        renderLive();
+        if (currentView === 'history') filterHistory();
+      }
+    }).catch(e => console.error('saveMcNote failed:', e));
   }
 
   // ── Node count header ──────────────────────────────────────────────────────
@@ -11100,6 +11252,7 @@ if (targetEl) {
       if (c.type !== 2) btns.push(`<button class="map-popup-btn" onclick="doMcPing('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}">Ping</button>`);
       if (mcCanRemoteManage(c)) btns.push(`<button class="map-popup-btn" onclick="openMcRemoteManage('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}">Manage</button>`);
       btns.push(`<button class="map-popup-btn" onclick="tocFromMcNode('${jsSafe(actionId)}','${jsSafe(actionRid)}');${hide}" title="Prefill TOC Log from this contact">Log</button>`);
+      btns.push(`<button class="map-popup-btn" onclick="openMcNoteModal('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}" title="Personal notes for this contact">Note</button>`);
     } else if (!c && actionId) {
       btns.push(`<button class="map-popup-btn" onclick="doMcPing('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}" title="Request status from this node — may trigger it to send an advert">Ping</button>`);
       btns.push(`<button class="map-popup-btn" onclick="tocFromMcNode('${jsSafe(actionId)}','${jsSafe(actionRid)}');${hide}" title="Prefill TOC Log from this contact">Log</button>`);
@@ -18176,6 +18329,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       }
       btns.push(`<button class="map-popup-btn" onclick="tocFromMtNode('${safeId}');${hide}">Log</button>`);
       btns.push(`<button class="map-popup-btn" onclick="openGpsTrail('${safeId}','${safeNm}');${hide}">Trail</button>`);
+      btns.push(`<button class="map-popup-btn" onclick="openNoteEdit('${safeId}','${safeNm}','${safeRid}');${hide}" title="Personal notes for this node">Note</button>`);
     } else {
       btns.push(`<button class="map-popup-btn" onclick="showNodeInList('${safeId}');${hide}" title="Look up in node history">List</button>`);
       btns.push(`<button class="map-popup-btn" onclick="openMapDM('${safeId}','${safeNm}');${hide}">DM</button>`);
@@ -18183,6 +18337,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       btns.push(`<button class="map-popup-btn" onclick="openMtNodeDetails('${safeId}');${hide}">Info</button>`);
       btns.push(`<button class="map-popup-btn" onclick="tocFromMtNode('${safeId}');${hide}">Log</button>`);
       btns.push(`<button class="map-popup-btn" onclick="openGpsTrail('${safeId}','${safeNm}');${hide}">Trail</button>`);
+      btns.push(`<button class="map-popup-btn" onclick="openNoteEdit('${safeId}','${safeNm}','${safeRid}');${hide}" title="Personal notes for this node">Note</button>`);
     }
 
     const nodeInfo = n

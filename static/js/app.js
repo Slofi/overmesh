@@ -3402,7 +3402,7 @@ if (targetEl) {
       ['Distance', _mtNodeDistanceLabel(n)],
       ['Latitude', n.latitude],
       ['Longitude', n.longitude],
-      ['Last heard', nodeLastHeardLabel(n)],
+      ['Last seen', nodeLastHeardLabel(n)],
     ];
     openModal('MT Node Details', `
       <div id="mt-detail-rows">${_detailRows(localRows)}</div>
@@ -3442,7 +3442,7 @@ if (targetEl) {
           ['Latitude', details.latitude],
           ['Longitude', details.longitude],
           ['Altitude', details.altitude],
-          ['Last heard', nodeLastHeardLabel(n)],
+          ['Last seen', nodeLastHeardLabel(n)],
         ];
         if (detailBox) detailBox.innerHTML = _detailRows(rows);
         area.className = '';
@@ -4099,7 +4099,7 @@ if (targetEl) {
           ${row('SNR', snrC(d.snr))}
           ${row('RSSI', d.rssi != null ? d.rssi + ' dBm' : null)}
           ${row('Hops away', d.hops_away)}
-          ${row('Last heard', escHtml(d.last_heard))}
+          ${row('Last seen', escHtml(d.last_heard))}
           <tr><td colspan="2" class="info-section">Power</td></tr>
           ${row('Battery', battC(d.battery))}
           ${row('Voltage', d.voltage != null ? d.voltage.toFixed(2) + ' V' : null)}
@@ -7825,7 +7825,7 @@ if (targetEl) {
           ${row('SNR', snrC(d.snr))}
           ${row('RSSI', d.rssi != null ? d.rssi + ' dBm' : null)}
           ${row('Hops away', d.hops_away)}
-          ${row('Last heard', escHtml(d.last_heard))}
+          ${row('Last seen', escHtml(d.last_heard))}
           <tr><td colspan="2" class="info-section">Power</td></tr>
           ${row('Battery', battC(d.battery))}
           ${row('Voltage', d.voltage != null ? d.voltage.toFixed(2) + ' V' : null)}
@@ -8055,7 +8055,7 @@ if (targetEl) {
       <div><b>Short:</b> ${escHtml(n.short_name)}${n.hw_model ? ` &nbsp;<span style="color:var(--muted);font-size:10px">${escHtml(n.hw_model)}</span>` : ''}</div>
       <div><b>SNR:</b> ${snrStr(n.snr)} &nbsp; <b>Battery:</b> ${battStr(n.battery)}</div>
       <div><b>Hops:</b> ${n.hops_away ?? '—'} &nbsp; <b>Distance:</b> ${escHtml(distanceText)}</div>
-      <div><b>Last heard:</b> <span class="map-popup-lh" data-ts="${n.last_heard_ts || 0}">${n.last_heard_ts ? senseTimeAgo(n.last_heard_ts) : '—'}</span></div>
+      <div><b>Last seen:</b> <span class="map-popup-lh" data-ts="${n.last_heard_ts || 0}">${n.last_heard_ts ? senseTimeAgo(n.last_heard_ts) : '—'}</span></div>
       <div style="color:var(--muted);font-size:11px;margin-top:2px">${n.latitude.toFixed(5)}, ${n.longitude.toFixed(5)}</div>
       <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
         <button class="map-popup-btn" title="Show in Nodes list" onclick="showNodeInList('${jsSafe(n.id)}')">List</button>
@@ -11258,14 +11258,12 @@ if (targetEl) {
       btns.push(`<button class="map-popup-btn" onclick="doMcDm('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}">DM</button>`);
       if (c.type !== 2) btns.push(`<button class="map-popup-btn" onclick="doMcPing('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}">Ping</button>`);
       if (mcCanRemoteManage(c)) btns.push(`<button class="map-popup-btn" onclick="openMcRemoteManage('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}">Manage</button>`);
-      btns.push(`<button class="map-popup-btn" onclick="tocFromMcNode('${jsSafe(actionId)}','${jsSafe(actionRid)}');${hide}" title="Prefill TOC Log from this contact">Log</button>`);
-      btns.push(`<button class="map-popup-btn" onclick="openMcNoteModal('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}" title="Personal notes for this contact">Note</button>`);
     } else if (!c && actionId) {
       btns.push(`<button class="map-popup-btn" onclick="doMcPing('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}" title="Request status from this node — may trigger it to send an advert">Ping</button>`);
-      btns.push(`<button class="map-popup-btn" onclick="tocFromMcNode('${jsSafe(actionId)}','${jsSafe(actionRid)}');${hide}" title="Prefill TOC Log from this contact">Log</button>`);
     } else if (!c && !actionId) {
       btns.push(`<button class="map-popup-btn" style="opacity:0.4;cursor:default" disabled title="No pubkey in message — cannot send targeted ping. Sender's firmware may not include pubkey in channel messages.">Ping</button>`);
     }
+    // Map, Log, Note — always after action buttons, matching MT popup order
     const cLat = c?.latitude, cLon = c?.longitude;
     if (hasMarker) {
       btns.push(`<button class="map-popup-btn" onclick="switchTab('map');${hide};setTimeout(()=>{const m=mcMapMarkerById['${jsSafe(markerId)}'];if(m&&leafletMap){leafletMap.setView(m.getLatLng(),Math.max(leafletMap.getZoom(),14));m.openPopup();}},100)">Map</button>`);
@@ -11273,6 +11271,10 @@ if (targetEl) {
       btns.push(`<button class="map-popup-btn" onclick="centerMcOnMap(${cLat},${cLon});${hide}">Map</button>`);
     } else {
       btns.push(`<button class="map-popup-btn" style="opacity:0.35;cursor:default" disabled title="No GPS position">Map</button>`);
+    }
+    if (actionId) {
+      btns.push(`<button class="map-popup-btn" onclick="tocFromMcNode('${jsSafe(actionId)}','${jsSafe(actionRid)}');${hide}" title="Prefill TOC Log from this contact">Log</button>`);
+      btns.push(`<button class="map-popup-btn" onclick="openMcNoteModal('${jsSafe(actionId)}','${jsSafe(actionRid)}','${jsSafe(name)}');${hide}" title="Personal notes for this contact">Note</button>`);
     }
     const btnsHtml = btns.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${btns.join('')}</div>` : '';
     panel.innerHTML = `
@@ -15742,7 +15744,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         `<div class="map-popup-name">${escHtml(lbl)}</div>`,
         n.snr     != null ? `<div><b>SNR:</b> ${n.snr.toFixed ? n.snr.toFixed(1) : n.snr} dB</div>` : null,
         n.hops    != null ? `<div><b>Hops:</b> ${n.hops === 0 ? 'Direct' : `${n.hops} hop${n.hops !== 1 ? 's' : ''} away`}</div>` : null,
-        n.ts      != null ? `<div><b>Last heard:</b> <span class="map-popup-lh" data-ts="${n.ts}">${senseTimeAgo(n.ts)}</span></div>` : null,
+        n.ts      != null ? `<div><b>Last seen:</b> <span class="map-popup-lh" data-ts="${n.ts}">${senseTimeAgo(n.ts)}</span></div>` : null,
         n.battery != null ? `<div><b>Battery:</b> ${n.battery}%</div>` : null,
         n.voltage != null ? `<div><b>Voltage:</b> ${n.voltage.toFixed ? n.voltage.toFixed(2) : n.voltage}V</div>` : null,
         n.alt     != null ? `<div><b>Alt:</b> ${n.alt}m</div>` : null,
@@ -18350,7 +18352,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const nodeInfo = n
       ? `<div style="color:var(--muted);font-size:10px;margin-bottom:2px">${escHtml(nodeId)}</div>
          <div style="color:var(--muted)">SNR ${snrStr(n.snr)} · Batt ${battStr(n.battery)}</div>
-         <div style="color:var(--muted);font-size:10px;margin-top:2px">Last heard: ${nodeLastHeardLabel(n)}</div>`
+         <div style="color:var(--muted);font-size:10px;margin-top:2px">Last seen: ${nodeLastHeardLabel(n)}</div>`
       : `<div style="color:var(--muted);font-size:10px;margin-bottom:2px">${escHtml(nodeId)}</div>
          <div style="color:var(--muted);font-size:11px;margin-top:2px">Not in live data</div>`;
 

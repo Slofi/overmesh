@@ -17888,10 +17888,15 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   function _tocSetSubmitMode() {
     const btn = document.getElementById('toc-submit-btn');
+    const clrBtn = document.getElementById('toc-clear-btn');
     const st = document.getElementById('toc-edit-status');
     if (btn) {
       btn.textContent = _tocEditingId ? 'Save Entry' : 'Add Entry';
       btn.title = _tocEditingId ? 'Save changes to this log entry' : 'Add log entry';
+    }
+    if (clrBtn) {
+      clrBtn.textContent = _tocEditingId ? 'Cancel' : 'Clear';
+      clrBtn.title = _tocEditingId ? 'Cancel editing and discard changes' : 'Clear all fields';
     }
     if (st) st.textContent = _tocEditingId ? `Editing entry #${_tocEditingId}` : '';
   }
@@ -18453,7 +18458,10 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   function tocInputKeydown(e) {
     const dd = document.getElementById('toc-mention-dropdown');
-    if (dd.style.display === 'none') return;
+    if (dd.style.display === 'none') {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); tocSubmit(); }
+      return;
+    }
     if (e.key === 'Escape') { _tocHideMentionDropdown(); e.preventDefault(); }
   }
 
@@ -18590,7 +18598,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     tr.innerHTML = `
       <td style="padding:6px 8px;color:var(--muted);font-size:11px;font-family:monospace;white-space:nowrap;vertical-align:top">${grouped ? tocFmtTime(e.ts) : tocFmtDate(e.ts)}</td>
       <td style="padding:6px 8px;vertical-align:top">
-        <span style="background:${color};color:#fff;border-radius:4px;padding:2px 6px;font-size:10px;font-weight:600;letter-spacing:.4px;white-space:nowrap">${e.category}</span>
+        <span onclick="document.getElementById('toc-filter-category').value='${e.category}';tocRenderLog()" title="Filter by ${e.category}" style="background:${color};color:#fff;border-radius:4px;padding:2px 6px;font-size:10px;font-weight:600;letter-spacing:.4px;white-space:nowrap;cursor:pointer">${e.category}</span>
       </td>
       <td style="padding:6px 8px;vertical-align:top;width:100%">${tocRenderBody(e.body)}</td>
       <td style="padding:6px 4px;vertical-align:top">
@@ -18913,7 +18921,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       Distance: _mtNodeDistanceLabel(n),
       Position: '',
       'Action / Follow-up': '',
-      Notes: n.last_heard_ts ? `Last heard: ${_formatAppDateTime(n.last_heard_ts)}` : '',
+      Notes: n.last_heard_ts ? `Last seen: ${_formatAppDateTime(n.last_heard_ts)}` : '',
     });
     _tocPrefill(hasPos ? 'POSITION' : 'CONTACT', body);
   }

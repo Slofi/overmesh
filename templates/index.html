@@ -676,7 +676,7 @@
         </select>
         <button class="btn" id="toc-pin-template-btn" onclick="tocTogglePinnedTemplate()" title="Pin or unpin selected template" style="padding:4px 8px;font-size:12px">☆</button>
         <button class="btn" onclick="tocAttachLocalPosition()" title="Attach local/manual position to the entry" style="padding:4px 8px;font-size:12px">+ GPS</button>
-        <button class="btn" onclick="tocClear()" title="Clear all fields" style="flex-shrink:0">Clear</button>
+        <button class="btn" id="toc-clear-btn" onclick="tocClear()" title="Clear all fields" style="flex-shrink:0">Clear</button>
       </div>
       <div id="toc-pinned-templates" style="display:none;gap:6px;flex-wrap:wrap;align-items:center"></div>
       <div id="toc-tag-tools" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
@@ -723,8 +723,10 @@
       <select id="toc-filter-mention" onchange="tocRenderLog()" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;max-width:170px">
         <option value="">Any node</option>
       </select>
+      <span style="font-size:11px;color:var(--muted);white-space:nowrap">From</span>
       <input id="toc-filter-from" type="date" title="From date" onchange="tocRenderLog()"
              style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;width:130px">
+      <span style="font-size:11px;color:var(--muted);white-space:nowrap">To</span>
       <input id="toc-filter-to" type="date" title="To date" onchange="tocRenderLog()"
              style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;width:130px">
       <select id="toc-view-mode" onchange="tocRenderLog()" title="Log layout" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px">
@@ -741,7 +743,7 @@
         <thead>
           <tr style="color:var(--muted);border-bottom:1px solid var(--border)">
             <th style="text-align:left;padding:4px 8px;font-weight:600;white-space:nowrap">Time</th>
-            <th style="text-align:left;padding:4px 8px;font-weight:600">Cat</th>
+            <th style="text-align:left;padding:4px 8px;font-weight:600">Type</th>
             <th style="text-align:left;padding:4px 8px;font-weight:600;width:100%">Entry</th>
             <th style="padding:4px 8px"></th>
           </tr>

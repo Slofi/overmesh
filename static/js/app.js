@@ -1071,8 +1071,9 @@
     const status = isMc ? mcLastStatus[id]?.status : lastStatus[id]?.status;
     if (status !== 'connected') return;
     if (selectedRadioIds.has(id)) {
-      // Only deselect if at least 1 other radio remains selected
-      if (selectedRadioIds.size > 1) {
+      // Only deselect if at least 1 other radio of the same type remains selected
+      const sameType = [...selectedRadioIds].filter(x => x !== id && x.startsWith('mc_') === isMc);
+      if (sameType.length > 0) {
         selectedRadioIds.delete(id);
         if (!isMc && activeRadioId === id) {
           // Pick another selected MT radio as primary (or null if none)

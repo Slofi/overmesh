@@ -134,18 +134,22 @@
           const canLog = a.type !== 'radio';
           const logBtn = canLog ? `<button class="alert-log-btn" onclick="event.stopPropagation();toggleAlertsPanel();tocFromAlert('${escHtml(a.id)}')" title="Send to Log tab">Log</button>` : '';
           const isNodeAlert = (a.type === 'node-new' || a.type === 'node-return') && a.meta;
+          const isMsgAlert = a.type === 'message' && a.meta;
           const bodyHtml = isNodeAlert
             ? `<span class="alert-node-link" onclick="_alertNodePopup(event,'${escHtml(a.id)}')">${a.body}</span>`
             : a.body;
+          const msgClick = isMsgAlert
+            ? `onclick="toggleAlertsPanel();jumpToMcChat(null,'${escHtml(a.meta.radioId)}',${a.meta.channel},'${escHtml(a.meta.fromId || '')}')"`
+            : '';
           return `
-          <div class="alert-entry alert-type-${escHtml(a.type)}">
+          <div class="alert-entry alert-type-${escHtml(a.type)}${isMsgAlert ? ' alert-clickable' : ''}" ${msgClick}>
             <div class="alert-entry-row">
               <div>
                 <div class="alert-entry-title">${escHtml(a.title)}</div>
                 <div class="alert-entry-body">${bodyHtml}</div>
                 <div class="alert-entry-ts">${_formatAppDateTime(a.ts)}${logBtn}</div>
               </div>
-              <button class="alert-dismiss-btn" onclick="dismissAlert('${escHtml(a.id)}')" title="Dismiss">×</button>
+              <button class="alert-dismiss-btn" onclick="event.stopPropagation();dismissAlert('${escHtml(a.id)}')" title="Dismiss">×</button>
             </div>
           </div>`;
         }).join('')}
@@ -2724,10 +2728,7 @@ if (targetEl) {
       </tr>`).join('') : '';
     // Append MC contacts
     const mcEnabled = mapShowMc && Object.keys(mcLastStatus).length > 0 && localStorage.getItem('mcHide') !== '1';
-    const allMcContacts = [];
-    if (mcEnabled) Object.entries(mcContacts).forEach(([rid, contacts]) => {
-      Object.values(contacts).forEach(c => allMcContacts.push({...c, _rid: rid}));
-    });
+    const allMcContacts = mcEnabled ? _mcDedupeContacts({ onlyConnected: false }) : [];
     const mcFiltered = allMcContacts.filter(c => {
       const radioStatus = mcLastStatus[c._rid]?.status || 'disconnected';
       if (radioStatus !== 'connected' && !c.archived_only) return false;
@@ -2903,10 +2904,7 @@ if (targetEl) {
     const tbody = document.getElementById('history-tbody');
 
     // Collect MC contacts for history
-    const allMcContacts = [];
-    Object.keys(mcContacts).forEach(rid => {
-      Object.values(mcContacts[rid] || {}).forEach(c => { allMcContacts.push({...c, _rid: rid}); });
-    });
+    const allMcContacts = _mcDedupeContacts({ onlyConnected: false });
     const mcHistFiltered = mcShowIgnored
       ? allMcContacts.filter(c => mcIgnored.has(c.id || ''))
       : allMcContacts.filter(c => !mcIgnored.has(c.id || ''));
@@ -3070,11 +3068,7 @@ if (targetEl) {
     const anyConnected = Object.values(mcLastStatus).some(s => s.status === 'connected')
                          && localStorage.getItem('mcHide') !== '1';
     if (!anyConnected) { el.style.display = 'none'; return; }
-    let total = 0;
-    Object.entries(mcContacts).forEach(([rid, rc]) => {
-      if (mcLastStatus[rid]?.status !== 'connected') return;
-      total += Object.keys(rc).length;
-    });
+    const total = _mcDedupeContacts({ onlyConnected: true }).length;
     el.style.display = '';
     el.innerHTML = `Contacts: <span style="color:var(--mc-color)">${total}</span>`;
   }
@@ -3103,17 +3097,24 @@ if (targetEl) {
         }
         n.last_heard = nodeLastHeardLabel(n);
       });
-      allNodes = nodes;
+      // Deduplicate MT nodes by id (multiple radios may report the same node)
+      const _nodeById = {};
+      nodes.forEach(n => {
+        if (!n.id) return;
+        const ex = _nodeById[n.id];
+        if (!ex || (n.last_heard_ts || 0) > (ex.last_heard_ts || 0)) _nodeById[n.id] = n;
+      });
+      allNodes = nodes.filter(n => !n.id).concat(Object.values(_nodeById));
       renderLive();
-      updateMapMarkers(nodes);
-      updateHeaderNodeCount(nodes);
-      updatePipMarkers(nodes);
+      updateMapMarkers(allNodes);
+      updateHeaderNodeCount(allNodes);
+      updatePipMarkers(allNodes);
       if (_showPolarGrid && !_polarGridLayer) _drawPolarGrid();
       // Node seen / returned detection
       const nowTs = Math.floor(Date.now() / 1000);
-      const curIds = new Set(nodes.filter(n => n.id && !n.is_local).map(n => n.id));
+      const curIds = new Set(allNodes.filter(n => n.id && !n.is_local).map(n => n.id));
       if (notifReady) {
-        nodes.filter(n => n.id && !n.is_local).forEach(n => {
+        allNodes.filter(n => n.id && !n.is_local).forEach(n => {
           const id = n.id;
           const prevSeen = _prevMtNodeSeen.get(id) || 0;
           const curSeen = n.last_heard_ts || 0;
@@ -3130,7 +3131,7 @@ if (targetEl) {
         });
       }
       prevNodeIds = curIds;
-      _prevMtNodeSeen = new Map(nodes.filter(n => n.id && !n.is_local).map(n => [n.id, n.last_heard_ts || 0]));
+      _prevMtNodeSeen = new Map(allNodes.filter(n => n.id && !n.is_local).map(n => [n.id, n.last_heard_ts || 0]));
       notifReady  = true;
     }).catch(e => console.error('loadLive failed', e));
     fetch(BASE_PATH + '/api/status').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(status => {
@@ -4225,6 +4226,10 @@ if (targetEl) {
     esri_streets:     { label: 'Esri Streets',    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles © Esri, DeLorme, NAVTEQ, USGS, Intermap, NRCAN', maxZoom: 19 },
     esri_topo:        { label: 'Esri Topo',       url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles © Esri', maxZoom: 18 },
     topo:             { label: 'OpenTopoMap',     url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, © <a href="https://opentopomap.org">OpenTopoMap</a>', maxZoom: 17 },
+    stadia_outdoors:  { label: 'Stadia Outdoors', url: 'https://tiles.stadiamaps.com/tiles/outdoors/{z}/{x}/{y}{r}.png', attribution: '© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', maxZoom: 20 },
+    esri_hillshade:   { label: 'Esri Hillshade',  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles © Esri, Airbus DS, USGS, NGA, NASA, CGIAR', maxZoom: 16 },
+    tf_landscape:     { label: 'TF Landscape ★',  url: 'https://tile.thunderforest.com/landscape/{z}/{x}/{y}.png?apikey={apikey}', attribution: 'Maps © <a href="https://www.thunderforest.com/">Thunderforest</a>, Data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 22 },
+    tf_outdoors:      { label: 'TF Outdoors ★',   url: 'https://tile.thunderforest.com/outdoors/{z}/{x}/{y}.png?apikey={apikey}', attribution: 'Maps © <a href="https://www.thunderforest.com/">Thunderforest</a>, Data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 22 },
   };
 
   // ── Polar grid ─────────────────────────────────────────────────────────────
@@ -4839,13 +4844,21 @@ if (targetEl) {
     return `sense-mt-pkt-${String(n.radio_id || activeRadioId || 'mt').replace(/[^A-Za-z0-9_-]/g, '_')}-${String(n.from_id || '').replace(/[^A-Za-z0-9_-]/g, '_')}-${n.pkt_id}`;
   }
 
+  function _resolveTileUrl(url) {
+    if (!url.includes('{apikey}')) return url;
+    const key = localStorage.getItem('thunderforestApiKey') || '';
+    if (!key) showToast('API key required', 'Set your Thunderforest API key in Settings → Map', 'warning', 'tf-no-key');
+    return url.replace('{apikey}', key);
+  }
+
   function setTileLayer(key) {
     if (!leafletMap) return;
     const def = TILE_LAYERS[key] || TILE_LAYERS.osm;
+    const url = _resolveTileUrl(def.url);
     if (_activeTileLayer) {
       // Update cache prefix BEFORE setUrl so new tiles use the right key
       _activeTileLayer.options.cachePrefix = key;
-      _activeTileLayer.setUrl(def.url);
+      _activeTileLayer.setUrl(url);
       if (leafletMap.attributionControl) {
         leafletMap.attributionControl.removeAttribution(_activeTileLayer.options.attribution);
         leafletMap.attributionControl.addAttribution(def.attribution);
@@ -4853,7 +4866,7 @@ if (targetEl) {
       _activeTileLayer.options.attribution = def.attribution;
       _activeTileLayer.options.maxZoom     = def.maxZoom;
     } else {
-      _activeTileLayer = new OfflineTileLayer(def.url, { attribution: def.attribution, maxZoom: def.maxZoom, cachePrefix: key });
+      _activeTileLayer = new OfflineTileLayer(url, { attribution: def.attribution, maxZoom: def.maxZoom, cachePrefix: key });
       _activeTileLayer.addTo(leafletMap);
     }
     try { localStorage.setItem('mapTileLayer', key); } catch(e) {}
@@ -4873,6 +4886,15 @@ if (targetEl) {
   function setAutoCacheTiles(val) {
     _autoCacheTiles = val;
     localStorage.setItem('om_autocache', val ? '1' : '0');
+  }
+
+  function saveThunderforestKey() {
+    const input = document.getElementById('tf-api-key-input');
+    const status = document.getElementById('tf-key-status');
+    if (!input) return;
+    const key = input.value.trim();
+    localStorage.setItem('thunderforestApiKey', key);
+    if (status) { status.textContent = key ? 'Saved. Select a TF layer on the map to apply.' : 'Key cleared.'; status.style.color = 'var(--accent)'; setTimeout(() => { if (status) status.textContent = ''; }, 3000); }
   }
 
   // ---- Offline Tile Cache (IndexedDB, no external deps) ----
@@ -8957,6 +8979,8 @@ if (targetEl) {
     loadExtMapPref();
     loadNodeCfgRadios();
     loadMapLayers({silent: true});
+    const tfInput = document.getElementById('tf-api-key-input');
+    if (tfInput) tfInput.value = localStorage.getItem('thunderforestApiKey') || '';
     document.getElementById('tile-autocache-toggle').checked = _autoCacheTiles;
     refreshTileCacheInfo();
     updateTileEstimate();
@@ -10160,7 +10184,7 @@ if (targetEl) {
             : `MC ${mcKnownChannels[data.channel ?? 0] || ('CH' + (data.channel ?? 0))}`;
           maybeShowInAppMessage(title, escHtml(_mcMsgText(data, mcDmContacts[data.from_id] || '')), `toast-mc-msg-${data.radio_id}-${data.id || data.ts || Date.now()}`);
           sendNotif(title, _mcMsgText(data, mcDmContacts[data.from_id] || ''), `mc-msg-${data.radio_id}-${data.id || data.ts || Date.now()}`, 'message');
-          _logAlert('message', title, escHtml(_mcMsgText(data, mcDmContacts[data.from_id] || '')));
+          _logAlert('message', title, escHtml(_mcMsgText(data, mcDmContacts[data.from_id] || '')), { radioId: data.radio_id, fromId: data.subtype === 'dm' ? (data.from_id || null) : null, channel: data.channel ?? 0, subtype: data.subtype });
         }
       }
       if (addedMcMessage) {
@@ -10177,6 +10201,9 @@ if (targetEl) {
         // Message was already in mcMessages (archive race-loaded it silently before SSE arrived).
         // Still need to render so it becomes visible and the tab/unread state updates.
         renderMcMessages();
+        if (data.subtype !== 'system') {
+          try { addMcSenseMessageEntry(data); } catch(e) { console.warn('MC activity message log failed:', e); }
+        }
       }
       return;
     }
@@ -10670,14 +10697,12 @@ if (targetEl) {
     if (!mapShowMc) return;
 
     const items = [];
-    Object.entries(mcContacts).forEach(([rid, radioContacts]) => {
-      Object.values(radioContacts).forEach(c => {
-        if (mcLastStatus[rid]?.status !== 'connected' && !c.archived_only) return;
-        const lat = c.latitude ?? c.lat;
-        const lon = c.longitude ?? c.lon;
-        if (lat == null || lon == null) return;
-        items.push({...c, latitude: lat, longitude: lon, _rid: rid, _kind: 'contact'});
-      });
+    _mcDedupeContacts({ onlyConnected: false }).forEach(c => {
+      if (mcLastStatus[c._rid]?.status !== 'connected' && !c.archived_only) return;
+      const lat = c.latitude ?? c.lat;
+      const lon = c.longitude ?? c.lon;
+      if (lat == null || lon == null) return;
+      items.push({...c, latitude: lat, longitude: lon, _kind: 'contact'});
     });
     Object.entries(mcLastStatus).forEach(([rid, st]) => {
       if (st?.status !== 'connected') return;
@@ -10937,6 +10962,36 @@ if (targetEl) {
   function _mcContactSeenTs(contact) {
     if (!contact) return 0;
     return contact.last_heard_ts || contact.last_seen_ts || contact.last_advert || 0;
+  }
+
+  // Deduplicate contacts across radios: same contact ID seen on multiple radios → keep one entry.
+  // Preference: currently selected MC radio wins for _rid; remaining contacts filled by most recently heard.
+  function _mcDedupeContacts({ onlyConnected = true } = {}) {
+    const selectedMcRid = activeMcRadioId || null;
+    const best = {};
+    // First pass: contacts from the currently selected MC radio always win
+    if (selectedMcRid && mcContacts[selectedMcRid]) {
+      if (!onlyConnected || mcLastStatus[selectedMcRid]?.status === 'connected') {
+        Object.values(mcContacts[selectedMcRid]).forEach(c => {
+          if (c.id) best[c.id] = {...c, _rid: selectedMcRid};
+        });
+      }
+    }
+    // Second pass: fill in contacts missing from selected radio; never overwrite first-pass entries
+    Object.entries(mcContacts).forEach(([rid, radioContacts]) => {
+      if (rid === selectedMcRid) return;
+      if (onlyConnected && mcLastStatus[rid]?.status !== 'connected') return;
+      Object.values(radioContacts).forEach(c => {
+        if (!c.id) return;
+        const existing = best[c.id];
+        if (!existing) { best[c.id] = {...c, _rid: rid}; return; }
+        // Only apply recency tiebreak when no selected radio seeded the entry
+        if (!selectedMcRid && _mcContactSeenTs(c) > _mcContactSeenTs(existing)) {
+          best[c.id] = {...c, _rid: rid};
+        }
+      });
+    });
+    return Object.values(best);
   }
 
   function _mergeMcContactRecord(prev, incoming) {
@@ -11270,18 +11325,14 @@ if (targetEl) {
     const filter = (document.getElementById('sense-mc-nodes-search')?.value || '').toLowerCase().trim();
     const now = Math.floor(Date.now() / 1000);
 
-    const allContacts = [];
+    const allContacts = _mcDedupeContacts({ onlyConnected: true });
     let totalGps = 0, totalRecent = 0;
-    Object.entries(mcContacts).forEach(([rid, radioContacts]) => {
-      if (mcLastStatus[rid]?.status !== 'connected') return;
-      Object.values(radioContacts).forEach(c => {
-        allContacts.push({...c, _rid: rid});
-        const lat = c.latitude ?? c.lat;
-        const lon = c.longitude ?? c.lon;
-        if (lat != null && lon != null) totalGps++;
-        const seenTs = _mcContactSeenTs(c);
-        if (seenTs && (now - seenTs) < 3600) totalRecent++;
-      });
+    allContacts.forEach(c => {
+      const lat = c.latitude ?? c.lat;
+      const lon = c.longitude ?? c.lon;
+      if (lat != null && lon != null) totalGps++;
+      const seenTs = _mcContactSeenTs(c);
+      if (seenTs && (now - seenTs) < 3600) totalRecent++;
     });
     allContacts.sort((a, b) => _mcContactSeenTs(b) - _mcContactSeenTs(a));
 
@@ -13008,6 +13059,7 @@ if (targetEl) {
   }
 
   function addMcSenseMessageEntry(data) {
+    if (data.ts && data.from_id && _mcSenseLogEntries.some(e => e.kind === 'message' && e.msgTs === data.ts && e.fromId === data.from_id)) return;
     const entry = _mcBuildSenseMessageEntry(data);
     if (!entry) return;
     if (_mcLogPinnedIdx !== null) _mcLogPinnedIdx++;

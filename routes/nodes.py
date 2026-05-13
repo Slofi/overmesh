@@ -16,7 +16,7 @@ from helpers import (
 from hw_models import hw_model_name
 from mesh import (
     get_any_iface, get_any_iface_with_id, get_iface_by_radio,
-    resolve_node_name,
+    resolve_node_name, _reconnect_disconnected,
 )
 from state import (
     chat_lock, chat_messages,
@@ -621,6 +621,10 @@ def api_request_position(node_id):
         iface.sendPosition(destinationId=node_id, wantResponse=True)
         return jsonify({"ok": True})
     except Exception as e:
+        # Some radios (e.g. Heltec Wireless Tracker with internal GPS) disconnect after
+        # processing a position request — kick reconnect immediately rather than waiting
+        # for the health_check_loop's 5-second poll.
+        threading.Thread(target=_reconnect_disconnected, daemon=True).start()
         return jsonify({"error": str(e)}), 500
 
 

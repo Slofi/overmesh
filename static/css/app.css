@@ -610,6 +610,8 @@
       cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px;
     }
     .alert-node-link:hover { color: var(--text); }
+    .alert-clickable { cursor: pointer; }
+    .alert-clickable:hover { background: rgba(255,255,255,0.03); }
     .alert-log-btn {
       background: none; border: 1px solid var(--border); color: var(--muted);
       border-radius: 4px; font-size: 10px; padding: 1px 5px; cursor: pointer; line-height: 1.4;

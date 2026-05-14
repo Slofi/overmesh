@@ -2707,6 +2707,7 @@ if (targetEl) {
       renderMcMapMarkers();
       _updateScanBtnVisibility();
     }
+    _updateMapLegend();
     renderLive();
   }
 
@@ -2718,6 +2719,17 @@ if (targetEl) {
   function initMapFilterPills() {
     document.getElementById('map-mt-pill')?.classList.toggle('active', mapShowMt);
     document.getElementById('map-mc-pill')?.classList.toggle('active', mapShowMc);
+  }
+
+  function _updateMapLegend() {
+    const legend   = document.querySelector('.map-legend');
+    const mtLegend = document.getElementById('map-legend-mt');
+    const mcLegend = document.getElementById('map-legend-mc');
+    if (!legend) return;
+    const mcVisible = mapShowMc && localStorage.getItem('mcHide') !== '1' && Object.keys(mcLastStatus).length > 0;
+    if (mtLegend) mtLegend.style.display = mapShowMt ? '' : 'none';
+    if (mcLegend) mcLegend.style.display = mcVisible ? '' : 'none';
+    legend.style.display = (mapShowMt || mcVisible) ? '' : 'none';
   }
 
   function toggleMapFilter(net) {
@@ -2735,6 +2747,7 @@ if (targetEl) {
       renderMcMapMarkers();
       _updateScanBtnVisibility();
     }
+    _updateMapLegend();
     if (pipOpen) updatePipMarkers(allNodes);
     renderLive();
   }
@@ -6741,18 +6754,21 @@ if (targetEl) {
       onAdd() {
         const div = L.DomUtil.create('div', 'map-legend');
         div.innerHTML = `
-          <div class="map-legend-title">Nodes</div>
-          <div class="map-legend-row"><span class="map-legend-dot" style="background:#86efac"></span>Fresh &lt;30m</div>
-          <div class="map-legend-row"><span class="map-legend-dot" style="background:#e07b30"></span>Recent &lt;2h</div>
-          <div class="map-legend-row"><span class="map-legend-dot" style="background:#f85149"></span>Old &gt;2h</div>
-          <div class="map-legend-row"><span class="map-legend-dot" style="background:#6e7681"></span>Unknown</div>
-          <div class="map-legend-row" style="margin-top:4px"><span class="map-legend-dot" style="background:#3b82f6;outline:2px solid #3b82f6;outline-offset:2px"></span>You</div>
+          <div id="map-legend-mt">
+            <div class="map-legend-title">Meshtastic</div>
+            <div class="map-legend-row"><span class="map-legend-dot" style="background:#86efac"></span>Fresh &lt;30m</div>
+            <div class="map-legend-row"><span class="map-legend-dot" style="background:#e07b30"></span>Recent &lt;2h</div>
+            <div class="map-legend-row"><span class="map-legend-dot" style="background:#f85149"></span>Old &gt;2h</div>
+            <div class="map-legend-row"><span class="map-legend-dot" style="background:#6e7681"></span>Unknown</div>
+            <div class="map-legend-row" style="margin-top:4px"><span class="map-legend-dot" style="background:#3b82f6;outline:2px solid #3b82f6;outline-offset:2px"></span>You</div>
+          </div>
           <div id="map-legend-mc"><div class="map-legend-title" style="margin-top:8px">MeshCore</div>
           <div class="map-legend-row"><span class="map-legend-dot" style="background:#3b82f6;border-color:white;border-radius:2px"></span>MC node</div></div>`;
         return div;
       }
     });
     new LegendCtrl({ position: 'bottomleft' }).addTo(leafletMap);
+    setTimeout(_updateMapLegend, 0);
 
     // Wire up standalone search bar
     const searchInput = document.getElementById('map-search-input');
@@ -7490,6 +7506,7 @@ if (targetEl) {
     if (!body) return;
     const collapsed = body.style.display === 'none';
     body.style.display = collapsed ? '' : 'none';
+    if (!collapsed) body.style.height = '';
     if (chev) chev.textContent = collapsed ? '▲' : '▼';
     try { localStorage.setItem('overlayPanelCollapsed', collapsed ? '0' : '1'); } catch(e) {}
   }
@@ -10028,9 +10045,8 @@ if (targetEl) {
     // st-cross: hide when no MC radios
     const stCross = document.getElementById('st-cross');
     if (stCross && !show) stCross.style.display = 'none';
-    // Map legend MC section — hide if MC not shown, or if sense panel is in MT mode
-    const mcLegend = document.getElementById('map-legend-mc');
-    if (mcLegend) mcLegend.style.display = (show && _senseNet !== 'mt') ? '' : 'none';
+    // Map legend — sync with current network visibility state
+    _updateMapLegend();
     // Sync hide toggle checkbox
     const hideToggle = document.getElementById('mc-hide-toggle');
     if (hideToggle) hideToggle.checked = forcedHide;
@@ -11489,8 +11505,6 @@ if (targetEl) {
     document.getElementById('sense-mt-log-wrap').style.display = net === 'mt' ? 'flex' : 'none';
     document.getElementById('sense-mc-log-wrap').style.display = net === 'mc' ? 'flex' : 'none';
 
-    const legend   = document.querySelector('.map-legend');
-    const mcLegend = document.getElementById('map-legend-mc');
     if (net === 'mc') {
       _clearTraceLines();
       _activeMtRouteKey = null;
@@ -11508,13 +11522,11 @@ if (targetEl) {
         document.getElementById('nodes-mt-pill')?.classList.remove('active');
         updateMapMarkers(allNodes);
       }
-      if (legend) legend.style.display = 'none';   // hide entire legend in MC Sense
+      _updateMapLegend();
       renderMcMapMarkers();   // also calls renderMcPathLines()
       renderMcSensePanel();
     } else {
-      // MT mode: show legend but hide MC section (MC markers not shown in MT Sense)
-      if (legend)   legend.style.display   = '';
-      if (mcLegend) mcLegend.style.display = 'none';
+      // MT mode: hide MC markers, show MT only
       clearMcPathLines();
       _mcHoverLines.forEach(l => leafletMap && leafletMap.removeLayer(l));
       _mcHoverLines = [];
@@ -11531,6 +11543,7 @@ if (targetEl) {
         renderMcMapMarkers();
         _updateScanBtnVisibility?.();
       }
+      _updateMapLegend();
     }
   }
 
@@ -15756,13 +15769,6 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       settleMapLayout();
     } else {
       // Clean up MC sense state — restore legend
-      const _leg   = document.querySelector('.map-legend');
-      const _mcLeg = document.getElementById('map-legend-mc');
-      if (_leg) _leg.style.display = '';
-      if (_mcLeg) {
-        const mcVisible = Object.keys(mcLastStatus).length > 0 && localStorage.getItem('mcHide') !== '1';
-        _mcLeg.style.display = mcVisible ? '' : 'none';
-      }
       clearMcPathLines();
       _mcHoverLines.forEach(l => leafletMap && leafletMap.removeLayer(l));
       _mcHoverLines = [];
@@ -15775,6 +15781,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       document.getElementById('nodes-mt-pill')?.classList.toggle('active', mapShowMt);
       document.getElementById('map-mc-pill')?.classList.toggle('active', mapShowMc);
       document.getElementById('nodes-mc-pill')?.classList.toggle('active', mapShowMc);
+      _updateMapLegend();
       updateMapMarkers(allNodes);
       renderMcMapMarkers();
       _updateScanBtnVisibility?.();

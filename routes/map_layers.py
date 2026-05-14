@@ -159,10 +159,21 @@ def api_update_map_layer(layer_id):
                 raw_json = json.dumps(_parse_geojson(payload.get("data")), separators=(",", ":"))
             except ValueError as e:
                 return jsonify({"error": str(e)}), 400
+        old_name = existing[1] or ""
         cur.execute(
             "UPDATE map_layers SET name=?, color=?, data_json=?, enabled=?, is_geofence=?, geofence_enter=?, geofence_leave=?, geofence_notify_app=?, geofence_notify_browser=?, geofence_networks=? WHERE id=?",
             (name, color, raw_json, enabled, is_geofence, geofence_enter, geofence_leave, geofence_notify_app, geofence_notify_browser, geofence_networks, layer_id),
         )
+        if name != old_name:
+            old_token = f"@[{old_name}](overlay:{layer_id})"
+            new_token = f"@[{name}](overlay:{layer_id})"
+            toc_rows = cur.execute(
+                "SELECT id, body FROM toc_log WHERE body LIKE ?",
+                (f"%overlay:{layer_id}%",),
+            ).fetchall()
+            for row_id, body in toc_rows:
+                if body and old_token in body:
+                    cur.execute("UPDATE toc_log SET body=? WHERE id=?", (body.replace(old_token, new_token), row_id))
         row = cur.execute(
             "SELECT id,name,color,data_json,enabled,is_geofence,geofence_enter,geofence_leave,geofence_notify_app,geofence_notify_browser,geofence_networks,created_ts FROM map_layers WHERE id=?",
             (layer_id,),

@@ -856,12 +856,14 @@
       border-radius: 8px; overflow: hidden;
       box-shadow: 0 2px 12px rgba(0,0,0,0.5);
     }
+    #overlay-panel { overflow: visible; }
     #marks-panel-hdr, #notes-panel-hdr, #overlay-panel-hdr {
       display: flex; align-items: center; gap: 6px;
       padding: 6px 10px; cursor: pointer; user-select: none;
     }
     #marks-panel-hdr:hover, #notes-panel-hdr:hover, #overlay-panel-hdr:hover { background: var(--bg3); }
-    #marks-panel-body, #notes-panel-body, #overlay-panel-body { overflow-y: auto; max-height: 320px; border-top: 1px solid var(--border); }
+    #marks-panel-body, #notes-panel-body { overflow-y: auto; max-height: 320px; border-top: 1px solid var(--border); }
+    #overlay-panel-body { overflow-y: auto; max-height: 320px; min-height: 80px; border-top: 1px solid var(--border); resize: vertical; }
     .mp-item {
       display: flex; align-items: center; gap: 7px;
       padding: 5px 10px; cursor: pointer;

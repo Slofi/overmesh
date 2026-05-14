@@ -4423,6 +4423,7 @@ if (targetEl) {
     mt_hybrid:        { label: 'Satellite Hybrid ★', url: 'https://api.maptiler.com/maps/hybrid-v4-dark/{z}/{x}/{y}.jpg?key={mtapikey}', attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 20 },
     mt_topo:          { label: 'MT Topo ★',          url: 'https://api.maptiler.com/maps/topo-v2/{z}/{x}/{y}.png?key={mtapikey}', attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 20 },
     mt_streets:       { label: 'MT Streets ★',       url: 'https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key={mtapikey}', attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 20 },
+    mt_winter:        { label: 'MT Winter ★',        url: 'https://api.maptiler.com/maps/winter-v2/{z}/{x}/{y}.png?key={mtapikey}', attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 20 },
   };
 
   // ── Polar grid ─────────────────────────────────────────────────────────────

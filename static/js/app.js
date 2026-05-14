@@ -4420,6 +4420,7 @@ if (targetEl) {
     tf_outdoors:      { label: 'TF Outdoors ★',   url: 'https://tile.thunderforest.com/outdoors/{z}/{x}/{y}.png?apikey={apikey}', attribution: 'Maps © <a href="https://www.thunderforest.com/">Thunderforest</a>, Data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 22 },
     tf_pioneer:       { label: 'TF Pioneer ★',    url: 'https://tile.thunderforest.com/pioneer/{z}/{x}/{y}.png?apikey={apikey}', attribution: 'Maps © <a href="https://www.thunderforest.com/">Thunderforest</a>, Data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 22 },
     tf_atlas:         { label: 'TF Atlas ★',      url: 'https://tile.thunderforest.com/atlas/{z}/{x}/{y}.png?apikey={apikey}', attribution: 'Maps © <a href="https://www.thunderforest.com/">Thunderforest</a>, Data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 22 },
+    mt_hybrid:        { label: 'Satellite Hybrid ★', url: 'https://api.maptiler.com/maps/hybrid-v4-dark/{z}/{x}/{y}.jpg?key={mtapikey}', attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 20 },
   };
 
   // ── Polar grid ─────────────────────────────────────────────────────────────
@@ -5035,10 +5036,17 @@ if (targetEl) {
   }
 
   function _resolveTileUrl(url) {
-    if (!url.includes('{apikey}')) return url;
-    const key = localStorage.getItem('thunderforestApiKey') || '';
-    if (!key) showToast('API key required', 'Set your Thunderforest API key in Settings → Map', 'warning', 'tf-no-key');
-    return url.replace('{apikey}', key);
+    if (url.includes('{apikey}')) {
+      const key = localStorage.getItem('thunderforestApiKey') || '';
+      if (!key) showToast('API key required', 'Set your Thunderforest API key in Settings → Map', 'warning', 'tf-no-key');
+      url = url.replace('{apikey}', key);
+    }
+    if (url.includes('{mtapikey}')) {
+      const key = localStorage.getItem('mapTilerApiKey') || '';
+      if (!key) showToast('API key required', 'Set your MapTiler API key in Settings → Map', 'warning', 'mt-no-key');
+      url = url.replace('{mtapikey}', key);
+    }
+    return url;
   }
 
   function setTileLayer(key) {
@@ -5085,6 +5093,15 @@ if (targetEl) {
     const key = input.value.trim();
     localStorage.setItem('thunderforestApiKey', key);
     if (status) { status.textContent = key ? 'Saved. Select a TF layer on the map to apply.' : 'Key cleared.'; status.style.color = 'var(--accent)'; setTimeout(() => { if (status) status.textContent = ''; }, 3000); }
+  }
+
+  function saveMapTilerKey() {
+    const input = document.getElementById('mt-api-key-input');
+    const status = document.getElementById('mt-key-status');
+    if (!input) return;
+    const key = input.value.trim();
+    localStorage.setItem('mapTilerApiKey', key);
+    if (status) { status.textContent = key ? 'Saved. Select Satellite Hybrid on the map to apply.' : 'Key cleared.'; status.style.color = 'var(--accent)'; setTimeout(() => { if (status) status.textContent = ''; }, 3000); }
   }
 
   // ---- Offline Tile Cache (IndexedDB, no external deps) ----
@@ -9175,6 +9192,8 @@ if (targetEl) {
     loadMapLayers({silent: true});
     const tfInput = document.getElementById('tf-api-key-input');
     if (tfInput) tfInput.value = localStorage.getItem('thunderforestApiKey') || '';
+    const mtInput = document.getElementById('mt-api-key-input');
+    if (mtInput) mtInput.value = localStorage.getItem('mapTilerApiKey') || '';
     document.getElementById('tile-autocache-toggle').checked = _autoCacheTiles;
     refreshTileCacheInfo();
     updateTileEstimate();

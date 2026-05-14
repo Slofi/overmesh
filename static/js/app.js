@@ -6766,7 +6766,7 @@ if (targetEl) {
           <div class="map-legend-row"><span class="map-legend-dot" style="background:#60a5fa"></span>Client</div>
           <div class="map-legend-row"><span class="map-legend-dot" style="background:#3b82f6;border-radius:2px"></span>Repeater</div>
           <div class="map-legend-row"><span class="map-legend-dot" style="background:#fb923c;border-radius:2px"></span>Room</div>
-          <div class="map-legend-row" style="margin-top:4px"><span class="map-legend-dot" style="background:#10b981;outline:2px solid #10b981;outline-offset:2px;transform:rotate(45deg)"></span>You (MC)</div>
+          <div class="map-legend-row" style="margin-top:4px"><svg width="14" height="14" viewBox="0 0 14 14" style="flex-shrink:0"><rect x="2" y="2" width="10" height="10" fill="white" transform="rotate(45,7,7)" rx="1"/><rect x="4" y="4" width="6" height="6" fill="#10b981" transform="rotate(45,7,7)" rx="0.5"/></svg>You (MC)</div>
           </div>`;
         return div;
       }

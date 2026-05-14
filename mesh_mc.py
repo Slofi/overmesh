@@ -33,6 +33,66 @@ from state import mc_connections, mc_connections_lock
 
 log = logging.getLogger(__name__)
 
+# RC collector: tracks in-flight collection sessions keyed by (config_id, sender_prefix)
+_rc_collector_state: dict = {}
+
+
+def _get_collector_latlon(config_id, sender_prefix):
+    """Return (lat, lon) from the collector's advertised position, or (None, None)."""
+    with mc_connections_lock:
+        contacts = mc_connections.get(config_id, {}).get("contacts", {})
+    prefix = sender_prefix.lower()
+    for key, contact in contacts.items():
+        if str(key).lower().startswith(prefix):
+            return contact.get("adv_lat") or None, contact.get("adv_lon") or None
+    return None, None
+
+
+def _handle_rc_collector_line(config_id, sender_prefix, text):
+    """Parse one RC collector relay line and write to passive_obs."""
+    state_key = (config_id, sender_prefix)
+    text = text.strip()
+
+    if text.startswith("OMCOLLECT_START|"):
+        parts = text.split("|")
+        collector_id = parts[1] if len(parts) > 1 else sender_prefix
+        count = parts[2] if len(parts) > 2 else "?"
+        _rc_collector_state[state_key] = {"collector_id": collector_id}
+        log.info(f"[RC] Collection started from {sender_prefix} ({collector_id}), {count} obs incoming")
+        return
+
+    if text == "OMCOLLECT_END":
+        state = _rc_collector_state.pop(state_key, {})
+        log.info(f"[RC] Collection complete from {sender_prefix} ({state.get('collector_id', '?')})")
+        return
+
+    if text.startswith("OBS|"):
+        parts = text.split("|")
+        if len(parts) != 6:
+            log.warning(f"[RC] Malformed OBS line from {sender_prefix}: {text}")
+            return
+        _, obs_type, node_id, rssi_s, snr_s, _ = parts
+        try:
+            rssi = float(rssi_s)
+            snr  = float(snr_s)
+        except ValueError:
+            log.warning(f"[RC] Bad RSSI/SNR in OBS line from {sender_prefix}: {text}")
+            return
+
+        state = _rc_collector_state.get(state_key, {})
+        collector_id = state.get("collector_id", sender_prefix)
+        collector_lat, collector_lon = _get_collector_latlon(config_id, sender_prefix)
+
+        om_obs_type = "rc_adv" if obs_type == "ADV" else "rc_rx"
+        save_passive_obs(
+            config_id, node_id, om_obs_type,
+            rssi=rssi, snr=snr,
+            collector_id=collector_id,
+            collector_lat=collector_lat,
+            collector_lon=collector_lon,
+        )
+        log.debug(f"[RC] Saved {om_obs_type} obs: {node_id[:12]} rssi={rssi} snr={snr} collector={collector_id}")
+
 
 def _mc_message_id(msg):
     parts = [
@@ -1387,6 +1447,14 @@ def _subscribe_mc_events(mc, config_id, name):
             publish_inbound_message(sse_msg)
             log.info(f"[MC:{name}] DM from {msg.get('pubkey_prefix','?')}: {msg.get('text','')[:60]}"
                      f" | path={repr(sse_msg.get('path'))[:40]} path_len={sse_msg.get('path_len')} hash_size={sse_msg.get('path_hash_size')}")
+            # RC collector relay: parse OMCOLLECT_START / OBS / OMCOLLECT_END lines
+            dm_text = msg.get("text", "")
+            if dm_text.startswith("OMCOLLECT_START|") or dm_text.startswith("OBS|") or dm_text == "OMCOLLECT_END":
+                threading.Thread(
+                    target=_handle_rc_collector_line,
+                    args=(config_id, msg.get("pubkey_prefix", ""), dm_text),
+                    daemon=True,
+                ).start()
             # Bot command handling (background thread to avoid blocking asyncio loop)
             threading.Thread(
                 target=_invoke_mc_bot, args=(dict(msg), config_id, "dm"),

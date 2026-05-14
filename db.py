@@ -126,10 +126,18 @@ def _init_mc_passive_db(db_path):
             payload_type TEXT,
             route_type   TEXT,
             lat          REAL,
-            lon          REAL
+            lon          REAL,
+            collector_id  TEXT,
+            collector_lat REAL,
+            collector_lon REAL
         )''')
         c.execute('CREATE INDEX IF NOT EXISTS idx_passive_pubkey ON passive_obs (pubkey_pre, ts DESC)')
         c.execute('CREATE INDEX IF NOT EXISTS idx_passive_ts ON passive_obs (ts DESC)')
+        for col, defn in [('collector_id', 'TEXT'), ('collector_lat', 'REAL'), ('collector_lon', 'REAL')]:
+            try:
+                c.execute(f'ALTER TABLE passive_obs ADD COLUMN {col} {defn}')
+            except sqlite3.OperationalError:
+                pass
         conn.commit()
     finally:
         conn.close()
@@ -138,6 +146,7 @@ def _init_mc_passive_db(db_path):
 def save_passive_obs(radio_id, pubkey_pre, obs_type, rssi=None, snr=None,
                      path_len=None, path=None, path_hash_size=None,
                      payload_type=None, route_type=None, lat=None, lon=None,
+                     collector_id=None, collector_lat=None, collector_lon=None,
                      max_per_contact=50):
     ts = int(time.time())
     with get_mc_passive_db(radio_id) as conn:
@@ -145,10 +154,12 @@ def save_passive_obs(radio_id, pubkey_pre, obs_type, rssi=None, snr=None,
         c.execute(
             '''INSERT INTO passive_obs
                (pubkey_pre, obs_type, ts, rssi, snr, path_len, path,
-                path_hash_size, payload_type, route_type, lat, lon)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
+                path_hash_size, payload_type, route_type, lat, lon,
+                collector_id, collector_lat, collector_lon)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             (pubkey_pre, obs_type, ts, rssi, snr, path_len, path,
-             path_hash_size, payload_type, route_type, lat, lon)
+             path_hash_size, payload_type, route_type, lat, lon,
+             collector_id, collector_lat, collector_lon)
         )
         # Enforce per-contact cap: keep only the most recent max_per_contact rows
         c.execute(

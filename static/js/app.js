@@ -6763,7 +6763,11 @@ if (targetEl) {
             <div class="map-legend-row" style="margin-top:4px"><span class="map-legend-dot" style="background:#3b82f6;outline:2px solid #3b82f6;outline-offset:2px"></span>You</div>
           </div>
           <div id="map-legend-mc"><div class="map-legend-title" style="margin-top:8px">MeshCore</div>
-          <div class="map-legend-row"><span class="map-legend-dot" style="background:#3b82f6;border-color:white;border-radius:2px"></span>MC node</div></div>`;
+          <div class="map-legend-row"><span class="map-legend-dot" style="background:#60a5fa"></span>Client</div>
+          <div class="map-legend-row"><span class="map-legend-dot" style="background:#3b82f6;border-radius:2px"></span>Repeater</div>
+          <div class="map-legend-row"><span class="map-legend-dot" style="background:#fb923c;border-radius:2px"></span>Room</div>
+          <div class="map-legend-row" style="margin-top:4px"><span class="map-legend-dot" style="background:#10b981;outline:2px solid #10b981;outline-offset:2px;transform:rotate(45deg)"></span>You (MC)</div>
+          </div>`;
         return div;
       }
     });

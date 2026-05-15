@@ -3886,43 +3886,70 @@ if (targetEl) {
       return;
     }
     const rid = _passiveIntelRadioId();
+    const SEC = 'font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px';
     el.innerHTML = collectors.map((c, i) => {
       const summary = rid ? (_mcPassiveSummaryFor(rid, c.key) || {}) : {};
-      const obsNote = summary.obs_count ? ` · ${summary.obs_count} obs stored` : '';
+      const obsCount = summary.obs_count ? summary.obs_count : null;
       const ck = jsSafe(c.key);
       const latVal = c.lat != null ? c.lat : '';
       const lonVal = c.lon != null ? c.lon : '';
-      const posNote = c.lat != null ? `${Number(c.lat).toFixed(5)}, ${Number(c.lon).toFixed(5)}` : 'position not set';
-      return `<div style="padding:6px 0;border-bottom:1px solid var(--border)">
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <span style="font-weight:600;font-size:12px">${escHtml(c.label || c.key)}</span>
-          <span style="font-family:monospace;font-size:11px;color:var(--muted)">${escHtml(c.key)}</span>
-          <span style="font-size:11px;color:var(--muted)">${escHtml(obsNote)}</span>
-          <input id="collector-label-${ck}" class="settings-input" style="width:130px;font-size:11px;margin-left:4px" placeholder="rename…" value="${escHtml(c.label || '')}">
+      const posNote = c.lat != null ? `${Number(c.lat).toFixed(5)}, ${Number(c.lon).toFixed(5)}` : 'not set';
+      const hasPwd = !!_collectorPassword(ck);
+      return `<div style="padding:10px 0;border-bottom:1px solid var(--border)">
+
+        <!-- Header: name + key + remove -->
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px">
+          <div>
+            <span style="font-weight:700;font-size:13px">${escHtml(c.label || c.key)}</span>
+            <span style="font-family:monospace;font-size:11px;color:var(--muted);margin-left:6px">${escHtml(c.key)}</span>
+            ${obsCount ? `<span style="font-size:11px;color:var(--muted);margin-left:6px">· ${obsCount} obs</span>` : ''}
+          </div>
+          <button class="btn" style="font-size:11px;padding:2px 8px;color:var(--red);border-color:var(--red);white-space:nowrap;flex-shrink:0" onclick="removePassiveCollector(${i})" title="Remove this collector">✕ Remove</button>
+        </div>
+
+        <!-- Rename -->
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:10px">
+          <input id="collector-label-${ck}" class="settings-input" style="width:160px;font-size:11px" placeholder="Label / rename…" value="${escHtml(c.label || '')}">
           <button class="btn" style="font-size:11px;padding:2px 8px" onclick="renameCollector(${i},'${ck}')" title="Save new label">Rename</button>
-          <button class="btn" style="margin-left:auto;font-size:11px;padding:2px 8px;color:var(--red);border-color:var(--red)" onclick="removePassiveCollector(${i})" title="Remove this collector">✕</button>
         </div>
-        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:5px">
-          <button class="btn" style="font-size:11px;padding:2px 10px" onclick="sendCollectorCommand('${ck}','OMCOLLECT',this)" title="Trigger observation dump from this collector">Collect</button>
-          <button class="btn" style="font-size:11px;padding:2px 10px" onclick="sendCollectorCommand('${ck}','neighbors',this)" title="Request neighbor list from this node">Neighbors</button>
-          <button class="btn" style="font-size:11px;padding:2px 10px" onclick="checkCollectorObs('${ck}','${escHtml(c.label||c.key)}',this)" title="Check how many observations are stored for this collector">Obs count</button>
-          <input id="collector-cmd-${ck}" class="settings-input" style="width:160px;font-size:11px;font-family:monospace" placeholder="custom command…">
-          <button class="btn" style="font-size:11px;padding:2px 10px" onclick="sendCollectorCustomCmd('${ck}',this)" title="Send custom command to this collector">Send</button>
+
+        <!-- Actions -->
+        <div style="margin-bottom:10px">
+          <div style="${SEC}">Actions</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
+            <button class="btn" style="font-size:11px;padding:2px 10px" onclick="sendCollectorCommand('${ck}','OMCOLLECT',this)" title="Trigger observation dump from this collector">Collect</button>
+            <button class="btn" style="font-size:11px;padding:2px 10px" onclick="sendCollectorCommand('${ck}','neighbors',this)" title="Request neighbor list from this node">Neighbors</button>
+            <button class="btn" style="font-size:11px;padding:2px 10px" onclick="checkCollectorObs('${ck}','${escHtml(c.label||c.key)}',this)" title="Check how many observations are stored for this collector">Obs count</button>
+            <button class="btn" style="font-size:11px;padding:2px 10px" onclick="fetchCollectorMessages('${ck}',this)" title="Fetch stored channel messages from this collector">Fetch messages</button>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input id="collector-cmd-${ck}" class="settings-input" style="width:200px;font-size:11px;font-family:monospace" placeholder="Custom command…">
+            <button class="btn" style="font-size:11px;padding:2px 10px" onclick="sendCollectorCustomCmd('${ck}',this)" title="Send custom command to this collector">Send</button>
+          </div>
+          <div id="collector-msgs-${ck}" style="margin-top:6px;font-size:11px;display:none"></div>
         </div>
-        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:5px">
-          <span style="font-size:11px;color:var(--muted);white-space:nowrap">Position:</span>
-          <input id="collector-lat-${ck}" class="settings-input" type="number" step="0.000001" style="width:110px;font-size:11px;font-family:monospace" placeholder="lat" value="${escHtml(String(latVal))}">
-          <input id="collector-lon-${ck}" class="settings-input" type="number" step="0.000001" style="width:110px;font-size:11px;font-family:monospace" placeholder="lon" value="${escHtml(String(lonVal))}">
-          <button class="btn" style="font-size:11px;padding:2px 8px" onclick="startCollectorMapPick('${ck}',${i})" title="Pick position on the map">Pick on map</button>
-          <button class="btn" style="font-size:11px;padding:2px 10px" onclick="setCollectorPosition('${ck}',${i},this)" title="Send lat/lon to the collector node and save locally">Set pos</button>
-          <span style="font-size:11px;color:var(--muted)">${escHtml(posNote)}</span>
+
+        <!-- Position -->
+        <div style="margin-bottom:10px">
+          <div style="${SEC}">Position <span style="color:var(--fg);font-size:11px;text-transform:none;letter-spacing:normal;margin-left:4px">${escHtml(posNote)}</span></div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <input id="collector-lat-${ck}" class="settings-input" type="number" step="0.000001" style="width:120px;font-size:11px;font-family:monospace" placeholder="Latitude" value="${escHtml(String(latVal))}">
+            <input id="collector-lon-${ck}" class="settings-input" type="number" step="0.000001" style="width:120px;font-size:11px;font-family:monospace" placeholder="Longitude" value="${escHtml(String(lonVal))}">
+            <button class="btn" style="font-size:11px;padding:2px 8px" onclick="startCollectorMapPick('${ck}',${i})" title="Pick position on the map">Pick on map</button>
+            <button class="btn" style="font-size:11px;padding:2px 10px" onclick="setCollectorPosition('${ck}',${i},this)" title="Send lat/lon to the collector node and save locally">Set position</button>
+          </div>
         </div>
-        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:5px">
-          <span style="font-size:11px;color:var(--muted);white-space:nowrap">Password:</span>
-          <input id="collector-pwd-${ck}" class="settings-input" type="password" style="width:140px;font-size:11px" placeholder="${_collectorPassword(ck) ? '(saved)' : 'not set'}" autocomplete="new-password">
-          <button class="btn" style="font-size:11px;padding:2px 8px" onclick="saveCollectorPwd('${ck}')" title="Save this password in browser storage (used for login before commands)">Save password</button>
-          <button class="btn" style="font-size:11px;padding:2px 8px" onclick="changeCollectorPwd('${ck}',this)" title="Login with saved password, then change the node password to what is typed above">Change password</button>
+
+        <!-- Password -->
+        <div>
+          <div style="${SEC}">Password <span style="color:var(--fg);font-size:11px;text-transform:none;letter-spacing:normal;margin-left:4px">${hasPwd ? '(saved)' : 'not set'}</span></div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <input id="collector-pwd-${ck}" class="settings-input" type="password" style="width:160px;font-size:11px" placeholder="New password…" autocomplete="new-password">
+            <button class="btn" style="font-size:11px;padding:2px 8px" onclick="saveCollectorPwd('${ck}')" title="Save this password in browser storage (used for login before commands)">Save password</button>
+            <button class="btn" style="font-size:11px;padding:2px 8px" onclick="changeCollectorPwd('${ck}',this)" title="Login with saved password, then change the node password to what is typed above">Change password</button>
+          </div>
         </div>
+
       </div>`;
     }).join('');
   }
@@ -4183,6 +4210,89 @@ if (targetEl) {
     await sendCollectorCommand(pubkeyPre, command, btn);
     if (input) input.value = '';
   }
+
+  async function fetchCollectorMessages(pubkeyPre, btn) {
+    const rid = _passiveIntelRadioId();
+    if (!rid) { showToast('Remote Collector', 'No MC radio connected.', 'node'); return; }
+    const out = document.getElementById(`collector-msgs-${pubkeyPre}`);
+    if (out) { out.style.display = 'block'; out.textContent = 'Requesting stored messages…'; }
+    if (btn) btn.disabled = true;
+
+    // Login first if password is stored
+    const pwd = _collectorPassword(pubkeyPre);
+    if (pwd) {
+      const ok = await _collectorLogin(rid, pubkeyPre, pwd);
+      if (!ok) {
+        if (out) out.innerHTML = '<span style="color:var(--red)">Login failed — check saved password.</span>';
+        if (btn) btn.disabled = false;
+        return;
+      }
+    }
+
+    const msgs = [];
+    let done = false;
+    let sseHandler = null;
+
+    const ssePromise = new Promise(resolve => {
+      sseHandler = (e) => {
+        try {
+          const d = JSON.parse(e.data);
+          if (d.radio_id !== rid) return;
+          if (d.type === 'msgstore_msg') {
+            msgs.push(d);
+          } else if (d.type === 'msgstore_end') {
+            done = true;
+            resolve(d.msgs || msgs);
+          } else if (d.type === 'msgstore_start') {
+            msgs.length = 0;
+          }
+        } catch (_) {}
+      };
+      if (chatSSE) chatSSE.addEventListener('message', sseHandler);
+      setTimeout(() => { if (!done) resolve(msgs); }, 30000);
+    });
+
+    try {
+      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/remote/${encodeURIComponent(pubkeyPre)}/command`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({command: 'get messages'}),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || r.status);
+
+      const replyText = d.reply?.text || '';
+      if (replyText === 'MSGSTORE_EMPTY') {
+        if (out) out.innerHTML = '<span style="color:var(--muted)">No messages stored on collector.</span>';
+        if (sseHandler && chatSSE) chatSSE.removeEventListener('message', sseHandler);
+        if (btn) btn.disabled = false;
+        return;
+      }
+
+      const received = await ssePromise;
+      if (sseHandler && chatSSE) chatSSE.removeEventListener('message', sseHandler);
+
+      if (!received || received.length === 0) {
+        if (out) out.innerHTML = '<span style="color:var(--muted)">No messages received.</span>';
+      } else {
+        const rows = received.map(m => {
+          const dt = m.ts ? new Date(m.ts * 1000).toLocaleString() : '?';
+          const sender = m.sender_hex && m.sender_hex !== '000000000000' ? `<span style="color:var(--muted)">[${escHtml(m.sender_hex.slice(0,8))}]</span> ` : '';
+          return `<div style="border-bottom:1px solid var(--border);padding:3px 0">
+            <span style="color:var(--muted);font-size:10px">${escHtml(dt)} · ${escHtml(m.channel||'?')} · SNR ${typeof m.snr==='number'?m.snr.toFixed(1):'?'} dB · RSSI ${m.rssi??'?'} dBm</span><br>
+            ${sender}<span>${escHtml(m.text||'')}</span>
+          </div>`;
+        }).join('');
+        if (out) out.innerHTML = `<div style="max-height:280px;overflow-y:auto"><b style="color:var(--green)">${received.length} stored message${received.length!==1?'s':''}</b>${rows}</div>`;
+      }
+    } catch (e) {
+      if (sseHandler && chatSSE) chatSSE.removeEventListener('message', sseHandler);
+      if (out) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
 
   async function setCollectorPosition(pubkeyPre, idx, btn) {
     const latEl = document.getElementById(`collector-lat-${pubkeyPre}`);
@@ -14481,7 +14591,6 @@ if (targetEl) {
           <button class="btn" onclick="mcRemoteAdvert('flood')">Flood advert</button>
           <button class="btn" onclick="mcRemoteRunCommand('discover.neighbors')">Discover neighbours</button>
           <button class="btn" onclick="mcRemoteRunCommand('neighbors')">Read neighbours</button>
-          <button class="btn" onclick="mcRemoteFetchMessages(this)" title="Fetch stored channel messages from RPTR">Fetch messages</button>
         </div>
         <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:10px">
           <div style="font-size:11px;color:var(--muted);margin-bottom:8px">

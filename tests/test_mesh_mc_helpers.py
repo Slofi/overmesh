@@ -671,6 +671,7 @@ class MeshMcPathHelperTests(unittest.TestCase):
         self.assertEqual(mesh_mc._validate_remote_admin_command("get powersaving"), "get powersaving")
         self.assertEqual(mesh_mc._validate_remote_admin_command("set repeat on"), "set repeat on")
         self.assertEqual(mesh_mc._validate_remote_admin_command("advert.zerohop"), "advert.zerohop")
+        self.assertEqual(mesh_mc._validate_remote_admin_command("clock sync"), "clock sync")
         self.assertEqual(mesh_mc._validate_remote_admin_command("discover.neighbors"), "discover.neighbors")
         self.assertEqual(mesh_mc._validate_remote_admin_command("set radio 869.525,250,11,5"), "set radio 869.525,250,11,5")
         self.assertEqual(mesh_mc._validate_remote_admin_command("set advert.interval 60"), "set advert.interval 60")

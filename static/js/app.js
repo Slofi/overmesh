@@ -13113,8 +13113,10 @@ if (targetEl) {
       entry.radioId,
       entry.fromId,
       entry.chanName,
+      entry.mode,
     ];
     if (entry.kind === 'self_advert') parts.push('self advert');
+    if (entry.kind === 'remote_advert') parts.push('remote advert');
     if (entry.kind === 'sent_message') parts.push('sent message');
     if (entry.kind === 'message') parts.push('message');
     if (entry.kind === 'ping') parts.push('ping');
@@ -13128,6 +13130,30 @@ if (targetEl) {
   function _mcLogTs(entry) {
     if (entry?.ts_epoch) return _formatAppTime(entry.ts_epoch, {seconds: true});
     return entry?.ts || '';
+  }
+
+  function _mcLogRemoteAdvertRequest(mode, target) {
+    if (!target) return;
+    const ts_epoch = Math.floor(Date.now() / 1000);
+    const ts = _formatAppTime(ts_epoch, {seconds: true});
+    const radioId = target.radioId || '';
+    const radioName = mcLastStatus[radioId]?.name || mcLastStatus[radioId]?.node_name || radioId;
+    const name = target.name || target.pubkeyPrefix || 'Remote RPTR';
+    const entry = {
+      kind: 'remote_advert',
+      mode: mode === 'local' ? 'local' : 'flood',
+      name,
+      ts,
+      ts_epoch,
+      id: target.pubkeyPrefix || '',
+      radioId,
+      radioName,
+    };
+    if (_mcLogPinnedIdx !== null) _mcLogPinnedIdx++;
+    _mcSenseLogEntries.unshift(entry);
+    if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
+    try { localStorage.setItem('mcSenseLog', JSON.stringify(_mcSenseLogEntries.slice(0, 100))); } catch(e) {}
+    renderMcSenseLog();
   }
 
   function renderMcSenseLog() {
@@ -13190,6 +13216,16 @@ if (targetEl) {
           <span style="color:#94a3b8;font-size:9px;font-weight:600;background:rgba(148,163,184,0.15);border:1px solid rgba(148,163,184,0.3);border-radius:3px;padding:0 3px;margin-left:4px">adv</span>
           <span style="margin-left:4px">${escHtml(e.radioName)}</span>
           <span style="color:#94a3b8;font-size:10px;margin-left:4px">(self)</span>
+        </div>`;
+      }
+      if (e.kind === 'remote_advert') {
+        const modeLabel = e.mode === 'local' ? 'local' : 'flood';
+        const via = e.radioName ? ` via ${e.radioName}` : '';
+        return `<div style="padding:2px 0;border-bottom:1px solid var(--border)">
+          <span style="color:var(--muted)">${_mcLogTs(e)}</span>
+          <span style="color:#38bdf8;font-size:9px;font-weight:600;background:rgba(56,189,248,0.12);border:1px solid rgba(56,189,248,0.28);border-radius:3px;padding:0 3px;margin-left:4px">adv</span>
+          <span style="margin-left:4px;font-weight:600">${escHtml(e.name)}</span>
+          <span style="color:#94a3b8;font-size:10px;margin-left:4px">remote ${modeLabel}${escHtml(via)}</span>
         </div>`;
       }
       if (e.kind === 'bot_reply') {
@@ -14478,6 +14514,15 @@ if (targetEl) {
 
   let _mcRemoteManage = null;
   let _mcRemoteQueuedAdvert = null;
+  const MC_REMOTE_AUTO_CLOCK_SYNC_KEY = 'mcRemoteAutoClockSync';
+
+  function _mcRemoteAutoClockSyncEnabled() {
+    return localStorage.getItem(MC_REMOTE_AUTO_CLOCK_SYNC_KEY) !== '0';
+  }
+
+  function mcRemoteSetAutoClockSync(enabled) {
+    localStorage.setItem(MC_REMOTE_AUTO_CLOCK_SYNC_KEY, enabled ? '1' : '0');
+  }
 
   function _mcRemoteCacheKey(pubkeyPrefix, radioId) {
     return `rptr_settings:${radioId || ''}:${(pubkeyPrefix || '').slice(0, 12)}`;
@@ -14983,6 +15028,11 @@ if (targetEl) {
         <button class="btn btn-net-mc" onclick="mcRemoteRead(true, true)" title="Authenticate only — no status read. Use ↻ or Read all afterwards.">Login</button>
         <button class="btn btn-net-mc" onclick="mcRemoteRead(true)">Login + Read</button>
         <button class="btn" onclick="mcRemoteRead(false)" title="Read RPTR status without a password — only works if the repeater allows guest access.">Guest Read</button>
+        <button class="btn" onclick="mcRemoteSyncClock()" title="Sync the RPTR clock to this MC radio before sending timestamp-sensitive adverts.">Sync clock</button>
+        <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);padding-bottom:6px" title="Run clock sync automatically after every successful admin login.">
+          <input id="mc-remote-auto-clock-sync" type="checkbox" onchange="mcRemoteSetAutoClockSync(this.checked)">
+          Auto-sync
+        </label>
       </div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:12px">
         <b>Login</b> — authenticates only, fast. Use ↻ buttons or Read all to fetch settings after.
@@ -14990,6 +15040,7 @@ if (targetEl) {
         <b>Guest Read</b> — no password, only works if the repeater allows public access.
       </div>
       <div id="mc-remote-result" style="font-size:12px;color:var(--muted);margin-bottom:14px">Not connected.</div>
+      <div id="mc-remote-clock-result" style="font-size:12px;color:var(--muted);margin-bottom:14px"></div>
       ${_mcRemoteQuickSettingsHtml()}
       <div style="border-top:1px solid var(--border);padding-top:10px">
         <h3 class="settings-subtitle" style="margin-top:0">Admin command</h3>
@@ -15012,6 +15063,7 @@ if (targetEl) {
             <option value="neighbors">neighbors</option>
             <option value="discover.neighbors">discover.neighbors</option>
             <option value="clock">clock</option>
+            <option value="clock sync">clock sync</option>
             <option value="advert">advert</option>
             <option value="advert.zerohop">advert.zerohop</option>
             <option value="set repeat on">set repeat on</option>
@@ -15027,6 +15079,8 @@ if (targetEl) {
     const rememberEl = document.getElementById('mc-remote-remember-password');
     if (pwEl && savedPassword) pwEl.value = savedPassword;
     if (rememberEl) rememberEl.checked = !!savedPassword;
+    const autoClockEl = document.getElementById('mc-remote-auto-clock-sync');
+    if (autoClockEl) autoClockEl.checked = _mcRemoteAutoClockSyncEnabled();
     _mcRemotePrefillFromCache();
     _mcRemoteLoadOmChannelList();
     document.getElementById('action-modal').classList.add('open');
@@ -15055,6 +15109,7 @@ if (targetEl) {
         if (out) out.innerHTML = loginOnly
           ? `<span style="color:var(--green)">Logged in${d.login.is_admin ? ' · admin' : ''} — use ↻ or Read all for settings.</span>`
           : '';
+        if (_mcRemoteAutoClockSyncEnabled()) await mcRemoteSyncClock(true);
       } else if (login && !d.login?.ok) {
         if (out) out.innerHTML = `<span style="color:var(--red)">Login failed.</span>`;
         return;
@@ -15073,6 +15128,19 @@ if (targetEl) {
     return mcRemoteRunCommand(command, 'mc-remote-command-result');
   }
 
+  async function mcRemoteSyncClock(auto = false) {
+    const out = document.getElementById('mc-remote-clock-result');
+    try {
+      const d = await mcRemoteRunCommand('clock sync', 'mc-remote-clock-result', {silentError: auto});
+      if (out && auto) out.innerHTML = `<span style="color:var(--green)">Clock auto-synced.</span>`;
+      return d;
+    } catch (e) {
+      if (out && auto) out.innerHTML = `<span style="color:#f59e0b">Clock auto-sync failed: ${escHtml(e.message)}</span>`;
+      if (!auto) throw e;
+      return null;
+    }
+  }
+
   async function mcRemoteRunCommand(command, outId = 'mc-remote-quick-result', opts = {}) {
     if (!_mcRemoteManage) return;
     const out = document.getElementById(outId);
@@ -15087,6 +15155,7 @@ if (targetEl) {
       if (!r.ok || d.ok === false || d.reply_error) throw new Error(d.error || d.reply?.text || r.status);
       const reply = d.reply?.text ? `<div style="margin-top:6px;color:var(--text)">${escHtml(d.reply.text)}</div>` : '';
       if (out && !opts.silentError) out.innerHTML = `<span style="color:var(--green)">Sent: ${escHtml(d.command || command)}</span>${reply}${d.note ? `<div style="margin-top:4px">${escHtml(d.note)}</div>` : ''}`;
+      if (opts.senseLogAdvertMode) _mcLogRemoteAdvertRequest(opts.senseLogAdvertMode, {..._mcRemoteManage});
       return d;
     } catch (e) {
       if (opts.queueAdvertOnFail && !_mcRemoteQueuedAdvert) {
@@ -15094,6 +15163,7 @@ if (targetEl) {
           command,
           target: {..._mcRemoteManage},
           label: opts.label || command,
+          senseLogAdvertMode: opts.senseLogAdvertMode || null,
         };
         if (out) out.innerHTML = `<span style="color:#f59e0b">Could not send now. Queued ${escHtml(opts.label || command)} for when Manage closes.</span><div style="margin-top:4px;color:var(--muted)">${escHtml(e.message)}</div>`;
         return null;
@@ -15106,7 +15176,7 @@ if (targetEl) {
   function mcRemoteAdvert(mode) {
     const command = mode === 'flood' ? 'advert' : 'advert.zerohop';
     const label = mode === 'flood' ? 'flood advert' : 'local advert';
-    return mcRemoteRunCommand(command, 'mc-remote-quick-result', {queueAdvertOnFail: true, label});
+    return mcRemoteRunCommand(command, 'mc-remote-quick-result', {queueAdvertOnFail: true, label, senseLogAdvertMode: mode});
   }
 
   async function _mcRemoteFlushQueuedAdvert() {
@@ -15117,7 +15187,7 @@ if (targetEl) {
     _mcRemoteManage = queued.target;
     try {
       await new Promise(resolve => setTimeout(resolve, 1200));
-      await mcRemoteRunCommand(queued.command, 'mc-remote-quick-result');
+      await mcRemoteRunCommand(queued.command, 'mc-remote-quick-result', {senseLogAdvertMode: queued.senseLogAdvertMode});
       console.info(`Queued MC remote ${queued.label} sent after Manage close`);
     } catch (e) {
       console.warn(`Queued MC remote ${queued.label} failed after Manage close:`, e);

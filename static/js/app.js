@@ -14474,12 +14474,14 @@ if (targetEl) {
             <input id="mc-remote-ch-key" class="settings-input" style="width:196px" placeholder="Key (base64, 16 or 32 bytes)">
             <button class="btn" onclick="mcRemoteSetChannel()">Set channel</button>
           </div>
+          <div id="mc-remote-quick-result" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px">
           <button class="btn" onclick="mcRemoteAdvert('local')">Local advert</button>
           <button class="btn" onclick="mcRemoteAdvert('flood')">Flood advert</button>
           <button class="btn" onclick="mcRemoteRunCommand('discover.neighbors')">Discover neighbours</button>
           <button class="btn" onclick="mcRemoteRunCommand('neighbors')">Read neighbours</button>
+          <button class="btn" onclick="mcRemoteFetchMessages(this)" title="Fetch stored channel messages from RPTR">Fetch messages</button>
         </div>
         <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:10px">
           <div style="font-size:11px;color:var(--muted);margin-bottom:8px">
@@ -14492,7 +14494,6 @@ if (targetEl) {
             <button class="btn" onclick="mcRemoteResumeMode(this)" title="Resume forwarding and adverts">Resume</button>
           </div>
         </div>
-        <div id="mc-remote-quick-result" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
       </div>`;
   }
 
@@ -14680,6 +14681,80 @@ if (targetEl) {
       if (out) out.innerHTML = `<span style="color:var(--green)">Channels read: ${channels.length ? channels.map(c => c.name).join(', ') : 'none'}</span>`;
     } catch(e) {
       if (out) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
+    }
+  }
+
+  async function mcRemoteFetchMessages(btn) {
+    if (!_mcRemoteManage) return;
+    const out = document.getElementById('mc-remote-quick-result');
+    if (out) out.textContent = 'Requesting stored messages from RPTR…';
+    if (btn) btn.disabled = true;
+
+    // Accumulate MSG| lines received via SSE while waiting for MSGSTORE_END
+    const msgs = [];
+    let done = false;
+    let sseHandler = null;
+
+    const ssePromise = new Promise(resolve => {
+      sseHandler = (e) => {
+        try {
+          const d = JSON.parse(e.data);
+          if (d.radio_id !== _mcRemoteManage.radioId) return;
+          if (d.type === 'msgstore_msg') {
+            msgs.push(d);
+          } else if (d.type === 'msgstore_end') {
+            done = true;
+            resolve(d.msgs || msgs);
+          } else if (d.type === 'msgstore_start') {
+            msgs.length = 0; // reset on start
+          }
+        } catch (_) {}
+      };
+      if (chatSSE) chatSSE.addEventListener('message', sseHandler);
+      // Fallback timeout
+      setTimeout(() => { if (!done) resolve(msgs); }, 30000);
+    });
+
+    try {
+      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(_mcRemoteManage.radioId)}/remote/${encodeURIComponent(_mcRemoteManage.pubkeyPrefix)}/command`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({command: 'get messages'}),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || r.status);
+
+      // Check for synchronous reply (MSGSTORE_EMPTY or error)
+      const replyText = d.reply?.text || '';
+      if (replyText === 'MSGSTORE_EMPTY') {
+        if (out) out.innerHTML = '<span style="color:var(--muted)">No messages stored on RPTR.</span>';
+        if (sseHandler && chatSSE) chatSSE.removeEventListener('message', sseHandler);
+        if (btn) btn.disabled = false;
+        return;
+      }
+
+      // Wait for burst delivery via SSE
+      const received = await ssePromise;
+      if (sseHandler && chatSSE) chatSSE.removeEventListener('message', sseHandler);
+
+      if (!received || received.length === 0) {
+        if (out) out.innerHTML = '<span style="color:var(--muted)">No messages received.</span>';
+      } else {
+        const rows = received.map(m => {
+          const dt = m.ts ? new Date(m.ts * 1000).toLocaleString() : '?';
+          const sender = m.sender_hex && m.sender_hex !== '000000000000' ? `<span style="color:var(--muted)">[${escHtml(m.sender_hex.slice(0,8))}]</span> ` : '';
+          return `<div style="border-bottom:1px solid var(--border);padding:3px 0">
+            <span style="color:var(--muted);font-size:10px">${escHtml(dt)} · ${escHtml(m.channel||'?')} · SNR ${typeof m.snr==='number'?m.snr.toFixed(1):'?'} dB · RSSI ${m.rssi??'?'} dBm</span><br>
+            ${sender}<span>${escHtml(m.text||'')}</span>
+          </div>`;
+        }).join('');
+        if (out) out.innerHTML = `<div style="max-height:320px;overflow-y:auto"><b style="color:var(--green)">${received.length} stored message${received.length!==1?'s':''}</b>${rows}</div>`;
+      }
+    } catch (e) {
+      if (sseHandler && chatSSE) chatSSE.removeEventListener('message', sseHandler);
+      if (out) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
+    } finally {
+      if (btn) btn.disabled = false;
     }
   }
 

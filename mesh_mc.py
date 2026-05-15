@@ -175,6 +175,86 @@ def _handle_rc_collector_line(config_id, sender_prefix, text):
                 state.setdefault("new_nodes", []).append(nid[:12])
 
 
+_msgstore_state = {}  # (config_id, sender_prefix) -> {"msgs": [...]}
+
+
+def _handle_msgstore_line(config_id, sender_prefix, text):
+    """Parse one RPTR message store burst line and accumulate / push to SSE."""
+    state_key = (config_id, sender_prefix)
+    text = text.strip()
+
+    if text.startswith("MSGSTORE_START|"):
+        parts = text.split("|")
+        count = parts[1] if len(parts) > 1 else "?"
+        _msgstore_state[state_key] = {"msgs": []}
+        log.info(f"[MSGSTORE] Start from {sender_prefix}: {count} messages incoming")
+        push_to_sse({
+            "type":       "msgstore_start",
+            "radio_id":   config_id,
+            "sender":     sender_prefix,
+            "count":      count,
+        })
+        return
+
+    if text == "MSGSTORE_EMPTY":
+        log.info(f"[MSGSTORE] Empty store from {sender_prefix}")
+        push_to_sse({
+            "type":     "msgstore_end",
+            "radio_id": config_id,
+            "sender":   sender_prefix,
+            "msgs":     [],
+        })
+        _msgstore_state.pop(state_key, None)
+        return
+
+    if text == "MSGSTORE_END":
+        state = _msgstore_state.pop(state_key, {})
+        msgs = state.get("msgs", [])
+        log.info(f"[MSGSTORE] End from {sender_prefix}: {len(msgs)} messages received")
+        push_to_sse({
+            "type":     "msgstore_end",
+            "radio_id": config_id,
+            "sender":   sender_prefix,
+            "msgs":     msgs,
+        })
+        return
+
+    if text.startswith("MSG|"):
+        # MSG|<timestamp>|<channel_name>|<snr_f>|<rssi>|<sender_hex>|<text>
+        parts = text.split("|", 6)
+        if len(parts) < 7:
+            log.warning(f"[MSGSTORE] Malformed MSG line from {sender_prefix}: {text[:80]}")
+            return
+        _, ts_s, ch_name, snr_s, rssi_s, sender_hex, msg_text = parts
+        try:
+            ts   = int(ts_s)
+            snr  = float(snr_s)
+            rssi = int(rssi_s)
+        except ValueError:
+            log.warning(f"[MSGSTORE] Bad numeric fields from {sender_prefix}: {text[:80]}")
+            return
+
+        entry = {
+            "ts":          ts,
+            "channel":     ch_name,
+            "snr":         snr,
+            "rssi":        rssi,
+            "sender_hex":  sender_hex,
+            "text":        msg_text,
+        }
+        state = _msgstore_state.get(state_key)
+        if state is not None:
+            state["msgs"].append(entry)
+        log.debug(f"[MSGSTORE] MSG from {sender_prefix}: ch={ch_name} ts={ts} snr={snr} rssi={rssi} text={msg_text[:40]}")
+        # Push individual message as SSE so UI can stream results
+        push_to_sse({
+            "type":     "msgstore_msg",
+            "radio_id": config_id,
+            "sender":   sender_prefix,
+            **entry,
+        })
+
+
 def _mc_message_id(msg):
     parts = [
         msg.get("radio_id", ""),
@@ -1536,6 +1616,13 @@ def _subscribe_mc_events(mc, config_id, name):
                     args=(config_id, msg.get("pubkey_prefix", ""), dm_text),
                     daemon=True,
                 ).start()
+            # RC message store-and-forward: parse MSGSTORE_START / MSG / MSGSTORE_END lines
+            if dm_text.startswith("MSGSTORE_START|") or dm_text.startswith("MSG|") or dm_text in ("MSGSTORE_END", "MSGSTORE_EMPTY"):
+                threading.Thread(
+                    target=_handle_msgstore_line,
+                    args=(config_id, msg.get("pubkey_prefix", ""), dm_text),
+                    daemon=True,
+                ).start()
             # Bot command handling (background thread to avoid blocking asyncio loop)
             threading.Thread(
                 target=_invoke_mc_bot, args=(dict(msg), config_id, "dm"),
@@ -2844,6 +2931,7 @@ def _validate_remote_admin_command(command):
         "gps advert",
         "powersaving",
         "get channels",
+        "get messages",
     }
     prefixes = (
         "set name ",

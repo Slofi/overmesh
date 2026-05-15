@@ -36,6 +36,21 @@ log = logging.getLogger(__name__)
 # RC collector: tracks in-flight collection sessions keyed by (config_id, sender_prefix)
 _rc_collector_state: dict = {}
 
+# RC collect summaries: config_id → list of recent summary dicts (newest first, max 50)
+_rc_collect_summaries: dict = {}
+
+
+def _rc_store_summary(config_id, summary):
+    lst = _rc_collect_summaries.setdefault(config_id, [])
+    lst.insert(0, summary)
+    if len(lst) > 50:
+        lst[:] = lst[:50]
+
+
+def get_rc_collect_events(config_id, since=0.0):
+    """Return collect summaries newer than `since` (unix timestamp)."""
+    return [s for s in _rc_collect_summaries.get(config_id, []) if s["ts"] > since]
+
 
 def _get_collector_latlon(config_id, sender_prefix):
     """Return (lat, lon) from the collector's advertised position, or (None, None)."""
@@ -68,16 +83,41 @@ def _handle_rc_collector_line(config_id, sender_prefix, text):
         parts = text.split("|")
         collector_id = parts[1] if len(parts) > 1 else sender_prefix
         count = parts[2] if len(parts) > 2 else "?"
-        _rc_collector_state[state_key] = {"collector_id": collector_id}
+        _rc_collector_state[state_key] = {
+            "collector_id": collector_id, "seen": set(),
+            "obs_count": 0, "new_nodes": [], "best_rssi": None,
+            "best_rssi_node": None, "best_rssi_snr": None,
+        }
         log.info(f"[RC] Collection started from {sender_prefix} ({collector_id}), {count} obs incoming")
         return
 
     if text == "OMCOLLECT_END":
         state = _rc_collector_state.pop(state_key, {})
-        log.info(f"[RC] Collection complete from {sender_prefix} ({state.get('collector_id', '?')})")
+        collector_id = state.get("collector_id", "?")
+        summary = {
+            "ts":             int(time.time()),
+            "collector_id":   collector_id,
+            "obs_count":      state.get("obs_count", 0),
+            "new_nodes":      state.get("new_nodes", []),
+            "best_rssi":      state.get("best_rssi"),
+            "best_rssi_node": state.get("best_rssi_node"),
+            "best_rssi_snr":  state.get("best_rssi_snr"),
+        }
+        _rc_store_summary(config_id, summary)
+        log.info(f"[RC] Collection complete from {sender_prefix} ({collector_id}): "
+                 f"{summary['obs_count']} obs, {len(summary['new_nodes'])} new nodes, "
+                 f"best RSSI {summary['best_rssi']} ({summary['best_rssi_node']})")
         return
 
     if text.startswith("OBS|"):
+        state = _rc_collector_state.get(state_key, {})
+        seen = state.get("seen")
+        if seen is not None:
+            if text in seen:
+                log.debug(f"[RC] Duplicate OBS from {sender_prefix}, skipping: {text[:40]}")
+                return
+            seen.add(text)
+
         parts = text.split("|")
         if len(parts) != 6:
             log.warning(f"[RC] Malformed OBS line from {sender_prefix}: {text}")
@@ -100,7 +140,6 @@ def _handle_rc_collector_line(config_id, sender_prefix, text):
             log.warning(f"[RC] Ignoring OBS with invalid node identity from {sender_prefix}: {text}")
             return
 
-        state = _rc_collector_state.get(state_key, {})
         collector_id = state.get("collector_id", sender_prefix)
         collector_lat, collector_lon = _get_collector_latlon(config_id, sender_prefix)
 
@@ -113,6 +152,27 @@ def _handle_rc_collector_line(config_id, sender_prefix, text):
             observed_ts=_rc_observed_ts(parts[5]),
         )
         log.debug(f"[RC] Saved {om_obs_type} obs: {node_id[:12]} rssi={rssi} snr={snr} collector={collector_id}")
+
+        # Track stats in session state
+        nid = node_id.strip().lower()
+        if state:
+            state["obs_count"] = state.get("obs_count", 0) + 1
+            if state.get("best_rssi") is None or rssi > state["best_rssi"]:
+                state["best_rssi"] = rssi
+                state["best_rssi_node"] = nid[:12]
+                state["best_rssi_snr"] = snr
+
+        # New node check + contact enrichment (use lock for thread safety)
+        with mc_connections_lock:
+            contacts = mc_connections.get(config_id, {}).get("contacts", {})
+            matched_key = next((k for k in contacts if k.startswith(nid[:12]) or nid.startswith(k[:12])), None)
+            if matched_key:
+                contacts[matched_key]["last_rc_heard_ts"]  = int(time.time())
+                contacts[matched_key]["last_rc_rssi"]      = rssi
+                contacts[matched_key]["last_rc_snr"]       = snr
+                contacts[matched_key]["last_rc_collector"] = collector_id
+            elif state and nid not in state.get("new_nodes", []):
+                state.setdefault("new_nodes", []).append(nid[:12])
 
 
 def _mc_message_id(msg):
@@ -2781,7 +2841,9 @@ def _validate_remote_admin_command(command):
         "get lon",
         "get role",
         "get public.key",
+        "gps advert",
         "powersaving",
+        "get channels",
     }
     prefixes = (
         "set name ",
@@ -2807,6 +2869,8 @@ def _validate_remote_admin_command(command):
         "set flood.max ",
         "set owner.info ",
         "powersaving ",
+        "gps advert ",
+        "set channel ",
     )
     if lower in exact or any(lower.startswith(prefix) for prefix in prefixes):
         return cmd

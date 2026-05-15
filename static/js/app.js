@@ -457,6 +457,9 @@
       alert_log_node_new:    document.getElementById('alert-log-node-new')?.checked   ?? true,
       alert_log_node_return: document.getElementById('alert-log-node-return')?.checked ?? true,
       alert_log_radio:       document.getElementById('alert-log-radio')?.checked      ?? true,
+      alert_log_rc_obs:      document.getElementById('alert-log-rc-obs')?.checked      ?? true,
+      alert_log_rc_collect:  document.getElementById('alert-log-rc-collect')?.checked  ?? true,
+      alert_log_rc_new_node: document.getElementById('alert-log-rc-new-node')?.checked ?? true,
     };
     Object.assign(_appSettings, payload);
     fetch(BASE_PATH + '/api/settings/app', {
@@ -467,7 +470,7 @@
   }
   function loadAlertLogPrefs(cfg = null) {
     _appSettings = Object.assign({}, _appSettings || {}, cfg || _appSettings || {});
-    const defaults = { messages: true, geofence: true, 'node-new': true, 'node-return': false, radio: true };
+    const defaults = { messages: true, geofence: true, 'node-new': true, 'node-return': false, radio: true, 'rc-obs': true, 'rc-collect': true, 'rc-new-node': true };
     Object.entries(defaults).forEach(([k, def]) => {
       const el = document.getElementById(`alert-log-${k}`);
       if (el) el.checked = _appPrefBool(`alert_log_${k.replace(/-/g, '_')}`, def);
@@ -3569,6 +3572,11 @@ if (targetEl) {
       ['Latitude', lat],
       ['Longitude', lon],
       ['Last seen', c.last_heard_ts ? senseTimeAgo(c.last_heard_ts) : (c.last_seen || '')],
+      ...(c.last_rc_heard_ts ? [
+        ['RC last heard', senseTimeAgo(c.last_rc_heard_ts)],
+        ['RC signal', `RSSI ${c.last_rc_rssi ?? '?'} · SNR ${c.last_rc_snr != null ? (c.last_rc_snr > 0 ? '+' : '') + c.last_rc_snr.toFixed(1) : '?'}`],
+        ['RC collector', c.last_rc_collector || '?'],
+      ] : []),
     ];
     const pubkeyPre = fullKey.slice(0, 12);
     openModal('MC Contact Details', `
@@ -3890,11 +3898,14 @@ if (targetEl) {
           <span style="font-weight:600;font-size:12px">${escHtml(c.label || c.key)}</span>
           <span style="font-family:monospace;font-size:11px;color:var(--muted)">${escHtml(c.key)}</span>
           <span style="font-size:11px;color:var(--muted)">${escHtml(obsNote)}</span>
+          <input id="collector-label-${ck}" class="settings-input" style="width:130px;font-size:11px;margin-left:4px" placeholder="rename…" value="${escHtml(c.label || '')}">
+          <button class="btn" style="font-size:11px;padding:2px 8px" onclick="renameCollector(${i},'${ck}')" title="Save new label">Rename</button>
           <button class="btn" style="margin-left:auto;font-size:11px;padding:2px 8px;color:var(--red);border-color:var(--red)" onclick="removePassiveCollector(${i})" title="Remove this collector">✕</button>
         </div>
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:5px">
           <button class="btn" style="font-size:11px;padding:2px 10px" onclick="sendCollectorCommand('${ck}','OMCOLLECT',this)" title="Trigger observation dump from this collector">Collect</button>
           <button class="btn" style="font-size:11px;padding:2px 10px" onclick="sendCollectorCommand('${ck}','neighbors',this)" title="Request neighbor list from this node">Neighbors</button>
+          <button class="btn" style="font-size:11px;padding:2px 10px" onclick="checkCollectorObs('${ck}','${escHtml(c.label||c.key)}',this)" title="Check how many observations are stored for this collector">Obs count</button>
           <input id="collector-cmd-${ck}" class="settings-input" style="width:160px;font-size:11px;font-family:monospace" placeholder="custom command…">
           <button class="btn" style="font-size:11px;padding:2px 10px" onclick="sendCollectorCustomCmd('${ck}',this)" title="Send custom command to this collector">Send</button>
         </div>
@@ -3988,6 +3999,16 @@ if (targetEl) {
     renderPassiveCollectors();
   }
 
+  function renameCollector(idx, ck) {
+    const newLabel = document.getElementById(`collector-label-${ck}`)?.value?.trim();
+    if (!newLabel) return;
+    const collectors = _loadCollectors();
+    if (!collectors[idx]) return;
+    collectors[idx].label = newLabel;
+    _saveCollectors(collectors);
+    renderPassiveCollectors();
+  }
+
   function _collectorPassword(pubkeyPre) {
     try { return JSON.parse(localStorage.getItem(`rcPwd_${pubkeyPre}`) || 'null'); } catch { return null; }
   }
@@ -4021,6 +4042,104 @@ if (targetEl) {
     await sendCollectorCommand(pubkeyPre, `password ${newPwd}`, btn);
     _saveCollectorPassword(pubkeyPre, newPwd);
     renderPassiveCollectors();
+  }
+
+  // ── RC collect events polling ────────────────────────────────────────────────
+  let _rcCollectEventsSince = parseFloat(localStorage.getItem('rcCollectEventsSince') || '0');
+  let _rcCollectPollTimer = null;
+
+  function _rcCollectPollStart() {
+    if (_rcCollectPollTimer) return;
+    _rcCollectPollTimer = setInterval(_rcCollectPoll, 30_000);
+  }
+
+  async function _rcCollectPoll() {
+    const rid = _passiveIntelRadioId();
+    if (!rid) return;
+    try {
+      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/rc_collect_events?since=${_rcCollectEventsSince}`);
+      if (!r.ok) return;
+      const events = await r.json();
+      if (!events.length) return;
+      _rcCollectEventsSince = Math.max(...events.map(e => e.ts));
+      localStorage.setItem('rcCollectEventsSince', String(_rcCollectEventsSince));
+      events.forEach(ev => _rcHandleCollectEvent(ev));
+    } catch(e) {}
+  }
+
+  function _rcHandleCollectEvent(ev) {
+    const cid   = ev.collector_id || '?';
+    const count = ev.obs_count || 0;
+    const newNodes = ev.new_nodes || [];
+    const bestNode = ev.best_rssi_node ? ev.best_rssi_node.slice(0, 8) + '…' : null;
+    const bestSig  = ev.best_rssi != null ? `${ev.best_rssi} dBm` + (ev.best_rssi_snr != null ? ` / SNR ${ev.best_rssi_snr > 0 ? '+' : ''}${Number(ev.best_rssi_snr).toFixed(1)}` : '') : null;
+
+    let msg = `${cid}: ${count} obs collected.`;
+    if (newNodes.length) msg += ` ${newNodes.length} new node${newNodes.length > 1 ? 's' : ''}.`;
+    if (bestNode && bestSig) msg += ` Best: ${bestNode} at ${bestSig}.`;
+    _logAlert('rc-collect', 'RC Collect', msg);
+    showToast('RC Collect', msg, 'node');
+    if (_signalHeatmapEnabled) _refreshSignalHeatmap();
+
+    if (_appPrefBool('alert_log_rc_new_node', true) && newNodes.length) {
+      newNodes.forEach(nid => {
+        const nodeMsg = `${cid} heard unknown node ${nid.slice(0, 8)}…`;
+        _logAlert('rc-new-node', 'RC New Node', nodeMsg);
+      });
+    }
+  }
+
+  // ── RC auto-collect ──────────────────────────────────────────────────────────
+  let _rcAutoCollectTimer = null;
+
+  function setRcAutoCollect(minutes) {
+    const mins = parseInt(minutes, 10) || 0;
+    localStorage.setItem('rcAutoCollectInterval', String(mins));
+    if (_rcAutoCollectTimer) { clearInterval(_rcAutoCollectTimer); _rcAutoCollectTimer = null; }
+    const statusEl = document.getElementById('rc-auto-collect-status');
+    if (mins > 0) {
+      _rcAutoCollectTimer = setInterval(_rcAutoCollectAll, mins * 60_000);
+      if (statusEl) statusEl.textContent = `Next collect in ${mins} min`;
+    } else {
+      if (statusEl) statusEl.textContent = '';
+    }
+  }
+
+  async function _rcAutoCollectAll() {
+    const collectors = _loadCollectors();
+    for (const c of collectors) {
+      await sendCollectorCommand(jsSafe(c.key), 'OMCOLLECT', null);
+      await new Promise(r => setTimeout(r, 2000));
+    }
+    const statusEl = document.getElementById('rc-auto-collect-status');
+    const mins = parseInt(localStorage.getItem('rcAutoCollectInterval') || '0', 10);
+    if (statusEl && mins > 0) statusEl.textContent = `Last: ${new Date().toLocaleTimeString()} · Next in ${mins} min`;
+  }
+
+  function _rcAutoCollectInit() {
+    const mins = parseInt(localStorage.getItem('rcAutoCollectInterval') || '0', 10);
+    const el = document.getElementById('rc-auto-collect-interval');
+    if (el) el.value = String(mins);
+    if (mins > 0) setRcAutoCollect(mins);
+    _rcCollectPollStart();
+  }
+
+  async function checkCollectorObs(pubkeyPre, label, btn) {
+    const rid = _passiveIntelRadioId();
+    if (!rid) { showToast('Remote Collector', 'No MC radio connected.', 'node'); return; }
+    if (btn) btn.disabled = true;
+    try {
+      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/passive_obs/collector_stats`);
+      const stats = r.ok ? await r.json() : {};
+      const count = stats[label] ?? stats[pubkeyPre] ?? 0;
+      const msg = count > 0 ? `${label}: ${count} obs stored` : `No obs stored for ${label}`;
+      showToast('Remote Collector', msg, 'node');
+      _logAlert('rc-obs', 'Remote Collector', msg);
+    } catch (e) {
+      showToast('Remote Collector', 'Failed to fetch obs stats.', 'node');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   }
 
   async function sendCollectorCommand(pubkeyPre, command, btn) {
@@ -6489,12 +6608,12 @@ if (targetEl) {
       for (const o of obs) {
         if (!o.pubkey_pre || o.rssi == null) continue;
         const contact = findMcContactByKeyPrefix(o.pubkey_pre, rid);
-        const lat = contact?.latitude ?? contact?.lat;
-        const lon = contact?.longitude ?? contact?.lon;
-        if (!lat || !lon) continue;
+        const lat = contact?.latitude ?? contact?.lat ?? o.collector_lat;
+        const lon = contact?.longitude ?? contact?.lon ?? o.collector_lon;
+        if (lat == null || lon == null || !Number.isFinite(Number(lat)) || !Number.isFinite(Number(lon))) continue;
         // Normalize RSSI: -50 → 1.0, -120 → 0.0
         const intensity = Math.max(0, Math.min(1, (o.rssi + 120) / 70));
-        points.push([lat, lon, intensity]);
+        points.push([Number(lat), Number(lon), intensity]);
       }
       _clearSignalHeatmap();
       if (!points.length) {
@@ -9493,6 +9612,7 @@ if (targetEl) {
     loadInAppNotifPrefs();
     loadSoundPrefs();
     loadAlertLogPrefs();
+    _rcAutoCollectInit();
     loadExtMapPref();
     loadNodeCfgRadios();
     loadMapLayers({silent: true});
@@ -14235,6 +14355,53 @@ if (targetEl) {
   let _mcRemoteManage = null;
   let _mcRemoteQueuedAdvert = null;
 
+  function _mcRemoteCacheKey(pubkeyPrefix, radioId) {
+    return `rptr_settings:${radioId || ''}:${(pubkeyPrefix || '').slice(0, 12)}`;
+  }
+
+  function _mcRemoteLoadCache() {
+    if (!_mcRemoteManage) return {};
+    try { return JSON.parse(localStorage.getItem(_mcRemoteCacheKey(_mcRemoteManage.pubkeyPrefix, _mcRemoteManage.radioId)) || '{}'); }
+    catch { return {}; }
+  }
+
+  function _mcRemoteSaveCache(updates) {
+    if (!_mcRemoteManage) return;
+    const key = _mcRemoteCacheKey(_mcRemoteManage.pubkeyPrefix, _mcRemoteManage.radioId);
+    const prev = _mcRemoteLoadCache();
+    localStorage.setItem(key, JSON.stringify({ ...prev, ...updates, last_synced: Math.floor(Date.now() / 1000) }));
+    _mcRemoteUpdateSyncLabel();
+  }
+
+  function _mcRemoteUpdateSyncLabel() {
+    const c = _mcRemoteLoadCache();
+    const el = document.getElementById('mc-remote-sync-label');
+    if (el) el.textContent = c.last_synced ? `Last synced: ${senseTimeAgo(c.last_synced)}` : 'Not synced yet — hit Read all';
+  }
+
+  function _mcRemotePrefillFromCache() {
+    const c = _mcRemoteLoadCache();
+    if (c.name) _mcRemoteSetValue('mc-remote-set-name', c.name);
+    if (c.repeat) _mcRemoteSetValue('mc-remote-set-repeat', c.repeat);
+    if (c.powersaving) _mcRemoteSetValue('mc-remote-set-powersaving', c.powersaving);
+    if (c.tx != null) _mcRemoteSetValue('mc-remote-set-tx', c.tx);
+    if (c.freq) _mcRemoteSetValue('mc-remote-set-freq', c.freq);
+    if (c.bw) _mcRemoteSetValue('mc-remote-set-bw', c.bw);
+    if (c.sf) _mcRemoteSetValue('mc-remote-set-sf', c.sf);
+    if (c.cr) _mcRemoteSetValue('mc-remote-set-cr', c.cr);
+    if (c.lat != null) _mcRemoteSetValue('mc-remote-set-lat', c.lat);
+    if (c.lon != null) _mcRemoteSetValue('mc-remote-set-lon', c.lon);
+    if (c.advert_loc) _mcRemoteSetValue('mc-remote-set-advert-loc', c.advert_loc);
+    if (c.owner != null) _mcRemoteSetValue('mc-remote-set-owner', c.owner);
+    if (c.path_hash != null) _mcRemoteSetValue('mc-remote-set-path-hash', String(c.path_hash));
+    if (c.loop) _mcRemoteSetValue('mc-remote-set-loop', c.loop);
+    if (c.advert_int != null) _mcRemoteSetValue('mc-remote-set-advert-int', c.advert_int);
+    if (c.flood_advert_int != null) _mcRemoteSetValue('mc-remote-set-flood-advert-int', c.flood_advert_int);
+    if (c.flood_max != null) _mcRemoteSetValue('mc-remote-set-flood-max', c.flood_max);
+    _mcRemoteUpdateSyncLabel();
+    _mcRemoteRenderChannels(c.channels || []);
+  }
+
   function _mcRemotePasswordKey(pubkeyPrefix, radioId) {
     return `mcRemotePassword:${radioId || ''}:${(pubkeyPrefix || '').slice(0, 12)}`;
   }
@@ -14260,33 +14427,64 @@ if (targetEl) {
   }
 
   function _mcRemoteQuickSettingsHtml() {
-    const row = (label, inner, action) => `
-      <div style="display:grid;grid-template-columns:minmax(96px,130px) 1fr auto;gap:8px;align-items:end;margin-bottom:8px">
+    const row = (label, inner, action, refreshCmd) => `
+      <div style="display:grid;grid-template-columns:minmax(96px,130px) 1fr auto auto;gap:6px;align-items:end;margin-bottom:8px">
         <label class="settings-label" style="margin-bottom:0">${label}</label>
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">${inner}</div>
+        <button class="btn" onclick="mcRemoteRefreshField('${refreshCmd}')" title="Read from RPTR" style="padding:0 9px;font-size:14px">↻</button>
         <button class="btn" onclick="${action}">Set</button>
       </div>`;
     const input = (id, width, placeholder, attrs = '') => `<input id="${id}" class="settings-input" style="width:${width}px" placeholder="${placeholder}" ${attrs}>`;
     return `
       <div style="border-top:1px solid var(--border);padding-top:10px;margin-top:10px">
-        <h3 class="settings-subtitle" style="margin:0 0 8px">Quick settings</h3>
-        ${row('Name', input('mc-remote-set-name', 180, 'RPTR name', 'maxlength="32"'), "mcRemoteApplySetting('name')")}
-        ${row('Repeat', `<select id="mc-remote-set-repeat" class="settings-select"><option value="on">On</option><option value="off">Off</option></select>`, "mcRemoteApplySetting('repeat')")}
-        ${row('Power save', `<select id="mc-remote-set-powersaving" class="settings-select"><option value="off">Off</option><option value="on">On</option></select>`, "mcRemoteApplySetting('powersaving')")}
-        ${row('TX power', input('mc-remote-set-tx', 82, '1-22', 'type="number" min="1" max="22" step="1"'), "mcRemoteApplySetting('tx')")}
-        ${row('Radio', `${input('mc-remote-set-freq', 88, 'MHz', 'type="number" step="0.001"')} ${input('mc-remote-set-bw', 72, 'BW', 'type="number" step="0.1"')} ${input('mc-remote-set-sf', 54, 'SF', 'type="number" min="5" max="12" step="1"')} ${input('mc-remote-set-cr', 54, 'CR', 'type="number" min="5" max="8" step="1"')}`, "mcRemoteApplySetting('radio')")}
-        ${row('Position', `${input('mc-remote-set-lat', 106, 'lat', 'type="number" step="0.000001"')} ${input('mc-remote-set-lon', 106, 'lon', 'type="number" step="0.000001"')} <button class="btn" onclick="startMcRemoteMapPick()" title="Pick RPTR position from map">Map</button>`, "mcRemoteApplySetting('position')")}
-        ${row('Owner info', `<input id="mc-remote-set-owner" class="settings-input" style="width:260px" placeholder="owner text">`, "mcRemoteApplySetting('owner')")}
-        ${row('Path hash', `<select id="mc-remote-set-path-hash" class="settings-select"><option value="0">1 byte</option><option value="1">2 bytes</option><option value="2">3 bytes</option></select>`, "mcRemoteApplySetting('path_hash')")}
-        ${row('Loop detect', `<select id="mc-remote-set-loop" class="settings-select"><option value="off">Off</option><option value="minimal">Minimal</option><option value="moderate">Moderate</option><option value="strict">Strict</option></select>`, "mcRemoteApplySetting('loop')")}
-        ${row('Advert timers', `${input('mc-remote-set-advert-int', 96, 'zero-hop min', 'type="number" min="0" step="2"')} ${input('mc-remote-set-flood-advert-int', 96, 'flood hrs', 'type="number" min="0" step="1"')}`, "mcRemoteApplySetting('adverts')")}
-        ${row('Flood max', input('mc-remote-set-flood-max', 82, '0-64', 'type="number" min="0" max="64" step="1"'), "mcRemoteApplySetting('flood_max')")}
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
-          <button class="btn" onclick="mcRemotePrefillSettings()" title="Read current RPTR settings into the fields above">Read settings</button>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+          <h3 class="settings-subtitle" style="margin:0">Settings</h3>
+          <span id="mc-remote-sync-label" style="font-size:11px;color:var(--muted)">Not synced yet — hit Read all</span>
+          <button class="btn" onclick="mcRemoteReadAll()" title="Read all current settings from RPTR and cache them">Read all</button>
+        </div>
+        ${row('Name', input('mc-remote-set-name', 180, 'RPTR name', 'maxlength="32"'), "mcRemoteApplySetting('name')", 'get name')}
+        ${row('Repeat', `<select id="mc-remote-set-repeat" class="settings-select"><option value="on">On</option><option value="off">Off</option></select>`, "mcRemoteApplySetting('repeat')", 'get repeat')}
+        ${row('Power save', `<select id="mc-remote-set-powersaving" class="settings-select"><option value="off">Off</option><option value="on">On</option></select>`, "mcRemoteApplySetting('powersaving')", 'get powersaving')}
+        ${row('TX power', input('mc-remote-set-tx', 82, '1-22', 'type="number" min="1" max="22" step="1"'), "mcRemoteApplySetting('tx')", 'get tx')}
+        ${row('Radio', `${input('mc-remote-set-freq', 88, 'MHz', 'type="number" step="0.001"')} ${input('mc-remote-set-bw', 72, 'BW', 'type="number" step="0.1"')} ${input('mc-remote-set-sf', 54, 'SF', 'type="number" min="5" max="12" step="1"')} ${input('mc-remote-set-cr', 54, 'CR', 'type="number" min="5" max="8" step="1"')}`, "mcRemoteApplySetting('radio')", 'get radio')}
+        ${row('Position', `${input('mc-remote-set-lat', 106, 'lat', 'type="number" step="0.000001"')} ${input('mc-remote-set-lon', 106, 'lon', 'type="number" step="0.000001"')} <button class="btn" onclick="startMcRemoteMapPick()" title="Pick RPTR position from map">Map</button>`, "mcRemoteApplySetting('position')", 'get lat')}
+        ${row('Share location', `<select id="mc-remote-set-advert-loc" class="settings-select"><option value="none">Off (hidden)</option><option value="prefs">On (share coords)</option></select>`, "mcRemoteApplySetting('advert_loc')", 'gps advert')}
+        ${row('Owner info', `<input id="mc-remote-set-owner" class="settings-input" style="width:260px" placeholder="owner text">`, "mcRemoteApplySetting('owner')", 'get owner.info')}
+        ${row('Path hash', `<select id="mc-remote-set-path-hash" class="settings-select"><option value="0">1 byte</option><option value="1">2 bytes</option><option value="2">3 bytes</option></select>`, "mcRemoteApplySetting('path_hash')", 'get path.hash.mode')}
+        ${row('Loop detect', `<select id="mc-remote-set-loop" class="settings-select"><option value="off">Off</option><option value="minimal">Minimal</option><option value="moderate">Moderate</option><option value="strict">Strict</option></select>`, "mcRemoteApplySetting('loop')", 'get loop.detect')}
+        ${row('Advert timers', `${input('mc-remote-set-advert-int', 96, 'zero-hop min', 'type="number" min="0" step="2"')} ${input('mc-remote-set-flood-advert-int', 96, 'flood hrs', 'type="number" min="0" step="1"')}`, "mcRemoteApplySetting('adverts')", 'get advert.interval')}
+        ${row('Flood max', input('mc-remote-set-flood-max', 82, '0-64', 'type="number" min="0" max="64" step="1"'), "mcRemoteApplySetting('flood_max')", 'get flood.max')}
+        <div style="border-top:1px solid var(--border);padding-top:10px;margin-top:4px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            <h3 class="settings-subtitle" style="margin:0">Channels</h3>
+            <button class="btn" onclick="mcRemoteReadChannels()" title="Read channel list from RPTR" style="padding:0 9px;font-size:14px">↻</button>
+          </div>
+          <div id="mc-remote-channels-list" style="font-size:12px;color:var(--muted);margin-bottom:8px">No cache yet.</div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <select id="mc-remote-ch-idx" class="settings-select" style="width:70px">
+              ${[0,1,2,3,4,5,6,7].map(i => `<option value="${i}">Slot ${i}</option>`).join('')}
+            </select>
+            <input id="mc-remote-ch-name" class="settings-input" style="width:110px" placeholder="Name" maxlength="31">
+            <input id="mc-remote-ch-key" class="settings-input" style="width:196px" placeholder="Key (base64, 16 or 32 bytes)">
+            <button class="btn" onclick="mcRemoteSetChannel()">Set channel</button>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px">
           <button class="btn" onclick="mcRemoteAdvert('local')">Local advert</button>
           <button class="btn" onclick="mcRemoteAdvert('flood')">Flood advert</button>
           <button class="btn" onclick="mcRemoteRunCommand('discover.neighbors')">Discover neighbours</button>
           <button class="btn" onclick="mcRemoteRunCommand('neighbors')">Read neighbours</button>
+        </div>
+        <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:10px">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:8px">
+            <b style="color:var(--fg)">Silent mode</b> — stops forwarding, disables all adverts, hides position.
+            Node stays reachable but invisible and passive on the mesh.
+            Use <b style="color:var(--fg)">Resume</b> to restore normal operation.
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn" style="color:var(--red);border-color:var(--red)" onclick="mcRemoteSilentMode(this)" title="Stop forwarding, silence all adverts, hide position">Silent mode</button>
+            <button class="btn" onclick="mcRemoteResumeMode(this)" title="Resume forwarding and adverts">Resume</button>
+          </div>
         </div>
         <div id="mc-remote-quick-result" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
       </div>`;
@@ -14350,12 +14548,9 @@ if (targetEl) {
   }
 
   function _mcRemoteNormalizePathHash(value) {
-    const v = String(value || '').trim().toLowerCase();
-    if (!v) return '';
-    if (v.includes('3') || v.includes('3b')) return '2';
-    if (v.includes('2') || v.includes('2b')) return '1';
-    if (v.includes('1') || v.includes('1b')) return '0';
-    const n = Number(v);
+    const match = String(value || '').match(/\d+/);
+    if (!match) return '';
+    const n = Number(match[0]);
     return Number.isFinite(n) && n >= 0 && n <= 2 ? String(n) : '';
   }
 
@@ -14373,41 +14568,46 @@ if (targetEl) {
     const text = _mcRemoteReplyText(data);
     const value = _mcRemoteExtractValue(text, command.replace(/^get\s+/, ''));
     if (!value) return false;
-    if (command === 'get name') return _mcRemoteSetValue('mc-remote-set-name', value);
-    if (command === 'get repeat') return _mcRemoteSetValue('mc-remote-set-repeat', _mcRemoteNormalizeOnOff(value));
-    if (command === 'get powersaving') return _mcRemoteSetValue('mc-remote-set-powersaving', _mcRemoteNormalizeOnOff(value));
-    if (command === 'get tx') return _mcRemoteSetValue('mc-remote-set-tx', value.match(/-?\d+(\.\d+)?/)?.[0] || '');
-    if (command === 'get lat') return _mcRemoteSetValue('mc-remote-set-lat', value.match(/-?\d+(\.\d+)?/)?.[0] || '');
-    if (command === 'get lon') return _mcRemoteSetValue('mc-remote-set-lon', value.match(/-?\d+(\.\d+)?/)?.[0] || '');
-    if (command === 'get owner.info') return _mcRemoteSetValue('mc-remote-set-owner', value);
-    if (command === 'get path.hash.mode') return _mcRemoteSetValue('mc-remote-set-path-hash', _mcRemoteNormalizePathHash(value));
-    if (command === 'get loop.detect') return _mcRemoteSetValue('mc-remote-set-loop', _mcRemoteNormalizeLoop(value));
-    if (command === 'get advert.interval') return _mcRemoteSetValue('mc-remote-set-advert-int', value.match(/-?\d+(\.\d+)?/)?.[0] || '');
-    if (command === 'get flood.advert.interval') return _mcRemoteSetValue('mc-remote-set-flood-advert-int', value.match(/-?\d+(\.\d+)?/)?.[0] || '');
-    if (command === 'get flood.max') return _mcRemoteSetValue('mc-remote-set-flood-max', value.match(/-?\d+(\.\d+)?/)?.[0] || '');
+    const set = (id, v) => { _mcRemoteSetValue(id, v); return v; };
+    if (command === 'get name') { const v = set('mc-remote-set-name', value); _mcRemoteSaveCache({name: v}); return true; }
+    if (command === 'get repeat') { const v = _mcRemoteNormalizeOnOff(value); set('mc-remote-set-repeat', v); _mcRemoteSaveCache({repeat: v}); return !!v; }
+    if (command === 'get powersaving') { const v = _mcRemoteNormalizeOnOff(value); set('mc-remote-set-powersaving', v); _mcRemoteSaveCache({powersaving: v}); return !!v; }
+    if (command === 'get tx') { const v = value.match(/-?\d+(\.\d+)?/)?.[0] || ''; set('mc-remote-set-tx', v); _mcRemoteSaveCache({tx: v}); return !!v; }
+    if (command === 'get lat') { const v = value.match(/-?\d+(\.\d+)?/)?.[0] || ''; set('mc-remote-set-lat', v); _mcRemoteSaveCache({lat: v}); return !!v; }
+    if (command === 'get lon') { const v = value.match(/-?\d+(\.\d+)?/)?.[0] || ''; set('mc-remote-set-lon', v); _mcRemoteSaveCache({lon: v}); return !!v; }
+    if (command === 'gps advert') {
+      const raw = String(value || '').trim().toLowerCase();
+      const v = raw.includes('prefs') ? 'prefs' : raw.includes('share') ? 'share' : 'none';
+      set('mc-remote-set-advert-loc', v); _mcRemoteSaveCache({advert_loc: v}); return true;
+    }
+    if (command === 'get owner.info') { set('mc-remote-set-owner', value); _mcRemoteSaveCache({owner: value}); return true; }
+    if (command === 'get path.hash.mode') { const v = _mcRemoteNormalizePathHash(value); set('mc-remote-set-path-hash', v); _mcRemoteSaveCache({path_hash: v}); return !!v; }
+    if (command === 'get loop.detect') { const v = _mcRemoteNormalizeLoop(value); set('mc-remote-set-loop', v); _mcRemoteSaveCache({loop: v}); return !!v; }
+    if (command === 'get advert.interval') { const v = value.match(/-?\d+(\.\d+)?/)?.[0] || ''; set('mc-remote-set-advert-int', v); _mcRemoteSaveCache({advert_int: v}); return !!v; }
+    if (command === 'get flood.advert.interval') { const v = value.match(/-?\d+(\.\d+)?/)?.[0] || ''; set('mc-remote-set-flood-advert-int', v); _mcRemoteSaveCache({flood_advert_int: v}); return !!v; }
+    if (command === 'get flood.max') { const v = value.match(/-?\d+(\.\d+)?/)?.[0] || ''; set('mc-remote-set-flood-max', v); _mcRemoteSaveCache({flood_max: v}); return !!v; }
     if (command === 'get radio') {
       const nums = text.match(/-?\d+(\.\d+)?/g) || [];
       if (nums.length >= 4) {
-        _mcRemoteSetValue('mc-remote-set-freq', nums[0]);
-        _mcRemoteSetValue('mc-remote-set-bw', nums[1]);
-        _mcRemoteSetValue('mc-remote-set-sf', nums[2]);
-        _mcRemoteSetValue('mc-remote-set-cr', nums[3]);
+        set('mc-remote-set-freq', nums[0]); set('mc-remote-set-bw', nums[1]);
+        set('mc-remote-set-sf', nums[2]); set('mc-remote-set-cr', nums[3]);
+        _mcRemoteSaveCache({freq: nums[0], bw: nums[1], sf: nums[2], cr: nums[3]});
         return true;
       }
     }
     return false;
   }
 
-  async function mcRemotePrefillSettings() {
+  async function mcRemoteReadAll() {
     if (!_mcRemoteManage) return;
     const out = document.getElementById('mc-remote-quick-result');
     const commands = [
       'get name', 'get repeat', 'get powersaving', 'get tx', 'get radio',
-      'get lat', 'get lon', 'get owner.info', 'get path.hash.mode',
+      'get lat', 'get lon', 'gps advert', 'get owner.info', 'get path.hash.mode',
       'get loop.detect', 'get advert.interval', 'get flood.advert.interval', 'get flood.max',
     ];
     let filled = 0;
-    if (out) out.textContent = 'Reading current settings...';
+    if (out) out.textContent = 'Reading settings from RPTR…';
     for (const command of commands) {
       try {
         const data = await mcRemoteRunCommand(command, 'mc-remote-quick-result', {silentError: true});
@@ -14415,8 +14615,89 @@ if (targetEl) {
       } catch(e) {}
     }
     if (out) out.innerHTML = filled
-      ? `<span style="color:var(--green)">Prefilled ${filled} setting${filled !== 1 ? 's' : ''} from RPTR replies.</span>`
-      : '<span style="color:#f59e0b">Settings read finished, but no parseable setting replies were received.</span>';
+      ? `<span style="color:var(--green)">Read ${filled} setting${filled !== 1 ? 's' : ''} from RPTR — cached.</span>`
+      : '<span style="color:#f59e0b">Read finished, but no parseable replies received.</span>';
+  }
+
+  async function mcRemoteRefreshField(command) {
+    if (!_mcRemoteManage || !command) return;
+    const out = document.getElementById('mc-remote-quick-result');
+    if (out) out.textContent = `Reading ${command}…`;
+    try {
+      const data = await mcRemoteRunCommand(command, 'mc-remote-quick-result', {silentError: true});
+      if (data) {
+        const ok = _mcRemoteApplyPrefill(command, data);
+        if (out) out.innerHTML = ok
+          ? `<span style="color:var(--green)">Updated from RPTR: ${escHtml(command)}</span>`
+          : `<span style="color:#f59e0b">Got reply but couldn't parse value</span>`;
+        if (command === 'get lat' || command === 'get lon') {
+          // also read the other one for completeness
+          const other = command === 'get lat' ? 'get lon' : 'get lat';
+          const d2 = await mcRemoteRunCommand(other, 'mc-remote-quick-result', {silentError: true});
+          if (d2) _mcRemoteApplyPrefill(other, d2);
+        }
+      }
+    } catch(e) {
+      if (out) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
+    }
+  }
+
+  function _mcRemoteRenderChannels(channels) {
+    const el = document.getElementById('mc-remote-channels-list');
+    if (!el) return;
+    if (!channels || !channels.length) {
+      el.textContent = 'No channels configured.';
+      return;
+    }
+    el.innerHTML = channels.map(ch =>
+      `<div style="margin-bottom:2px"><b style="color:var(--fg)">${ch.idx}:</b> ${escHtml(ch.name)}</div>`
+    ).join('');
+  }
+
+  async function mcRemoteReadChannels() {
+    if (!_mcRemoteManage) return;
+    const out = document.getElementById('mc-remote-quick-result');
+    if (out) out.textContent = 'Reading channels from RPTR…';
+    try {
+      const data = await mcRemoteRunCommand('get channels', 'mc-remote-quick-result', {silentError: true});
+      if (!data) return;
+      const text = _mcRemoteReplyText(data).replace(/^>\s*/, '').trim();
+      const channels = [];
+      if (text && text !== '(none)') {
+        for (const part of text.split(',')) {
+          const m = part.trim().match(/^(\d+):(.+)$/);
+          if (m) channels.push({ idx: parseInt(m[1]), name: m[2].trim() });
+        }
+      }
+      _mcRemoteSaveCache({ channels });
+      _mcRemoteRenderChannels(channels);
+      if (out) out.innerHTML = `<span style="color:var(--green)">Channels read: ${channels.length ? channels.map(c => c.name).join(', ') : 'none'}</span>`;
+    } catch(e) {
+      if (out) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
+    }
+  }
+
+  async function mcRemoteSetChannel() {
+    if (!_mcRemoteManage) return;
+    const idx = (document.getElementById('mc-remote-ch-idx')?.value || '0').trim();
+    const name = (document.getElementById('mc-remote-ch-name')?.value || '').trim();
+    const key = (document.getElementById('mc-remote-ch-key')?.value || '').trim();
+    const out = document.getElementById('mc-remote-quick-result');
+    if (!name || !key) {
+      if (out) out.innerHTML = '<span style="color:var(--red)">Enter channel name and base64 key</span>';
+      return;
+    }
+    const data = await mcRemoteRunCommand(`set channel ${idx} ${name} ${key}`, 'mc-remote-quick-result');
+    if (data?.reply?.text?.toLowerCase().includes('ok')) {
+      const c = _mcRemoteLoadCache();
+      const channels = [...(c.channels || [])];
+      const i = channels.findIndex(ch => ch.idx === parseInt(idx));
+      if (i >= 0) channels[i].name = name;
+      else channels.push({ idx: parseInt(idx), name });
+      channels.sort((a, b) => a.idx - b.idx);
+      _mcRemoteSaveCache({ channels });
+      _mcRemoteRenderChannels(channels);
+    }
   }
 
   function openMcRemoteManage(pubkeyPrefix, radioId, name) {
@@ -14488,6 +14769,7 @@ if (targetEl) {
     const rememberEl = document.getElementById('mc-remote-remember-password');
     if (pwEl && savedPassword) pwEl.value = savedPassword;
     if (rememberEl) rememberEl.checked = !!savedPassword;
+    _mcRemotePrefillFromCache();
     document.getElementById('action-modal').classList.add('open');
   }
 
@@ -14511,7 +14793,7 @@ if (targetEl) {
         if (remember && password) localStorage.setItem(passwordKey, password);
       }
       _mcRemoteRenderResult(d);
-      if (login && d.login?.ok) mcRemotePrefillSettings();
+      if (login && d.login?.ok) mcRemoteReadAll();
     } catch (e) {
       if (out) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
     }
@@ -14612,6 +14894,7 @@ if (targetEl) {
         commands.push(`set lat ${num('mc-remote-set-lat', 'latitude', -90, 90)}`);
         commands.push(`set lon ${num('mc-remote-set-lon', 'longitude', -180, 180)}`);
       }
+      if (kind === 'advert_loc') commands.push(`gps advert ${val('mc-remote-set-advert-loc')}`);
       if (kind === 'owner') commands.push(`set owner.info ${val('mc-remote-set-owner')}`);
       if (kind === 'path_hash') commands.push(`set path.hash.mode ${val('mc-remote-set-path-hash')}`);
       if (kind === 'loop') commands.push(`set loop.detect ${val('mc-remote-set-loop')}`);
@@ -14622,9 +14905,52 @@ if (targetEl) {
       if (kind === 'flood_max') commands.push(`set flood.max ${num('mc-remote-set-flood-max', 'flood max', 0, 64)}`);
       if (!commands.length || commands.some(c => !c.trim() || c.endsWith(' '))) throw new Error('Enter a value first.');
       for (const command of commands) await mcRemoteRunCommand(command);
+      // update cache with applied values
+      if (kind === 'name') _mcRemoteSaveCache({name: val('mc-remote-set-name')});
+      if (kind === 'repeat') _mcRemoteSaveCache({repeat: val('mc-remote-set-repeat')});
+      if (kind === 'powersaving') _mcRemoteSaveCache({powersaving: val('mc-remote-set-powersaving')});
+      if (kind === 'tx') _mcRemoteSaveCache({tx: val('mc-remote-set-tx')});
+      if (kind === 'radio') _mcRemoteSaveCache({freq: val('mc-remote-set-freq'), bw: val('mc-remote-set-bw'), sf: val('mc-remote-set-sf'), cr: val('mc-remote-set-cr')});
+      if (kind === 'position') _mcRemoteSaveCache({lat: val('mc-remote-set-lat'), lon: val('mc-remote-set-lon')});
+      if (kind === 'advert_loc') _mcRemoteSaveCache({advert_loc: val('mc-remote-set-advert-loc')});
+      if (kind === 'owner') _mcRemoteSaveCache({owner: val('mc-remote-set-owner')});
+      if (kind === 'path_hash') _mcRemoteSaveCache({path_hash: val('mc-remote-set-path-hash')});
+      if (kind === 'loop') _mcRemoteSaveCache({loop: val('mc-remote-set-loop')});
+      if (kind === 'adverts') _mcRemoteSaveCache({advert_int: val('mc-remote-set-advert-int'), flood_advert_int: val('mc-remote-set-flood-advert-int')});
+      if (kind === 'flood_max') _mcRemoteSaveCache({flood_max: val('mc-remote-set-flood-max')});
     } catch (e) {
       const out = document.getElementById('mc-remote-quick-result');
       if (out) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
+    }
+  }
+
+  async function mcRemoteSilentMode(btn) {
+    if (btn) btn.disabled = true;
+    const out = document.getElementById('mc-remote-quick-result');
+    if (out) out.textContent = 'Enabling silent mode…';
+    try {
+      for (const cmd of ['set repeat off', 'set advert.interval 0', 'set flood.advert.interval 0', 'gps advert none'])
+        await mcRemoteRunCommand(cmd, 'mc-remote-quick-result', {silentError: false});
+      if (out) out.innerHTML = '<span style="color:var(--accent)">Silent mode active — node is passive and hidden.</span>';
+    } catch(e) {
+      if (out) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function mcRemoteResumeMode(btn) {
+    if (btn) btn.disabled = true;
+    const out = document.getElementById('mc-remote-quick-result');
+    if (out) out.textContent = 'Resuming normal operation…';
+    try {
+      for (const cmd of ['set repeat on', 'set advert.interval 120', 'set flood.advert.interval 13', 'gps advert prefs'])
+        await mcRemoteRunCommand(cmd, 'mc-remote-quick-result', {silentError: false});
+      if (out) out.innerHTML = '<span style="color:var(--accent)">Resumed — node is active and advertising.</span>';
+    } catch(e) {
+      if (out) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
+    } finally {
+      if (btn) btn.disabled = false;
     }
   }
 

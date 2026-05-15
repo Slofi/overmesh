@@ -4066,7 +4066,9 @@ if (targetEl) {
     const inp = document.getElementById(`collector-pwd-${pubkeyPre}`);
     const newPwd = inp?.value?.trim() || '';
     if (!newPwd) { showToast('Remote Collector', 'Enter the new password first.', 'node'); return; }
-    await sendCollectorCommand(pubkeyPre, `password ${newPwd}`, btn);
+    const oldPwd = _collectorPassword(pubkeyPre) || '';
+    if (!oldPwd) { showToast('Remote Collector', 'No saved password to authenticate with — save current password first.', 'node'); return; }
+    await sendCollectorCommand(pubkeyPre, `password ${oldPwd} ${newPwd}`, btn);
     _saveCollectorPassword(pubkeyPre, newPwd);
     renderPassiveCollectors();
   }

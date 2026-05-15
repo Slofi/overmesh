@@ -1963,6 +1963,50 @@
       ]
     },
     {
+      title: 'Remote Collector (RC)',
+      tags: 'remote collector rc rptr repeater passive intel observations heatmap signal rssi snr firmware hardware t114 rp2040 serial uart solar omcollect coverage',
+      body: [
+        'A Remote Collector is your own MeshCore RPTR deployed at a remote vantage point — hilltop, rooftop, solar-powered — running custom OverMesh firmware. It passively logs every node it hears and delivers that intel back to your OM instance over the mesh as encrypted DMs.',
+        'The RC gives you a second set of ears on the mesh from a different RF vantage point. You see which nodes reach the hilltop, at what signal strength, and when — intel that your base radio can never collect because it is in a different location.',
+        '--- What the RPTR hears ---',
+        'OBS|ADV — full mesh advertisements: sender pubkey, RSSI, SNR, timestamp. Full identity, useful for passive intel.',
+        'OBS|RX — all other received packets: short 4-byte hash, RSSI, SNR. No identity, useful for coverage mapping.',
+        '--- Required hardware ---',
+        'The collector unit consists of two boards:',
+        '1. MeshCore-compatible RPTR: nRF52840 + HT-RA62 (Heltec T114 v1 or v2 recommended). Must run the Overmesh-RC custom firmware.',
+        '2. RP2040-PiZero (Waveshare): MicroPython board that reads serial output from the RPTR, buffers observations, and delivers them to OM on request. Connected to the RPTR via hardware UART (T114 GPIO 10 TX → RP2040 GP1 RX; GPIO 9 RX → RP2040 GP0 TX; GND shared). Powered from the T114 3.3V rail — no separate power supply needed.',
+        'For off-grid deployment: connect a small solar panel to the T114 solar input connector and a LiPo battery to the VBAT connector. The T114 handles charging. The RP2040 runs from the T114 regulated 3.3V output.',
+        '--- Custom firmware ---',
+        'The Overmesh-RC firmware is a fork of MeshCore RPTR. Source: https://github.com/Slofi/overmesh-RC',
+        'Build target: Heltec_t114_without_display_repeater (PlatformIO). The display is not used and can be physically removed.',
+        'Patches over stock MeshCore RPTR:',
+        '• OBS|ADV output on advert reception (onAdvertRecv) — full pubkey + RSSI/SNR',
+        '• OBS|RX output on all other received packets (logRx) — 4-byte hash + RSSI/SNR',
+        '• OMCOLLECT intercept in onPeerDataRecv — stores requester identity, signals the RP2040 via serial',
+        '• RELAY| handler in handleCommand — receives buffered observations from the RP2040 and sends them as encrypted DMs back to the OM requester',
+        '• Serial1 hardware UART mirroring all RC output (GPIO 9 RX / GPIO 10 TX at 115200 baud)',
+        '--- RP2040 collector script ---',
+        'MicroPython script (main.py) runs on the RP2040-PiZero. Reads OBS|ADV and OBS|RX lines from UART0 (GP0/GP1 at 115200 baud), maintains a 200-entry ring buffer, and responds to the OMCOLLECT trigger by sending all buffered entries back to the T114 via RELAY| commands.',
+        '--- Configuring the RC node ---',
+        'Use OM Settings → MeshCore → Remote Manage to configure the T114: set name, position (lat/lon), advert intervals (local 2h, flood 13h recommended), and admin password. Radio parameters must match your mesh (SLO mesh: 869.618 MHz, BW 62.5, SF8, CR8).',
+        '--- Adding a collector to OM ---',
+        'Go to Settings → MeshCore → Remote Collectors. Search for the node by name or paste its pubkey prefix, add a label, and click Add collector. Use Set pos or Pick to set the collector position — this sends set lat/set lon commands to the RPTR and stores the position locally for heatmap use.',
+        '--- Triggering a collection ---',
+        'Press Collect in the collector row. OM sends an OMCOLLECT command to the RPTR over the mesh. The RPTR signals the RP2040 via serial, which responds with all buffered observations as RELAY| messages. The RPTR re-encrypts each one as a DM back to your OM radio. OM stores them automatically as passive observations.',
+        '--- Signal heatmap ---',
+        'Enable the Signal Heatmap in Map → Overlays → Data layers. OM plots a weather-radar style heat overlay on the map: each node heard by the collector appears at its known position, colored by signal strength (blue = weak, red = strong). Requires passive observations with known node positions (OBS|ADV type).'
+      ],
+      buttons: [
+        ['Collect', 'Trigger an observation dump from this remote collector. Sends OMCOLLECT to the RPTR over the mesh.'],
+        ['Neighbors', 'Request the neighbor list from the collector RPTR node.'],
+        ['Send (custom)', 'Send a custom remote admin command to the collector RPTR.'],
+        ['Pick', 'Pick the collector position on the map. Populates the lat/lon fields — press Set pos to send.'],
+        ['Set pos', 'Send set lat and set lon commands to the collector RPTR and save the position locally.'],
+        ['↻', 'Reload the signal heatmap from the latest passive observations.'],
+        ['Signal heatmap On/Off', 'Toggle the RSSI coverage heatmap layer on the map.']
+      ]
+    },
+    {
       title: 'Settings - App',
       tags: 'settings app appearance zoom accent notifications sounds offline maps gps update manual intro cache regions auth security login password',
       body: [
@@ -3702,14 +3746,18 @@ if (targetEl) {
         const count    = entries.length;
         const lastTs   = Math.max(...entries.map(o => o.ts || 0));
         const lastAgo  = lastTs ? senseTimeAgo(lastTs) : '?';
-        const rxEntries = entries.filter(o => o.obs_type === 'rx');
-        const trEntries = entries.filter(o => o.obs_type === 'trace');
-        const bestSnr  = rxEntries.reduce((m, o) => o.snr  != null && o.snr  > m ? o.snr  : m, -Infinity);
-        const bestRssi = rxEntries.reduce((m, o) => o.rssi != null && o.rssi > m ? o.rssi : m, -Infinity);
+        const signalEntries = entries.filter(o => ['rx', 'trace', 'rc_adv', 'rc_anon', 'rc_peer'].includes(o.obs_type));
+        const typeCounts = entries.reduce((acc, o) => {
+          const t = o.obs_type || 'obs';
+          acc[t] = (acc[t] || 0) + 1;
+          return acc;
+        }, {});
+        const bestSnr  = signalEntries.reduce((m, o) => o.snr  != null && o.snr  > m ? o.snr  : m, -Infinity);
+        const bestRssi = signalEntries.reduce((m, o) => o.rssi != null && o.rssi > m ? o.rssi : m, -Infinity);
         const snrStr   = isFinite(bestSnr)  ? `SNR ${bestSnr  > 0 ? '+' : ''}${bestSnr.toFixed(1)}` : '';
         const rssiStr  = isFinite(bestRssi) ? `RSSI ${bestRssi}` : '';
         const sigStr   = [snrStr, rssiStr].filter(Boolean).join(' · ');
-        const typeStr  = [rxEntries.length ? `${rxEntries.length} rx` : '', trEntries.length ? `${trEntries.length} trace` : ''].filter(Boolean).join(' · ');
+        const typeStr  = Object.entries(typeCounts).map(([type, n]) => `${n} ${type}`).join(' · ');
         // Show which radios heard this node only when multiple radios are connected
         const radioNames = multiRadio && seenByRids.size > 0
           ? [...seenByRids].map(rid => escHtml(mcLastStatus[rid]?.name || mcLastStatus[rid]?.node_name || rid.slice(-6))).join(', ')
@@ -3833,16 +3881,81 @@ if (targetEl) {
     el.innerHTML = collectors.map((c, i) => {
       const summary = rid ? (_mcPassiveSummaryFor(rid, c.key) || {}) : {};
       const obsNote = summary.obs_count ? ` · ${summary.obs_count} obs stored` : '';
-      return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);flex-wrap:wrap">
-        <span style="font-weight:600;font-size:12px">${escHtml(c.label || c.key)}</span>
-        <span style="font-family:monospace;font-size:11px;color:var(--muted)">${escHtml(c.key)}</span>
-        <span style="font-size:11px;color:var(--muted)">${escHtml(obsNote)}</span>
-        <div style="margin-left:auto;display:flex;gap:6px">
-          <button class="btn" style="font-size:11px;padding:2px 10px" onclick="collectFromNode('${jsSafe(c.key)}',this)" title="Send collect trigger to this node">Collect</button>
-          <button class="btn" style="font-size:11px;padding:2px 8px;color:var(--red);border-color:var(--red)" onclick="removePassiveCollector(${i})" title="Remove this collector">✕</button>
+      const ck = jsSafe(c.key);
+      const latVal = c.lat != null ? c.lat : '';
+      const lonVal = c.lon != null ? c.lon : '';
+      const posNote = c.lat != null ? `${Number(c.lat).toFixed(5)}, ${Number(c.lon).toFixed(5)}` : 'position not set';
+      return `<div style="padding:6px 0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-weight:600;font-size:12px">${escHtml(c.label || c.key)}</span>
+          <span style="font-family:monospace;font-size:11px;color:var(--muted)">${escHtml(c.key)}</span>
+          <span style="font-size:11px;color:var(--muted)">${escHtml(obsNote)}</span>
+          <button class="btn" style="margin-left:auto;font-size:11px;padding:2px 8px;color:var(--red);border-color:var(--red)" onclick="removePassiveCollector(${i})" title="Remove this collector">✕</button>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:5px">
+          <button class="btn" style="font-size:11px;padding:2px 10px" onclick="sendCollectorCommand('${ck}','OMCOLLECT',this)" title="Trigger observation dump from this collector">Collect</button>
+          <button class="btn" style="font-size:11px;padding:2px 10px" onclick="sendCollectorCommand('${ck}','neighbors',this)" title="Request neighbor list from this node">Neighbors</button>
+          <input id="collector-cmd-${ck}" class="settings-input" style="width:160px;font-size:11px;font-family:monospace" placeholder="custom command…">
+          <button class="btn" style="font-size:11px;padding:2px 10px" onclick="sendCollectorCustomCmd('${ck}',this)" title="Send custom command to this collector">Send</button>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:5px">
+          <span style="font-size:11px;color:var(--muted);white-space:nowrap">Position:</span>
+          <input id="collector-lat-${ck}" class="settings-input" type="number" step="0.000001" style="width:110px;font-size:11px;font-family:monospace" placeholder="lat" value="${escHtml(String(latVal))}">
+          <input id="collector-lon-${ck}" class="settings-input" type="number" step="0.000001" style="width:110px;font-size:11px;font-family:monospace" placeholder="lon" value="${escHtml(String(lonVal))}">
+          <button class="btn" style="font-size:11px;padding:2px 8px" onclick="startCollectorMapPick('${ck}',${i})" title="Pick position on the map">Pick on map</button>
+          <button class="btn" style="font-size:11px;padding:2px 10px" onclick="setCollectorPosition('${ck}',${i},this)" title="Send lat/lon to the collector node and save locally">Set pos</button>
+          <span style="font-size:11px;color:var(--muted)">${escHtml(posNote)}</span>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:5px">
+          <span style="font-size:11px;color:var(--muted);white-space:nowrap">Password:</span>
+          <input id="collector-pwd-${ck}" class="settings-input" type="password" style="width:140px;font-size:11px" placeholder="${_collectorPassword(ck) ? '(saved)' : 'not set'}" autocomplete="new-password">
+          <button class="btn" style="font-size:11px;padding:2px 8px" onclick="saveCollectorPwd('${ck}')" title="Save this password in browser storage (used for login before commands)">Save password</button>
+          <button class="btn" style="font-size:11px;padding:2px 8px" onclick="changeCollectorPwd('${ck}',this)" title="Login with saved password, then change the node password to what is typed above">Change password</button>
         </div>
       </div>`;
     }).join('');
+  }
+
+  function renderCollectorSearchResults() {
+    const searchEl  = document.getElementById('passive-collector-search');
+    const resultsEl = document.getElementById('passive-collector-search-results');
+    if (!searchEl || !resultsEl) return;
+    const q = searchEl.value.trim().toLowerCase();
+    if (!q) { resultsEl.style.display = 'none'; return; }
+    const existing = new Set(_loadCollectors().map(c => c.key));
+    const hits = [];
+    for (const contacts of Object.values(mcContacts)) {
+      for (const c of Object.values(contacts)) {
+        const displayName = c.long_name || c.name || c.adv_name || '';
+        const name = displayName.toLowerCase();
+        const key  = (c.full_key || c.id || '').toLowerCase();
+        if (!key || (!name.includes(q) && !key.includes(q))) continue;
+        if (hits.find(h => h.key === key)) continue;
+        hits.push({key, name: displayName || key.slice(0, 12), already: existing.has(key)});
+        if (hits.length >= 8) break;
+      }
+      if (hits.length >= 8) break;
+    }
+    if (!hits.length) { resultsEl.style.display = 'none'; return; }
+    resultsEl.innerHTML = hits.map(h => `
+      <div style="padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;opacity:${h.already ? 0.45 : 1}"
+           onclick="selectCollectorSearchResult('${jsSafe(h.key)}','${jsSafe(h.name)}')">
+        <span style="font-size:12px;font-weight:600;color:var(--text)">${escHtml(h.name)}</span>
+        <span style="font-family:monospace;font-size:11px;color:var(--muted)">${escHtml(h.key.slice(0,12))}</span>
+        ${h.already ? '<span style="font-size:11px;color:var(--muted);margin-left:auto">already added</span>' : ''}
+      </div>`).join('');
+    resultsEl.style.display = 'block';
+  }
+
+  function selectCollectorSearchResult(key, name) {
+    const keyEl   = document.getElementById('passive-collector-key');
+    const labelEl = document.getElementById('passive-collector-label');
+    const searchEl  = document.getElementById('passive-collector-search');
+    const resultsEl = document.getElementById('passive-collector-search-results');
+    if (keyEl)   keyEl.value   = key.slice(0, 12);
+    if (labelEl && !labelEl.value) labelEl.value = name;
+    if (searchEl)  searchEl.value  = '';
+    if (resultsEl) resultsEl.style.display = 'none';
   }
 
   function addPassiveCollector() {
@@ -3875,30 +3988,115 @@ if (targetEl) {
     renderPassiveCollectors();
   }
 
-  async function collectFromNode(pubkeyPre, btn) {
+  function _collectorPassword(pubkeyPre) {
+    try { return JSON.parse(localStorage.getItem(`rcPwd_${pubkeyPre}`) || 'null'); } catch { return null; }
+  }
+  function _saveCollectorPassword(pubkeyPre, pwd) {
+    if (pwd) localStorage.setItem(`rcPwd_${pubkeyPre}`, JSON.stringify(pwd));
+    else localStorage.removeItem(`rcPwd_${pubkeyPre}`);
+  }
+
+  async function _collectorLogin(rid, pubkeyPre, password) {
+    const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/remote/${encodeURIComponent(pubkeyPre)}/read`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({login: true, login_only: true, password}),
+    });
+    const d = await r.json();
+    return d.login?.ok === true;
+  }
+
+  function saveCollectorPwd(pubkeyPre) {
+    const inp = document.getElementById(`collector-pwd-${pubkeyPre}`);
+    const pwd = inp?.value?.trim() || '';
+    _saveCollectorPassword(pubkeyPre, pwd || null);
+    showToast('Remote Collector', pwd ? 'Password saved.' : 'Password cleared.', 'node');
+    renderPassiveCollectors();
+  }
+
+  async function changeCollectorPwd(pubkeyPre, btn) {
+    const inp = document.getElementById(`collector-pwd-${pubkeyPre}`);
+    const newPwd = inp?.value?.trim() || '';
+    if (!newPwd) { showToast('Remote Collector', 'Enter the new password first.', 'node'); return; }
+    await sendCollectorCommand(pubkeyPre, `password ${newPwd}`, btn);
+    _saveCollectorPassword(pubkeyPre, newPwd);
+    renderPassiveCollectors();
+  }
+
+  async function sendCollectorCommand(pubkeyPre, command, btn) {
     const rid = _passiveIntelRadioId();
-    if (!rid) { showToast('Passive Intel', 'No MC radio connected.', 'node'); return; }
-    const contact = findMcContactByKeyPrefix(pubkeyPre, rid);
-    const fullKey = contact?.full_key || contact?.id || pubkeyPre;
+    if (!rid) { showToast('Remote Collector', 'No MC radio connected.', 'node'); return; }
+    const origText = btn ? btn.textContent : command;
     if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
     try {
-      // Send the OMCOLLECT trigger as a DM to the collector node
-      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/send_dm`, {
+      // Login first if password is stored
+      const pwd = _collectorPassword(pubkeyPre);
+      if (pwd) {
+        const ok = await _collectorLogin(rid, pubkeyPre, pwd);
+        if (!ok) {
+          showToast('Remote Collector', 'Login failed — check saved password.', 'node');
+          return;
+        }
+      }
+      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/remote/${encodeURIComponent(pubkeyPre)}/command`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({pubkey: fullKey, text: 'OMCOLLECT'}),
+        body: JSON.stringify({command}),
       });
       const d = await r.json();
       if (r.ok && !d.error) {
-        showToast('Passive Intel', `Collect trigger sent to ${escHtml(pubkeyPre)}. Observations will arrive as messages.`, 'node');
+        const reply = d.reply?.text || d.reply || null;
+        showToast('Remote Collector', reply ? escHtml(reply) : `"${command}" sent to ${escHtml(pubkeyPre)}.`, 'node');
       } else {
-        showToast('Passive Intel', `Send failed: ${escHtml(d.error || 'unknown error')}`, 'node');
+        showToast('Remote Collector', `Failed: ${escHtml(d.error || 'unknown error')}`, 'node');
       }
     } catch (e) {
-      showToast('Passive Intel', `Error: ${escHtml(e.message)}`, 'node');
+      showToast('Remote Collector', `Error: ${escHtml(e.message)}`, 'node');
     } finally {
-      if (btn) { btn.disabled = false; btn.textContent = 'Collect'; }
+      if (btn) { btn.disabled = false; btn.textContent = origText; }
     }
+  }
+
+  async function sendCollectorCustomCmd(pubkeyPre, btn) {
+    const input = document.getElementById(`collector-cmd-${pubkeyPre}`);
+    const command = (input?.value || '').trim();
+    if (!command) { showToast('Remote Collector', 'Enter a command first.', 'node'); return; }
+    await sendCollectorCommand(pubkeyPre, command, btn);
+    if (input) input.value = '';
+  }
+
+  async function setCollectorPosition(pubkeyPre, idx, btn) {
+    const latEl = document.getElementById(`collector-lat-${pubkeyPre}`);
+    const lonEl = document.getElementById(`collector-lon-${pubkeyPre}`);
+    const lat = parseFloat(latEl?.value);
+    const lon = parseFloat(lonEl?.value);
+    if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+      showToast('Remote Collector', 'Enter valid lat/lon values.', 'node');
+      return;
+    }
+    const latStr = lat.toFixed(6);
+    const lonStr = lon.toFixed(6);
+    const origText = btn ? btn.textContent : 'Set pos';
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+    try {
+      await sendCollectorCommand(pubkeyPre, `set lat ${latStr}`, null);
+      await sendCollectorCommand(pubkeyPre, `set lon ${lonStr}`, null);
+      // Save locally
+      const collectors = _loadCollectors();
+      if (collectors[idx]) { collectors[idx].lat = lat; collectors[idx].lon = lon; }
+      _saveCollectors(collectors);
+      showToast('Remote Collector', `Position set: ${latStr}, ${lonStr}`, 'node');
+      renderPassiveCollectors();
+    } catch (e) {
+      showToast('Remote Collector', `Error: ${escHtml(e.message)}`, 'node');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = origText; }
+    }
+  }
+
+  // Keep legacy name callable from any older serialised HTML
+  async function collectFromNode(pubkeyPre, btn) {
+    return sendCollectorCommand(pubkeyPre, 'OMCOLLECT', btn);
   }
 
   function trTimerStart(updateFn) {
@@ -4171,9 +4369,11 @@ if (targetEl) {
     e.stopPropagation();
     document.getElementById('power-menu').classList.toggle('open');
   }
-  document.addEventListener('click', () => {
+  document.addEventListener('click', (e) => {
     document.getElementById('power-menu')?.classList.remove('open');
     document.getElementById('alerts-panel')?.classList.remove('open');
+    const sr = document.getElementById('passive-collector-search-results');
+    if (sr && !sr.contains(e.target) && e.target.id !== 'passive-collector-search') sr.style.display = 'none';
   });
 
   async function restartOverMeshNow(btn) {
@@ -4246,6 +4446,10 @@ if (targetEl) {
   let _mapLayerDraftLayer = null;
   let _mapLayerVertexMarkers = [];
   let _mapLayerSelectedVertex = -1;
+
+  // Signal heatmap
+  let _signalHeatmapLayer = null;
+  let _signalHeatmapEnabled = localStorage.getItem('signalHeatmapEnabled') === '1';
   let _geofenceStates = {};
 
   function _haversineMeters(lat1, lon1, lat2, lon2) {
@@ -6255,6 +6459,59 @@ if (targetEl) {
     }
   }
 
+  function toggleSignalHeatmap() {
+    _signalHeatmapEnabled = !_signalHeatmapEnabled;
+    localStorage.setItem('signalHeatmapEnabled', _signalHeatmapEnabled ? '1' : '0');
+    if (_signalHeatmapEnabled) {
+      _refreshSignalHeatmap();
+    } else {
+      _clearSignalHeatmap();
+    }
+    renderOverlayPanel();
+  }
+
+  function _clearSignalHeatmap() {
+    if (_signalHeatmapLayer && leafletMap) {
+      leafletMap.removeLayer(_signalHeatmapLayer);
+      _signalHeatmapLayer = null;
+    }
+  }
+
+  async function _refreshSignalHeatmap() {
+    if (!_signalHeatmapEnabled || !leafletMap) return;
+    const rid = _passiveIntelRadioId();
+    if (!rid) { showToast('Signal Heatmap', 'No MC radio selected in Passive Intel settings.', 'node'); return; }
+    try {
+      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/passive_obs?limit=500`);
+      if (!r.ok) return;
+      const obs = await r.json();
+      const points = [];
+      for (const o of obs) {
+        if (!o.pubkey_pre || o.rssi == null) continue;
+        const contact = findMcContactByKeyPrefix(o.pubkey_pre, rid);
+        const lat = contact?.latitude ?? contact?.lat;
+        const lon = contact?.longitude ?? contact?.lon;
+        if (!lat || !lon) continue;
+        // Normalize RSSI: -50 → 1.0, -120 → 0.0
+        const intensity = Math.max(0, Math.min(1, (o.rssi + 120) / 70));
+        points.push([lat, lon, intensity]);
+      }
+      _clearSignalHeatmap();
+      if (!points.length) {
+        showToast('Signal Heatmap', 'No observations with known positions yet.', 'node');
+        return;
+      }
+      _signalHeatmapLayer = L.heatLayer(points, {
+        radius: 40,
+        blur: 25,
+        maxZoom: 14,
+        gradient: {0.0: '#0000ff', 0.35: '#00ffff', 0.55: '#00ff00', 0.75: '#ffff00', 1.0: '#ff0000'},
+      }).addTo(leafletMap);
+    } catch (e) {
+      console.warn('Signal heatmap error:', e);
+    }
+  }
+
   function renderOverlayPanel() {
     const body = document.getElementById('overlay-panel-body');
     const count = document.getElementById('overlay-panel-count');
@@ -6270,6 +6527,19 @@ if (targetEl) {
     const gf = draft?.geofence || {enter: true, leave: true, notify_app: true, notify_browser: true, networks: 'both'};
     const tip = !editing ? 'Create simple overlays directly on the map.' : draft.mode === 'point' ? 'Click the map to place the point. Drag the handle to adjust it.' : draft.mode === 'line' ? 'Click to add vertices. Double-click to finish. Drag handles to refine the path.' : 'Click to add corners. Double-click to finish. Drag handles to refine the area.';
     body.innerHTML = `
+      <div style="padding:6px 10px;border-bottom:1px solid var(--border)">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);margin-bottom:5px">Data layers</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:3px 0">
+          <div>
+            <span style="font-size:12px;font-weight:600;color:var(--text)">Signal heatmap</span>
+            <span style="font-size:11px;color:var(--muted);margin-left:6px">RC passive obs · RSSI coverage</span>
+          </div>
+          <div style="display:flex;gap:5px;align-items:center">
+            <button class="btn" style="font-size:11px;padding:2px 8px" onclick="_refreshSignalHeatmap()" title="Reload heatmap from latest observations" ${_signalHeatmapEnabled ? '' : 'disabled'}>↻</button>
+            <button class="overlay-tool-btn ${_signalHeatmapEnabled ? 'active' : ''}" onclick="toggleSignalHeatmap()" title="Toggle signal strength heatmap on the map">${_signalHeatmapEnabled ? 'On' : 'Off'}</button>
+          </div>
+        </div>
+      </div>
       <div style="padding:8px 10px;display:grid;gap:8px">
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           <button class="overlay-tool-btn ${draft?.mode === 'point' ? 'active' : ''}" onclick="startMapLayerDraft('point')">Point</button>
@@ -6618,6 +6888,17 @@ if (targetEl) {
         if (lonEl) lonEl.value = lon.toFixed(6);
         const out = document.getElementById('mc-remote-quick-result');
         if (out) out.innerHTML = `<span style="color:var(--accent)">Position set to ${lat.toFixed(5)}, ${lon.toFixed(5)}. Press Set to send it to the RPTR.</span>`;
+      } else if (_mapPickMode === 'rc-collector') {
+        const target = _collectorPickTarget;
+        cancelMapPick();
+        if (target) {
+          const latEl = document.getElementById(`collector-lat-${target.pubkeyPre}`);
+          const lonEl = document.getElementById(`collector-lon-${target.pubkeyPre}`);
+          if (latEl) latEl.value = lat.toFixed(6);
+          if (lonEl) lonEl.value = lon.toFixed(6);
+          const statEl = document.getElementById('passive-collector-status');
+          if (statEl) statEl.textContent = `Position picked: ${lat.toFixed(5)}, ${lon.toFixed(5)} — press Set pos to send.`;
+        }
       } else {
         document.getElementById('node-cfg-fixed-lat').value = lat.toFixed(6);
         document.getElementById('node-cfg-fixed-lon').value = lon.toFixed(6);
@@ -6786,6 +7067,7 @@ if (targetEl) {
     loadMapLayers({silent: true});
     renderMapOverlays();
     renderOverlayPanel();
+    if (_signalHeatmapEnabled) _refreshSignalHeatmap();
     try {
       if (localStorage.getItem('overlayPanelCollapsed') === '0') {
         const body = document.getElementById('overlay-panel-body');
@@ -17049,6 +17331,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   }
 
   let _mapPickMode = false;
+  let _collectorPickTarget = null;
 
   let _mapPickEscHandler = null;
 
@@ -17086,6 +17369,18 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     document.addEventListener('keydown', _mapPickEscHandler);
   }
 
+  function startCollectorMapPick(pubkeyPre, idx) {
+    _collectorPickTarget = {pubkeyPre, idx};
+    _mapPickMode = 'rc-collector';
+    switchTab('map');
+    document.getElementById('map-pick-banner').textContent = 'Click on the map to set collector position';
+    document.getElementById('map-pick-banner').style.display = 'block';
+    document.getElementById('map-pick-cancel').style.display = 'block';
+    document.body.classList.add('map-pick-mode');
+    _mapPickEscHandler = e => { if (e.key === 'Escape') cancelMapPick(); };
+    document.addEventListener('keydown', _mapPickEscHandler);
+  }
+
   function cancelMapPick(opts = {}) {
     const mode = _mapPickMode;
     _mapPickMode = false;
@@ -17095,6 +17390,11 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     if (_mapPickEscHandler) { document.removeEventListener('keydown', _mapPickEscHandler); _mapPickEscHandler = null; }
     if (mode === 'mc-remote') {
       if (!opts.keepTab) openMcRemoteManage(_mcRemoteManage?.pubkeyPrefix || '', _mcRemoteManage?.radioId || '', _mcRemoteManage?.name || '');
+      return;
+    }
+    if (mode === 'rc-collector') {
+      switchTab('settings');
+      switchSettingsTab('mc');
       return;
     }
     switchTab('settings');

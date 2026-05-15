@@ -44,8 +44,19 @@ def _get_collector_latlon(config_id, sender_prefix):
     prefix = sender_prefix.lower()
     for key, contact in contacts.items():
         if str(key).lower().startswith(prefix):
-            return contact.get("adv_lat") or None, contact.get("adv_lon") or None
+            return contact.get("adv_lat"), contact.get("adv_lon")
     return None, None
+
+
+def _rc_observed_ts(ts_s):
+    """Use collector timestamps only when they look like Unix time."""
+    try:
+        ts = int(float(ts_s))
+    except (TypeError, ValueError):
+        return None
+    if 1_600_000_000 <= ts <= int(time.time()) + 86400:
+        return ts
+    return None
 
 
 def _handle_rc_collector_line(config_id, sender_prefix, text):
@@ -79,17 +90,27 @@ def _handle_rc_collector_line(config_id, sender_prefix, text):
             log.warning(f"[RC] Bad RSSI/SNR in OBS line from {sender_prefix}: {text}")
             return
 
+        obs_type_norm = obs_type.strip().upper()
+        identity_types = {"ADV": "rc_adv", "ANON": "rc_anon", "PEER": "rc_peer"}
+        om_obs_type = identity_types.get(obs_type_norm)
+        if not om_obs_type:
+            log.debug(f"[RC] Ignoring non-identity OBS type from {sender_prefix}: {obs_type_norm}")
+            return
+        if len(node_id.strip()) < 8:
+            log.warning(f"[RC] Ignoring OBS with invalid node identity from {sender_prefix}: {text}")
+            return
+
         state = _rc_collector_state.get(state_key, {})
         collector_id = state.get("collector_id", sender_prefix)
         collector_lat, collector_lon = _get_collector_latlon(config_id, sender_prefix)
 
-        om_obs_type = "rc_adv" if obs_type == "ADV" else "rc_rx"
         save_passive_obs(
-            config_id, node_id, om_obs_type,
+            config_id, node_id.strip().lower(), om_obs_type,
             rssi=rssi, snr=snr,
             collector_id=collector_id,
             collector_lat=collector_lat,
             collector_lon=collector_lon,
+            observed_ts=_rc_observed_ts(parts[5]),
         )
         log.debug(f"[RC] Saved {om_obs_type} obs: {node_id[:12]} rssi={rssi} snr={snr} collector={collector_id}")
 
@@ -2676,7 +2697,7 @@ async def _remote_best_effort(label, func):
         return {"ok": False, "error": str(e)}
 
 
-async def _remote_read_async(config_id, pubkey_prefix, password=None, do_login=False):
+async def _remote_read_async(config_id, pubkey_prefix, password=None, do_login=False, login_only=False):
     mc, _ = _get_mc(config_id)
     with mc_connections_lock:
         contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
@@ -2690,7 +2711,7 @@ async def _remote_read_async(config_id, pubkey_prefix, password=None, do_login=F
     if do_login:
         login = await _remote_login_async(mc, full_key, password or "")
         result["login"] = login
-        if not login.get("ok"):
+        if login_only or not login.get("ok"):
             return result
 
     result["basic"] = await _remote_best_effort(
@@ -2734,6 +2755,7 @@ def _validate_remote_admin_command(command):
         "advert",
         "advert.zerohop",
         "neighbors",
+        "omcollect",
         "discover.neighbors",
         "get name",
         "get radio",
@@ -2765,6 +2787,7 @@ def _validate_remote_admin_command(command):
         "set name ",
         "set lat ",
         "set lon ",
+        "password ",
         "set tx ",
         "set radio ",
         "set radio.rxgain ",
@@ -3029,10 +3052,16 @@ def req_node_status(config_id, pubkey_prefix, timeout=30, prime_trace=False):
     return run_mc(_req_status_async(config_id, pubkey_prefix, prime_trace=prime_trace), timeout=timeout)
 
 
-def remote_repeater_read(config_id, pubkey_prefix, password=None, login=False, timeout=75):
+def remote_repeater_read(config_id, pubkey_prefix, password=None, login=False, login_only=False, timeout=75):
     _ensure_mc_tx_allowed("MC remote repeater read")
     return run_mc(
-        _remote_read_async(config_id, pubkey_prefix, password=password, do_login=login),
+        _remote_read_async(
+            config_id,
+            pubkey_prefix,
+            password=password,
+            do_login=login,
+            login_only=login_only,
+        ),
         timeout=timeout,
     )
 

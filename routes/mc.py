@@ -642,8 +642,12 @@ def api_mc_remote_read(radio_id, node_id):
     data = request.get_json(silent=True) or {}
     password = data.get("password")
     login = bool(data.get("login"))
+    login_only = bool(data.get("login_only"))
     try:
-        return jsonify(remote_repeater_read(radio_id, node_id, password=password, login=login))
+        kwargs = {"password": password, "login": login}
+        if login_only:
+            kwargs["login_only"] = True
+        return jsonify(remote_repeater_read(radio_id, node_id, **kwargs))
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     except RuntimeError as e:

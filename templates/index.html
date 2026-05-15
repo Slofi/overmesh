@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}?v={{ version }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='leaflet/leaflet.css') }}">
   <script src="{{ url_for('static', filename='leaflet/leaflet.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/leaflet-heat.js') }}"></script>
   <link rel="icon" type="image/png" href="/static/favicon.png?v=2">
 </head>
 <body>
@@ -1425,13 +1426,18 @@
 
       <!-- Collectors subsection -->
       <h2 class="settings-title" style="margin-top:20px">Remote Collectors
-        <span style="font-size:11px;font-weight:normal;color:var(--muted);margin-left:6px">— pull intel from solar/remote nodes over the mesh</span>
+        <span style="font-size:11px;font-weight:normal;color:var(--muted);margin-left:6px">— your remote RPTRs collecting passive RF intel over the mesh</span>
       </h2>
       <p style="font-size:12px;color:var(--muted);margin:0 0 10px">
-        A configured collector node passively accumulates observations in its local flash buffer. Press <b>Collect</b> to trigger a dump — it sends its buffer to this MC radio as batched messages which OM stores automatically.
+        A Remote Collector is your own MeshCore RPTR running custom firmware, deployed at a remote vantage point (hilltop, solar-powered). It passively logs every node it hears — adverts with full identity and RSSI/SNR, plus anonymous packet activity for coverage mapping — into a local buffer. Press <b>Collect</b> to trigger a delivery: the collector sends its buffer back to your OM instance as encrypted mesh DMs, which OM stores automatically as passive observations.
       </p>
       <div id="passive-collectors-list" style="margin-bottom:10px">
         <div style="color:var(--muted);font-size:12px">No collectors configured.</div>
+      </div>
+      <div style="margin-bottom:8px;position:relative">
+        <label class="settings-label">Search known nodes</label>
+        <input id="passive-collector-search" class="settings-input" style="width:280px" placeholder="Name or pubkey…" oninput="renderCollectorSearchResults()" autocomplete="off">
+        <div id="passive-collector-search-results" style="display:none;position:absolute;z-index:200;background:var(--bg2);border:1px solid var(--border);border-radius:6px;width:320px;max-height:180px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,0.3);margin-top:2px"></div>
       </div>
       <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:6px">
         <div>

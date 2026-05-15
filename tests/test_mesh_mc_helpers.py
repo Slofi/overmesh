@@ -676,6 +676,31 @@ class MeshMcPathHelperTests(unittest.TestCase):
         self.assertEqual(mesh_mc._validate_remote_admin_command("set advert.interval 60"), "set advert.interval 60")
         self.assertEqual(mesh_mc._validate_remote_admin_command("set flood.advert.interval 12"), "set flood.advert.interval 12")
         self.assertEqual(mesh_mc._validate_remote_admin_command("set loop.detect minimal"), "set loop.detect minimal")
+        self.assertEqual(mesh_mc._validate_remote_admin_command("OMCOLLECT"), "OMCOLLECT")
+
+    def test_rc_collector_import_stores_identity_obs_only(self):
+        with mc_connections_lock:
+            mc_connections["mc1"] = {
+                "contacts": {
+                    "abc123000000": {"adv_lat": 0.0, "adv_lon": 14.5},
+                }
+            }
+
+        with mock.patch.object(mesh_mc, "save_passive_obs") as save_mock:
+            mesh_mc._handle_rc_collector_line("mc1", "abc123", "OMCOLLECT_START|RC1|2")
+            mesh_mc._handle_rc_collector_line("mc1", "abc123", "OBS|ADV|deadbeefcaf0|-72|8.25|1778157541")
+            mesh_mc._handle_rc_collector_line("mc1", "abc123", "OBS|RX|3a7f|-85|4.50|1778157602")
+            mesh_mc._handle_rc_collector_line("mc1", "abc123", "OMCOLLECT_END")
+
+        save_mock.assert_called_once()
+        args, kwargs = save_mock.call_args
+        self.assertEqual(args[:3], ("mc1", "deadbeefcaf0", "rc_adv"))
+        self.assertEqual(kwargs["rssi"], -72)
+        self.assertEqual(kwargs["snr"], 8.25)
+        self.assertEqual(kwargs["collector_id"], "RC1")
+        self.assertEqual(kwargs["collector_lat"], 0.0)
+        self.assertEqual(kwargs["collector_lon"], 14.5)
+        self.assertEqual(kwargs["observed_ts"], 1778157541)
 
     def test_remote_admin_command_allowlist_rejects_unknown_commands(self):
         with self.assertRaises(ValueError):
@@ -697,6 +722,27 @@ class MeshMcPathHelperTests(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.get_json()["target"], "abcdef")
         read_mock.assert_called_once_with("mc1", "abcdef123456", password="secret", login=True)
+
+    def test_api_mc_remote_read_can_request_login_only(self):
+        app = Flask(__name__)
+        app.register_blueprint(mc_routes.bp)
+        client = app.test_client()
+
+        with mock.patch.object(mc_routes, "remote_repeater_read", return_value={"ok": True, "target": "abcdef"}) as read_mock:
+            res = client.post("/api/mc/mc1/remote/abcdef123456/read", json={
+                "login": True,
+                "login_only": True,
+                "password": "secret",
+            })
+
+        self.assertEqual(res.status_code, 200)
+        read_mock.assert_called_once_with(
+            "mc1",
+            "abcdef123456",
+            password="secret",
+            login=True,
+            login_only=True,
+        )
 
     def test_api_mc_remote_command_maps_validation_errors_to_400(self):
         app = Flask(__name__)

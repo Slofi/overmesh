@@ -147,8 +147,8 @@ def save_passive_obs(radio_id, pubkey_pre, obs_type, rssi=None, snr=None,
                      path_len=None, path=None, path_hash_size=None,
                      payload_type=None, route_type=None, lat=None, lon=None,
                      collector_id=None, collector_lat=None, collector_lon=None,
-                     max_per_contact=50):
-    ts = int(time.time())
+                     max_per_contact=50, observed_ts=None):
+    ts = int(observed_ts) if observed_ts is not None else int(time.time())
     with get_mc_passive_db(radio_id) as conn:
         c = conn.cursor()
         c.execute(

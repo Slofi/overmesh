@@ -14460,6 +14460,12 @@ if (targetEl) {
             <button class="btn" onclick="mcRemoteReadChannels()" title="Read channel list from RPTR" style="padding:0 9px;font-size:14px">↻</button>
           </div>
           <div id="mc-remote-channels-list" style="font-size:12px;color:var(--muted);margin-bottom:8px">No cache yet.</div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+            <select id="mc-remote-ch-copy-src" class="settings-select" style="width:200px">
+              <option value="">— Copy from OM channel —</option>
+            </select>
+            <button class="btn" onclick="mcRemoteLoadOmChannel()" title="Pre-fill name and key from selected OM channel">Load</button>
+          </div>
           <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
             <select id="mc-remote-ch-idx" class="settings-select" style="width:70px">
               ${[0,1,2,3,4,5,6,7].map(i => `<option value="${i}">Slot ${i}</option>`).join('')}
@@ -14700,6 +14706,57 @@ if (targetEl) {
     }
   }
 
+  function _hexToBase64(hex) {
+    const bytes = (hex.match(/.{1,2}/g) || []).map(b => parseInt(b, 16));
+    return btoa(String.fromCharCode(...bytes));
+  }
+
+  async function _mcRemoteLoadOmChannelList() {
+    if (!_mcRemoteManage) return;
+    const sel = document.getElementById('mc-remote-ch-copy-src');
+    if (!sel) return;
+    try {
+      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(_mcRemoteManage.radioId)}/channels`);
+      if (!r.ok) return;
+      const d = await r.json();
+      const channels = d.channels || [];
+      while (sel.options.length > 1) sel.remove(1);
+      for (const ch of channels) {
+        if (!ch.name) continue;
+        const opt = document.createElement('option');
+        opt.value = `${_mcRemoteManage.radioId}:${ch.idx}`;
+        opt.textContent = `${ch.idx}: ${ch.name}`;
+        sel.appendChild(opt);
+      }
+    } catch(e) { /* silently fail — not critical */ }
+  }
+
+  async function mcRemoteLoadOmChannel() {
+    if (!_mcRemoteManage) return;
+    const sel = document.getElementById('mc-remote-ch-copy-src');
+    const out = document.getElementById('mc-remote-quick-result');
+    if (!sel?.value) {
+      if (out) out.innerHTML = '<span style="color:var(--red)">Select an OM channel first</span>';
+      return;
+    }
+    const [radioId, idx] = sel.value.split(':');
+    if (out) out.textContent = 'Loading channel from OM…';
+    try {
+      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/channels/${idx}/share`);
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.error || 'Failed to get channel');
+      const secretHex = d.details?.secret_hex || '';
+      if (!secretHex) throw new Error('Channel key not available');
+      const nameEl = document.getElementById('mc-remote-ch-name');
+      const keyEl = document.getElementById('mc-remote-ch-key');
+      if (nameEl) nameEl.value = d.details?.name || '';
+      if (keyEl) keyEl.value = _hexToBase64(secretHex);
+      if (out) out.innerHTML = `<span style="color:var(--green)">Loaded "${escHtml(d.details?.name || '')}" — select slot and hit Set channel</span>`;
+    } catch(e) {
+      if (out) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
+    }
+  }
+
   function openMcRemoteManage(pubkeyPrefix, radioId, name) {
     _mcRemoteManage = { pubkeyPrefix, radioId, name: name || pubkeyPrefix };
     const title = document.getElementById('modal-title');
@@ -14773,6 +14830,7 @@ if (targetEl) {
     if (pwEl && savedPassword) pwEl.value = savedPassword;
     if (rememberEl) rememberEl.checked = !!savedPassword;
     _mcRemotePrefillFromCache();
+    _mcRemoteLoadOmChannelList();
     document.getElementById('action-modal').classList.add('open');
   }
 

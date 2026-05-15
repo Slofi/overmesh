@@ -2778,6 +2778,28 @@ def _mc_event_payload(event):
     return dict(getattr(event, "payload", {}) or {})
 
 
+def _remote_cli_reply_text(reply):
+    if isinstance(reply, dict):
+        return str(reply.get("text") or reply.get("message") or "").strip()
+    if reply is None:
+        return ""
+    return str(reply).strip()
+
+
+def _remote_cli_reply_is_error(reply):
+    text = _remote_cli_reply_text(reply).lower()
+    return text.startswith((
+        "error",
+        "err:",
+        "invalid",
+        "usage",
+        "can't",
+        "cannot",
+        "bad ",
+        "unknown command",
+    ))
+
+
 async def _remote_login_async(mc, full_key, password, timeout=12):
     dispatcher = getattr(mc.commands, "dispatcher", None)
     if dispatcher is None:
@@ -2992,11 +3014,13 @@ async def _remote_command_async(config_id, pubkey_prefix, command):
                     reply = _mc_event_payload(reply_event)
             except Exception:
                 reply = None
+        reply_error = _remote_cli_reply_is_error(reply)
         return {
-            "ok": True,
+            "ok": not reply_error,
             "command": cmd,
             "sent": _mc_event_type_name(sent),
             "reply": reply,
+            "reply_error": reply_error,
             "note": None if reply else "Command sent. No immediate text reply was received.",
         }
     finally:

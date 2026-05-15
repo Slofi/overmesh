@@ -4068,7 +4068,12 @@ if (targetEl) {
     if (!newPwd) { showToast('Remote Collector', 'Enter the new password first.', 'node'); return; }
     const oldPwd = _collectorPassword(pubkeyPre) || '';
     if (!oldPwd) { showToast('Remote Collector', 'No saved password to authenticate with — save current password first.', 'node'); return; }
-    await sendCollectorCommand(pubkeyPre, `password ${oldPwd} ${newPwd}`, btn);
+    const result = await sendCollectorCommand(pubkeyPre, `password ${oldPwd} ${newPwd}`, btn);
+    const reply = (result?.reply?.text || result?.reply || '').toString().toLowerCase();
+    if (!reply.includes('password now')) {
+      showToast('Remote Collector', 'Password change was not confirmed by the node.', 'node');
+      return;
+    }
     _saveCollectorPassword(pubkeyPre, newPwd);
     renderPassiveCollectors();
   }
@@ -4173,7 +4178,7 @@ if (targetEl) {
 
   async function sendCollectorCommand(pubkeyPre, command, btn) {
     const rid = _passiveIntelRadioId();
-    if (!rid) { showToast('Remote Collector', 'No MC radio connected.', 'node'); return; }
+    if (!rid) { showToast('Remote Collector', 'No MC radio connected.', 'node'); throw new Error('No MC radio connected'); }
     const origText = btn ? btn.textContent : command;
     if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
     try {
@@ -4183,7 +4188,7 @@ if (targetEl) {
         const ok = await _collectorLogin(rid, pubkeyPre, pwd);
         if (!ok) {
           showToast('Remote Collector', 'Login failed — check saved password.', 'node');
-          return;
+          throw new Error('Login failed');
         }
       }
       const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/remote/${encodeURIComponent(pubkeyPre)}/command`, {
@@ -4192,14 +4197,21 @@ if (targetEl) {
         body: JSON.stringify({command}),
       });
       const d = await r.json();
-      if (r.ok && !d.error) {
+      if (r.ok && !d.error && d.ok !== false && !d.reply_error) {
         const reply = d.reply?.text || d.reply || null;
         showToast('Remote Collector', reply ? escHtml(reply) : `"${command}" sent to ${escHtml(pubkeyPre)}.`, 'node');
+        return d;
       } else {
-        showToast('Remote Collector', `Failed: ${escHtml(d.error || 'unknown error')}`, 'node');
+        const reply = d.reply?.text || d.reply || '';
+        const msg = d.error || reply || 'unknown error';
+        showToast('Remote Collector', `Failed: ${escHtml(msg)}`, 'node');
+        const err = new Error(msg);
+        err.toastShown = true;
+        throw err;
       }
     } catch (e) {
-      showToast('Remote Collector', `Error: ${escHtml(e.message)}`, 'node');
+      if (!e.toastShown) showToast('Remote Collector', `Error: ${escHtml(e.message)}`, 'node');
+      throw e;
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = origText; }
     }
@@ -15072,7 +15084,7 @@ if (targetEl) {
         body: JSON.stringify({command}),
       });
       const d = await r.json();
-      if (!r.ok) throw new Error(d.error || r.status);
+      if (!r.ok || d.ok === false || d.reply_error) throw new Error(d.error || d.reply?.text || r.status);
       const reply = d.reply?.text ? `<div style="margin-top:6px;color:var(--text)">${escHtml(d.reply.text)}</div>` : '';
       if (out && !opts.silentError) out.innerHTML = `<span style="color:var(--green)">Sent: ${escHtml(d.command || command)}</span>${reply}${d.note ? `<div style="margin-top:4px">${escHtml(d.note)}</div>` : ''}`;
       return d;

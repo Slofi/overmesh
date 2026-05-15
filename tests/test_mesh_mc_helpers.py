@@ -708,6 +708,13 @@ class MeshMcPathHelperTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             mesh_mc._validate_remote_admin_command("set prv.key abc")
 
+    def test_remote_cli_reply_error_detection(self):
+        self.assertTrue(mesh_mc._remote_cli_reply_is_error({"text": "Error: wrong password"}))
+        self.assertTrue(mesh_mc._remote_cli_reply_is_error({"text": "ERR: bad value"}))
+        self.assertTrue(mesh_mc._remote_cli_reply_is_error({"text": "can't find custom var"}))
+        self.assertFalse(mesh_mc._remote_cli_reply_is_error({"text": "OK"}))
+        self.assertFalse(mesh_mc._remote_cli_reply_is_error({"text": "password now: secret"}))
+
     def test_api_mc_remote_read_calls_backend_helper(self):
         app = Flask(__name__)
         app.register_blueprint(mc_routes.bp)

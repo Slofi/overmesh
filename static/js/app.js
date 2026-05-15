@@ -14725,11 +14725,14 @@ if (targetEl) {
           <input id="mc-remote-remember-password" type="checkbox">
           Remember
         </label>
+        <button class="btn btn-net-mc" onclick="mcRemoteRead(true, true)" title="Authenticate only — no status read. Use ↻ or Read all afterwards.">Login</button>
         <button class="btn btn-net-mc" onclick="mcRemoteRead(true)">Login + Read</button>
-        <button class="btn" onclick="mcRemoteRead(false)">Read Only</button>
+        <button class="btn" onclick="mcRemoteRead(false)" title="Read RPTR status without a password — only works if the repeater allows guest access.">Guest Read</button>
       </div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:12px">
-        Guest access is read-only when the repeater allows it. Admin unlocks remote CLI commands after the repeater accepts the password.
+        <b>Login</b> — authenticates only, fast. Use ↻ buttons or Read all to fetch settings after.
+        <b>Login + Read</b> — authenticates and loads full status + settings.
+        <b>Guest Read</b> — no password, only works if the repeater allows public access.
       </div>
       <div id="mc-remote-result" style="font-size:12px;color:var(--muted);margin-bottom:14px">Not connected.</div>
       ${_mcRemoteQuickSettingsHtml()}
@@ -14773,27 +14776,37 @@ if (targetEl) {
     document.getElementById('action-modal').classList.add('open');
   }
 
-  async function mcRemoteRead(login) {
+  async function mcRemoteRead(login, loginOnly = false) {
     if (!_mcRemoteManage) return;
     const out = document.getElementById('mc-remote-result');
-    if (out) out.textContent = login ? 'Logging in…' : 'Reading…';
+    if (out) out.textContent = loginOnly ? 'Logging in…' : login ? 'Logging in and reading…' : 'Reading (guest)…';
     const password = document.getElementById('mc-remote-password')?.value || '';
     const remember = !!document.getElementById('mc-remote-remember-password')?.checked;
     const passwordKey = _mcRemotePasswordKey(_mcRemoteManage.pubkeyPrefix, _mcRemoteManage.radioId);
     if (login && !remember) localStorage.removeItem(passwordKey);
     try {
+      const body = {login, password};
+      if (loginOnly) body.login_only = true;
       const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(_mcRemoteManage.radioId)}/remote/${encodeURIComponent(_mcRemoteManage.pubkeyPrefix)}/read`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({login, password}),
+        body: JSON.stringify(body),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || r.status);
       if (login && d.login?.ok) {
         if (remember && password) localStorage.setItem(passwordKey, password);
+        if (out) out.innerHTML = loginOnly
+          ? `<span style="color:var(--green)">Logged in${d.login.is_admin ? ' · admin' : ''} — use ↻ or Read all for settings.</span>`
+          : '';
+      } else if (login && !d.login?.ok) {
+        if (out) out.innerHTML = `<span style="color:var(--red)">Login failed.</span>`;
+        return;
       }
-      _mcRemoteRenderResult(d);
-      if (login && d.login?.ok) mcRemoteReadAll();
+      if (!loginOnly) {
+        _mcRemoteRenderResult(d);
+        if (login && d.login?.ok) mcRemoteReadAll();
+      }
     } catch (e) {
       if (out) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
     }

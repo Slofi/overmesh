@@ -219,6 +219,16 @@ def delete_passive_obs(radio_id, pubkey_pre=None):
             c.execute('DELETE FROM passive_obs')
 
 
+def count_passive_obs_by_collector(radio_id):
+    """Return {collector_id: count} for all collectors."""
+    with get_mc_passive_db(radio_id) as conn:
+        c = conn.cursor()
+        c.execute(
+            'SELECT collector_id, COUNT(*) FROM passive_obs GROUP BY collector_id'
+        )
+        return {row[0]: row[1] for row in c.fetchall()}
+
+
 def cleanup_passive_obs(radio_id, ttl_days=30):
     cutoff = int(time.time()) - ttl_days * 86400
     with get_mc_passive_db(radio_id) as conn:

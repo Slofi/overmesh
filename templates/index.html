@@ -1431,6 +1431,18 @@
       <p style="font-size:12px;color:var(--muted);margin:0 0 10px">
         A Remote Collector is your own MeshCore RPTR running custom firmware, deployed at a remote vantage point (hilltop, solar-powered). It passively logs every node it hears — adverts with full identity and RSSI/SNR, plus anonymous packet activity for coverage mapping — into a local buffer. Press <b>Collect</b> to trigger a delivery: the collector sends its buffer back to your OM instance as encrypted mesh DMs, which OM stores automatically as passive observations.
       </p>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+        <label style="font-size:12px;color:var(--muted)">Auto-collect every</label>
+        <select id="rc-auto-collect-interval" class="settings-select" style="font-size:12px" onchange="setRcAutoCollect(this.value)">
+          <option value="0">Off</option>
+          <option value="30">30 min</option>
+          <option value="60">1 hr</option>
+          <option value="120">2 hr</option>
+          <option value="240">4 hr</option>
+          <option value="480">8 hr</option>
+        </select>
+        <span id="rc-auto-collect-status" style="font-size:11px;color:var(--muted)"></span>
+      </div>
       <div id="passive-collectors-list" style="margin-bottom:10px">
         <div style="color:var(--muted);font-size:12px">No collectors configured.</div>
       </div>
@@ -1646,6 +1658,18 @@
         <div style="display:flex;align-items:center;gap:12px">
           <label class="bot-toggle"><input type="checkbox" id="alert-log-radio" onchange="saveAlertLogPrefs()"><span class="bot-toggle-slider"></span></label>
           <span style="font-size:13px">Radio connected / disconnected</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <label class="bot-toggle"><input type="checkbox" id="alert-log-rc-obs" onchange="saveAlertLogPrefs()"><span class="bot-toggle-slider"></span></label>
+          <span style="font-size:13px">RC collector obs count</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <label class="bot-toggle"><input type="checkbox" id="alert-log-rc-collect" onchange="saveAlertLogPrefs()"><span class="bot-toggle-slider"></span></label>
+          <span style="font-size:13px">RC collect summary (auto)</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <label class="bot-toggle"><input type="checkbox" id="alert-log-rc-new-node" onchange="saveAlertLogPrefs()"><span class="bot-toggle-slider"></span></label>
+          <span style="font-size:13px">RC new node detected</span>
         </div>
       </div>
 

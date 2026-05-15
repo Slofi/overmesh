@@ -26,10 +26,12 @@ from mesh_mc import (send_chan_msg, send_dm, send_advert, refresh_contacts,
                      send_trace_broadcast, import_mc_contact, enable_mc_debug,
                      get_mc_contact_archive,
                      set_contact_path, reset_all_paths, remote_repeater_read,
-                     remote_repeater_command, clear_mc_all_contacts)
+                     remote_repeater_command, clear_mc_all_contacts,
+                     get_rc_collect_events)
 from db import (
     delete_mc_channel_messages,
     delete_mc_all_messages,
+    count_passive_obs_by_collector,
     delete_passive_obs,
     cleanup_passive_obs,
     get_mc_ignored,
@@ -1187,6 +1189,27 @@ def api_mc_passive_obs(radio_id):
     except Exception as e:
         log.warning(f"[MC] passive_obs load error: {e}")
         return jsonify([])
+
+
+@bp.route("/api/mc/<radio_id>/rc_collect_events")
+def api_mc_rc_collect_events(radio_id):
+    """Return RC collect summaries newer than ?since=<unix_ts>."""
+    try:
+        since = float(request.args.get("since", 0))
+        return jsonify(get_rc_collect_events(radio_id, since))
+    except Exception as e:
+        log.warning(f"[MC] rc_collect_events error: {e}")
+        return jsonify([]), 500
+
+
+@bp.route("/api/mc/<radio_id>/passive_obs/collector_stats")
+def api_mc_passive_obs_collector_stats(radio_id):
+    """Return obs count per collector_id: {collector_id: count}."""
+    try:
+        return jsonify(count_passive_obs_by_collector(radio_id))
+    except Exception as e:
+        log.warning(f"[MC] passive_obs collector_stats error: {e}")
+        return jsonify({}), 500
 
 
 @bp.route("/api/mc/<radio_id>/passive_obs/summary")

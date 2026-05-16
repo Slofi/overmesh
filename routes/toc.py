@@ -9,7 +9,7 @@ from db import get_prefs_db
 
 bp = Blueprint('toc', __name__)
 
-VALID_CATEGORIES = {'NOTE', 'SITREP', 'ALERT', 'ACTION', 'COMMS', 'CONTACT', 'POSITION', 'INTEL'}
+VALID_CATEGORIES = {'NOTE', 'PLAN', 'SITREP', 'ALERT', 'ACTION', 'COMMS', 'CONTACT', 'POSITION', 'INTEL'}
 _TXT_ENTRY_RE = re.compile(
     r'^\[(?P<dt>\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?Z?)\] \[(?P<cat>[A-Z]+)\]\n(?P<body>.*?)(?=\n\n\[\d{4}-\d{2}-\d{2} |\Z)',
     re.S | re.M,

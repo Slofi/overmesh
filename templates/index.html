@@ -638,19 +638,27 @@
   <!-- ── TOC Log panel ── -->
   <div class="panel" id="panel-log">
     <div class="toolbar">
-      <span class="section-title">TOC Log</span>
+      <span class="section-title">Log</span>
+      <div class="view-toggle" style="margin-left:4px">
+        <button class="btn active" id="log-subtab-toc-btn" onclick="setLogSubtab('toc')" title="Open the TOC log entry view">TOC</button>
+        <button class="btn" id="log-subtab-sop-btn" onclick="setLogSubtab('sop')" title="Open the Log SOP reference">SOP</button>
+      </div>
       <div class="toolbar-spacer"></div>
-      <input id="toc-import-file" type="file" accept=".json,.txt,application/json,text/plain" onchange="tocImportFile(this)" style="display:none">
-      <button class="btn" onclick="document.getElementById('toc-import-file').click()" title="Import a previously exported TOC JSON or TXT file">Import</button>
-      <button class="btn" onclick="tocExport('text')" title="Export log as plain text">Export TXT</button>
-      <button class="btn" onclick="tocExport('json')" title="Export log as JSON" style="margin-left:4px">Export JSON</button>
+      <div id="toc-toolbar-actions" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input id="toc-import-file" type="file" accept=".json,.txt,application/json,text/plain" onchange="tocImportFile(this)" style="display:none">
+        <button class="btn" onclick="document.getElementById('toc-import-file').click()" title="Import a previously exported TOC JSON or TXT file">Import</button>
+        <button class="btn" onclick="tocExport('text')" title="Export log as plain text">Export TXT</button>
+        <button class="btn" onclick="tocExport('json')" title="Export log as JSON">Export JSON</button>
+      </div>
     </div>
 
+    <div id="log-subtab-toc">
     <!-- Entry composer -->
     <div style="padding:10px 12px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:8px">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <select id="toc-category" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;flex-shrink:0">
           <option value="NOTE">NOTE</option>
+          <option value="PLAN">PLAN</option>
           <option value="SITREP">SITREP</option>
           <option value="ALERT">ALERT</option>
           <option value="ACTION">ACTION</option>
@@ -667,6 +675,7 @@
         </div>
         <select id="toc-template" onchange="tocApplyTemplate(this.value)" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;flex:1;min-width:140px">
           <option value="">— template —</option>
+          <option value="plan">PLAN</option>
           <option value="sitrep">SITREP</option>
           <option value="contact">First Contact</option>
           <option value="commscheck">COMMS CHECK</option>
@@ -678,6 +687,12 @@
         <button class="btn" id="toc-pin-template-btn" onclick="tocTogglePinnedTemplate()" title="Pin or unpin selected template" style="padding:4px 8px;font-size:12px">☆</button>
         <button class="btn" onclick="tocAttachLocalPosition()" title="Attach local/manual position to the entry" style="padding:4px 8px;font-size:12px">+ GPS</button>
         <button class="btn" id="toc-clear-btn" onclick="tocClear()" title="Clear all fields" style="flex-shrink:0">Clear</button>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <label for="toc-mission" style="font-size:11px;color:var(--muted);white-space:nowrap">Mission / Folder:</label>
+        <input id="toc-mission" type="text" list="toc-mission-list" placeholder="e.g. CD mobile route, Basecamp watch, RC test"
+               style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;flex:1;min-width:180px">
+        <datalist id="toc-mission-list"></datalist>
       </div>
       <div id="toc-pinned-templates" style="display:none;gap:6px;flex-wrap:wrap;align-items:center"></div>
       <div id="toc-tag-tools" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
@@ -713,6 +728,7 @@
       <select id="toc-filter-category" onchange="tocRenderLog()" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px">
         <option value="">All categories</option>
         <option value="NOTE">NOTE</option>
+        <option value="PLAN">PLAN</option>
         <option value="SITREP">SITREP</option>
         <option value="ALERT">ALERT</option>
         <option value="ACTION">ACTION</option>
@@ -727,6 +743,9 @@
       <select id="toc-filter-mention" onchange="tocRenderLog()" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;max-width:170px">
         <option value="">Any node</option>
       </select>
+      <select id="toc-filter-mission" onchange="tocRenderLog()" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;max-width:190px">
+        <option value="">Any mission</option>
+      </select>
       <span style="font-size:11px;color:var(--muted);white-space:nowrap">From</span>
       <input id="toc-filter-from" type="date" title="From date" onchange="tocRenderLog()"
              style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;width:130px">
@@ -735,6 +754,7 @@
              style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;width:130px">
       <select id="toc-view-mode" onchange="tocRenderLog()" title="Log layout" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px">
         <option value="grouped">Grouped</option>
+        <option value="mission">Missions</option>
         <option value="flat">Flat</option>
       </select>
       <button class="btn" onclick="tocClearFilters()" title="Clear log filters" style="padding:4px 8px;font-size:12px">Clear filters</button>
@@ -756,6 +776,110 @@
           <tr id="toc-empty-row"><td colspan="4" style="color:var(--muted);text-align:center;padding:24px 0">No log entries yet.</td></tr>
         </tbody>
       </table>
+    </div>
+    </div>
+
+    <div id="log-subtab-sop" class="log-sop" style="display:none">
+      <div class="log-sop-header">
+        <div>
+          <div class="log-sop-kicker">Field SOP</div>
+          <h2>MC / MT Log Discipline</h2>
+        </div>
+        <div class="log-sop-callout">Log facts first. Keep chat in Chat. Use the log for decisions, checks, movement, and follow-up.</div>
+      </div>
+
+      <section class="log-sop-section">
+        <h3>Minimum Entry Standard</h3>
+        <ul class="log-sop-list">
+          <li>Record time, place or area, network path, involved node or station, and current status.</li>
+          <li>Use node mentions with <code>#</code> when possible so entries stay tied to MC / MT contacts.</li>
+          <li>Mark confidence clearly: confirmed, likely, possible, unconfirmed, stale, or inferred.</li>
+          <li>Add <code>+ GPS</code> for own position when location matters; avoid guessing exact coordinates.</li>
+          <li>Close the loop with ACTION or a later SITREP when something was assigned or changed.</li>
+        </ul>
+      </section>
+
+      <section class="log-sop-section">
+        <h3>Quick Start</h3>
+        <div class="log-sop-actionbar">
+          <button class="log-sop-action" onclick="logSopUse('mobile-start')" title="Prefill a mobile CD movement plan">Mobile plan</button>
+          <button class="log-sop-action" onclick="logSopUse('quick-sitrep')" title="Prefill a current status SITREP">SITREP</button>
+          <button class="log-sop-action" onclick="logSopUse('basecamp-open')" title="Prefill a basecamp opening SITREP">Basecamp open</button>
+          <button class="log-sop-action" onclick="logSopUse('rc-collect')" title="Prefill a Remote Collector collection note">RC collect</button>
+          <button class="log-sop-action" onclick="logSopUse('degraded-comms')" title="Prefill a degraded comms alert">Degraded comms</button>
+        </div>
+      </section>
+
+      <section class="log-sop-section">
+        <h3>Category Use</h3>
+        <div class="log-sop-grid">
+          <button class="log-sop-rule" onclick="logSopUse('note')" title="Prefill a NOTE entry"><strong>NOTE</strong><span>Scratchpad facts that do not yet fit a formal report.</span></button>
+          <button class="log-sop-rule" onclick="logSopUse('plan')" title="Prefill a PLAN entry"><strong>PLAN</strong><span>Pre-move or pre-watch intent, route, checks, risks, and reporting plan.</span></button>
+          <button class="log-sop-rule" onclick="logSopUse('sitrep')" title="Prefill a SITREP entry"><strong>SITREP</strong><span>Overall state of the station, route, group, or operating area.</span></button>
+          <button class="log-sop-rule" onclick="logSopUse('commscheck')" title="Prefill a COMMS CHECK entry"><strong>COMMS</strong><span>MC / MT checks, pings, message paths, signal quality, retries, and failures.</span></button>
+          <button class="log-sop-rule" onclick="logSopUse('contact')" title="Prefill a CONTACT entry"><strong>CONTACT</strong><span>First heard, first seen, or newly identified station / node.</span></button>
+          <button class="log-sop-rule" onclick="logSopUse('position')" title="Prefill a POSITION entry"><strong>POSITION</strong><span>Own station, mobile node, RPTR, contact, waypoint, or last known location.</span></button>
+          <button class="log-sop-rule" onclick="logSopUse('alert')" title="Prefill an ALERT entry"><strong>ALERT</strong><span>Safety, weather, power, access, comms outage, or other actionable risk.</span></button>
+          <button class="log-sop-rule" onclick="logSopUse('action')" title="Prefill an ACTION entry"><strong>ACTION</strong><span>Specific task, owner, due time, status, result, and follow-up.</span></button>
+          <button class="log-sop-rule" onclick="logSopUse('intel')" title="Prefill an INTEL entry"><strong>INTEL</strong><span>Observed pattern, passive RF note, movement, infrastructure, signal, or RC collection finding.</span></button>
+        </div>
+      </section>
+
+      <section class="log-sop-section">
+        <h3>Mobile CD Use</h3>
+        <ol class="log-sop-list">
+          <li>Before moving, create PLAN with objective, route or area, radio state, GPS state, risks, and expected next update.</li>
+          <li>At start, turn points, stops, and end, create POSITION. Attach GPS when available.</li>
+          <li>After terrain, antenna, channel, or radio changes, create COMMS with network, target station, result, RSSI/SNR if known, hops, and retry plan.</li>
+          <li>For new MC / MT stations, create CONTACT with first heard time, path, signal, distance if known, and follow-up.</li>
+          <li>For observed signal patterns, RC captures, movement, or infrastructure notes, create INTEL and tag it Signal, Movement, Location, Infrastructure, or Recon.</li>
+          <li>Use ALERT only when someone needs to act now or monitor a real risk.</li>
+          <li>Close the route with SITREP: current status, unresolved actions, contacts added, and next operating plan.</li>
+        </ol>
+      </section>
+
+      <section class="log-sop-section">
+        <h3>Basecamp Station</h3>
+        <ol class="log-sop-list">
+          <li>Open with SITREP: station location, power, GPS, MC radios, MT nodes, antenna setup, and monitoring channels.</li>
+          <li>Run a regular SITREP every 30-60 minutes, or immediately after any meaningful change.</li>
+          <li>Use COMMS for net checks, MC pings, MT channel checks, direct messages, relay behavior, and failed paths.</li>
+          <li>Use CONTACT for new arrivals, renamed nodes, unexpected stations, or stations that need to be added to contacts.</li>
+          <li>Use ACTION for tasks such as add contact, move antenna, retry route, restart radio, verify position, or check RC output.</li>
+          <li>Use ALERT for power loss, weather, safety, access, device failure, or loss of expected comms.</li>
+          <li>At handover or shutdown, export the log and add a final SITREP with open items.</li>
+        </ol>
+      </section>
+
+      <section class="log-sop-section">
+        <h3>Remote Collector / RPTR Watch</h3>
+        <ul class="log-sop-list">
+          <li>Before deploying Argus or another RPTR / RC unit, log POSITION with placement, antenna, power state, and confidence.</li>
+          <li>Log COMMS for login, ping, OMCOLLECT, relay import, or failed session attempts.</li>
+          <li>After collection, log INTEL with new nodes, strong signals, unusual paths, stale data, and reliability.</li>
+          <li>Create ACTION for reset, redeploy, contact add, route verify, firmware check, or follow-up collection.</li>
+        </ul>
+      </section>
+
+      <section class="log-sop-section">
+        <h3>Degraded Comms</h3>
+        <ul class="log-sop-list">
+          <li>Create one ALERT for the problem, affected network, scope, and immediate mitigation.</li>
+          <li>Use COMMS for each test, not for long discussion. Record what changed between attempts.</li>
+          <li>Use ACTION for the next named step: move, retry, swap radio, check power, restart service, or verify route.</li>
+          <li>When stable, create SITREP with what is restored, what remains degraded, and the next check time.</li>
+        </ul>
+      </section>
+
+      <section class="log-sop-section">
+        <h3>Cadence</h3>
+        <div class="log-sop-kv">
+          <span>Mobile</span><p>Start, major route changes, stop points, contact events, and end of movement.</p>
+          <span>Basecamp</span><p>Opening report, 30-60 minute watch updates, state changes, handover, and shutdown.</p>
+          <span>Incident</span><p>On first detection, after each material change, and when stable or resolved.</p>
+          <span>RC / RPTR</span><p>Before collection, after collection, after import, and after any failed command sequence.</p>
+        </div>
+      </section>
     </div>
   </div>
   <!-- /panel-log -->

@@ -83,6 +83,19 @@ class TocRoutesTests(unittest.TestCase):
         self.assertEqual(data["category"], "INTEL")
         self.assertIn("**Intel Tags:** Personnel, Recon", data["body"])
 
+    def test_plan_category_is_accepted(self):
+        resp = self.client.post("/api/toc", json={
+            "category": "PLAN",
+            "body": {"Objective": "Mobile CD route", "Mission / Folder": "CD test"},
+            "ts": 36,
+        })
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertEqual(data["category"], "PLAN")
+        self.assertIn("**Objective:** Mobile CD route", data["body"])
+        self.assertIn("**Mission / Folder:** CD test", data["body"])
+
     def test_text_export_formats_legacy_json_body_as_markdown(self):
         created = self.client.post("/api/toc", json={
             "category": "SITREP",

@@ -2477,7 +2477,7 @@ if (targetEl) {
     document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + name));
     if (name === 'nodes')    { initNodesFilterPills(); renderLive(); }
     if (name === 'chat')     { initChat(); updateUnreadDots(); }
-    if (name === 'log')      { tocLoad(); }
+    if (name === 'log')      { initLogSubtab(); tocLoad(); }
     if (name === 'map')      {
       initMapFilterPills();
       if (!window._mapResizeObserver) { window._mapResizeObserver = new ResizeObserver(() => leafletMap && leafletMap.invalidateSize()); window._mapResizeObserver.observe(document.getElementById('map')); }
@@ -18296,6 +18296,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   }).catch(() => {});
 
   updateLiveSortArrows();
+  initLogSubtab();
   initNodesFilterPills();
   initMapFilterPills();
   requestNotifPermission();
@@ -18738,7 +18739,43 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   // ── TOC Log ──────────────────────────────────────────────────────────────
 
+  function setLogSubtab(tab) {
+    const isSop = tab === 'sop';
+    const tocPane = document.getElementById('log-subtab-toc');
+    const sopPane = document.getElementById('log-subtab-sop');
+    const tocBtn = document.getElementById('log-subtab-toc-btn');
+    const sopBtn = document.getElementById('log-subtab-sop-btn');
+    const tocActions = document.getElementById('toc-toolbar-actions');
+    if (tocPane) tocPane.style.display = isSop ? 'none' : '';
+    if (sopPane) sopPane.style.display = isSop ? 'block' : 'none';
+    if (tocBtn) tocBtn.classList.toggle('active', !isSop);
+    if (sopBtn) sopBtn.classList.toggle('active', isSop);
+    if (tocActions) tocActions.style.display = isSop ? 'none' : 'flex';
+    try { localStorage.setItem('logSubtab', isSop ? 'sop' : 'toc'); } catch(e) {}
+  }
+
+  function initLogSubtab() {
+    let saved = 'toc';
+    try { saved = localStorage.getItem('logSubtab') === 'sop' ? 'sop' : 'toc'; } catch(e) {}
+    setLogSubtab(saved);
+  }
+
   const TOC_TEMPLATES = {
+    plan: {
+      cat:'PLAN', label:'PLAN',
+      fields:[
+        {name:'Area / Route', hint:'Basecamp, route, work area, or planned collection point'},
+        {name:'Objective', hint:'What should be achieved', multiline:true},
+        {name:'Window / Timing', hint:'Start time, end time, update cadence, or time limit'},
+        {name:'People / Nodes / Assets', hint:'Operators, MC contacts, MT nodes, RPTRs, vehicles, stations (# to mention node)'},
+        {name:'MC / MT Setup', hint:'Radios, channels, contacts, antenna, power, GPS, Silent status', multiline:true},
+        {name:'Checkpoints / Triggers', hint:'When to log POSITION, COMMS, CONTACT, ALERT, or SITREP', multiline:true},
+        {name:'Risks / Constraints', hint:'Weather, power, access, RF path, USB/GPS, time, safety', multiline:true},
+        {name:'Comms Plan', hint:'Who to ping, where to report, fallback channel/path', multiline:true},
+        {name:'Abort / Change Criteria', hint:'When to stop, return, change route, or switch mode'},
+        {name:'Notes', hint:'Extra planning context', multiline:true},
+      ],
+    },
     sitrep: {
       cat:'SITREP', label:'SITREP',
       fields:[
@@ -18840,8 +18877,201 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     },
   };
 
+  const LOG_SOP_PREFILLS = {
+    note: {
+      category: 'NOTE',
+      body: 'Field note:\nArea / station:\nFact:\nConfidence:\nFollow-up:',
+    },
+    plan: {
+      mission: 'Planning',
+      template: 'plan',
+      values: {
+        'Area / Route': 'CD / planned operating area',
+        Objective: 'Define what should be achieved before starting.',
+        'Window / Timing': 'Start now; update on movement, contact, degraded comms, or stop.',
+        'People / Nodes / Assets': 'CD, MC radio, MT node, GPS',
+        'MC / MT Setup': 'Confirm MC/MT connected, channels/contacts selected, antenna/power/GPS checked.',
+        'Checkpoints / Triggers': 'Log POSITION at start/turn/stop/end. Log COMMS after radio/terrain changes. Log ALERT for actionable risk.',
+        'Risks / Constraints': 'Battery, weather, GPS fix, USB stability, RF path, access.',
+        'Comms Plan': 'Ping/check selected MC/MT stations before movement; retry or change position if no ack.',
+        'Abort / Change Criteria': 'Stop or change plan if comms, power, GPS, weather, or access becomes unsafe/unusable.',
+      },
+    },
+    sitrep: {
+      template: 'sitrep',
+      values: {
+        'Location / Area': 'CD / current operating area',
+        'Situation': 'Normal watch. MC and MT status being checked.',
+        'Status': 'Normal',
+        'Known Nodes / Assets': 'CD, MC radio, MT node',
+        'Issues / Risks': 'None reported',
+        'Intent / Plan': 'Continue monitoring. Update on change or next scheduled check.',
+        'Next Update': '30-60 min or on state change',
+      },
+    },
+    commscheck: {
+      template: 'commscheck',
+      values: {
+        From: 'CD',
+        To: 'Selected MC / MT station',
+        'Network / Channel': 'MC / MT',
+        'Message / Check': 'Ping / check message sent.',
+        Result: 'Pending',
+        'Follow-up': 'Retry, move antenna, or verify route if no ack.',
+      },
+    },
+    contact: {
+      template: 'contact',
+      values: {
+        'Node / Station': '#',
+        'Network / Channel': 'MC / MT',
+        'First Heard': 'Now',
+        'Action / Follow-up': 'Add contact, ping, monitor, or verify position.',
+      },
+    },
+    position: {
+      template: 'position',
+      values: {
+        'Node / Asset': 'CD / selected node',
+        Source: 'GPS / manual / report',
+        'Accuracy / Confidence': 'Approximate',
+        'Movement / Heading': 'Static',
+      },
+    },
+    alert: {
+      template: 'alert',
+      values: {
+        Priority: 'Medium',
+        Type: 'Comms / safety / power / weather',
+        Status: 'Open',
+        'Immediate Action': 'Stabilize, verify, and assign follow-up.',
+      },
+    },
+    action: {
+      template: 'action',
+      values: {
+        'Task / Action': 'Specific next step',
+        'Assigned To': 'CD / operator / node',
+        Status: 'Planned',
+        'Follow-up': 'Confirm result and close with SITREP if needed.',
+      },
+    },
+    intel: {
+      template: 'intel',
+      values: {
+        'Who / Source': 'CD / MC / MT / RC',
+        'What Happened': 'Observed signal, contact, movement, infrastructure, or collection result.',
+        'Intel Tags': 'Signal',
+        'Reliability / Confidence': 'Unconfirmed',
+        'Source Type': 'Direct observation / radio report / passive RF / RC collection',
+        'Required Action': 'Monitor / verify / none',
+      },
+    },
+    'mobile-start': {
+      mission: 'CD mobile route',
+      template: 'plan',
+      values: {
+        'Area / Route': 'Mobile CD route / operating area',
+        Objective: 'Move through planned area while maintaining MC / MT awareness and logging contacts, positions, and comms state.',
+        'Window / Timing': 'Start now; next update at first stop / turn point / 30 min.',
+        'People / Nodes / Assets': 'CD, MC radio, MT node, GPS',
+        'MC / MT Setup': 'Confirm MC/MT connected, channel/contact selected, antenna/power/GPS checked.',
+        'Checkpoints / Triggers': 'POSITION at start/turn/stop/end. COMMS after terrain/antenna/radio change. CONTACT for new stations. ALERT for actionable risk.',
+        'Risks / Constraints': 'GPS fix, battery, weather, terrain, USB stability, RF shadow.',
+        'Comms Plan': 'Run MC/MT check before moving; retry from alternate position if no ack.',
+        'Abort / Change Criteria': 'Stop or return if power, weather, access, GPS, or comms state becomes unacceptable.',
+      },
+    },
+    'quick-sitrep': {
+      template: 'sitrep',
+      values: {
+        'Location / Area': 'CD / current operating area',
+        Situation: 'Current status update.',
+        Status: 'Normal / degraded / blocked / urgent',
+        'Known Nodes / Assets': 'CD, MC radio, MT node',
+        'Issues / Risks': 'None reported',
+        'Intent / Plan': 'Continue current plan. Update on change.',
+        'Next Update': '30-60 min or on state change',
+      },
+    },
+    'basecamp-open': {
+      mission: 'Basecamp watch',
+      template: 'sitrep',
+      values: {
+        'Location / Area': 'Basecamp / static CD station',
+        Situation: 'Station watch opened. MC and MT monitoring active.',
+        Status: 'Basecamp open',
+        'Known Nodes / Assets': 'CD, MC radio, MT node, GPS, power source, antenna',
+        'Issues / Risks': 'Power, weather, radio path, GPS availability',
+        'Intent / Plan': 'Maintain watch, log contacts, run comms checks, track open actions.',
+        'Next Update': '30-60 min or on state change',
+      },
+    },
+    'rc-collect': {
+      mission: 'RC / RPTR watch',
+      template: 'intel',
+      values: {
+        'Who / Source': 'Remote Collector / RPTR',
+        'What Happened': 'Collection started / imported. Summarize new nodes, strong signals, stale data, or unusual paths.',
+        'Intel Tags': 'Signal, Recon',
+        'Reliability / Confidence': 'Collector report; verify important items',
+        'Source Type': 'RC collection',
+        'Related Nodes / Assets': 'Argus mobile RPTR / selected RC',
+        Assessment: 'Compare against local CD view and follow up on important differences.',
+        'Required Action': 'Monitor / collect again / add contact / verify route',
+      },
+    },
+    'degraded-comms': {
+      mission: 'Degraded comms',
+      template: 'alert',
+      values: {
+        Priority: 'Medium',
+        Type: 'Comms',
+        Location: 'CD / affected area',
+        'Affected Node(s) / People': 'MC / MT station(s)',
+        Details: 'Expected comms path is degraded or unavailable.',
+        'Immediate Action': 'Check radio state, power, antenna, channel, path, and retry from alternate position if mobile.',
+        Status: 'Open',
+        'Follow-up': 'Log each test as COMMS. Close with SITREP when stable.',
+      },
+    },
+  };
+
+  function _tocFillTemplateValues(values) {
+    const vals = values || {};
+    document.querySelectorAll('#toc-fields [data-toc-field]').forEach(field => {
+      const name = field.getAttribute('data-toc-field') || '';
+      if (Object.prototype.hasOwnProperty.call(vals, name)) {
+        field.value = vals[name];
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    });
+  }
+
+  function logSopUse(key) {
+    const spec = LOG_SOP_PREFILLS[key];
+    if (!spec) return;
+    tocClear();
+    const missionEl = document.getElementById('toc-mission');
+    if (missionEl && spec.mission) missionEl.value = spec.mission;
+    if (spec.template) {
+      const tmplEl = document.getElementById('toc-template');
+      if (tmplEl) tmplEl.value = spec.template;
+      tocApplyTemplate(spec.template);
+      _tocFillTemplateValues(spec.values);
+    } else {
+      const catEl = document.getElementById('toc-category');
+      const bodyEl = document.getElementById('toc-body');
+      if (catEl) catEl.value = spec.category || 'NOTE';
+      if (bodyEl) bodyEl.value = spec.body || '';
+    }
+    setLogSubtab('toc');
+    const target = document.getElementById(spec.template ? 'toc-fields' : 'toc-body') || document.getElementById('toc-category');
+    setTimeout(() => target?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 40);
+  }
+
   const TOC_CAT_COLORS = {
-    SITREP:'#3b82f6', ALERT:'#ef4444', ACTION:'#f59e0b',
+    PLAN:'#14b8a6', SITREP:'#3b82f6', ALERT:'#ef4444', ACTION:'#f59e0b',
     COMMS:'#10b981',  CONTACT:'#8b5cf6', POSITION:'#06b6d4',
     INTEL:'#a855f7', NOTE:'#64748b',
   };
@@ -19007,6 +19237,40 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       .join('\n');
   }
 
+  function _tocMissionFieldKey(obj = null) {
+    const keys = obj && typeof obj === 'object' ? Object.keys(obj) : [];
+    return keys.find(k => {
+      const lk = String(k || '').trim().toLowerCase();
+      return lk === 'mission / folder' || lk === 'mission' || lk === 'folder';
+    }) || '';
+  }
+
+  function _tocMissionFromBody(body) {
+    const obj = _tocStructuredObject(body);
+    const key = _tocMissionFieldKey(obj);
+    return key ? String(obj[key] || '').trim() : '';
+  }
+
+  function _tocWithoutMission(body) {
+    const obj = _tocStructuredObject(body);
+    const key = _tocMissionFieldKey(obj);
+    if (!key) return body || '';
+    const copy = {...obj};
+    delete copy[key];
+    return Object.keys(copy).length ? _tocStructuredMarkdown(copy) : '';
+  }
+
+  function _tocWithMission(body, mission) {
+    const clean = String(mission || '').trim();
+    if (!clean) return body || '';
+    const obj = _tocStructuredObject(body);
+    if (obj && typeof obj === 'object') {
+      const key = _tocMissionFieldKey(obj) || 'Mission / Folder';
+      return _tocStructuredMarkdown({'Mission / Folder': clean, ...Object.fromEntries(Object.entries(obj).filter(([k]) => k !== key))});
+    }
+    return _tocStructuredMarkdown({'Mission / Folder': clean, Notes: body || ''});
+  }
+
   function _tocNormalizeTag(tag) {
     const clean = String(tag || '')
       .replace(/^#+/, '')
@@ -19087,7 +19351,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   function _tocTemplateKeyForObject(obj, category = '') {
     if (!obj || typeof obj !== 'object') return '';
-    const keys = Object.keys(obj);
+    const keys = Object.keys(obj).filter(k => !_tocMissionFieldKey({[k]: obj[k]}));
     return Object.entries(TOC_TEMPLATES).find(([, t]) => {
       const names = _tocTemplateFieldNames(t);
       return (!category || t.cat === category) && keys.length > 0 && keys.every(k => names.includes(k));
@@ -19144,6 +19408,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   function tocClear() {
     document.getElementById('toc-template').value = '';
     document.getElementById('toc-category').value = 'NOTE';
+    const missionEl = document.getElementById('toc-mission');
+    if (missionEl) missionEl.value = '';
     _tocSetDateTimeFields();
     document.getElementById('toc-body').value      = '';
     document.getElementById('toc-body').style.display = '';
@@ -19348,6 +19614,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   function _tocPrefill(category, body, ts = null, templateKey = '') {
     switchTab('log');
     document.getElementById('toc-category').value = category || 'NOTE';
+    const missionEl = document.getElementById('toc-mission');
+    if (missionEl) missionEl.value = _tocMissionFromBody(body);
     _tocSetDateTimeFields(ts);
     const templateEl = document.getElementById('toc-template');
     if (templateEl) templateEl.value = templateKey;
@@ -19355,7 +19623,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       tocApplyTemplate(templateKey);
     } else {
       tocApplyTemplate('');
-      _tocSetBodyText(body || '');
+      _tocSetBodyText(_tocWithoutMission(body) || '');
     }
     _tocEditingId = null;
     _tocSetSubmitMode();
@@ -19614,6 +19882,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const cat = document.getElementById('toc-filter-category')?.value || '';
     const tag = (document.getElementById('toc-filter-tag')?.value || '').trim().toLowerCase();
     const mention = document.getElementById('toc-filter-mention')?.value || '';
+    const mission = (document.getElementById('toc-filter-mission')?.value || '').trim().toLowerCase();
     const from = document.getElementById('toc-filter-from')?.value || '';
     const to = document.getElementById('toc-filter-to')?.value || '';
     if (cat && entry.category !== cat) return false;
@@ -19623,6 +19892,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     }
     if (tag && !_tocTagsFromBody(entry.body).some(t => t.toLowerCase() === tag)) return false;
     if (mention && !_tocMentionTokens(entry.body).some(t => t.key === mention)) return false;
+    if (mission && _tocMissionFromBody(entry.body).toLowerCase() !== mission) return false;
     if (from) {
       const fromTs = Math.floor(new Date(`${from}T00:00`).getTime() / 1000);
       if (Number.isFinite(fromTs) && Number(entry.ts) < fromTs) return false;
@@ -19660,8 +19930,29 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     if ([...mentions.keys()].includes(current)) sel.value = current;
   }
 
+  function _tocRenderMissionFilter() {
+    const sel = document.getElementById('toc-filter-mission');
+    const list = document.getElementById('toc-mission-list');
+    const missions = new Map();
+    _tocAllEntries.forEach(e => {
+      const mission = _tocMissionFromBody(e.body);
+      if (mission) missions.set(mission.toLowerCase(), mission);
+    });
+    const values = [...missions.values()].sort((a, b) => a.localeCompare(b));
+    if (sel) {
+      const current = sel.value;
+      sel.innerHTML = '<option value="">Any mission</option>' + values
+        .map(m => `<option value="${_tocEscape(m)}">${_tocEscape(m)}</option>`)
+        .join('');
+      if ([...missions.keys()].includes(String(current || '').toLowerCase())) sel.value = current;
+    }
+    if (list) {
+      list.innerHTML = values.map(m => `<option value="${_tocEscape(m)}"></option>`).join('');
+    }
+  }
+
   function tocClearFilters() {
-    ['toc-filter-text', 'toc-filter-category', 'toc-filter-tag', 'toc-filter-mention', 'toc-filter-from', 'toc-filter-to'].forEach(id => {
+    ['toc-filter-text', 'toc-filter-category', 'toc-filter-tag', 'toc-filter-mention', 'toc-filter-mission', 'toc-filter-from', 'toc-filter-to'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.value = '';
     });
@@ -19686,15 +19977,22 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     }
     if (emptyRow) emptyRow.style.display = 'none';
     let lastGroup = '';
-    const grouped = (document.getElementById('toc-view-mode')?.value || 'grouped') === 'grouped';
+    const viewMode = document.getElementById('toc-view-mode')?.value || 'grouped';
+    const grouped = viewMode !== 'flat';
     entries.forEach(e => {
       if (grouped) {
         const d = _appDate(e.ts);
-        const group = _formatAppDate(d, {weekday: true});
+        const mission = _tocMissionFromBody(e.body);
+        const group = viewMode === 'mission'
+          ? (mission || 'Unfiled')
+          : _formatAppDate(d, {weekday: true});
         if (group !== lastGroup) {
           const gr = document.createElement('tr');
           gr.dataset.tocGroup = group;
-          gr.innerHTML = `<td colspan="4" style="padding:8px 8px 4px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">${_tocEscape(group)}</td>`;
+          const filter = viewMode === 'mission' && mission
+            ? `<button onclick="document.getElementById('toc-filter-mission').value='${jsSafe(mission)}';tocRenderLog()" title="Filter this mission" style="margin-left:8px;background:none;border:none;color:var(--accent);cursor:pointer;font-size:11px">filter</button>`
+            : '';
+          gr.innerHTML = `<td colspan="4" style="padding:8px 8px 4px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)">${_tocEscape(group)}${filter}</td>`;
           tbody.appendChild(gr);
           lastGroup = group;
         }
@@ -19736,6 +20034,10 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     tr.dataset.tocId = e.id;
     tr.style.borderBottom = '1px solid var(--border)';
     const grouped = (document.getElementById('toc-view-mode')?.value || 'grouped') === 'grouped';
+    const mission = _tocMissionFromBody(e.body);
+    const missionBadge = mission
+      ? `<button onclick="document.getElementById('toc-filter-mission').value='${jsSafe(mission)}';tocRenderLog()" title="Filter mission/folder" style="background:#14b8a622;color:#5eead4;border:1px solid #14b8a655;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:600;cursor:pointer;margin-bottom:4px">📁 ${_tocEscape(mission)}</button><br>`
+      : '';
     const coords = _tocExtractCoords(e.body);
     const mapBtn = coords
       ? `<button onclick="tocShowOnMap(${coords.lat},${coords.lon},'${jsSafe(e.category)}')" title="Show coordinates on map" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:0 3px"
@@ -19746,7 +20048,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       <td style="padding:6px 8px;vertical-align:top">
         <span onclick="document.getElementById('toc-filter-category').value='${e.category}';tocRenderLog()" title="Filter by ${e.category}" style="background:${color};color:#fff;border-radius:4px;padding:2px 6px;font-size:10px;font-weight:600;letter-spacing:.4px;white-space:nowrap;cursor:pointer">${e.category}</span>
       </td>
-      <td style="padding:6px 8px;vertical-align:top;width:100%">${tocRenderBody(e.body)}</td>
+      <td style="padding:6px 8px;vertical-align:top;width:100%">${missionBadge}${tocRenderBody(_tocWithoutMission(e.body))}</td>
       <td style="padding:6px 4px;vertical-align:top;white-space:nowrap">
         ${mapBtn}<button onclick="tocShareViaMc(${e.id})" title="Share via active MC chat target" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:0 3px"
           onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--muted)'">⇄</button>
@@ -19769,6 +20071,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       _tocAllEntries = Array.isArray(entries) ? entries : [];
       _tocRenderTagFilter();
       _tocRenderMentionFilter();
+      _tocRenderMissionFilter();
       tocRenderPinnedTemplates();
       tocRenderLog();
     }).catch(() => {});
@@ -19776,6 +20079,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   function tocSubmit() {
     const category = document.getElementById('toc-category').value;
+    const mission = document.getElementById('toc-mission')?.value || '';
     let bodyStr;
     if (_tocActiveTemplate) {
       const fields = document.getElementById('toc-fields');
@@ -19784,10 +20088,12 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         obj[inp.dataset.tocField] = inp.value.trim();
       });
       if (!Object.values(obj).some(v => v)) return;
+      if (mission.trim()) obj['Mission / Folder'] = mission.trim();
       bodyStr = _tocStructuredMarkdown(obj);
     } else {
       bodyStr = (document.getElementById('toc-body').value || '').trim();
       if (!bodyStr) return;
+      bodyStr = _tocWithMission(bodyStr, mission);
     }
     const isEdit = !!_tocEditingId;
     const url = isEdit ? `/api/toc/${_tocEditingId}` : '/api/toc';
@@ -19803,6 +20109,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       _tocAllEntries.sort((a, b) => Number(b.ts) - Number(a.ts));
       _tocRenderTagFilter();
       _tocRenderMentionFilter();
+      _tocRenderMissionFilter();
       tocRenderLog();
       document.getElementById('toc-body')?.focus();
     }).catch(() => {});
@@ -19813,6 +20120,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     if (!entry) return;
     _tocEditingId = Number(id);
     document.getElementById('toc-category').value = entry.category || 'NOTE';
+    const missionEl = document.getElementById('toc-mission');
+    if (missionEl) missionEl.value = _tocMissionFromBody(entry.body);
     _tocSetDateTimeFields(entry.ts);
     const obj = _tocStructuredObject(entry.body);
     const tmplKey = _tocTemplateKeyForObject(obj, entry.category || '');
@@ -19825,7 +20134,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       });
     } else {
       tocApplyTemplate('');
-      document.getElementById('toc-body').value = entry.body || '';
+      document.getElementById('toc-body').value = _tocWithoutMission(entry.body) || '';
     }
     _tocSetSubmitMode();
     document.getElementById('toc-category').scrollIntoView({block: 'center', behavior: 'smooth'});

@@ -13223,9 +13223,9 @@ if (targetEl) {
         const via = e.radioName ? ` via ${e.radioName}` : '';
         return `<div style="padding:2px 0;border-bottom:1px solid var(--border)">
           <span style="color:var(--muted)">${_mcLogTs(e)}</span>
-          <span style="color:#38bdf8;font-size:9px;font-weight:600;background:rgba(56,189,248,0.12);border:1px solid rgba(56,189,248,0.28);border-radius:3px;padding:0 3px;margin-left:4px">adv</span>
+          <span style="color:#38bdf8;font-size:9px;font-weight:600;background:rgba(56,189,248,0.12);border:1px solid rgba(56,189,248,0.28);border-radius:3px;padding:0 3px;margin-left:4px">cmd</span>
           <span style="margin-left:4px;font-weight:600">${escHtml(e.name)}</span>
-          <span style="color:#94a3b8;font-size:10px;margin-left:4px">remote ${modeLabel}${escHtml(via)}</span>
+          <span style="color:#94a3b8;font-size:10px;margin-left:4px">requested ${modeLabel} advert${escHtml(via)}</span>
         </div>`;
       }
       if (e.kind === 'bot_reply') {
@@ -14699,9 +14699,16 @@ if (targetEl) {
     const keyed = lines.find(line => lowerKey && line.toLowerCase().startsWith(lowerKey));
     const line = keyed || lines[0] || '';
     const parts = line.split(/[:=]/);
-    if (parts.length > 1) return parts.slice(1).join(':').trim();
-    if (lowerKey && line.toLowerCase().startsWith(lowerKey)) return line.slice(lowerKey.length).trim();
-    return line.trim();
+    const value = parts.length > 1
+      ? parts.slice(1).join(':').trim()
+      : lowerKey && line.toLowerCase().startsWith(lowerKey)
+        ? line.slice(lowerKey.length).trim()
+        : line.trim();
+    return _mcRemoteStripPrompt(value);
+  }
+
+  function _mcRemoteStripPrompt(value) {
+    return String(value || '').trim().replace(/^>\s*/, '').trim();
   }
 
   function _mcRemoteSetValue(id, value) {
@@ -15211,7 +15218,7 @@ if (targetEl) {
   }
 
   async function mcRemoteApplySetting(kind) {
-    const val = id => (document.getElementById(id)?.value || '').trim();
+    const val = id => _mcRemoteStripPrompt(document.getElementById(id)?.value || '');
     const num = (id, label, min = null, max = null) => {
       const raw = val(id);
       const n = Number(raw);
@@ -15244,6 +15251,9 @@ if (targetEl) {
       if (kind === 'flood_max') commands.push(`set flood.max ${num('mc-remote-set-flood-max', 'flood max', 0, 64)}`);
       if (!commands.length || commands.some(c => !c.trim() || c.endsWith(' '))) throw new Error('Enter a value first.');
       for (const command of commands) await mcRemoteRunCommand(command);
+      if (['name', 'position', 'advert_loc'].includes(kind)) {
+        await mcRemoteRunCommand('advert', 'mc-remote-quick-result', {senseLogAdvertMode: 'flood'});
+      }
       // update cache with applied values
       if (kind === 'name') _mcRemoteSaveCache({name: val('mc-remote-set-name')});
       if (kind === 'repeat') _mcRemoteSaveCache({repeat: val('mc-remote-set-repeat')});

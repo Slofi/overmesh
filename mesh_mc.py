@@ -2800,6 +2800,13 @@ def _remote_cli_reply_is_error(reply):
     ))
 
 
+def _remote_cli_reply_is_benign_for_command(cmd, reply):
+    text = _remote_cli_reply_text(reply).lower()
+    if cmd == "clock sync" and "clock cannot go backwards" in text:
+        return True
+    return False
+
+
 async def _remote_login_async(mc, full_key, password, timeout=12):
     dispatcher = getattr(mc.commands, "dispatcher", None)
     if dispatcher is None:
@@ -3024,6 +3031,8 @@ async def _remote_command_async(config_id, pubkey_prefix, command):
             except Exception:
                 reply = None
         reply_error = _remote_cli_reply_is_error(reply)
+        if reply_error and _remote_cli_reply_is_benign_for_command(cmd, reply):
+            reply_error = False
         return {
             "ok": not reply_error,
             "command": cmd,

@@ -715,6 +715,9 @@ class MeshMcPathHelperTests(unittest.TestCase):
         self.assertTrue(mesh_mc._remote_cli_reply_is_error({"text": "can't find custom var"}))
         self.assertFalse(mesh_mc._remote_cli_reply_is_error({"text": "OK"}))
         self.assertFalse(mesh_mc._remote_cli_reply_is_error({"text": "password now: secret"}))
+        self.assertTrue(mesh_mc._remote_cli_reply_is_error({"text": "ERR: clock cannot go backwards"}))
+        self.assertTrue(mesh_mc._remote_cli_reply_is_benign_for_command("clock sync", {"text": "ERR: clock cannot go backwards"}))
+        self.assertFalse(mesh_mc._remote_cli_reply_is_benign_for_command("set name x", {"text": "ERR: clock cannot go backwards"}))
 
     def test_api_mc_remote_read_calls_backend_helper(self):
         app = Flask(__name__)

@@ -2087,28 +2087,42 @@
     },
     {
       title: 'TOC Log',
-      tags: 'toc log intel position comms contact alert note entry mention @mention #mention overlay node coordinates map show coords prefill category template tag filter export import share mc',
+      tags: 'toc log sop plan mission folder intel position comms contact alert action note entry mention @mention #mention +gps gps overlay node coordinates map show coords prefill category template tag filter export import share mc',
       body: [
-        'The TOC (Table of Contents) Log is a structured field journal: timestamped entries with a category, free-text or structured body, tags, and node/overlay mentions.',
-        'Categories: NOTE, INTEL, POSITION, COMMS, CONTACT, ALERT, TASK. Each gets a colour-coded badge. Click a badge in the log to filter by that category.',
+        'The Log tab has two sub-tabs: TOC for creating/searching entries, and SOP for the field logging procedure and quick-start actions.',
+        'The TOC Log is a structured field journal: timestamped entries with a category, optional Mission / Folder, free-text or structured body, tags, and node/overlay mentions.',
+        'Categories: NOTE, PLAN, SITREP, ALERT, ACTION, COMMS, CONTACT, POSITION, INTEL. Each gets a colour-coded badge. Click a badge in the log to filter by that category.',
+        'Use PLAN before movement, basecamp watch, or collector work. Use SITREP for current state updates after the plan starts, at handover, on state changes, or at scheduled check-ins.',
+        'Mission / Folder groups related reports together without changing export/share format. Click or type in the Mission / Folder field to show existing missions as selectable suggestions. The Missions / Folders strip lists every created mission with entry count and last activity; click one to filter it and continue composing into that folder.',
         'Type # in the body field to get a node/contact autocomplete dropdown. Arrow keys navigate, Enter inserts. The token #[Name](mt:id) or #[Name](mc:id:radioId) is stored and renders as a clickable chip that opens the action popup for that node. Works for both MT and MC.',
         'Type @ in the body field to get an overlay autocomplete dropdown. Inserting an overlay creates an @[Name](overlay:id) token that renders as an amber chip. Clicking the chip switches to Map and zooms to that overlay.',
+        'Type +GPS in any Log text field to insert the current local/manual position as Position: lat, lon. The +GPS toolbar button does the same append action. If OM has no usable local/manual position, it shows a toast instead.',
         'When an entry body contains coordinates in lat, lon format (e.g. 46.05123, 14.50456), a ⌖ button appears in the action column. Clicking it drops a marker on the map at those coordinates.',
         'Log entries can be prefilled from multiple sources: a node row (Log button), an MT/MC map popup (Log button), a message (Log button), an alert panel entry (Log button), and now also from overlay sidebars and feature popups.',
+        'The SOP sub-tab includes Quick Start buttons for Mobile plan, SITREP, Basecamp open, RC collect, and Degraded comms. Clicking one switches back to TOC and pre-fills the matching template.',
         'Ctrl+Enter submits the current entry. When editing an existing entry, the Clear button becomes Cancel.',
         'Entries can be tagged. The tag filter searches across all entry tags. The mention filter lists all nodes/contacts mentioned in any entry and lets you filter by one.',
-        'Share (⇄) sends the entry body via the active MC chat target. Export downloads all entries as JSON or CSV. Import restores from a previously exported JSON file.',
+        'Share (⇄) sends the entry body via the active MC chat target. Export downloads all entries as JSON or TXT. Import restores from a previously exported JSON or TXT file.',
         'The date/time field sets the timestamp for new entries — useful for backdating field notes. Leave it at now to auto-timestamp.'
       ],
       buttons: [
+        ['TOC', 'Open the Log entry composer, filters, table, import, and export controls.'],
+        ['SOP', 'Open the Log procedure reference and Quick Start template actions.'],
+        ['Mission / Folder', 'Group related reports into a named mission/folder and filter or group by it later.'],
+        ['PLAN', 'Pre-move or pre-watch plan: objective, route/area, timing, assets, MC/MT setup, risks, comms plan, and abort criteria.'],
+        ['SITREP', 'Current state update after a plan starts, during watch, at handover, or on meaningful change.'],
+        ['+GPS', 'Insert local/manual coordinates into the current entry. Also works by typing +GPS in a Log text field.'],
         ['Log', 'Prefill a new TOC entry from a node, contact, message, alert, or overlay.'],
+        ['Missions / Folders', 'Show all created missions/folders with counts and last activity. Click one to filter/select it.'],
+        ['Missions', 'Group the visible log table by Mission / Folder.'],
         ['⌖', 'Show the coordinates found in this entry on the map.'],
         ['⇄', 'Share this entry body via active MC chat target.'],
         ['⧉', 'Duplicate this entry.'],
         ['✎', 'Edit this entry.'],
         ['✕', 'Delete this entry.'],
-        ['Export', 'Download all TOC entries as JSON or CSV.'],
-        ['Import', 'Restore TOC entries from a previously exported JSON file.'],
+        ['Export TXT', 'Download all TOC entries as plain text.'],
+        ['Export JSON', 'Download all TOC entries as JSON.'],
+        ['Import', 'Restore TOC entries from a previously exported JSON or TXT file.'],
         ['Ctrl+Enter', 'Submit the current entry without clicking the button.']
       ]
     },
@@ -19080,6 +19094,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   let _tocEditingId = null;
   const _tocEntries = new Map();
   let _tocAllEntries = [];
+  let _tocMissionOptions = [];
+  let _tocMissionIdx = -1;
   let _tocPinnedTemplates = (() => {
     try {
       const raw = JSON.parse(localStorage.getItem('tocPinnedTemplates') || '[]');
@@ -19557,13 +19573,37 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     bodyEl.value = [bodyEl.value.trim(), line].filter(Boolean).join('\n');
   }
 
-  function tocAttachLocalPosition() {
+  function _tocLocalPositionLine() {
     const origin = typeof _omLocalOrigin === 'function' ? _omLocalOrigin() : null;
-    if (!origin || origin.lat == null || origin.lon == null) {
+    if (!origin || origin.lat == null || origin.lon == null) return '';
+    return `Position: ${Number(origin.lat).toFixed(5)}, ${Number(origin.lon).toFixed(5)}`;
+  }
+
+  function tocAttachLocalPosition() {
+    const line = _tocLocalPositionLine();
+    if (!line) {
       showToast('TOC Log', 'No local/manual position available.', 'node');
       return;
     }
-    _tocAppendToBody(`Position: ${Number(origin.lat).toFixed(5)}, ${Number(origin.lon).toFixed(5)}`);
+    _tocAppendToBody(line);
+  }
+
+  function _tocExpandGpsCommand(target) {
+    if (!target || typeof target.value !== 'string') return false;
+    const cursor = target.selectionStart ?? target.value.length;
+    const before = target.value.slice(0, cursor);
+    const m = before.match(/(^|[\s([{])\+GPS$/i);
+    if (!m) return false;
+    const line = _tocLocalPositionLine();
+    if (!line) {
+      showToast('TOC Log', 'No local/manual position available.', 'node');
+      return true;
+    }
+    const start = cursor - 4;
+    target.value = target.value.slice(0, start) + line + target.value.slice(cursor);
+    const newPos = start + line.length;
+    target.setSelectionRange(newPos, newPos);
+    return true;
   }
 
   function _tocFindTagInput() {
@@ -19746,6 +19786,10 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   function tocInputHandler(e) {
     const target = e.target;
+    if (_tocExpandGpsCommand(target)) {
+      _tocHideMentionDropdown();
+      return;
+    }
     const val    = target.value;
     const cursor = target.selectionStart;
     const before = val.slice(0, cursor);
@@ -19875,6 +19919,9 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   document.addEventListener('pointerdown', e => {
     const dd = document.getElementById('toc-mention-dropdown');
     if (dd && !dd.contains(e.target)) _tocHideMentionDropdown();
+    const md = document.getElementById('toc-mission-dropdown');
+    const mi = document.getElementById('toc-mission');
+    if (md && !md.contains(e.target) && e.target !== mi) tocHideMissionSuggestions();
   }, true);
 
   function _tocEntryMatchesFilters(entry) {
@@ -19939,6 +19986,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       if (mission) missions.set(mission.toLowerCase(), mission);
     });
     const values = [...missions.values()].sort((a, b) => a.localeCompare(b));
+    _tocMissionOptions = values;
     if (sel) {
       const current = sel.value;
       sel.innerHTML = '<option value="">Any mission</option>' + values
@@ -19948,6 +19996,139 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     }
     if (list) {
       list.innerHTML = values.map(m => `<option value="${_tocEscape(m)}"></option>`).join('');
+    }
+    tocRenderMissionSummary();
+  }
+
+  function _tocMissionStats() {
+    const stats = new Map();
+    _tocAllEntries.forEach(e => {
+      const mission = _tocMissionFromBody(e.body);
+      if (!mission) return;
+      const key = mission.toLowerCase();
+      const cur = stats.get(key) || {name: mission, count: 0, lastTs: 0, categories: new Map()};
+      cur.count += 1;
+      cur.lastTs = Math.max(cur.lastTs, Number(e.ts) || 0);
+      cur.categories.set(e.category || 'NOTE', (cur.categories.get(e.category || 'NOTE') || 0) + 1);
+      stats.set(key, cur);
+    });
+    return [...stats.values()].sort((a, b) => b.lastTs - a.lastTs || a.name.localeCompare(b.name));
+  }
+
+  function tocRenderMissionSummary() {
+    const wrap = document.getElementById('toc-mission-summary');
+    if (!wrap) return;
+    const active = (document.getElementById('toc-filter-mission')?.value || '').trim().toLowerCase();
+    const stats = _tocMissionStats();
+    if (!stats.length) {
+      wrap.innerHTML = '<span style="color:var(--muted);font-size:12px">No missions yet. Add a Mission / Folder name to any log entry.</span>';
+      return;
+    }
+    wrap.innerHTML = stats.map(m => {
+      const cats = [...m.categories.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([cat, count]) => `${cat}:${count}`)
+        .join(' ');
+      return `<button class="toc-mission-chip ${active === m.name.toLowerCase() ? 'active' : ''}" onclick="tocFilterMission('${jsSafe(m.name)}')" title="Filter Mission / Folder: ${_tocEscape(m.name)}">` +
+        `<span class="toc-mission-chip-name">📁 ${_tocEscape(m.name)}</span>` +
+        `<span class="toc-mission-chip-count">${m.count}</span>` +
+        `<span class="toc-mission-chip-meta">Last ${_tocEscape(_formatAppDateTime(m.lastTs))}${cats ? ' · ' + _tocEscape(cats) : ''}</span>` +
+        `</button>`;
+    }).join('');
+  }
+
+  function tocFilterMission(value) {
+    const sel = document.getElementById('toc-filter-mission');
+    const input = document.getElementById('toc-mission');
+    if (sel) sel.value = value || '';
+    if (input) input.value = value || '';
+    const mode = document.getElementById('toc-view-mode');
+    if (mode) mode.value = 'mission';
+    tocRenderLog();
+  }
+
+  function tocClearMissionFilter() {
+    const sel = document.getElementById('toc-filter-mission');
+    if (sel) sel.value = '';
+    tocRenderLog();
+  }
+
+  function tocSelectMission(value) {
+    const input = document.getElementById('toc-mission');
+    if (input) {
+      input.value = value || '';
+      input.focus();
+    }
+    tocHideMissionSuggestions();
+  }
+
+  function tocHideMissionSuggestions() {
+    const dd = document.getElementById('toc-mission-dropdown');
+    if (dd) dd.style.display = 'none';
+    _tocMissionIdx = -1;
+  }
+
+  function _tocMissionHighlight(idx) {
+    const dd = document.getElementById('toc-mission-dropdown');
+    if (!dd) return;
+    [...dd.children].forEach((item, i) => {
+      item.style.background = i === idx ? 'var(--bg3)' : '';
+    });
+  }
+
+  function tocShowMissionSuggestions() {
+    const input = document.getElementById('toc-mission');
+    const dd = document.getElementById('toc-mission-dropdown');
+    if (!input || !dd) return;
+    const q = input.value.trim().toLowerCase();
+    const matches = _tocMissionOptions
+      .filter(m => !q || m.toLowerCase().includes(q))
+      .slice(0, 10);
+    if (!matches.length) {
+      tocHideMissionSuggestions();
+      return;
+    }
+    _tocMissionIdx = -1;
+    dd.innerHTML = matches.map(m =>
+      `<div data-mission="${escHtml(m)}" style="padding:6px 10px;cursor:pointer;font-size:12px;color:var(--text);display:flex;align-items:center;gap:8px">` +
+      `<span style="color:#5eead4">📁</span><span>${_tocEscape(m)}</span></div>`
+    ).join('');
+    [...dd.children].forEach(item => {
+      const value = item.getAttribute('data-mission') || '';
+      item.onmousedown = ev => {
+        ev.preventDefault();
+        tocSelectMission(value);
+      };
+      item.onmouseover = () => item.style.background = 'var(--bg3)';
+      item.onmouseout = () => item.style.background = '';
+    });
+    const rect = input.getBoundingClientRect();
+    dd.style.left = rect.left + 'px';
+    dd.style.top = (rect.bottom + 4) + 'px';
+    dd.style.width = Math.max(rect.width, 200) + 'px';
+    dd.style.display = 'block';
+  }
+
+  function tocMissionKeydown(e) {
+    const dd = document.getElementById('toc-mission-dropdown');
+    if (!dd || dd.style.display === 'none') return;
+    const items = [...dd.children];
+    if (!items.length) return;
+    if (e.key === 'Escape') {
+      tocHideMissionSuggestions();
+      e.preventDefault();
+    } else if (e.key === 'ArrowDown') {
+      _tocMissionIdx = Math.min(_tocMissionIdx + 1, items.length - 1);
+      _tocMissionHighlight(_tocMissionIdx);
+      e.preventDefault();
+    } else if (e.key === 'ArrowUp') {
+      _tocMissionIdx = Math.max(_tocMissionIdx - 1, 0);
+      _tocMissionHighlight(_tocMissionIdx);
+      e.preventDefault();
+    } else if (e.key === 'Enter' && _tocMissionIdx >= 0) {
+      tocSelectMission(items[_tocMissionIdx].getAttribute('data-mission') || '');
+      e.preventDefault();
     }
   }
 
@@ -19968,6 +20149,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const entries = _tocAllEntries.filter(_tocEntryMatchesFilters);
     const countEl = document.getElementById('toc-filter-count');
     if (countEl) countEl.textContent = `${entries.length}/${_tocAllEntries.length}`;
+    tocRenderMissionSummary();
     if (!entries.length) {
       if (emptyRow) {
         emptyRow.style.display = '';

@@ -416,6 +416,101 @@
     .view-toggle .btn:not(:last-child):not(.active):hover { border-right-width: 1px; }
     .view-toggle .btn:not(:last-child):not(.active):hover + .btn { border-left-width: 0; }
 
+    .toc-composer {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background: rgba(13, 17, 23, 0.18);
+    }
+    .toc-mission-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      padding: 6px 8px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+    .toc-mission-input {
+      background: var(--bg2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 5px 8px;
+      font-size: 12px;
+      flex: 1;
+      min-width: 180px;
+    }
+    .toc-missions-panel {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      display: grid;
+      gap: 7px;
+      background: rgba(13, 17, 23, 0.1);
+    }
+    .toc-missions-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+    }
+    .toc-mission-summary {
+      display: flex;
+      gap: 7px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .toc-mission-chip {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 4px 10px;
+      min-width: 160px;
+      max-width: 260px;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      cursor: pointer;
+      padding: 7px 9px;
+      text-align: left;
+      font: inherit;
+    }
+    .toc-mission-chip:hover,
+    .toc-mission-chip.active {
+      border-color: var(--accent);
+      background: var(--bg3);
+    }
+    .toc-mission-chip-name {
+      color: #5eead4;
+      font-size: 12px;
+      font-weight: 650;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .toc-mission-chip-count {
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .toc-mission-chip-meta {
+      grid-column: 1 / -1;
+      color: var(--muted);
+      font-size: 10px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
     .log-sop {
       padding: 12px 14px 18px;
       font-size: 12px;

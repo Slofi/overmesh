@@ -654,7 +654,7 @@
 
     <div id="log-subtab-toc">
     <!-- Entry composer -->
-    <div style="padding:10px 12px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:8px">
+    <div class="toc-composer">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <select id="toc-category" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;flex-shrink:0">
           <option value="NOTE">NOTE</option>
@@ -685,13 +685,14 @@
           <option value="intel">INTEL</option>
         </select>
         <button class="btn" id="toc-pin-template-btn" onclick="tocTogglePinnedTemplate()" title="Pin or unpin selected template" style="padding:4px 8px;font-size:12px">☆</button>
-        <button class="btn" onclick="tocAttachLocalPosition()" title="Attach local/manual position to the entry" style="padding:4px 8px;font-size:12px">+ GPS</button>
+        <button class="btn" onclick="tocAttachLocalPosition()" title="Attach local/manual position to the entry. You can also type +GPS in a Log text field." style="padding:4px 8px;font-size:12px">+GPS</button>
         <button class="btn" id="toc-clear-btn" onclick="tocClear()" title="Clear all fields" style="flex-shrink:0">Clear</button>
       </div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <div class="toc-mission-row">
         <label for="toc-mission" style="font-size:11px;color:var(--muted);white-space:nowrap">Mission / Folder:</label>
         <input id="toc-mission" type="text" list="toc-mission-list" placeholder="e.g. CD mobile route, Basecamp watch, RC test"
-               style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;flex:1;min-width:180px">
+               onfocus="tocShowMissionSuggestions()" oninput="tocShowMissionSuggestions()" onkeydown="tocMissionKeydown(event)"
+               class="toc-mission-input">
         <datalist id="toc-mission-list"></datalist>
       </div>
       <div id="toc-pinned-templates" style="display:none;gap:6px;flex-wrap:wrap;align-items:center"></div>
@@ -711,10 +712,21 @@
       <!-- Structured fields (shown when template active) -->
       <div id="toc-fields" style="display:none;flex-direction:column;gap:6px"></div>
       <!-- Free-text note (shown when no template) -->
-      <textarea id="toc-body" rows="3" placeholder="Note… (# node  @ overlay)" oninput="tocInputHandler(event)" onkeydown="tocInputKeydown(event)" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:13px;resize:vertical;width:100%;box-sizing:border-box"></textarea>
+      <textarea id="toc-body" rows="3" placeholder="Note… (# node  @ overlay  +GPS)" oninput="tocInputHandler(event)" onkeydown="tocInputKeydown(event)" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:13px;resize:vertical;width:100%;box-sizing:border-box"></textarea>
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
         <span id="toc-edit-status" style="font-size:12px;color:var(--muted);min-height:16px"></span>
         <button class="btn" id="toc-submit-btn" onclick="tocSubmit()" style="min-width:80px" title="Add log entry">Add Entry</button>
+      </div>
+    </div>
+
+    <!-- Missions / folders -->
+    <div class="toc-missions-panel">
+      <div class="toc-missions-head">
+        <span>Missions / Folders</span>
+        <button class="btn" onclick="tocClearMissionFilter()" title="Show all missions and folders" style="padding:3px 8px;font-size:11px">All</button>
+      </div>
+      <div id="toc-mission-summary" class="toc-mission-summary">
+        <span style="color:var(--muted);font-size:12px">No missions yet.</span>
       </div>
     </div>
 
@@ -794,7 +806,7 @@
           <li>Record time, place or area, network path, involved node or station, and current status.</li>
           <li>Use node mentions with <code>#</code> when possible so entries stay tied to MC / MT contacts.</li>
           <li>Mark confidence clearly: confirmed, likely, possible, unconfirmed, stale, or inferred.</li>
-          <li>Add <code>+ GPS</code> for own position when location matters; avoid guessing exact coordinates.</li>
+          <li>Add <code>+GPS</code> for own position when location matters; avoid guessing exact coordinates.</li>
           <li>Close the loop with ACTION or a later SITREP when something was assigned or changed.</li>
         </ul>
       </section>
@@ -884,6 +896,7 @@
   </div>
   <!-- /panel-log -->
   <div id="toc-mention-dropdown" style="display:none;position:fixed;z-index:3000;background:var(--bg2);border:1px solid var(--border);border-radius:6px;max-height:200px;overflow-y:auto;box-shadow:0 4px 16px rgba(0,0,0,.4);min-width:200px"></div>
+  <div id="toc-mission-dropdown" style="display:none;position:fixed;z-index:3000;background:var(--bg2);border:1px solid var(--border);border-radius:6px;max-height:180px;overflow-y:auto;box-shadow:0 4px 16px rgba(0,0,0,.4);min-width:200px"></div>
 
   <div class="panel" id="panel-settings">
 

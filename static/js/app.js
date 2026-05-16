@@ -15279,6 +15279,12 @@ if (targetEl) {
       if (kind === 'loop') _mcRemoteSaveCache({loop: val('mc-remote-set-loop')});
       if (kind === 'adverts') _mcRemoteSaveCache({advert_int: val('mc-remote-set-advert-int'), flood_advert_int: val('mc-remote-set-flood-advert-int')});
       if (kind === 'flood_max') _mcRemoteSaveCache({flood_max: val('mc-remote-set-flood-max')});
+      // auto-reboot after name/position changes so prefs take effect and fresh advert goes out
+      if (kind === 'name' || kind === 'position') {
+        const out = document.getElementById('mc-remote-quick-result');
+        if (out) out.innerHTML = '<span style="color:var(--accent)">Set OK — rebooting node…</span>';
+        mcRemoteRunCommand('reboot').catch(() => {});
+      }
     } catch (e) {
       const out = document.getElementById('mc-remote-quick-result');
       if (out) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;

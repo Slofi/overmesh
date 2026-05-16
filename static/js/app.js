@@ -14765,7 +14765,7 @@ if (targetEl) {
     const value = _mcRemoteExtractValue(text, command.replace(/^get\s+/, ''));
     if (!value) return false;
     const set = (id, v) => { _mcRemoteSetValue(id, v); return v; };
-    if (command === 'get name') { const v = set('mc-remote-set-name', value); _mcRemoteSaveCache({name: v}); return true; }
+    if (command === 'get name') { const v = set('mc-remote-set-name', value.replace(/^>\s*/, '')); _mcRemoteSaveCache({name: v}); return true; }
     if (command === 'get repeat') { const v = _mcRemoteNormalizeOnOff(value); set('mc-remote-set-repeat', v); _mcRemoteSaveCache({repeat: v}); return !!v; }
     if (command === 'get powersaving') { const v = _mcRemoteNormalizeOnOff(value); set('mc-remote-set-powersaving', v); _mcRemoteSaveCache({powersaving: v}); return !!v; }
     if (command === 'get tx') { const v = value.match(/-?\d+(\.\d+)?/)?.[0] || ''; set('mc-remote-set-tx', v); _mcRemoteSaveCache({tx: v}); return !!v; }
@@ -14776,7 +14776,7 @@ if (targetEl) {
       const v = raw.includes('prefs') ? 'prefs' : raw.includes('share') ? 'share' : 'none';
       set('mc-remote-set-advert-loc', v); _mcRemoteSaveCache({advert_loc: v}); return true;
     }
-    if (command === 'get owner.info') { set('mc-remote-set-owner', value); _mcRemoteSaveCache({owner: value}); return true; }
+    if (command === 'get owner.info') { const v = value.replace(/^>\s*/, ''); set('mc-remote-set-owner', v); _mcRemoteSaveCache({owner: v}); return true; }
     if (command === 'get path.hash.mode') { const v = _mcRemoteNormalizePathHash(value); set('mc-remote-set-path-hash', v); _mcRemoteSaveCache({path_hash: v}); return !!v; }
     if (command === 'get loop.detect') { const v = _mcRemoteNormalizeLoop(value); set('mc-remote-set-loop', v); _mcRemoteSaveCache({loop: v}); return !!v; }
     if (command === 'get advert.interval') { const v = value.match(/-?\d+(\.\d+)?/)?.[0] || ''; set('mc-remote-set-advert-int', v); _mcRemoteSaveCache({advert_int: v}); return !!v; }

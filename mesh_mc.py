@@ -3020,6 +3020,7 @@ def _validate_remote_admin_command(command):
         "advert.zerohop",
         "neighbors",
         "omcollect",
+        "reboot",
         "discover.neighbors",
         "get name",
         "get radio",

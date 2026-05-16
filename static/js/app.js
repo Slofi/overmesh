@@ -14674,6 +14674,7 @@ if (targetEl) {
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn" style="color:var(--red);border-color:var(--red)" onclick="mcRemoteSilentMode(this)" title="Stop forwarding, silence all adverts, hide position">Silent mode</button>
             <button class="btn" onclick="mcRemoteResumeMode(this)" title="Resume forwarding and adverts">Resume</button>
+            <button class="btn" style="color:var(--orange,#f97316);border-color:var(--orange,#f97316)" onclick="mcRemoteReboot(this)" title="Send reboot command to the RPTR firmware">Restart</button>
           </div>
         </div>
       </div>`;
@@ -15307,6 +15308,21 @@ if (targetEl) {
       for (const cmd of ['set repeat on', 'set advert.interval 120', 'set flood.advert.interval 13', 'gps advert prefs'])
         await mcRemoteRunCommand(cmd, 'mc-remote-quick-result', {silentError: false});
       if (out) out.innerHTML = '<span style="color:var(--accent)">Resumed — node is active and advertising.</span>';
+    } catch(e) {
+      if (out) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function mcRemoteReboot(btn) {
+    if (!confirm('Send reboot command to the RPTR? It will disconnect briefly.')) return;
+    if (btn) btn.disabled = true;
+    const out = document.getElementById('mc-remote-quick-result');
+    if (out) out.textContent = 'Sending reboot…';
+    try {
+      await mcRemoteRunCommand('reboot', 'mc-remote-quick-result', {silentError: false});
+      if (out) out.innerHTML = '<span style="color:var(--accent)">Reboot sent — node will restart in a moment.</span>';
     } catch(e) {
       if (out) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
     } finally {

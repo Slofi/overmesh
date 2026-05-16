@@ -2786,6 +2786,15 @@ def _remote_cli_reply_text(reply):
     return str(reply).strip()
 
 
+def _remote_cli_reply_value(reply):
+    text = _remote_cli_reply_text(reply)
+    if not text:
+        return ""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    value = lines[0] if lines else text
+    return value.removeprefix(">").strip()
+
+
 def _remote_cli_reply_is_error(reply):
     text = _remote_cli_reply_text(reply).lower()
     return text.startswith((
@@ -2805,6 +2814,84 @@ def _remote_cli_reply_is_benign_for_command(cmd, reply):
     if cmd == "clock sync" and "clock cannot go backwards" in text:
         return True
     return False
+
+
+def _remote_float_value(value):
+    try:
+        return float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _remote_contact_updates_for_command(cmd, reply):
+    lower = str(cmd or "").lower()
+    value = _remote_cli_reply_value(reply)
+    updates = {}
+    if lower == "get name" and value:
+        updates["adv_name"] = value
+    elif lower.startswith("set name "):
+        name = cmd[len("set name "):].strip()
+        if name:
+            updates["adv_name"] = name
+    elif lower == "get lat":
+        lat = _remote_float_value(value)
+        if lat is not None:
+            updates["adv_lat"] = lat
+    elif lower == "get lon":
+        lon = _remote_float_value(value)
+        if lon is not None:
+            updates["adv_lon"] = lon
+    elif lower.startswith("set lat "):
+        lat = _remote_float_value(cmd[len("set lat "):])
+        if lat is not None:
+            updates["adv_lat"] = lat
+    elif lower.startswith("set lon "):
+        lon = _remote_float_value(cmd[len("set lon "):])
+        if lon is not None:
+            updates["adv_lon"] = lon
+    return updates
+
+
+def _remote_update_contact_from_command(config_id, full_key, cmd, reply):
+    updates = _remote_contact_updates_for_command(cmd, reply)
+    if not updates:
+        return
+    now = int(time.time())
+    archive_merge = None
+    with mc_connections_lock:
+        state = mc_connections.get(config_id)
+        if not state:
+            return
+        contact = dict((state.get("contacts") or {}).get(full_key) or {})
+        contact.setdefault("public_key", full_key)
+        contact.update(updates)
+        contact["last_seen_ts"] = now
+        state.setdefault("contacts", {})[full_key] = contact
+        archive_merge = {full_key: dict(contact)}
+        radio_name = state.get("name", config_id)
+    _mc_archive_merge_contacts(config_id, archive_merge)
+    lat = contact.get("adv_lat") if contact.get("adv_lat") is not None else contact.get("latitude")
+    lon = contact.get("adv_lon") if contact.get("adv_lon") is not None else contact.get("longitude")
+    name = contact.get("adv_name") or contact.get("long_name") or full_key[:8]
+    _push_mc_node({
+        "type": "mc_node",
+        "radio_id": config_id,
+        "radio_name": radio_name,
+        "id": full_key[:12],
+        "full_key": full_key,
+        "long_name": name,
+        "short_name": (name or "?")[:4].upper(),
+        "latitude": lat,
+        "longitude": lon,
+        "last_heard_ts": _mc_contact_seen_ts(contact, now),
+        "out_path_len": contact.get("out_path_len", -1),
+        "out_path": contact.get("out_path", ""),
+        "out_path_hash_mode": contact.get("out_path_hash_mode"),
+        "out_path_hash_size": contact.get("out_path_hash_size"),
+        "path_manual": bool(contact.get("path_manual", False)),
+        "contact_type": contact.get("type", 0),
+        "network": "mc",
+    })
 
 
 async def _remote_login_async(mc, full_key, password, timeout=12):
@@ -3025,6 +3112,8 @@ async def _remote_command_async(config_id, pubkey_prefix, command):
         reply_error = _remote_cli_reply_is_error(reply)
         if reply_error and _remote_cli_reply_is_benign_for_command(cmd, reply):
             reply_error = False
+        if reply is not None and not reply_error:
+            _remote_update_contact_from_command(config_id, full_key, cmd, reply)
         return {
             "ok": not reply_error,
             "command": cmd,

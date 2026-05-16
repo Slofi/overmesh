@@ -1930,7 +1930,7 @@
         'Remote Manage opens a login/read/command interface for MC repeater and room-server nodes. Only visible for contacts identified as repeaters or room servers.',
         'Remote Manage also has Quick settings for common RPTR/room-server options: name, repeat, power save, TX power, radio parameters, position, owner info, path hash mode, loop detect, advert timers, flood max, neighbour discovery, and local/flood adverts. After Admin Login + Read, OM best-effort pre-fills these fields from safe remote get commands; Read settings runs that prefill again. The Map button lets you pick RPTR coordinates directly from the map before pressing Set.',
         'Remember stores the RPTR admin password in this browser for this radio/contact pair, similar to the MeshCore Android app. Uncheck it before Login + Read to remove the saved password.',
-        'Remote Local advert and Flood advert try to send immediately while connected. If firmware rejects the advert during the admin session, OM queues one retry when you close Manage, which is the practical log-off point in this UI.'
+        'Remote Local advert and Flood advert try to send immediately while connected. They are manual actions so settings can be changed without forcing an advert during the admin session.'
       ],
       buttons: [
         ['Serial', 'Add an MC radio by USB serial device path.'],
@@ -15251,9 +15251,6 @@ if (targetEl) {
       if (kind === 'flood_max') commands.push(`set flood.max ${num('mc-remote-set-flood-max', 'flood max', 0, 64)}`);
       if (!commands.length || commands.some(c => !c.trim() || c.endsWith(' '))) throw new Error('Enter a value first.');
       for (const command of commands) await mcRemoteRunCommand(command);
-      if (['name', 'position', 'advert_loc'].includes(kind)) {
-        await mcRemoteRunCommand('advert', 'mc-remote-quick-result', {senseLogAdvertMode: 'flood'});
-      }
       // update cache with applied values
       if (kind === 'name') _mcRemoteSaveCache({name: val('mc-remote-set-name')});
       if (kind === 'repeat') _mcRemoteSaveCache({repeat: val('mc-remote-set-repeat')});

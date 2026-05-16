@@ -117,6 +117,30 @@ class MeshMcPathHelperTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertEqual(conn.closed, 1)
 
+    def test_remote_cli_reply_value_strips_repeater_prompt(self):
+        self.assertEqual(
+            mesh_mc._remote_cli_reply_value({"text": "> Argus mobile RPTR"}),
+            "Argus mobile RPTR",
+        )
+
+    def test_remote_contact_updates_parse_name_and_coords(self):
+        self.assertEqual(
+            mesh_mc._remote_contact_updates_for_command("get name", {"text": "> Argus mobile RPTR"}),
+            {"adv_name": "Argus mobile RPTR"},
+        )
+        self.assertEqual(
+            mesh_mc._remote_contact_updates_for_command("set name Argus mobile RPTR", {"text": "OK"}),
+            {"adv_name": "Argus mobile RPTR"},
+        )
+        self.assertEqual(
+            mesh_mc._remote_contact_updates_for_command("get lat", {"text": "> 46.123456"}),
+            {"adv_lat": 46.123456},
+        )
+        self.assertEqual(
+            mesh_mc._remote_contact_updates_for_command("set lon 14.654321", {"text": "OK"}),
+            {"adv_lon": 14.654321},
+        )
+
     def test_force_close_meshcore_closes_raw_serial_transport(self):
         class FakeSerial:
             def __init__(self):

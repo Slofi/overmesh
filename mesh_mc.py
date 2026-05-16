@@ -3001,14 +3001,6 @@ async def _remote_command_async(config_id, pubkey_prefix, command):
         contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
     full_key, _contact = _resolve_mc_contact(contacts, pubkey_prefix)
     cmd = _validate_remote_admin_command(command)
-    if cmd.lower() in {"advert", "advert.zerohop"}:
-        try:
-            sync_sent = await mc.commands.send_cmd(full_key, "clock sync")
-            _raise_if_mc_error(sync_sent, "remote advert clock sync")
-            log.info(f"[MC:{config_id}] remote advert pre-clock-sync sent to {full_key[:12]}")
-            await asyncio.sleep(0.6)
-        except Exception as e:
-            log.warning(f"[MC:{config_id}] remote advert pre-clock-sync failed for {full_key[:12]}: {e}")
     dispatcher = getattr(mc.commands, "dispatcher", None)
     reply_task = None
     if dispatcher is not None:

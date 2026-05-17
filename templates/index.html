@@ -794,102 +794,116 @@
     <div id="log-subtab-sop" class="log-sop" style="display:none">
       <div class="log-sop-header">
         <div>
-          <div class="log-sop-kicker">Field SOP</div>
-          <h2>MC / MT Log Discipline</h2>
+          <div class="log-sop-kicker">Operating Procedure</div>
+          <h2>MC / MT Log Standard</h2>
         </div>
-        <div class="log-sop-callout">Log facts first. Keep chat in Chat. Use the log for decisions, checks, movement, and follow-up.</div>
+        <div class="log-sop-callout">The log is the operational record for all MeshCore (MC) and Meshtastic (MT) activity. Log facts, not conversation. If it happened and it matters, it goes in the log.</div>
       </div>
 
       <section class="log-sop-section">
-        <h3>Minimum Entry Standard</h3>
+        <h3>Entry Standard</h3>
         <ul class="log-sop-list">
-          <li>Record time, place or area, network path, involved node or station, and current status.</li>
-          <li>Use node mentions with <code>#</code> when possible so entries stay tied to MC / MT contacts.</li>
-          <li>Mark confidence clearly: confirmed, likely, possible, unconfirmed, stale, or inferred.</li>
-          <li>Add <code>+GPS</code> for own position when location matters; avoid guessing exact coordinates.</li>
-          <li>Close the loop with ACTION or a later SITREP when something was assigned or changed.</li>
+          <li>Log time, network, station or node, and current status. Every entry.</li>
+          <li>Use <code>#</code> mentions to tie entries to MC / MT contacts by name.</li>
+          <li>State confidence. Choose one: confirmed / likely / possible / unconfirmed / stale / inferred.</li>
+          <li>Attach <code>+GPS</code> when position matters. Do not estimate coordinates.</li>
+          <li>Close every ALERT and ACTION. An unresolved entry is an open task.</li>
+          <li>Chat is for conversation. Log is for record. Keep them separate.</li>
         </ul>
       </section>
 
       <section class="log-sop-section">
-        <h3>Quick Start</h3>
+        <h3>Quick Launch</h3>
         <div class="log-sop-actionbar">
-          <button class="log-sop-action" onclick="logSopUse('mobile-start')" title="Prefill a mobile CD movement plan">Mobile plan</button>
+          <button class="log-sop-action" onclick="logSopUse('plan')" title="Prefill a PLAN entry — define objective, route, and comms before any activation">Plan</button>
+          <button class="log-sop-action" onclick="logSopUse('mobile-start')" title="Prefill a mobile movement plan — use when departing with the Cyberdeck">Depart</button>
+          <button class="log-sop-action" onclick="logSopUse('basecamp-open')" title="Prefill a static station opening report">Station open</button>
           <button class="log-sop-action" onclick="logSopUse('quick-sitrep')" title="Prefill a current status SITREP">SITREP</button>
-          <button class="log-sop-action" onclick="logSopUse('basecamp-open')" title="Prefill a basecamp opening SITREP">Basecamp open</button>
-          <button class="log-sop-action" onclick="logSopUse('rc-collect')" title="Prefill a Remote Collector collection note">RC collect</button>
-          <button class="log-sop-action" onclick="logSopUse('degraded-comms')" title="Prefill a degraded comms alert">Degraded comms</button>
+          <button class="log-sop-action" onclick="logSopUse('rc-collect')" title="Prefill a Remote Collector sweep note">Collector sweep</button>
+          <button class="log-sop-action" onclick="logSopUse('degraded-comms')" title="Prefill a degraded comms alert">Comms lost</button>
         </div>
       </section>
 
       <section class="log-sop-section">
-        <h3>Category Use</h3>
+        <h3>Op Phase</h3>
+        <div class="log-sop-kv">
+          <span>PREP</span><p>Log PLAN. Confirm radio state, GPS fix, and power. No movement without a plan on record.</p>
+          <span>MOBILE</span><p>POSITION at departure, checkpoints, and arrival. COMMS on radio or terrain change. CONTACT on new stations.</p>
+          <span>STATIC</span><p>SITREP (Situation Report) on open. SITREP every 30–60 min or on any state change. INTEL after RC (Remote Collector) import.</p>
+          <span>RECOVER</span><p>Final SITREP. Export log. Record open items and next planned activation.</p>
+        </div>
+      </section>
+
+      <section class="log-sop-section">
+        <h3>Category Reference</h3>
         <div class="log-sop-grid">
-          <button class="log-sop-rule" onclick="logSopUse('note')" title="Prefill a NOTE entry"><strong>NOTE</strong><span>Scratchpad facts that do not yet fit a formal report.</span></button>
-          <button class="log-sop-rule" onclick="logSopUse('plan')" title="Prefill a PLAN entry"><strong>PLAN</strong><span>Pre-move or pre-watch intent, route, checks, risks, and reporting plan.</span></button>
-          <button class="log-sop-rule" onclick="logSopUse('sitrep')" title="Prefill a SITREP entry"><strong>SITREP</strong><span>Overall state of the station, route, group, or operating area.</span></button>
-          <button class="log-sop-rule" onclick="logSopUse('commscheck')" title="Prefill a COMMS CHECK entry"><strong>COMMS</strong><span>MC / MT checks, pings, message paths, signal quality, retries, and failures.</span></button>
-          <button class="log-sop-rule" onclick="logSopUse('contact')" title="Prefill a CONTACT entry"><strong>CONTACT</strong><span>First heard, first seen, or newly identified station / node.</span></button>
-          <button class="log-sop-rule" onclick="logSopUse('position')" title="Prefill a POSITION entry"><strong>POSITION</strong><span>Own station, mobile node, RPTR, contact, waypoint, or last known location.</span></button>
-          <button class="log-sop-rule" onclick="logSopUse('alert')" title="Prefill an ALERT entry"><strong>ALERT</strong><span>Safety, weather, power, access, comms outage, or other actionable risk.</span></button>
-          <button class="log-sop-rule" onclick="logSopUse('action')" title="Prefill an ACTION entry"><strong>ACTION</strong><span>Specific task, owner, due time, status, result, and follow-up.</span></button>
-          <button class="log-sop-rule" onclick="logSopUse('intel')" title="Prefill an INTEL entry"><strong>INTEL</strong><span>Observed pattern, passive RF note, movement, infrastructure, signal, or RC collection finding.</span></button>
+          <button class="log-sop-rule" onclick="logSopUse('note')" title="Prefill a NOTE entry"><strong>NOTE</strong><span>Unverified observation. Not yet classified. Review and promote when facts are clear.</span></button>
+          <button class="log-sop-rule" onclick="logSopUse('plan')" title="Prefill a PLAN entry"><strong>PLAN</strong><span>Pre-move or pre-watch order. Objective, route, comms plan, risk, and reporting triggers.</span></button>
+          <button class="log-sop-rule" onclick="logSopUse('sitrep')" title="Prefill a SITREP entry"><strong>SITREP</strong><span>Full status at a point in time. Network, assets, issues, intent, and next update.</span></button>
+          <button class="log-sop-rule" onclick="logSopUse('commscheck')" title="Prefill a COMMS CHECK entry"><strong>COMMS</strong><span>Radio check, ping, message path, relay test, or failed contact. Log results, not discussion.</span></button>
+          <button class="log-sop-rule" onclick="logSopUse('contact')" title="Prefill a CONTACT entry"><strong>CONTACT</strong><span>New station identified. First heard, path, signal, and follow-up action.</span></button>
+          <button class="log-sop-rule" onclick="logSopUse('position')" title="Prefill a POSITION entry"><strong>POSITION</strong><span>Own station, mobile node, RPTR (Repeater), or remote asset. GPS when available; state confidence if not.</span></button>
+          <button class="log-sop-rule" onclick="logSopUse('alert')" title="Prefill an ALERT entry"><strong>ALERT</strong><span>Actionable problem. Power, comms outage, weather, or safety. Requires a response now.</span></button>
+          <button class="log-sop-rule" onclick="logSopUse('action')" title="Prefill an ACTION entry"><strong>ACTION</strong><span>Assigned task with owner and status. Must be closed or superseded when complete.</span></button>
+          <button class="log-sop-rule" onclick="logSopUse('intel')" title="Prefill an INTEL entry"><strong>INTEL</strong><span>Observed pattern, RC find, signal, movement, or infrastructure. Tag and assess reliability.</span></button>
         </div>
       </section>
 
       <section class="log-sop-section">
-        <h3>Mobile CD Use</h3>
+        <h3>Mobile Operations</h3>
         <ol class="log-sop-list">
-          <li>Before moving, create PLAN with objective, route or area, radio state, GPS state, risks, and expected next update.</li>
-          <li>At start, turn points, stops, and end, create POSITION. Attach GPS when available.</li>
-          <li>After terrain, antenna, channel, or radio changes, create COMMS with network, target station, result, RSSI/SNR if known, hops, and retry plan.</li>
-          <li>For new MC / MT stations, create CONTACT with first heard time, path, signal, distance if known, and follow-up.</li>
-          <li>For observed signal patterns, RC captures, movement, or infrastructure notes, create INTEL and tag it Signal, Movement, Location, Infrastructure, or Recon.</li>
-          <li>Use ALERT only when someone needs to act now or monitor a real risk.</li>
-          <li>Close the route with SITREP: current status, unresolved actions, contacts added, and next operating plan.</li>
+          <li>Log PLAN before departure: objective, route, radio state, GPS state, risks, and first checkpoint.</li>
+          <li>Confirm MC / MT connectivity before moving. Log COMMS if no acknowledgement from target station.</li>
+          <li>Log POSITION at departure, each turn or stop, and arrival. Attach GPS when available.</li>
+          <li>Log COMMS after any terrain, antenna, channel, or radio change. Record result and retry plan if failed.</li>
+          <li>Log CONTACT for new MC / MT stations: first heard, path, signal, distance if known.</li>
+          <li>Log INTEL for signal patterns, RC captures, movement observations, or infrastructure notes. Tag accordingly.</li>
+          <li>Log ALERT only for actionable risk. Reserve it for things that need a response, not every problem.</li>
+          <li>Close the route with SITREP: current status, contacts added, unresolved actions, and next planned activation.</li>
         </ol>
       </section>
 
       <section class="log-sop-section">
-        <h3>Basecamp Station</h3>
+        <h3>Static Station</h3>
         <ol class="log-sop-list">
-          <li>Open with SITREP: station location, power, GPS, MC radios, MT nodes, antenna setup, and monitoring channels.</li>
-          <li>Run a regular SITREP every 30-60 minutes, or immediately after any meaningful change.</li>
-          <li>Use COMMS for net checks, MC pings, MT channel checks, direct messages, relay behavior, and failed paths.</li>
-          <li>Use CONTACT for new arrivals, renamed nodes, unexpected stations, or stations that need to be added to contacts.</li>
-          <li>Use ACTION for tasks such as add contact, move antenna, retry route, restart radio, verify position, or check RC output.</li>
-          <li>Use ALERT for power loss, weather, safety, access, device failure, or loss of expected comms.</li>
-          <li>At handover or shutdown, export the log and add a final SITREP with open items.</li>
+          <li>Open with SITREP: location, power, GPS state, MC radios, MT nodes, antenna setup, monitoring channels.</li>
+          <li>Log SITREP every 30–60 minutes, or immediately after any meaningful change.</li>
+          <li>Log COMMS for net checks, MC pings, MT channel checks, messages, relay behavior, and failed paths.</li>
+          <li>Log CONTACT for new arrivals, renamed nodes, unexpected stations, or stations to be added to contacts.</li>
+          <li>Log ACTION for assigned tasks: add contact, move antenna, retry route, restart radio, verify position.</li>
+          <li>Log ALERT for power loss, weather, safety risk, device failure, or loss of expected comms path.</li>
+          <li>At shutdown or handover: export log, add final SITREP with open items and next activation plan.</li>
         </ol>
       </section>
 
       <section class="log-sop-section">
-        <h3>Remote Collector / RPTR Watch</h3>
+        <h3>Remote Assets</h3>
         <ul class="log-sop-list">
-          <li>Before deploying Argus or another RPTR / RC unit, log POSITION with placement, antenna, power state, and confidence.</li>
-          <li>Log COMMS for login, ping, OMCOLLECT, relay import, or failed session attempts.</li>
-          <li>After collection, log INTEL with new nodes, strong signals, unusual paths, stale data, and reliability.</li>
-          <li>Create ACTION for reset, redeploy, contact add, route verify, firmware check, or follow-up collection.</li>
+          <li>Treat each RC / RPTR unit as a remote station with a callsign (e.g. <strong>Argus</strong>). Log by callsign.</li>
+          <li>Before deploying, log POSITION: placement, antenna orientation, power state, and confidence level.</li>
+          <li>Log COMMS for each session: login, OMCOLLECT command, relay import result, or failed attempt.</li>
+          <li>After collection, log INTEL: new stations found, strong signals, unusual paths, stale data, and assessment.</li>
+          <li>Log ACTION for follow-up: redeploy, reset, firmware check, route verify, or next scheduled collection.</li>
         </ul>
       </section>
 
       <section class="log-sop-section">
         <h3>Degraded Comms</h3>
         <ul class="log-sop-list">
-          <li>Create one ALERT for the problem, affected network, scope, and immediate mitigation.</li>
-          <li>Use COMMS for each test, not for long discussion. Record what changed between attempts.</li>
-          <li>Use ACTION for the next named step: move, retry, swap radio, check power, restart service, or verify route.</li>
-          <li>When stable, create SITREP with what is restored, what remains degraded, and the next check time.</li>
+          <li>On first sign of degradation: log ALERT with affected network, scope, and immediate mitigation step.</li>
+          <li>Log COMMS for each test attempt. Record what changed between attempts, not the discussion around it.</li>
+          <li>Log ACTION for each named step: move, retry, swap radio, check power, restart service, verify route.</li>
+          <li>When stable: log SITREP. State what is restored, what remains degraded, and the next check time.</li>
         </ul>
       </section>
 
       <section class="log-sop-section">
         <h3>Cadence</h3>
         <div class="log-sop-kv">
-          <span>Mobile</span><p>Start, major route changes, stop points, contact events, and end of movement.</p>
-          <span>Basecamp</span><p>Opening report, 30-60 minute watch updates, state changes, handover, and shutdown.</p>
-          <span>Incident</span><p>On first detection, after each material change, and when stable or resolved.</p>
-          <span>RC / RPTR</span><p>Before collection, after collection, after import, and after any failed command sequence.</p>
+          <span>Mobile</span><p>Scheduled: departure, checkpoints, arrival. Triggered: terrain change, new contact, comms failure, ALERT.</p>
+          <span>Static</span><p>Scheduled: every 30–60 min. Triggered: state change, new contact, ALERT, RC collection import.</p>
+          <span>Remote</span><p>Triggered: before collection, after import, after failed session, on redeploy or reset.</p>
+          <span>Incident</span><p>On detection. After each material change. On resolution or stabilization.</p>
         </div>
       </section>
     </div>

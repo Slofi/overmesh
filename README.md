@@ -140,6 +140,8 @@ pip install -r requirements.txt
 copy config.example.json config.json
 ```
 
+> **PowerShell note:** If `venv\Scripts\activate` fails with "running scripts is disabled", either use Command Prompt instead, or run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` first.
+
 4. Run it:
 
 ```powershell

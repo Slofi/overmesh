@@ -7136,6 +7136,7 @@ if (targetEl) {
         switchTab('settings');
         switchSettingsTab('app');
         omManualPosStatus(`Position set to ${lat.toFixed(5)}, ${lon.toFixed(5)}. Save to use it as OM origin.`, true);
+        setTimeout(() => { const el = document.getElementById('om-pos-lat'); if (el) el.scrollIntoView({behavior: 'smooth', block: 'center'}); }, 80);
       } else if (_mapPickMode === 'mc-remote') {
         cancelMapPick({keepTab: true});
         openMcRemoteManage(_mcRemoteManage?.pubkeyPrefix || '', _mcRemoteManage?.radioId || '', _mcRemoteManage?.name || '');

@@ -386,13 +386,31 @@ def _release_port_fds(port):
 
 def connect_node(node_cfg):
     node_id = node_cfg["id"]
+    node_type = node_cfg.get("type", "serial")
+    # Pre-check serial device existence before broadcasting "connecting".
+    # If the port file is gone (radio powered off via hardware switch), stay
+    # grey (disconnected) instead of flickering yellow on every reconnect retry.
+    if node_type == "serial":
+        usb_serial_pre = node_cfg.get("usb_serial")
+        if usb_serial_pre:
+            if not find_port_by_usb_serial(usb_serial_pre, preferred_port=node_cfg.get("port")):
+                with connections_lock:
+                    connections[node_id] = {"iface": None, "status": "disconnected",
+                                            "status_ts": time.time(), "config": node_cfg}
+                return
+        else:
+            pre_port = node_cfg.get("port", "")
+            if pre_port and not os.path.exists(pre_port):
+                with connections_lock:
+                    connections[node_id] = {"iface": None, "status": "disconnected",
+                                            "status_ts": time.time(), "config": node_cfg}
+                return
     with connections_lock:
         connections[node_id] = {"iface": None, "status": "connecting", "status_ts": time.time(), "config": node_cfg}
         status_ts = connections[node_id]["status_ts"]
     push_to_sse(json.dumps({"type": "node_status", "radio_id": node_id,
                             "status": "connecting", "status_ts": status_ts,
                             "name": node_cfg.get("name", node_id)}))
-    node_type = node_cfg.get("type", "serial")
     iface = None
     if node_type == "tcp":
         host     = node_cfg.get("host", "").strip()

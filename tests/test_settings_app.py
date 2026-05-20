@@ -204,6 +204,50 @@ class AppSettingsOmPositionTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.get_json()["error"], "This device is already configured as an MC node")
 
+    def test_can_disable_only_mt_radio(self):
+        settings_routes.CONFIG["nodes"] = [
+            {"id": "node_a", "name": "Only MT", "enabled": True, "type": "serial", "port": "/dev/ttyACM0"}
+        ]
+
+        resp = self.client.post("/api/settings/nodes/node_a/set_enabled", json={"enabled": False})
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(settings_routes.CONFIG["nodes"][0]["enabled"])
+
+    def test_can_remove_only_mt_radio(self):
+        settings_routes.CONFIG["nodes"] = [
+            {"id": "node_a", "name": "Only MT", "enabled": True, "type": "serial", "port": "/dev/ttyACM0"}
+        ]
+        with settings_routes.connections_lock:
+            settings_routes.connections["node_a"] = {"iface": mock.Mock()}
+        with mock.patch.object(settings_routes, "push_to_sse") as push_mock:
+            resp = self.client.post("/api/settings/nodes/node_a/remove")
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(settings_routes.CONFIG["nodes"], [])
+        push_mock.assert_called_once()
+
+    def test_can_delete_only_mt_radio_and_history(self):
+        db_path = _DATA_DIR / "overmesh_msgs_abc123.db"
+        db_path.write_text("test", encoding="utf-8")
+        settings_routes.CONFIG["nodes"] = [
+            {
+                "id": "node_a",
+                "name": "Only MT",
+                "enabled": True,
+                "type": "serial",
+                "port": "/dev/ttyACM0",
+                "msgs_db": str(db_path),
+            }
+        ]
+        with mock.patch.object(settings_routes, "push_to_sse"):
+            resp = self.client.post("/api/settings/nodes/node_a/delete")
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(settings_routes.CONFIG["nodes"], [])
+        self.assertTrue(resp.get_json()["deleted_db"])
+        self.assertFalse(db_path.exists())
+
     def test_adds_mc_tcp_radio(self):
         resp = self.client.post(
             "/api/settings/mc_nodes/add",

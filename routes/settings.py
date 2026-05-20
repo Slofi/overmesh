@@ -68,21 +68,12 @@ def _app_settings_payload():
     return app_cfg
 
 
-def _has_any_mc_nodes():
-    return bool(CONFIG.get("mc_nodes", []))
-
-
 def _node_enabled(node):
     return node.get("enabled", True) is not False
 
 
 def _active_nodes(nodes):
     return [n for n in nodes if _node_enabled(n)]
-
-
-def _can_remove_mt_node():
-    """Allow removing the last MT radio only if the app still has MC radios configured."""
-    return len(CONFIG["nodes"]) > 1 or _has_any_mc_nodes()
 
 
 def _parse_mc_path_hash_mode(value):
@@ -442,8 +433,6 @@ def api_settings_nodes_remove(node_id):
     node = next((n for n in CONFIG["nodes"] if n["id"] == node_id), None)
     if not node:
         return jsonify({"error": "Node not found"}), 404
-    if not _can_remove_mt_node():
-        return jsonify({"error": "Cannot remove the last MT radio unless at least one MC radio is configured"}), 400
     with connections_lock:
         state = connections.pop(node_id, None)
     if state and state.get("iface"):
@@ -465,8 +454,6 @@ def api_settings_nodes_delete(node_id):
     node = next((n for n in CONFIG["nodes"] if n["id"] == node_id), None)
     if not node:
         return jsonify({"error": "Node not found"}), 404
-    if not _can_remove_mt_node():
-        return jsonify({"error": "Cannot delete the last MT radio unless at least one MC radio is configured"}), 400
     # Find db path from connections dict first, then fall back to config
     with connections_lock:
         state = connections.pop(node_id, None)

@@ -10001,26 +10001,23 @@ if (targetEl) {
       }
       list.innerHTML = data.nodes.map(n => {
         const dot = n.status === 'connected' ? 'dot-connected' : n.status === 'connecting' ? 'dot-connecting' : 'dot-disconnected';
-        const canRemove = data.nodes.length > 1;
         return `<div class="radio-row">
           <span class="status-dot ${dot}"></span>
           <span class="radio-row-name">${escHtml(n.name)}</span>
           <span class="radio-row-port" title="${escHtml(n.usb_serial || n.port)}">${escHtml(n.usb_serial ? n.port + ' ⬡' : n.port)}</span>
           <span class="radio-row-status" style="${!n.enabled ? 'color:var(--muted)' : ''}">${n.enabled ? n.status : 'disabled'}</span>
+          <button class="btn-secondary" style="font-size:11px;padding:3px 8px;${n.enabled ? '' : 'color:var(--accent);border-color:var(--accent)'}"
+            title="${n.enabled ? 'Pause scanning for this device — keeps config and message history intact' : 'Resume scanning and connecting to this device'}"
+            onclick="settingsToggleNode('${jsSafe(n.id)}',${!n.enabled})">${n.enabled ? 'Disable' : 'Enable'}</button>
           <button class="btn-secondary" style="font-size:11px;padding:3px 8px;margin-left:4px"
             title="Clear message history for this radio"
             onclick="settingsMtClearHistory('${jsSafe(n.id)}','${jsSafe(n.name)}')">Clear History</button>
-          ${canRemove ? `
-            <button class="btn-secondary" style="font-size:11px;padding:3px 8px;${n.enabled ? '' : 'color:var(--accent);border-color:var(--accent)'}"
-              title="${n.enabled ? 'Pause scanning for this device — keeps config and message history intact' : 'Resume scanning and connecting to this device'}"
-              onclick="settingsToggleNode('${jsSafe(n.id)}',${!n.enabled})">${n.enabled ? 'Disable' : 'Enable'}</button>
-            <button class="btn-secondary" style="font-size:11px;padding:3px 8px;margin-left:4px"
-              title="Remove this radio from OverMesh — config deleted, message history kept on disk"
-              onclick="settingsRemoveNode('${jsSafe(n.id)}','${jsSafe(n.name)}')">Remove</button>
-            <button class="btn-secondary" style="font-size:11px;padding:3px 8px;color:var(--red);border-color:var(--red);margin-left:4px"
-              title="Permanently delete this radio and wipe all its message history — cannot be undone"
-              onclick="settingsDeleteNode('${jsSafe(n.id)}','${jsSafe(n.name)}')">Delete</button>
-          ` : '<span style="font-size:11px;color:var(--muted)">primary</span>'}
+          <button class="btn-secondary" style="font-size:11px;padding:3px 8px;margin-left:4px"
+            title="Remove this radio from OverMesh — config deleted, message history kept on disk"
+            onclick="settingsRemoveNode('${jsSafe(n.id)}','${jsSafe(n.name)}')">Remove</button>
+          <button class="btn-secondary" style="font-size:11px;padding:3px 8px;color:var(--red);border-color:var(--red);margin-left:4px"
+            title="Permanently delete this radio and wipe all its message history — cannot be undone"
+            onclick="settingsDeleteNode('${jsSafe(n.id)}','${jsSafe(n.name)}')">Delete</button>
         </div>`;
       }).join('');
   }

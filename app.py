@@ -130,6 +130,11 @@ def index():
     return render_template("index.html", version=__version__, auth_enabled=is_auth_enabled())
 
 
+@app.route("/lite")
+def lite():
+    return render_template("lite.html", version=__version__, auth_enabled=is_auth_enabled())
+
+
 @app.route("/api/shutdown", methods=["POST"])
 def api_shutdown():
     def _kill():

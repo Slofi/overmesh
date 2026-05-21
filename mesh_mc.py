@@ -119,10 +119,22 @@ def _handle_rc_collector_line(config_id, sender_prefix, text):
             seen.add(text)
 
         parts = text.split("|")
-        if len(parts) != 6:
+        if len(parts) < 6:
             log.warning(f"[RC] Malformed OBS line from {sender_prefix}: {text}")
             return
-        _, obs_type, node_id, rssi_s, snr_s, _ = parts
+        _, obs_type, node_id, rssi_s, snr_s, ts_s = parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]
+        # Extended ADV fields: |name|lat|lon (firmware >= rc-gps build)
+        adv_name = parts[6].strip() if len(parts) > 6 else ""
+        adv_lat  = None
+        adv_lon  = None
+        if len(parts) > 8:
+            try:
+                adv_lat = float(parts[7])
+                adv_lon = float(parts[8])
+                if adv_lat == 0.0 and adv_lon == 0.0:
+                    adv_lat = adv_lon = None
+            except ValueError:
+                pass
         try:
             rssi = float(rssi_s)
             snr  = float(snr_s)
@@ -149,7 +161,7 @@ def _handle_rc_collector_line(config_id, sender_prefix, text):
             collector_id=collector_id,
             collector_lat=collector_lat,
             collector_lon=collector_lon,
-            observed_ts=_rc_observed_ts(parts[5]),
+            observed_ts=_rc_observed_ts(ts_s),
         )
         log.debug(f"[RC] Saved {om_obs_type} obs: {node_id[:12]} rssi={rssi} snr={snr} collector={collector_id}")
 
@@ -164,15 +176,61 @@ def _handle_rc_collector_line(config_id, sender_prefix, text):
 
         # New node check + contact enrichment (use lock for thread safety)
         with mc_connections_lock:
-            contacts = mc_connections.get(config_id, {}).get("contacts", {})
+            mc_conn = mc_connections.get(config_id, {})
+            contacts = mc_conn.get("contacts", {})
             matched_key = next((k for k in contacts if k.startswith(nid[:12]) or nid.startswith(k[:12])), None)
             if matched_key:
                 contacts[matched_key]["last_rc_heard_ts"]  = int(time.time())
                 contacts[matched_key]["last_rc_rssi"]      = rssi
                 contacts[matched_key]["last_rc_snr"]       = snr
                 contacts[matched_key]["last_rc_collector"] = collector_id
-            elif state and nid not in state.get("new_nodes", []):
-                state.setdefault("new_nodes", []).append(nid[:12])
+                if adv_lat is not None and not contacts[matched_key].get("adv_lat"):
+                    contacts[matched_key]["adv_lat"] = adv_lat
+                    contacts[matched_key]["adv_lon"] = adv_lon
+            else:
+                # Unknown node — create a synthetic RC contact so it appears in OM
+                display_name = adv_name or nid[:12]
+                new_contact = {
+                    "adv_name":          display_name,
+                    "adv_lat":           adv_lat,
+                    "adv_lon":           adv_lon,
+                    "out_path_len":      -1,
+                    "out_path":          "",
+                    "out_path_hash_mode": None,
+                    "out_path_hash_size": None,
+                    "type":              0,
+                    "rc_sourced":        True,
+                    "last_rc_heard_ts":  int(time.time()),
+                    "last_rc_rssi":      rssi,
+                    "last_rc_snr":       snr,
+                    "last_rc_collector": collector_id,
+                }
+                contacts[nid] = new_contact
+                _mc_archive_merge_contacts(config_id, {nid: new_contact})
+                if state and nid[:12] not in state.get("new_nodes", []):
+                    state.setdefault("new_nodes", []).append(nid[:12])
+                mc_conn_name = mc_conn.get("name", config_id)
+                push_to_sse({
+                    "type":        "mc_node",
+                    "radio_id":    config_id,
+                    "radio_name":  mc_conn_name,
+                    "id":          nid[:12],
+                    "full_key":    nid,
+                    "long_name":   display_name,
+                    "short_name":  display_name[:4].upper(),
+                    "latitude":    adv_lat,
+                    "longitude":   adv_lon,
+                    "last_heard_ts":      int(time.time()),
+                    "out_path_len":       -1,
+                    "out_path":           "",
+                    "out_path_hash_mode": None,
+                    "out_path_hash_size": None,
+                    "path_manual":        False,
+                    "contact_type":       0,
+                    "network":            "mc",
+                    "rc_sourced":         True,
+                })
+                log.info(f"[RC] New contact from RC: {display_name} ({nid[:12]}) lat={adv_lat} lon={adv_lon}")
 
 
 _msgstore_state = {}  # (config_id, sender_prefix) -> {"msgs": [...]}
@@ -1280,12 +1338,28 @@ async def _connect_mc_node_async(node_cfg):
         except Exception as e:
             log.warning(f"[MC:{name}] Could not apply saved path hash mode {saved_hash_mode}: {e}")
             node_info["path_hash_mode"] = 0
-            with CONFIG_LOCK:
-                for node in CONFIG.get("mc_nodes", []):
-                    if node.get("id") == config_id:
-                        node["path_hash_mode"] = 0
-                        break
-                save_config()
+
+            async def _retry_path_hash_mode():
+                for attempt in range(3):
+                    await asyncio.sleep(10)
+                    with mc_connections_lock:
+                        still_connected = (
+                            mc_connections.get(config_id, {}).get("status") == "connected"
+                            and mc_connections.get(config_id, {}).get("mc") is mc
+                        )
+                    if not still_connected:
+                        return
+                    try:
+                        result = await _set_path_hash_mode_on_mc(mc, saved_hash_mode)
+                        with mc_connections_lock:
+                            if config_id in mc_connections:
+                                mc_connections[config_id].setdefault("node_info", {})["path_hash_mode"] = result["applied"]
+                        log.info(f"[MC:{name}] Path hash mode retry {attempt+1} succeeded: {result['applied']}")
+                        return
+                    except Exception as retry_e:
+                        log.warning(f"[MC:{name}] Path hash mode retry {attempt+1} failed: {retry_e}")
+
+            _mc_bg_task(_retry_path_hash_mode(), "path_hash_retry")
 
     node_id = node_info.get("public_key", "")[:12]  # 6-byte pubkey prefix as ID
 

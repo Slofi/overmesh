@@ -12732,11 +12732,14 @@ if (targetEl) {
       }
       const forward = build(hashList, 'as-received', hashSize);
       const reverse = hashList.length > 1 ? build([...hashList].reverse(), 'reversed', hashSize) : null;
-      const chosen = (!forward)
-        ? reverse
-        : (!reverse)
-          ? forward
-          : ((_mcDecodedPathScore(reverse, hopCount) + 25 < _mcDecodedPathScore(forward, hopCount)) ? reverse : forward);
+      // MeshCore path arrays are always in sender→receiver order (last hash = relay closest to
+      // local radio). When building from radio outward, reversed order is geometrically correct.
+      // Prefer reversed; fall back to forward only when reverse is clearly worse.
+      const chosen = (!reverse)
+        ? forward
+        : (!forward)
+          ? reverse
+          : ((_mcDecodedPathScore(forward, hopCount) + 25 < _mcDecodedPathScore(reverse, hopCount)) ? forward : reverse);
       if (!chosen) return;
       const score = _mcDecodedPathScore(chosen, hopCount);
       if (!best || score < best.score) best = { score, result: chosen };

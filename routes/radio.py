@@ -65,7 +65,8 @@ def api_radio_config_get(radio_id):
             except Exception: return ""
 
         # device + lora
-        role      = _int(lc, "device", "role")
+        role                 = _int(lc,  "device", "role")
+        led_heartbeat_disabled = _bool(lc, "device", "led_heartbeat_disabled")
         region    = _int(lc, "lora", "region")
         preset    = _int(lc, "lora", "modem_preset")
         tx_power  = _int(lc, "lora", "tx_power")
@@ -151,8 +152,9 @@ def api_radio_config_get(radio_id):
             "short_name":   user.get("shortName", ""),
             "hw_model":     user.get("hwModel",   ""),
             # device
-            "role":          role,
-            "device_roles":  DEVICE_ROLES,
+            "role":                  role,
+            "led_heartbeat_disabled": led_heartbeat_disabled,
+            "device_roles":          DEVICE_ROLES,
             # lora
             "region":        region,
             "modem_preset":  preset,
@@ -249,6 +251,8 @@ def api_radio_config_device(radio_id):
         return jsonify({"error": "role must be a number"}), 400
     try:
         iface.localNode.localConfig.device.role = role
+        if "led_heartbeat_disabled" in data:
+            iface.localNode.localConfig.device.led_heartbeat_disabled = bool(data["led_heartbeat_disabled"])
         iface.localNode.writeConfig("device")
         return jsonify({"ok": True})
     except Exception as e:

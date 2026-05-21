@@ -17504,6 +17504,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
           .sort((a,b) => parseInt(a[0]) - parseInt(b[0]))
           .map(([v,n]) => `<option value="${escHtml(v)}">${escHtml(_formatMtDeviceRoleLabel(n))}</option>`).join('');
         roleSel.value = d.role;
+        document.getElementById('node-cfg-led-heartbeat-disabled').checked = !!d.led_heartbeat_disabled;
 
         // Populate region dropdown
         const regionSel = document.getElementById('node-cfg-region');
@@ -17632,11 +17633,12 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   function saveNodeDevice(btn) {
     const radioId = _selectedNodeId;
     const role    = parseInt(document.getElementById('node-cfg-role').value);
+    const led_heartbeat_disabled = document.getElementById('node-cfg-led-heartbeat-disabled').checked;
     nodeCfgStatus('device', 'Saving…', true);
     fetch(BASE_PATH + `/api/radio/${encodeURIComponent(radioId)}/config/device`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({role})
+      body: JSON.stringify({role, led_heartbeat_disabled})
     }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
       nodeCfgStatus('device', d.error || 'Saved. Reboot may be needed.', !d.error);
       if (!d.error) btnFeedback(btn, '✓ Saved');

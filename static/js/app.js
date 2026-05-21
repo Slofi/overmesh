@@ -3478,17 +3478,33 @@ if (targetEl) {
     const el = document.getElementById(id);
     const text = el ? (el.textContent || el.value || '') : '';
     if (!text) return;
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(text).catch(() => showAlert('Copy failed.'));
-    } else {
-      showAlert(text);
-    }
-    if (btn) {
+    const finish = (ok) => {
+      if (!btn) return;
       const orig = btn.textContent;
-      btn.textContent = '✓ Copied';
+      btn.textContent = ok ? '✓ Copied' : '✓ See alert';
       btn.disabled = true;
       setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500);
+    };
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(() => finish(true)).catch(() => {
+        _copyFallback(text); finish(false);
+      });
+    } else {
+      _copyFallback(text) ? finish(true) : finish(false);
     }
+  }
+
+  function _copyFallback(text) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
+      document.body.appendChild(ta);
+      ta.focus(); ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch(e) { showAlert(text); return false; }
   }
 
   function openMtNodeDetails(nodeId) {

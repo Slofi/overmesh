@@ -12818,7 +12818,7 @@ if (targetEl) {
       };
       const forward = build(hashList, 'as-received');
       const reverse = hashList.length > 1 ? build([...hashList].reverse(), 'reversed') : null;
-      const chosen = (!forward || (reverse && reverse.score > forward.score + 10)) ? reverse : forward;
+      const chosen = (!reverse || (forward && forward.score > reverse.score + 10)) ? forward : reverse;
       if (chosen && (!best || chosen.score > best.score)) best = chosen;
     });
     return best?.result || null;

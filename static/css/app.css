@@ -80,10 +80,10 @@
     #header {
       background: var(--bg2);
       border-radius: 12px;
-      padding: 0 16px;
+      padding: 0 10px;
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 5px;
       height: 48px;
       flex-shrink: 0;
     }
@@ -120,11 +120,11 @@
     .tabs { display: flex; gap: 4px; }
 
     .tab {
-      padding: 6px 10px;
+      padding: 5px 7px;
       border-radius: 6px;
       cursor: pointer;
       color: var(--muted);
-      font-size: 13px;
+      font-size: 12px;
       border: 1px solid transparent;
       transition: all 0.15s;
     }
@@ -859,9 +859,7 @@
       flex-shrink: 0;
     }
     #header-refresh-btn .btn-label {
-      display: inline-block;
-      min-width: 0;
-      text-align: left;
+      display: none;
     }
     #shutdown-btn {
       background: color-mix(in srgb, var(--accent) 10%, var(--bg3)); border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border)); color: var(--text);

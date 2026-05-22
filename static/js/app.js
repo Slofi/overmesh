@@ -3949,7 +3949,7 @@ if (targetEl) {
           <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
             <button class="btn" style="font-size:11px;padding:2px 10px" onclick="sendCollectorCommand('${ck}','OMCOLLECT',this)" title="Trigger observation dump from this collector">Collect</button>
             <button class="btn" style="font-size:11px;padding:2px 10px" onclick="sendCollectorCommand('${ck}','neighbors',this)" title="Request neighbor list from this node">Neighbors</button>
-            <button class="btn" style="font-size:11px;padding:2px 10px" onclick="checkCollectorObs('${ck}','${escHtml(c.label||c.key)}',this)" title="Query how many observations are buffered on the RC hardware">RC buf count</button>
+            <button class="btn" style="font-size:11px;padding:2px 10px" onclick="checkCollectorObs('${ck}','${escHtml(c.label||c.key)}',this)" title="Query how many observations are buffered on the RC hardware">RC OBS count</button>
             <button class="btn" style="font-size:11px;padding:2px 10px" onclick="fetchCollectorMessages('${ck}',this)" title="Fetch stored channel messages from this collector">Fetch messages</button>
           </div>
           <div style="display:flex;gap:6px;align-items:center">
@@ -4201,6 +4201,9 @@ if (targetEl) {
     try {
       await sendCollectorCommand(pubkeyPre, 'OMCOUNT', btn);
       showToast('Remote Collector', `Querying ${label} buffer…`, 'node');
+      // Poll after short delay to catch the OMCOUNT_RESULT DM, then again after T114 relay pacing
+      setTimeout(_rcCollectPoll, 4000);
+      setTimeout(_rcCollectPoll, 8000);
     } catch (e) {
       // sendCollectorCommand already shows login-failure toast
     }

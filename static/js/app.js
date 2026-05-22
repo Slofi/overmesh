@@ -3949,7 +3949,7 @@ if (targetEl) {
           <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
             <button class="btn" style="font-size:11px;padding:2px 10px" onclick="sendCollectorCommand('${ck}','OMCOLLECT',this)" title="Trigger observation dump from this collector">Collect</button>
             <button class="btn" style="font-size:11px;padding:2px 10px" onclick="sendCollectorCommand('${ck}','neighbors',this)" title="Request neighbor list from this node">Neighbors</button>
-            <button class="btn" style="font-size:11px;padding:2px 10px" onclick="checkCollectorObs('${ck}','${escHtml(c.label||c.key)}',this)" title="Check how many observations are stored for this collector">Obs count</button>
+            <button class="btn" style="font-size:11px;padding:2px 10px" onclick="checkCollectorObs('${ck}','${escHtml(c.label||c.key)}',this)" title="Query how many observations are buffered on the RC hardware">RC buf count</button>
             <button class="btn" style="font-size:11px;padding:2px 10px" onclick="fetchCollectorMessages('${ck}',this)" title="Fetch stored channel messages from this collector">Fetch messages</button>
           </div>
           <div style="display:flex;gap:6px;align-items:center">
@@ -4133,12 +4133,19 @@ if (targetEl) {
 
   function _rcHandleCollectEvent(ev) {
     const cid   = ev.collector_id || '?';
-    const count = ev.obs_count || 0;
+    const count = ev.obs_count ?? 0;
     const newNodes = ev.new_nodes || [];
     const bestNode = ev.best_rssi_node ? ev.best_rssi_node.slice(0, 8) + '…' : null;
     const bestSig  = ev.best_rssi != null ? `${ev.best_rssi} dBm` + (ev.best_rssi_snr != null ? ` / SNR ${ev.best_rssi_snr > 0 ? '+' : ''}${Number(ev.best_rssi_snr).toFixed(1)}` : '') : null;
 
-    let msg = `${cid}: ${count} obs collected.`;
+    let msg;
+    if (ev.count_only) {
+      msg = `${cid}: ${count} obs in RC buffer`;
+      _logAlert('rc-collect', 'RC Buffer', msg);
+      showToast('RC Buffer', msg, 'node');
+      return;
+    }
+    msg = `${cid}: ${count} obs collected.`;
     if (newNodes.length) msg += ` ${newNodes.length} new node${newNodes.length > 1 ? 's' : ''}.`;
     if (bestNode && bestSig) msg += ` Best: ${bestNode} at ${bestSig}.`;
     _logAlert('rc-collect', 'RC Collect', msg);
@@ -4189,20 +4196,13 @@ if (targetEl) {
   }
 
   async function checkCollectorObs(pubkeyPre, label, btn) {
-    const rid = _passiveIntelRadioId();
-    if (!rid) { showToast('Remote Collector', 'No MC radio connected.', 'node'); return; }
-    if (btn) btn.disabled = true;
+    // Queries the RP2040 ring buffer count (not the local OM DB).
+    // Result comes back async via rc_collect_events poll as a count_only summary.
     try {
-      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/passive_obs/collector_stats`);
-      const stats = r.ok ? await r.json() : {};
-      const count = stats[label] ?? stats[pubkeyPre] ?? 0;
-      const msg = count > 0 ? `${label}: ${count} obs stored` : `No obs stored for ${label}`;
-      showToast('Remote Collector', msg, 'node');
-      _logAlert('rc-obs', 'Remote Collector', msg);
+      await sendCollectorCommand(pubkeyPre, 'OMCOUNT', btn);
+      showToast('Remote Collector', `Querying ${label} buffer…`, 'node');
     } catch (e) {
-      showToast('Remote Collector', 'Failed to fetch obs stats.', 'node');
-    } finally {
-      if (btn) btn.disabled = false;
+      // sendCollectorCommand already shows login-failure toast
     }
   }
 

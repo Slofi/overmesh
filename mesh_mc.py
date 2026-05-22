@@ -91,8 +91,32 @@ def _handle_rc_collector_line(config_id, sender_prefix, text):
         log.info(f"[RC] Collection started from {sender_prefix} ({collector_id}), {count} obs incoming")
         return
 
+    if text.startswith("OMCOUNT_RESULT|"):
+        parts = text.split("|")
+        collector_id = parts[1] if len(parts) > 1 else "?"
+        count_str = parts[2] if len(parts) > 2 else "?"
+        try:
+            count = int(count_str)
+        except (ValueError, TypeError):
+            count = count_str
+        summary = {
+            "ts":           int(time.time()),
+            "collector_id": collector_id,
+            "obs_count":    count,
+            "new_nodes":    [],
+            "best_rssi":    None,
+            "best_rssi_node": None,
+            "best_rssi_snr":  None,
+            "count_only":   True,
+        }
+        _rc_store_summary(config_id, summary)
+        log.info(f"[RC] Buffer count from {sender_prefix} ({collector_id}): {count} obs")
+        return
+
     if text == "OMCOLLECT_END":
-        state = _rc_collector_state.pop(state_key, {})
+        state = _rc_collector_state.pop(state_key, None)
+        if state is None:
+            return  # cleanup after OMCOUNT — no active collect session
         collector_id = state.get("collector_id", "?")
         summary = {
             "ts":             int(time.time()),
@@ -1684,7 +1708,7 @@ def _subscribe_mc_events(mc, config_id, name):
                      f" | path={repr(sse_msg.get('path'))[:40]} path_len={sse_msg.get('path_len')} hash_size={sse_msg.get('path_hash_size')}")
             # RC collector relay: parse OMCOLLECT_START / OBS / OMCOLLECT_END lines
             dm_text = msg.get("text", "")
-            if dm_text.startswith("OMCOLLECT_START|") or dm_text.startswith("OBS|") or dm_text == "OMCOLLECT_END":
+            if dm_text.startswith("OMCOLLECT_START|") or dm_text.startswith("OBS|") or dm_text == "OMCOLLECT_END" or dm_text.startswith("OMCOUNT_RESULT|"):
                 threading.Thread(
                     target=_handle_rc_collector_line,
                     args=(config_id, msg.get("pubkey_prefix", ""), dm_text),
@@ -3094,6 +3118,7 @@ def _validate_remote_admin_command(command):
         "advert.zerohop",
         "neighbors",
         "omcollect",
+        "omcount",
         "reboot",
         "discover.neighbors",
         "get name",

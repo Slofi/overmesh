@@ -21,10 +21,10 @@ The version in `VERSION` must be updated every time an OverMesh update is pushed
 ## 2026.05.24.1
 
 - Added initial CD-local Map App tile sharing, superseded by the opt-in shared tile server setting in `2026.05.24.2`:
-  - OM fetches the Map App catalog on the same host at port `8090` and adds MBTiles downloads as selectable base layers
-  - Map App local layers appear in the map layer menu as `Map App: ...`
+  - OM initially fetched the Map App catalog on the same host at port `8090` and added MBTiles downloads as selectable base layers
+  - local layers appeared in the map layer menu as `Map App: ...`
   - OM's region downloader and PiP map use the same combined layer catalog
-  - the layer menu refreshes the Map App catalog when opened
+  - this was replaced by the production-safe shared tile server toggle
 
 ## 2026.04.27.1
 

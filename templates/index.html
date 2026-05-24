@@ -2012,6 +2012,25 @@
       <p style="color:var(--muted);font-size:12px;margin:0 0 10px 0">Save map tiles to your browser so the map works without internet. Tiles are stored in your browser's IndexedDB.</p>
       <div class="settings-row" style="align-items:center;gap:8px">
         <div>
+          <span class="settings-label">Use shared local tile DB</span>
+          <div style="color:var(--muted);font-size:11px;margin-top:2px">Opt-in. Adds MBTiles served by a local tile server to OM's map layer picker. Leave off for standalone OM installs.</div>
+        </div>
+        <label class="toggle-label" style="margin-left:auto;flex-shrink:0">
+          <input type="checkbox" id="shared-tile-server-toggle" onchange="settingsSetSharedTileServer(this.checked)">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="settings-row" style="align-items:flex-end;gap:8px">
+        <div style="flex:1;min-width:220px">
+          <label class="settings-label" for="shared-tile-server-url">Shared tile server URL</label>
+          <input id="shared-tile-server-url" class="settings-input" placeholder="http://this-host:8092" onchange="settingsSetSharedTileServerUrl(this.value)">
+        </div>
+        <button class="btn-sm" onclick="loadMapAppTileLayers({force:true})" title="Refresh shared local tile list">Refresh local layers</button>
+      </div>
+      <div id="shared-tile-server-status" style="font-size:12px;color:var(--muted);min-height:16px;margin:2px 0 8px"></div>
+      <div style="border-top:1px solid var(--border);margin:10px 0 8px 0"></div>
+      <div class="settings-row" style="align-items:center;gap:8px">
+        <div>
           <span class="settings-label">Auto-cache browsed tiles</span>
           <div style="color:var(--muted);font-size:11px;margin-top:2px">Every tile you view on the map is automatically saved for offline use. Convenient but grows the cache over time.</div>
         </div>

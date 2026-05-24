@@ -4718,6 +4718,8 @@ if (targetEl) {
   let _mapAppTileLayers = {};
   let _mapAppTileLayersLoaded = false;
   let _mapAppTileLayersLoading = false;
+  let _sharedTileServerEnabled = false;
+  let _sharedTileServerUrl = 'http://localhost:8092';
   let _baseLayerMenuPanel = null;
   let _mapLayerDefs = [];
   let _mapLayerObjects = {};
@@ -4923,39 +4925,69 @@ if (targetEl) {
     mt_winter:        { label: 'MT Winter ★',        url: 'https://api.maptiler.com/maps/winter-v2/{z}/{x}/{y}.png?key={mtapikey}', attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 20 },
   };
 
-  const MAP_APP_TILE_BASE = (() => {
-    const fallbackHost = (window.location && window.location.hostname) || 'localhost';
-    try { return localStorage.getItem('mapAppTileBaseUrl') || `http://${fallbackHost}:8090`; }
-    catch(e) { return `http://${fallbackHost}:8090`; }
-  })();
-
   function allTileLayers() {
     return {...TILE_LAYERS, ..._mapAppTileLayers};
   }
 
   function _mapAppLocalLayerKey(id) {
-    return `mapapp_${String(id || '').replace(/[^A-Za-z0-9_-]/g, '_')}`;
+    return `shared_${String(id || '').replace(/[^A-Za-z0-9_-]/g, '_')}`;
+  }
+
+  function _defaultSharedTileServerUrl() {
+    const host = (window.location && window.location.hostname) || 'localhost';
+    return `http://${host}:8092`;
+  }
+
+  function _sharedTileStatus(text, ok = null) {
+    const el = document.getElementById('shared-tile-server-status');
+    if (!el) return;
+    el.textContent = text || '';
+    el.style.color = ok == null ? 'var(--muted)' : ok ? 'var(--accent)' : 'var(--red)';
+  }
+
+  function _setSharedTileServerConfig(enabled, url) {
+    _sharedTileServerEnabled = !!enabled;
+    _sharedTileServerUrl = String(url || _defaultSharedTileServerUrl()).trim().replace(/\/+$/, '') || _defaultSharedTileServerUrl();
+    const toggle = document.getElementById('shared-tile-server-toggle');
+    if (toggle) toggle.checked = _sharedTileServerEnabled;
+    const input = document.getElementById('shared-tile-server-url');
+    if (input) input.value = _sharedTileServerUrl;
+    if (!_sharedTileServerEnabled) {
+      _mapAppTileLayers = {};
+      _mapAppTileLayersLoaded = false;
+      refreshBaseLayerPanelOptions();
+      const saved = (() => { try { return localStorage.getItem('mapTileLayer') || ''; } catch(e) { return ''; } })();
+      if (saved.startsWith('shared_')) setTileLayer('osm');
+      _sharedTileStatus('Shared tile DB disabled. OM is using built-in layers and browser cache.', true);
+    }
   }
 
   async function loadMapAppTileLayers(opts = {}) {
+    if (!_sharedTileServerEnabled) {
+      _mapAppTileLayers = {};
+      _mapAppTileLayersLoaded = false;
+      refreshBaseLayerPanelOptions();
+      _sharedTileStatus('Shared tile DB disabled.');
+      return;
+    }
     if (_mapAppTileLayersLoading) return;
     if (_mapAppTileLayersLoaded && !opts.force) return;
     _mapAppTileLayersLoading = true;
+    _sharedTileStatus('Loading shared local tile layers...');
     try {
-      const r = await fetch(`${MAP_APP_TILE_BASE}/api/tile-layers`, {cache: 'no-store'});
+      const r = await fetch(`${_sharedTileServerUrl}/services`, {cache: 'no-store'});
       if (!r.ok) throw new Error(String(r.status));
-      const data = await r.json();
-      const local = Array.isArray(data.local) ? data.local : [];
+      const local = await r.json();
       const next = {};
-      local.forEach(layer => {
+      (Array.isArray(local) ? local : []).forEach(layer => {
         if (!layer || !layer.id) return;
         const key = _mapAppLocalLayerKey(layer.id);
         next[key] = {
-          label: `Map App: ${layer.name || layer.id}`,
-          url: `${MAP_APP_TILE_BASE}/tiles/${encodeURIComponent(layer.id)}/{z}/{x}/{y}.png`,
-          attribution: layer.attribution || 'Local Map App MBTiles',
+          label: `Local DB: ${layer.name || layer.id}`,
+          url: `${_sharedTileServerUrl}/services/${encodeURIComponent(layer.id)}/tiles/{z}/{x}/{y}.png`,
+          attribution: layer.attribution || `Local tiles · ${layer.name || layer.id}`,
           maxZoom: Number(layer.maxzoom || layer.maxZoom || 19),
-          localMapApp: true,
+          sharedTileServer: true,
         };
       });
       _mapAppTileLayers = next;
@@ -4963,8 +4995,12 @@ if (targetEl) {
       refreshBaseLayerPanelOptions();
       const saved = (() => { try { return localStorage.getItem('mapTileLayer') || ''; } catch(e) { return ''; } })();
       if (saved && _mapAppTileLayers[saved] && _activeTileLayer) setTileLayer(saved);
+      _sharedTileStatus(Object.keys(next).length ? `Loaded ${Object.keys(next).length} shared local layer(s).` : 'Shared tile server is running, but no MBTiles were found.', true);
     } catch (e) {
+      _mapAppTileLayers = {};
       _mapAppTileLayersLoaded = true;
+      refreshBaseLayerPanelOptions();
+      _sharedTileStatus(`Shared tile server not reachable at ${_sharedTileServerUrl}.`, false);
     } finally {
       _mapAppTileLayersLoading = false;
     }
@@ -6312,9 +6348,9 @@ if (targetEl) {
         if (panel) panel.classList.remove('open');
       });
     });
-    if (_mapAppTileLayersLoaded && !Object.keys(_mapAppTileLayers).length) {
+    if (_sharedTileServerEnabled && _mapAppTileLayersLoaded && !Object.keys(_mapAppTileLayers).length) {
       const empty = L.DomUtil.create('div', '', _baseLayerMenuPanel);
-      empty.textContent = 'No Map App offline layers found';
+      empty.textContent = 'No shared local layers found';
       empty.style.cssText = 'padding:4px 10px 6px 10px;font-size:11px;color:var(--muted)';
     }
   }
@@ -9788,6 +9824,36 @@ if (targetEl) {
     _syncAccentSwatch();
     _setOmManualPos(cfg.om_manual_lat, cfg.om_manual_lon);
     _applyOmManualInputs();
+    _setSharedTileServerConfig(!!cfg.shared_tile_server_enabled, cfg.shared_tile_server_url || _defaultSharedTileServerUrl());
+    if (_sharedTileServerEnabled) loadMapAppTileLayers({force: true});
+  }
+
+  function settingsSetSharedTileServer(enabled) {
+    _setSharedTileServerConfig(enabled, _sharedTileServerUrl);
+    fetch(BASE_PATH + '/api/settings/app', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({shared_tile_server_enabled: !!enabled})
+    }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || `HTTP ${r.status}`); }))
+      .then(() => {
+        if (enabled) loadMapAppTileLayers({force: true});
+      })
+      .catch(e => _sharedTileStatus(String(e.message || e), false));
+  }
+
+  function settingsSetSharedTileServerUrl(url) {
+    const nextUrl = String(url || '').trim().replace(/\/+$/, '') || _defaultSharedTileServerUrl();
+    _setSharedTileServerConfig(_sharedTileServerEnabled, nextUrl);
+    _mapAppTileLayersLoaded = false;
+    fetch(BASE_PATH + '/api/settings/app', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({shared_tile_server_url: nextUrl})
+    }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || `HTTP ${r.status}`); }))
+      .then(() => {
+        if (_sharedTileServerEnabled) loadMapAppTileLayers({force: true});
+      })
+      .catch(e => _sharedTileStatus(String(e.message || e), false));
   }
 
   function saveOmManualPosition(btn) {

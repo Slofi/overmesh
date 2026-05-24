@@ -10,9 +10,17 @@ OverMesh uses date-based release versions:
 
 The version in `VERSION` must be updated every time an OverMesh update is pushed to GitHub. The Settings updater also shows the Git commit hash for exact build identification.
 
+## 2026.05.24.2
+
+- Made shared local tile DB support opt-in for production safety:
+  - Settings -> App -> Offline Maps now has a `Use shared local tile DB` toggle, default off
+  - when enabled, OM reads MBTiles layers from a local tile server, defaulting to the same host as OM on port `8092`
+  - when disabled, OM only uses its built-in online layers and browser IndexedDB cache
+  - if a shared layer was selected and the setting is disabled, OM falls back to OpenStreetMap
+
 ## 2026.05.24.1
 
-- Added CD-local Map App tile sharing:
+- Added initial CD-local Map App tile sharing, superseded by the opt-in shared tile server setting in `2026.05.24.2`:
   - OM fetches the Map App catalog on the same host at port `8090` and adds MBTiles downloads as selectable base layers
   - Map App local layers appear in the map layer menu as `Map App: ...`
   - OM's region downloader and PiP map use the same combined layer catalog

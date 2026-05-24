@@ -60,6 +60,8 @@ def _app_settings_payload():
     app_cfg.setdefault("distance_unit", "km")
     app_cfg.setdefault("time_format", "24h")
     app_cfg.setdefault("date_format", "eu")
+    app_cfg.setdefault("shared_tile_server_enabled", False)
+    app_cfg.setdefault("shared_tile_server_url", "")
     app_cfg.setdefault("bridge_webhooks_enabled", bool(webhook_cfg.get("enabled")))
     app_cfg.setdefault("bridge_webhook_urls", urls_text)
     app_cfg.setdefault("bridge_webhook_secret", webhook_cfg.get("secret") or "")
@@ -598,6 +600,11 @@ def api_settings_app_set():
             if fmt not in ("eu", "us", "iso"):
                 return jsonify({"error": "date_format must be 'eu', 'us', or 'iso'"}), 400
             CONFIG["app"]["date_format"] = fmt
+        if "shared_tile_server_url" in data:
+            url = str(data.get("shared_tile_server_url") or "").strip().rstrip("/")
+            if url and not url.startswith(("http://", "https://")):
+                return jsonify({"error": "Shared tile server URL must start with http:// or https://"}), 400
+            CONFIG["app"]["shared_tile_server_url"] = url or "http://localhost:8092"
         for key in (
             "inapp_notify_messages",
             "inapp_notify_nodes",
@@ -610,6 +617,7 @@ def api_settings_app_set():
             "alert_log_node_new",
             "alert_log_node_return",
             "alert_log_radio",
+            "shared_tile_server_enabled",
         ):
             if key in data:
                 CONFIG["app"][key] = bool(data[key])

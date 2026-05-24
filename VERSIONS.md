@@ -10,6 +10,14 @@ OverMesh uses date-based release versions:
 
 The version in `VERSION` must be updated every time an OverMesh update is pushed to GitHub. The Settings updater also shows the Git commit hash for exact build identification.
 
+## 2026.05.24.1
+
+- Added CD-local Map App tile sharing:
+  - OM fetches the Map App catalog on the same host at port `8090` and adds MBTiles downloads as selectable base layers
+  - Map App local layers appear in the map layer menu as `Map App: ...`
+  - OM's region downloader and PiP map use the same combined layer catalog
+  - the layer menu refreshes the Map App catalog when opened
+
 ## 2026.04.27.1
 
 - Added browser-tab unread message badge handling:

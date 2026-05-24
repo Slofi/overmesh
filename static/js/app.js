@@ -4715,6 +4715,10 @@ if (targetEl) {
   let mapLocked     = false;
   let mapLabels     = false;
   let _activeTileLayer = null;
+  let _mapAppTileLayers = {};
+  let _mapAppTileLayersLoaded = false;
+  let _mapAppTileLayersLoading = false;
+  let _baseLayerMenuPanel = null;
   let _mapLayerDefs = [];
   let _mapLayerObjects = {};
   let _mapLayerMenuPanel = null;
@@ -4918,6 +4922,53 @@ if (targetEl) {
     mt_streets:       { label: 'MT Streets ★',       url: 'https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key={mtapikey}', attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 20 },
     mt_winter:        { label: 'MT Winter ★',        url: 'https://api.maptiler.com/maps/winter-v2/{z}/{x}/{y}.png?key={mtapikey}', attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 20 },
   };
+
+  const MAP_APP_TILE_BASE = (() => {
+    const fallbackHost = (window.location && window.location.hostname) || 'localhost';
+    try { return localStorage.getItem('mapAppTileBaseUrl') || `http://${fallbackHost}:8090`; }
+    catch(e) { return `http://${fallbackHost}:8090`; }
+  })();
+
+  function allTileLayers() {
+    return {...TILE_LAYERS, ..._mapAppTileLayers};
+  }
+
+  function _mapAppLocalLayerKey(id) {
+    return `mapapp_${String(id || '').replace(/[^A-Za-z0-9_-]/g, '_')}`;
+  }
+
+  async function loadMapAppTileLayers(opts = {}) {
+    if (_mapAppTileLayersLoading) return;
+    if (_mapAppTileLayersLoaded && !opts.force) return;
+    _mapAppTileLayersLoading = true;
+    try {
+      const r = await fetch(`${MAP_APP_TILE_BASE}/api/tile-layers`, {cache: 'no-store'});
+      if (!r.ok) throw new Error(String(r.status));
+      const data = await r.json();
+      const local = Array.isArray(data.local) ? data.local : [];
+      const next = {};
+      local.forEach(layer => {
+        if (!layer || !layer.id) return;
+        const key = _mapAppLocalLayerKey(layer.id);
+        next[key] = {
+          label: `Map App: ${layer.name || layer.id}`,
+          url: `${MAP_APP_TILE_BASE}/tiles/${encodeURIComponent(layer.id)}/{z}/{x}/{y}.png`,
+          attribution: layer.attribution || 'Local Map App MBTiles',
+          maxZoom: Number(layer.maxzoom || layer.maxZoom || 19),
+          localMapApp: true,
+        };
+      });
+      _mapAppTileLayers = next;
+      _mapAppTileLayersLoaded = true;
+      refreshBaseLayerPanelOptions();
+      const saved = (() => { try { return localStorage.getItem('mapTileLayer') || ''; } catch(e) { return ''; } })();
+      if (saved && _mapAppTileLayers[saved] && _activeTileLayer) setTileLayer(saved);
+    } catch (e) {
+      _mapAppTileLayersLoaded = true;
+    } finally {
+      _mapAppTileLayersLoading = false;
+    }
+  }
 
   // ── Polar grid ─────────────────────────────────────────────────────────────
   function _hexToRgba(hex, alpha) {
@@ -5547,7 +5598,8 @@ if (targetEl) {
 
   function setTileLayer(key) {
     if (!leafletMap) return;
-    const def = TILE_LAYERS[key] || TILE_LAYERS.osm;
+    const layers = allTileLayers();
+    const def = layers[key] || TILE_LAYERS.osm;
     const url = _resolveTileUrl(def.url);
     if (_activeTileLayer) {
       // Update cache prefix BEFORE setUrl so new tiles use the right key
@@ -5564,7 +5616,9 @@ if (targetEl) {
       _activeTileLayer.addTo(leafletMap);
     }
     try { localStorage.setItem('mapTileLayer', key); } catch(e) {}
-    document.querySelectorAll('.map-layer-opt').forEach(el => el.classList.toggle('active', el.dataset.layer === key));
+    document.querySelectorAll('.map-layer-opt').forEach(el => {
+      if (el.dataset.layer) el.classList.toggle('active', el.dataset.layer === key);
+    });
     const btn = document.getElementById('map-layer-btn');
     if (btn) btn.classList.toggle('active', key !== 'osm');
     // Update the offline save label so it's clear which layer you're saving
@@ -5888,7 +5942,7 @@ if (targetEl) {
     document.getElementById('region-dl-progress').style.display = 'none';
     document.getElementById('region-dl-btn').disabled = false;
     const sel = document.getElementById('region-dl-layer');
-    sel.innerHTML = Object.entries(TILE_LAYERS).map(([k, def]) =>
+    sel.innerHTML = Object.entries(allTileLayers()).map(([k, def]) =>
       `<option value="${k}">${escHtml(def.label)}</option>`).join('');
     sel.value = layerKey || (_activeTileLayer ? (_activeTileLayer.options.cachePrefix || 'osm') : 'osm');
     updateRegionEstimate();
@@ -5913,9 +5967,9 @@ if (targetEl) {
   }
 
   function _tileUrlForLayer(layerKey, z, x, y) {
-    const def = TILE_LAYERS[layerKey] || TILE_LAYERS.osm;
+    const def = allTileLayers()[layerKey] || TILE_LAYERS.osm;
     const s = 'abc'[Math.abs(x + y) % 3];
-    return def.url.replace('{s}', s).replace('{z}', z).replace('{x}', x).replace('{y}', y).replace('{r}', '');
+    return _resolveTileUrl(def.url).replace('{s}', s).replace('{z}', z).replace('{x}', x).replace('{y}', y).replace('{r}', '');
   }
 
   async function downloadSelectedRegion() {
@@ -5945,7 +5999,7 @@ if (targetEl) {
     }
 
     const layerKey   = document.getElementById('region-dl-layer').value || 'osm';
-    const layerLabel = (TILE_LAYERS[layerKey] || TILE_LAYERS.osm).label;
+    const layerLabel = (allTileLayers()[layerKey] || TILE_LAYERS.osm).label;
     let saved = 0, skipped = 0, failed = 0;
     const BATCH = 4;
     try {
@@ -6240,6 +6294,29 @@ if (targetEl) {
       }
     });
     _refreshAllGeofences();
+  }
+
+  function refreshBaseLayerPanelOptions() {
+    if (!_baseLayerMenuPanel) return;
+    _baseLayerMenuPanel.innerHTML = '';
+    const saved = (() => { try { return localStorage.getItem('mapTileLayer') || 'osm'; } catch(e) { return 'osm'; } })();
+    Object.entries(allTileLayers()).forEach(([key, def]) => {
+      const opt = L.DomUtil.create('div', 'map-layer-opt', _baseLayerMenuPanel);
+      opt.textContent  = def.label;
+      opt.dataset.layer = key;
+      if (key === saved) opt.classList.add('active');
+      L.DomEvent.on(opt, 'click', (e) => {
+        L.DomEvent.stopPropagation(e);
+        setTileLayer(key);
+        const panel = document.getElementById('map-layer-panel');
+        if (panel) panel.classList.remove('open');
+      });
+    });
+    if (_mapAppTileLayersLoaded && !Object.keys(_mapAppTileLayers).length) {
+      const empty = L.DomUtil.create('div', '', _baseLayerMenuPanel);
+      empty.textContent = 'No Map App offline layers found';
+      empty.style.cssText = 'padding:4px 10px 6px 10px;font-size:11px;color:var(--muted)';
+    }
   }
 
   function refreshMapLayerPanelOptions() {
@@ -7099,6 +7176,7 @@ if (targetEl) {
     leafletMap = L.map('map', { zoomSnap: 0.5, zoomDelta: 0.5 }).setView(_initCenter, _initZoom);
     const _savedLayer = (() => { try { return localStorage.getItem('mapTileLayer') || 'osm'; } catch(e) { return 'osm'; } })();
     setTileLayer(_savedLayer);
+    loadMapAppTileLayers();
     if (_showPolarGrid) _drawPolarGrid();
     fetch(BASE_PATH + '/api/traceroute/history').then(r => r.json()).then(rows => {
       if (!Array.isArray(rows) || !rows.length) return;
@@ -7246,18 +7324,8 @@ if (targetEl) {
         const panel = L.DomUtil.create('div', '', wrap);
         panel.id = 'map-layer-panel';
         L.DomEvent.disableScrollPropagation(panel);
-        Object.entries(TILE_LAYERS).forEach(([key, def]) => {
-          const opt = L.DomUtil.create('div', 'map-layer-opt', panel);
-          opt.textContent  = def.label;
-          opt.dataset.layer = key;
-          const saved = (() => { try { return localStorage.getItem('mapTileLayer') || 'osm'; } catch(e) { return 'osm'; } })();
-          if (key === saved) opt.classList.add('active');
-          L.DomEvent.on(opt, 'click', (e) => {
-            L.DomEvent.stopPropagation(e);
-            setTileLayer(key);
-            panel.classList.remove('open');
-          });
-        });
+        _baseLayerMenuPanel = L.DomUtil.create('div', '', panel);
+        refreshBaseLayerPanelOptions();
         _mapLayerMenuPanel = L.DomUtil.create('div', '', panel);
         refreshMapLayerPanelOptions();
 
@@ -7281,7 +7349,10 @@ if (targetEl) {
         L.DomEvent.on(custBtn, 'click', (e) => { L.DomEvent.stopPropagation(e); openPolarCustomize(); });
 
         L.DomEvent.on(btn, 'click', L.DomEvent.stopPropagation);
-        L.DomEvent.on(btn, 'click', () => panel.classList.toggle('open'));
+        L.DomEvent.on(btn, 'click', () => {
+          panel.classList.toggle('open');
+          if (panel.classList.contains('open')) loadMapAppTileLayers({force: true});
+        });
         leafletMap.on('click', () => panel.classList.remove('open'));
 
         const savedKey = (() => { try { return localStorage.getItem('mapTileLayer') || 'osm'; } catch(e) { return 'osm'; } })();
@@ -9130,8 +9201,8 @@ if (targetEl) {
       zoomControl: false, attributionControl: false, zoomSnap: 1,
     }).setView([46.05, 14.50], 9);
     const _pipLayerKey = (() => { try { return localStorage.getItem('mapTileLayer') || 'osm'; } catch(e) { return 'osm'; } })();
-    const _pipDef = TILE_LAYERS[_pipLayerKey] || TILE_LAYERS.osm;
-    new OfflineTileLayer(_pipDef.url, { maxZoom: _pipDef.maxZoom }).addTo(pipMap);
+    const _pipDef = allTileLayers()[_pipLayerKey] || TILE_LAYERS.osm;
+    new OfflineTileLayer(_resolveTileUrl(_pipDef.url), { maxZoom: _pipDef.maxZoom }).addTo(pipMap);
 
     // Draggable header
     const wrap        = document.getElementById('pip-wrap');

@@ -5,6 +5,8 @@ import time
 from flask import Blueprint, jsonify, request
 
 from db import get_prefs_db
+from helpers import push_to_sse
+from state import notes_cache, notes_lock, waypoints_cache, waypoints_lock
 
 bp = Blueprint("map_layers", __name__)
 
@@ -68,6 +70,73 @@ def _row_to_layer(row):
         },
         "created_ts": row[11] or 0,
     }
+
+
+def _feature_collection(features):
+    return {"type": "FeatureCollection", "features": features}
+
+
+def _feature_name(feature, fallback):
+    props = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
+    return str(props.get("name") or props.get("title") or fallback).strip()[:60] or fallback
+
+
+def _feature_color(feature, fallback="#f59e0b"):
+    props = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
+    return _normalize_color(props.get("color") or fallback)
+
+
+def _iter_features(geojson):
+    if not isinstance(geojson, dict):
+        return
+    gtype = geojson.get("type")
+    if gtype == "FeatureCollection":
+        for feature in geojson.get("features") or []:
+            if isinstance(feature, dict):
+                yield feature
+    elif gtype == "Feature":
+        yield geojson
+    elif gtype in _VALID_GEOJSON_TYPES:
+        yield {"type": "Feature", "properties": {}, "geometry": geojson}
+
+
+def _point_feature(name, description, lat, lon, source, emoji="📍", ts=0):
+    return {
+        "type": "Feature",
+        "properties": {
+            "name": name or "Mark",
+            "description": description or "",
+            "marker_emoji": emoji or "📍",
+            "source_app": "overmesh",
+            "source_type": source,
+            "updated_at": ts or int(time.time()),
+        },
+        "geometry": {"type": "Point", "coordinates": [lon, lat]},
+    }
+
+
+def _insert_self_note(cur, name, description, lat, lon, marker_emoji):
+    note_id = int(time.time() * 1000) % (2 ** 31)
+    while cur.execute("SELECT 1 FROM self_notes WHERE id=?", (note_id,)).fetchone():
+        note_id = (note_id + 1) % (2 ** 31)
+    ts = int(time.time())
+    cur.execute(
+        "INSERT INTO self_notes (id,name,description,lat,lon,marker_emoji,ts) VALUES (?,?,?,?,?,?,?)",
+        (note_id, name, description, lat, lon, marker_emoji, ts),
+    )
+    note = {
+        "id": note_id,
+        "name": name,
+        "description": description,
+        "lat": lat,
+        "lon": lon,
+        "marker_emoji": marker_emoji,
+        "ts": ts,
+    }
+    with notes_lock:
+        notes_cache[note_id] = note
+    push_to_sse(json.dumps({"type": "note", "note": note}))
+    return note_id
 
 
 @bp.route("/api/map_layers")
@@ -189,3 +258,73 @@ def api_delete_map_layer(layer_id):
             return jsonify({"error": "Layer not found"}), 404
         cur.execute("DELETE FROM map_layers WHERE id=?", (layer_id,))
     return jsonify({"ok": True})
+
+
+@bp.route("/api/map_exchange/export")
+def api_map_exchange_export():
+    features = []
+    with get_prefs_db() as conn:
+        cur = conn.cursor()
+        layer_rows = cur.execute(
+            "SELECT id,name,color,data_json,enabled,is_geofence,geofence_enter,geofence_leave,geofence_notify_app,geofence_notify_browser,geofence_networks,created_ts FROM map_layers ORDER BY created_ts DESC, id DESC"
+        ).fetchall()
+        note_rows = cur.execute("SELECT id,name,description,lat,lon,marker_emoji,ts FROM self_notes").fetchall()
+    for row in layer_rows:
+        layer = _row_to_layer(row)
+        for feature in _iter_features(layer["data"]):
+            props = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
+            props = dict(props)
+            props.setdefault("name", layer["name"])
+            props.setdefault("color", layer["color"])
+            props["source_app"] = "overmesh"
+            props["source_type"] = "overlay"
+            props["source_id"] = layer["id"]
+            features.append({"type": "Feature", "properties": props, "geometry": feature.get("geometry")})
+    with waypoints_lock:
+        waypoint_values = list(waypoints_cache.values())
+    for wp in waypoint_values:
+        if wp.get("lat") is None or wp.get("lon") is None:
+            continue
+        features.append(_point_feature(wp.get("name"), wp.get("description"), wp["lat"], wp["lon"], "mark", wp.get("marker_emoji"), wp.get("ts")))
+    for row in note_rows:
+        features.append(_point_feature(row[1], row[2], row[3], row[4], "self_note", row[5], row[6]))
+    return jsonify({"ok": True, "data": _feature_collection(features), "counts": {"features": len(features)}})
+
+
+@bp.route("/api/map_exchange/import", methods=["POST"])
+def api_map_exchange_import():
+    payload = request.get_json(silent=True) or {}
+    try:
+        geojson = _parse_geojson(payload.get("data"))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    imported_notes = 0
+    imported_layers = 0
+    with get_prefs_db() as conn:
+        cur = conn.cursor()
+        for feature in _iter_features(geojson):
+            geom = feature.get("geometry") if isinstance(feature.get("geometry"), dict) else {}
+            gtype = geom.get("type")
+            props = feature.get("properties") if isinstance(feature.get("properties"), dict) else {}
+            name = _feature_name(feature, "Map App mark" if gtype == "Point" else "Map App overlay")
+            if gtype == "Point":
+                coords = geom.get("coordinates") or []
+                if len(coords) < 2:
+                    continue
+                try:
+                    lon = float(coords[0])
+                    lat = float(coords[1])
+                except (TypeError, ValueError):
+                    continue
+                desc = str(props.get("description") or props.get("desc") or "").strip()[:400]
+                emoji = str(props.get("marker_emoji") or props.get("emoji") or "📍").strip()[:8] or "📍"
+                _insert_self_note(cur, name[:80], desc, lat, lon, emoji)
+                imported_notes += 1
+            elif gtype in {"LineString", "MultiLineString", "Polygon", "MultiPolygon"}:
+                data = {"type": "FeatureCollection", "features": [feature]}
+                cur.execute(
+                    "INSERT INTO map_layers (name,color,data_json,enabled,is_geofence,geofence_enter,geofence_leave,geofence_notify_app,geofence_notify_browser,geofence_networks,created_ts) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (name, _feature_color(feature), json.dumps(data, separators=(",", ":")), 1, 0, 1, 1, 1, 1, "both", int(time.time())),
+                )
+                imported_layers += 1
+    return jsonify({"ok": True, "notes": imported_notes, "layers": imported_layers})

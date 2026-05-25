@@ -10,6 +10,13 @@ OverMesh uses date-based release versions:
 
 The version in `VERSION` must be updated every time an OverMesh update is pushed to GitHub. The Settings updater also shows the Git commit hash for exact build identification.
 
+## 2026.05.25.1
+
+- Added local Map App marking exchange endpoints for the CD workflow:
+  - `GET /api/map_exchange/export` exports OM Marks, Self Notes, and Overlays as GeoJSON features
+  - `POST /api/map_exchange/import` imports Map App markers as OM Self Notes and Map App drawings as OM Overlays
+  - this exchange is local-only and does not broadcast anything over MT/MC radios
+
 ## 2026.05.24.2
 
 - Made shared local tile DB support opt-in for production safety:

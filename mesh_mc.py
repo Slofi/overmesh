@@ -3450,23 +3450,34 @@ def get_stats(config_id, timeout=30):
     return run_mc(_get_stats_async(config_id), timeout=timeout)
 
 
-async def _get_local_neighbors_async(config_id):
-    mc, _ = _get_mc(config_id)
+def get_local_neighbors(config_id):
+    """Return contacts known to the local radio with routing info.
+
+    Reads live_contacts from in-memory state (no async mesh request needed —
+    the firmware does not respond to self-addressed binary NEIGHBOURS requests).
+    Returns entries sorted by path length: direct (0) first, then ascending hops,
+    flood (-1) last.
+    """
     with mc_connections_lock:
         state = mc_connections.get(config_id, {})
-    node_info = state.get("node_info", {})
-    own_key = node_info.get("public_key")
-    if not own_key:
-        raise ValueError("Local radio public key not available")
-    contact = {"public_key": own_key}
-    result = await mc.commands.fetch_all_neighbours(contact, min_timeout=10)
-    if result is None:
-        return []
-    return result.get("neighbours", [])
-
-
-def get_local_neighbors(config_id, timeout=15):
-    return run_mc(_get_local_neighbors_async(config_id), timeout=timeout)
+    contacts = state.get("live_contacts") or state.get("contacts") or {}
+    now = int(time.time())
+    result = []
+    for pubkey, c in contacts.items():
+        path_len = c.get("out_path_len", -1)
+        last_advert = c.get("last_advert", 0) or 0
+        result.append({
+            "pubkey":       pubkey[:12],
+            "full_key":     pubkey,
+            "name":         c.get("adv_name") or pubkey[:8],
+            "out_path_len": path_len,
+            "out_path":     c.get("out_path", ""),
+            "last_advert":  last_advert,
+            "secs_ago":     (now - last_advert) if last_advert else None,
+            "contact_type": c.get("type", 0),
+        })
+    result.sort(key=lambda x: (1, 0) if x["out_path_len"] < 0 else (0, x["out_path_len"]))
+    return result
 
 
 def reboot_device_dtr(config_id):

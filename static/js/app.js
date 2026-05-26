@@ -16109,28 +16109,32 @@ if (targetEl) {
       const body  = document.getElementById('mc-statusreq-body');
       if (!panel) { showAlert(JSON.stringify(neighbors)); return; }
       panel.dataset.detailKind = 'mc-neighbors';
-      title.textContent = 'Neighbors';
+      title.textContent = 'Contacts / Neighbors';
       if (!neighbors.length) {
-        body.innerHTML = '<span style="color:var(--muted)">No neighbors heard.</span>';
+        body.innerHTML = '<span style="color:var(--muted)">No contacts known.</span>';
       } else {
         body.innerHTML = neighbors.map(function(n) {
-          const key = (n.public_key || n.pubkey_prefix || '?').slice(0, 8);
-          const contact = findMcContactByKeyPrefix(key, radioId);
-          const name = contact ? escHtml(contact.adv_name || contact.name || key) : escHtml(key);
-          const snr  = n.snr  != null ? n.snr.toFixed(1)  + ' dB'  : '?';
-          const rssi = n.rssi != null ? n.rssi + ' dBm' : '?';
-          const age  = n.last_heard != null ? Math.round(n.last_heard) + 's ago' : '';
+          const key = (n.pubkey || n.full_key || '?').slice(0, 8);
+          const name = escHtml(n.name || key);
+          const pl = n.out_path_len;
+          let pathLabel, pathColor;
+          if (pl === 0) { pathLabel = 'direct'; pathColor = 'var(--green)'; }
+          else if (pl > 0) { pathLabel = pl + ' hop' + (pl > 1 ? 's' : ''); pathColor = 'var(--accent)'; }
+          else { pathLabel = 'flood'; pathColor = 'var(--muted)'; }
+          const age = n.secs_ago != null
+            ? (n.secs_ago < 120 ? n.secs_ago + 's' : Math.round(n.secs_ago / 60) + 'm') + ' ago'
+            : '';
           return `<div style="display:flex;gap:10px;align-items:baseline;padding:3px 0;border-bottom:1px solid var(--border);font-size:12px">
-            <span style="color:var(--accent);font-weight:600;min-width:80px">${name}</span>
-            <span style="color:var(--muted)">${key}</span>
-            <span>SNR ${snr}</span>
-            <span style="color:var(--muted)">RSSI ${rssi}</span>
+            <span style="color:var(--accent);font-weight:600;min-width:90px">${name}</span>
+            <span style="color:var(--muted)">${escHtml(key)}</span>
+            <span style="color:${pathColor}">${pathLabel}</span>
             ${age ? `<span style="color:var(--muted);margin-left:auto">${escHtml(age)}</span>` : ''}
           </div>`;
         }).join('');
       }
       panel.style.display = '';
-      if (status) status.textContent = `${neighbors.length} neighbor${neighbors.length !== 1 ? 's' : ''}`;
+      const directCount = (d.neighbors || []).filter(n => n.out_path_len === 0).length;
+      if (status) status.textContent = `${neighbors.length} contact${neighbors.length !== 1 ? 's' : ''} (${directCount} direct)`;
     } catch(e) {
       if (status) status.textContent = 'Neighbors error.';
     } finally {

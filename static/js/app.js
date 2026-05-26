@@ -11548,8 +11548,13 @@ if (targetEl) {
     const labelHtml = mcContactNameHtml(item, label, item._rid || item.radio_id || null);
     const safePk = jsSafe(item.full_key || item.id || '');
     const safeRid = jsSafe(item._rid || '');
+    const safeContactId = jsSafe(item.id || (item.full_key || '').slice(0, 12));
     const safeName = jsSafe(label);
     const hops = item.out_path_len ?? null;
+    const radioConnected = mcLastStatus[item._rid]?.status === 'connected';
+    const pathButton = radioConnected
+      ? `<button class="map-popup-btn" title="Set stored MC route/path" onclick="leafletMap.closePopup();openMcRouteEditor('${safeContactId}','${safeRid}')">Path</button>`
+      : `<button class="map-popup-btn" title="MC radio disconnected" disabled style="opacity:0.35;cursor:default">Path</button>`;
     const bat = item.battery ?? item.bat_pct ?? item.bat;
     const batStr = bat != null ? `${bat}%` : '—';
     const snrText = item.snr != null ? `${item.snr} dB` : '—';
@@ -11562,12 +11567,13 @@ if (targetEl) {
         ${keyStr ? `<div style="font-size:10px;color:var(--muted)">${escHtml(keyStr)}</div>` : ''}
         <div style="font-size:10px;color:var(--muted);margin-top:2px">${escHtml(mcContactMetaLabel(item, item._rid))}</div>
         <div style="font-size:11px;color:var(--muted);margin-bottom:4px">
-          <b>SNR:</b> ${snrText} &nbsp; <b>Path:</b> ${hops !== null ? escHtml(mcPathHopLabel(hops, true)) : '—'} &nbsp; <b>Dist:</b> ${escHtml(distanceText)} &nbsp; <b>Seen:</b> ${tsText}
+          <b>SNR:</b> ${snrText} &nbsp; <b>Hops:</b> ${hops !== null ? escHtml(mcPathHopLabel(hops, true)) : '—'} &nbsp; <b>Dist:</b> ${escHtml(distanceText)} &nbsp; <b>Seen:</b> ${tsText}
         </div>
         <div style="display:flex;gap:4px;flex-wrap:wrap">
           <button class="map-popup-btn" title="Show in Nodes list" onclick="leafletMap.closePopup();showMcNodeInList('${jsSafe(item.id || '')}')">List</button>
           ${item.type !== 2 ? `<button class="map-popup-btn" title="Send direct message" onclick="leafletMap.closePopup();doMcDm('${safePk}','${safeRid}','${safeName}')">DM</button>` : ''}
           <button class="map-popup-btn" title="Ping (request status)" onclick="leafletMap.closePopup();doMcPing('${safePk}','${safeRid}','${safeName}')">Ping</button>
+          ${pathButton}
           ${mcCanRemoteManage(item) ? `<button class="map-popup-btn" title="Remote repeater/room management" onclick="leafletMap.closePopup();openMcRemoteManage('${safePk}','${safeRid}','${safeName}')">Manage</button>` : ''}
           <button class="map-popup-btn" title="Select in Sense panel" onclick="leafletMap.closePopup();switchTab('map');toggleSensePanel(true);switchSenseNet('mc');selectMcSenseContact('${jsSafe(item.id || '')}','${safeRid}')">Sense</button>
           <button class="map-popup-btn" title="Prefill TOC Log from this contact" onclick="leafletMap.closePopup();tocFromMcNode('${safePk}','${safeRid}')">Log</button>
@@ -11692,6 +11698,7 @@ if (targetEl) {
       const label = mcContactNameHtml(c, c.long_name || c.name || c.id || '?', c._rid || c.radio_id || null);
       const labelRaw = c.long_name || c.name || c.id || '?';
       const safePk = jsSafe(c.full_key || c.id || '');
+      const safeContactId = jsSafe(c.id || (c.full_key || '').slice(0, 12));
       const safeRid = jsSafe(c._rid);
       const safeName = jsSafe(labelRaw);
       const hops = c.out_path_len ?? null;
@@ -11704,6 +11711,9 @@ if (targetEl) {
       const popupPingButton = radioConnected
         ? `<button class="map-popup-btn" title="Ping (request status)" onclick="leafletMap.closePopup();doMcPing('${safePk}','${safeRid}','${safeName}')">Ping</button>`
         : `<button class="map-popup-btn" title="MC radio disconnected" disabled style="opacity:0.35;cursor:default">Ping</button>`;
+      const popupPathButton = radioConnected
+        ? `<button class="map-popup-btn" title="Set stored MC route/path" onclick="leafletMap.closePopup();openMcRouteEditor('${safeContactId}','${safeRid}')">Path</button>`
+        : `<button class="map-popup-btn" title="MC radio disconnected" disabled style="opacity:0.35;cursor:default">Path</button>`;
       const popupManageButton = mcCanRemoteManage(c)
         ? (radioConnected
           ? `<button class="map-popup-btn" title="Remote repeater/room management" onclick="leafletMap.closePopup();openMcRemoteManage('${safePk}','${safeRid}','${safeName}')">Manage</button>`
@@ -11722,13 +11732,14 @@ if (targetEl) {
         + (keyStr ? `<div style="font-size:10px;color:var(--muted)">${escHtml(keyStr)}</div>` : '')
         + `<div style="font-size:10px;color:var(--muted);margin-top:2px">${escHtml(mcContactMetaLabel(c, c._rid))}</div>`
         + `<div><b>SNR:</b> ${snrText} &nbsp; <b>Battery:</b> ${batStr}</div>`
-        + `<div><b>Path:</b> ${hops !== null ? escHtml(mcPathHopLabel(hops, true)) : '—'} &nbsp; <b>Distance:</b> ${escHtml(distanceText)}</div>`
+        + `<div><b>Hops:</b> ${hops !== null ? escHtml(mcPathHopLabel(hops, true)) : '—'} &nbsp; <b>Distance:</b> ${escHtml(distanceText)}</div>`
         + `<div><b>Last seen:</b> ${tsText}</div>`
         + `<div style="font-size:11px;color:var(--muted)">${c.latitude.toFixed(5)}, ${c.longitude.toFixed(5)}</div>`
         + `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">`
         + `<button class="map-popup-btn" title="Show in Nodes list" onclick="leafletMap.closePopup();showMcNodeInList('${jsSafe(c.id || '')}')">List</button>`
         + popupDmButton
         + popupPingButton
+        + popupPathButton
         + popupManageButton
         + `<button class="map-popup-btn" title="Select in Sense panel" onclick="leafletMap.closePopup();switchTab('map');toggleSensePanel(true);switchSenseNet('mc');selectMcSenseContact('${jsSafe(c.id || '')}','${safeRid}')">Sense</button>`
         + `<button class="map-popup-btn" title="Prefill TOC Log from this contact" onclick="leafletMap.closePopup();tocFromMcNode('${safePk}','${safeRid}')">Log</button>`
@@ -15885,9 +15896,11 @@ if (targetEl) {
   }
 
   async function doMcTrace() {
-    // Use first connected MC radio
-    const radioId = Object.keys(mcLastStatus).find(id => mcLastStatus[id]?.status === 'connected');
-    if (!radioId) return;
+    const radioId = activeMcRadioId;
+    if (!radioId || mcLastStatus[radioId]?.status !== 'connected') {
+      showAlert('No connected MC radio selected.');
+      return;
+    }
     const remainingMs = Math.max(0, _mcTraceCooldownUntil - Date.now());
     if (remainingMs > 0) {
       const status = document.getElementById('sense-mc-status');
@@ -16120,7 +16133,7 @@ if (targetEl) {
       const filterBtns = filters.map(f =>
         `<button onclick="doMcNeighbors('${f.v}')" style="padding:1px 7px;font-size:11px;cursor:pointer;border:1px solid var(--border);border-radius:3px;background:${mode===f.v?'var(--accent)':'var(--bg2)'};color:${mode===f.v?'#fff':'var(--text)'}">${f.l}</button>`
       ).join(' ');
-      title.innerHTML = `Neighbors &nbsp;<span style="font-size:11px;font-weight:normal">${filterBtns}</span>`;
+      title.innerHTML = `Last Heard &nbsp;<span style="font-size:11px;font-weight:normal">${filterBtns}</span>`;
 
       const noContactMsg = {
         neighbors: 'No direct neighbors (out_path_len=0) in contact list.',
@@ -16151,7 +16164,7 @@ if (targetEl) {
             ${age ? `<span style="color:var(--muted);margin-left:auto">${escHtml(age)}</span>` : ''}
           </div>`;
         }).join('')
-        + (hiddenCount > 0 && mode !== 'all' ? `<div style="padding:4px 0;font-size:11px;color:var(--muted)">${hiddenCount - contacts.length > 0 ? total - contacts.length : ''} more contacts — use "24h" or "All" to expand</div>` : '');
+        + (hiddenCount > 0 && mode !== 'all' ? `<div style="padding:4px 0;font-size:11px;color:var(--muted)">${hiddenCount} more contacts — use "24h" or "All" to expand</div>` : '');
       }
       panel.style.display = '';
       if (status) {
@@ -16161,9 +16174,9 @@ if (targetEl) {
           : `${contacts.length} contact${contacts.length !== 1 ? 's' : ''} (${direct} direct)`;
       }
     } catch(e) {
-      if (status) status.textContent = 'Neighbors error.';
+      if (status) status.textContent = 'Last Heard error.';
     } finally {
-      if (btn) { btn.textContent = 'Neighbors'; btn.disabled = false; }
+      if (btn) { btn.textContent = 'Last Heard'; btn.disabled = false; }
     }
   }
 

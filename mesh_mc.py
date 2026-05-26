@@ -3472,6 +3472,7 @@ def get_local_neighbors(config_id, mode="neighbors"):
     for pubkey, c in contacts.items():
         path_len = c.get("out_path_len", -1)
         last_advert = c.get("last_advert", 0) or 0
+        seen_ts = _mc_contact_seen_ts(c, now)
 
         if mode == "neighbors":
             if path_len != 0:
@@ -3481,7 +3482,7 @@ def get_local_neighbors(config_id, mode="neighbors"):
                 continue
         elif mode == "recent":
             cutoff = now - 86400
-            if last_advert > 0 and last_advert < cutoff:
+            if not seen_ts or seen_ts < cutoff:
                 continue
         # mode == "all": no filter
 
@@ -3492,15 +3493,16 @@ def get_local_neighbors(config_id, mode="neighbors"):
             "out_path_len": path_len,
             "out_path":     c.get("out_path", ""),
             "last_advert":  last_advert,
-            "secs_ago":     (now - last_advert) if last_advert else None,
+            "last_seen_ts":  seen_ts,
+            "secs_ago":     (now - seen_ts) if seen_ts else None,
             "contact_type": c.get("type", 0),
         })
 
     # neighbors/nearby: sort direct first then by recency; recent/all: recency only
     if mode in ("neighbors", "nearby"):
-        result.sort(key=lambda x: (x["out_path_len"] if x["out_path_len"] >= 0 else 999, -(x["last_advert"] or 0)))
+        result.sort(key=lambda x: (x["out_path_len"] if x["out_path_len"] >= 0 else 999, -(x["last_seen_ts"] or 0)))
     else:
-        result.sort(key=lambda x: -(x["last_advert"] or 0))
+        result.sort(key=lambda x: -(x["last_seen_ts"] or 0))
 
     total = len(contacts)
     return {"contacts": result, "total": total, "mode": mode}

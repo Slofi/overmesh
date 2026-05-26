@@ -1129,17 +1129,23 @@ def api_mc_trace(radio_id):
 
 @bp.route("/api/mc/<radio_id>/neighbors", methods=["GET"])
 def api_mc_neighbors(radio_id):
-    """Return the list of neighbors heard by the local MC radio."""
+    """Return recently active contacts known to the local MC radio.
+
+    Query params:
+      max_age  — seconds to look back (default 86400 = 24h, 0 = all time)
+    """
+    from flask import request as flask_request
     with mc_connections_lock:
         state = mc_connections.get(radio_id, {})
     if state.get("status") != "connected":
         return jsonify({"error": "MC radio not connected"}), 503
     try:
-        neighbors = get_local_neighbors(radio_id)
+        max_age = flask_request.args.get("max_age", 86400, type=int)
+        result = get_local_neighbors(radio_id, max_age_secs=max_age)
     except Exception as e:
         log.warning(f"[MC] neighbors failed: {e}")
         return jsonify({"error": str(e)}), 500
-    return jsonify({"ok": True, "neighbors": neighbors})
+    return jsonify({"ok": True, **result})
 
 
 @bp.route("/api/mc/<radio_id>/debug_events", methods=["POST"])

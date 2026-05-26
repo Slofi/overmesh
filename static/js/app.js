@@ -16089,31 +16089,40 @@ if (targetEl) {
     }
   }
 
-  async function doMcNeighbors() {
+  async function doMcNeighbors(maxAge) {
     const radioId = activeMcRadioId;
     if (!radioId) { showAlert('No MC radio selected.'); return; }
+    if (maxAge === undefined) maxAge = 86400;
     const btn = document.getElementById('mc-neighbors-btn');
     if (btn) { btn.textContent = '…'; btn.disabled = true; }
     const status = document.getElementById('sense-mc-status');
     try {
-      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/neighbors`);
+      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/neighbors?max_age=${maxAge}`);
       const d = await r.json();
       if (!r.ok || !d.ok) {
         if (status) status.textContent = d.error || 'Neighbors failed.';
         return;
       }
-      const neighbors = d.neighbors || [];
-      // Show results in the mc-statusreq-panel (same as trace)
+      const contacts = d.contacts || [];
+      const total = d.total || 0;
       const panel = document.getElementById('mc-statusreq-panel');
       const title = document.getElementById('mc-statusreq-title');
       const body  = document.getElementById('mc-statusreq-body');
-      if (!panel) { showAlert(JSON.stringify(neighbors)); return; }
+      if (!panel) { showAlert(JSON.stringify(contacts)); return; }
       panel.dataset.detailKind = 'mc-neighbors';
-      title.textContent = 'Contacts / Neighbors';
-      if (!neighbors.length) {
-        body.innerHTML = '<span style="color:var(--muted)">No contacts known.</span>';
+
+      const filterLabels = [{v:3600,l:'1h'},{v:86400,l:'24h'},{v:604800,l:'7d'},{v:0,l:'All'}];
+      const filterBtns = filterLabels.map(f =>
+        `<button onclick="doMcNeighbors(${f.v})" style="padding:1px 7px;font-size:11px;cursor:pointer;border:1px solid var(--border);border-radius:3px;background:${maxAge===f.v?'var(--accent)':'var(--bg2)'};color:${maxAge===f.v?'#fff':'var(--text)'}">${f.l}</button>`
+      ).join(' ');
+      title.innerHTML = `Recent Contacts &nbsp; <span style="font-size:11px;font-weight:normal">${filterBtns}</span>`;
+
+      if (!contacts.length) {
+        const hiddenCount = total - contacts.length;
+        body.innerHTML = `<span style="color:var(--muted)">No contacts heard in this window.${hiddenCount > 0 ? ` (${hiddenCount} older — try "All")` : ''}</span>`;
       } else {
-        body.innerHTML = neighbors.map(function(n) {
+        const hiddenCount = total - contacts.length;
+        body.innerHTML = contacts.map(function(n) {
           const key = (n.pubkey || n.full_key || '?').slice(0, 8);
           const name = escHtml(n.name || key);
           const pl = n.out_path_len;
@@ -16121,20 +16130,20 @@ if (targetEl) {
           if (pl === 0) { pathLabel = 'direct'; pathColor = 'var(--green)'; }
           else if (pl > 0) { pathLabel = pl + ' hop' + (pl > 1 ? 's' : ''); pathColor = 'var(--accent)'; }
           else { pathLabel = 'flood'; pathColor = 'var(--muted)'; }
-          const age = n.secs_ago != null
-            ? (n.secs_ago < 120 ? n.secs_ago + 's' : Math.round(n.secs_ago / 60) + 'm') + ' ago'
-            : '';
+          const s = n.secs_ago;
+          const age = s != null ? (s < 120 ? s + 's' : s < 7200 ? Math.round(s/60) + 'm' : Math.round(s/3600) + 'h') + ' ago' : '';
           return `<div style="display:flex;gap:10px;align-items:baseline;padding:3px 0;border-bottom:1px solid var(--border);font-size:12px">
             <span style="color:var(--accent);font-weight:600;min-width:90px">${name}</span>
             <span style="color:var(--muted)">${escHtml(key)}</span>
             <span style="color:${pathColor}">${pathLabel}</span>
             ${age ? `<span style="color:var(--muted);margin-left:auto">${escHtml(age)}</span>` : ''}
           </div>`;
-        }).join('');
+        }).join('')
+        + (hiddenCount > 0 ? `<div style="padding:4px 0;font-size:11px;color:var(--muted)">${hiddenCount} older contact${hiddenCount!==1?'s':''} hidden — use "7d" or "All" to show</div>` : '');
       }
       panel.style.display = '';
-      const directCount = (d.neighbors || []).filter(n => n.out_path_len === 0).length;
-      if (status) status.textContent = `${neighbors.length} contact${neighbors.length !== 1 ? 's' : ''} (${directCount} direct)`;
+      const directCount = contacts.filter(n => n.out_path_len === 0).length;
+      if (status) status.textContent = `${contacts.length} contact${contacts.length !== 1 ? 's' : ''} (${directCount} direct)`;
     } catch(e) {
       if (status) status.textContent = 'Neighbors error.';
     } finally {

@@ -10710,15 +10710,17 @@ if (targetEl) {
   function _updateScanBtnVisibility() {
     const mcConnected = Object.values(mcLastStatus).some(s => s.status === 'connected')
                         && localStorage.getItem('mcHide') !== '1';
-    // Scan/Trace buttons live inside MC sense wrap — visible only when MC connected
+    // Scan/Trace/Neighbors buttons live inside MC sense wrap — visible only when MC connected
     const btn = document.getElementById('mc-scan-btn');
     const st  = document.getElementById('mc-scan-status');
     const traceBtn = document.getElementById('mc-trace-btn');
     const traceWarn = document.getElementById('mc-trace-warning');
+    const neighborsBtn = document.getElementById('mc-neighbors-btn');
     if (btn) btn.style.display = mcConnected ? '' : 'none';
     if (st && !mcConnected) st.style.display = 'none';
     if (traceBtn) traceBtn.style.display = mcConnected ? '' : 'none';
     if (traceWarn) traceWarn.style.display = mcConnected ? '' : 'none';
+    if (neighborsBtn) neighborsBtn.style.display = mcConnected ? '' : 'none';
     if (!mcConnected) _mcTraceSetButtonState();
   }
 
@@ -16084,6 +16086,55 @@ if (targetEl) {
       input.value = '';
     } catch(e) {
       status.innerHTML = `<div class="modal-error">Failed: ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  async function doMcNeighbors() {
+    const radioId = activeMcRadioId;
+    if (!radioId) { showAlert('No MC radio selected.'); return; }
+    const btn = document.getElementById('mc-neighbors-btn');
+    if (btn) { btn.textContent = '…'; btn.disabled = true; }
+    const status = document.getElementById('sense-mc-status');
+    try {
+      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/neighbors`);
+      const d = await r.json();
+      if (!r.ok || !d.ok) {
+        if (status) status.textContent = d.error || 'Neighbors failed.';
+        return;
+      }
+      const neighbors = d.neighbors || [];
+      // Show results in the mc-statusreq-panel (same as trace)
+      const panel = document.getElementById('mc-statusreq-panel');
+      const title = document.getElementById('mc-statusreq-title');
+      const body  = document.getElementById('mc-statusreq-body');
+      if (!panel) { showAlert(JSON.stringify(neighbors)); return; }
+      panel.dataset.detailKind = 'mc-neighbors';
+      title.textContent = 'Neighbors';
+      if (!neighbors.length) {
+        body.innerHTML = '<span style="color:var(--muted)">No neighbors heard.</span>';
+      } else {
+        body.innerHTML = neighbors.map(function(n) {
+          const key = (n.public_key || n.pubkey_prefix || '?').slice(0, 8);
+          const contact = findMcContactByKeyPrefix(key, radioId);
+          const name = contact ? escHtml(contact.adv_name || contact.name || key) : escHtml(key);
+          const snr  = n.snr  != null ? n.snr.toFixed(1)  + ' dB'  : '?';
+          const rssi = n.rssi != null ? n.rssi + ' dBm' : '?';
+          const age  = n.last_heard != null ? Math.round(n.last_heard) + 's ago' : '';
+          return `<div style="display:flex;gap:10px;align-items:baseline;padding:3px 0;border-bottom:1px solid var(--border);font-size:12px">
+            <span style="color:var(--accent);font-weight:600;min-width:80px">${name}</span>
+            <span style="color:var(--muted)">${key}</span>
+            <span>SNR ${snr}</span>
+            <span style="color:var(--muted)">RSSI ${rssi}</span>
+            ${age ? `<span style="color:var(--muted);margin-left:auto">${escHtml(age)}</span>` : ''}
+          </div>`;
+        }).join('');
+      }
+      panel.style.display = '';
+      if (status) status.textContent = `${neighbors.length} neighbor${neighbors.length !== 1 ? 's' : ''}`;
+    } catch(e) {
+      if (status) status.textContent = 'Neighbors error.';
+    } finally {
+      if (btn) { btn.textContent = 'Neighbors'; btn.disabled = false; }
     }
   }
 

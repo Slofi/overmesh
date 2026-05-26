@@ -3450,6 +3450,25 @@ def get_stats(config_id, timeout=30):
     return run_mc(_get_stats_async(config_id), timeout=timeout)
 
 
+async def _get_local_neighbors_async(config_id):
+    mc, _ = _get_mc(config_id)
+    with mc_connections_lock:
+        state = mc_connections.get(config_id, {})
+    node_info = state.get("node_info", {})
+    own_key = node_info.get("public_key")
+    if not own_key:
+        raise ValueError("Local radio public key not available")
+    contact = {"public_key": own_key}
+    result = await mc.commands.fetch_all_neighbours(contact, min_timeout=10)
+    if result is None:
+        return []
+    return result.get("neighbours", [])
+
+
+def get_local_neighbors(config_id, timeout=15):
+    return run_mc(_get_local_neighbors_async(config_id), timeout=timeout)
+
+
 def reboot_device_dtr(config_id):
     """Hardware reset via RTS toggle (ESP32 EN pin). Disconnects MC first, reconnect loop picks it back up."""
     with mc_connections_lock:

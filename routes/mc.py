@@ -27,7 +27,7 @@ from mesh_mc import (send_chan_msg, send_dm, send_advert, refresh_contacts,
                      get_mc_contact_archive,
                      set_contact_path, reset_all_paths, remote_repeater_read,
                      remote_repeater_command, clear_mc_all_contacts,
-                     get_rc_collect_events)
+                     get_rc_collect_events, get_local_neighbors)
 from db import (
     delete_mc_channel_messages,
     delete_mc_all_messages,
@@ -1126,6 +1126,21 @@ def api_mc_trace(radio_id):
 # ---------------------------------------------------------------------------
 # Debug event logging
 # ---------------------------------------------------------------------------
+
+@bp.route("/api/mc/<radio_id>/neighbors", methods=["GET"])
+def api_mc_neighbors(radio_id):
+    """Return the list of neighbors heard by the local MC radio."""
+    with mc_connections_lock:
+        state = mc_connections.get(radio_id, {})
+    if state.get("status") != "connected":
+        return jsonify({"error": "MC radio not connected"}), 503
+    try:
+        neighbors = get_local_neighbors(radio_id)
+    except Exception as e:
+        log.warning(f"[MC] neighbors failed: {e}")
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"ok": True, "neighbors": neighbors})
+
 
 @bp.route("/api/mc/<radio_id>/debug_events", methods=["POST"])
 def api_mc_debug_events(radio_id):

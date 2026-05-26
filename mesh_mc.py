@@ -3450,30 +3450,41 @@ def get_stats(config_id, timeout=30):
     return run_mc(_get_stats_async(config_id), timeout=timeout)
 
 
-def get_local_neighbors(config_id, max_age_secs=86400):
-    """Return recently active contacts known to the local radio.
+def get_local_neighbors(config_id, mode="neighbors"):
+    """Return contacts from the local radio's contact list, filtered by mode.
 
-    Reads contacts from in-memory state — the firmware does not respond to
-    self-addressed binary NEIGHBOURS requests so we can't query its RF neighbor
-    table directly. Instead we return the contact list filtered by recency.
+    Modes:
+      neighbors  — out_path_len == 0 only (direct RF neighbors), no age filter
+      nearby     — out_path_len 0 or 1 (direct + one hop), no age filter
+      recent     — all contacts heard in the last 24h, sorted by recency
+      all        — entire contact list, sorted by recency
 
-    max_age_secs: only return contacts heard within this window (0 = all).
-    Returns entries sorted by last_advert descending (most recent first).
+    The firmware does not respond to self-addressed binary NEIGHBOURS requests
+    so we can't query its live RF neighbor table. This uses the contact list
+    which accumulates over time and reflects the last known path to each node.
     """
     with mc_connections_lock:
         state = mc_connections.get(config_id, {})
     contacts = state.get("live_contacts") or state.get("contacts") or {}
     now = int(time.time())
-    cutoff = (now - max_age_secs) if max_age_secs > 0 else 0
 
     result = []
-    total = 0
     for pubkey, c in contacts.items():
-        last_advert = c.get("last_advert", 0) or 0
-        total += 1
-        if cutoff and last_advert > 0 and last_advert < cutoff:
-            continue
         path_len = c.get("out_path_len", -1)
+        last_advert = c.get("last_advert", 0) or 0
+
+        if mode == "neighbors":
+            if path_len != 0:
+                continue
+        elif mode == "nearby":
+            if path_len not in (0, 1):
+                continue
+        elif mode == "recent":
+            cutoff = now - 86400
+            if last_advert > 0 and last_advert < cutoff:
+                continue
+        # mode == "all": no filter
+
         result.append({
             "pubkey":       pubkey[:12],
             "full_key":     pubkey,
@@ -3485,8 +3496,14 @@ def get_local_neighbors(config_id, max_age_secs=86400):
             "contact_type": c.get("type", 0),
         })
 
-    result.sort(key=lambda x: -(x["last_advert"] or 0))
-    return {"contacts": result, "total": total, "max_age_secs": max_age_secs}
+    # neighbors/nearby: sort direct first then by recency; recent/all: recency only
+    if mode in ("neighbors", "nearby"):
+        result.sort(key=lambda x: (x["out_path_len"] if x["out_path_len"] >= 0 else 999, -(x["last_advert"] or 0)))
+    else:
+        result.sort(key=lambda x: -(x["last_advert"] or 0))
+
+    total = len(contacts)
+    return {"contacts": result, "total": total, "mode": mode}
 
 
 def reboot_device_dtr(config_id):

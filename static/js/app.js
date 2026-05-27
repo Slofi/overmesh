@@ -5,6 +5,32 @@
     if (s == null) return '';
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
+
+  // Position a position:fixed popup panel so it stays within the visible viewport.
+  // vx/vy are in viewport CSS pixels (e.g. from event.clientX/Y or getBoundingClientRect).
+  // Accounts for body CSS zoom so the panel doesn't clip off-screen at high zoom levels.
+  function _positionFixedPanel(panel, vx, vy, margin) {
+    if (margin == null) margin = 8;
+    const zoom = parseFloat(document.body.style.zoom) / 100 || 1;
+    const vw   = window.innerWidth  / zoom;
+    const vh   = window.innerHeight / zoom;
+    const bx   = vx / zoom;
+    const by   = vy / zoom;
+    const pw   = panel.offsetWidth  || 280;
+    const ph   = panel.offsetHeight || 150;
+    const m    = margin / zoom;
+    let x = Math.min(bx + m, vw - pw - m);
+    let y = by > vh / 2 ? Math.max(by - ph - m, m) : by + m;
+    y = Math.max(m, Math.min(y, vh - ph - m));
+    panel.style.left = Math.max(m, x) + 'px';
+    panel.style.top  = y + 'px';
+  }
+
+  // Convert a viewport-pixel coordinate (from getBoundingClientRect / event.clientX/Y)
+  // to the body's zoomed coordinate space, for positioning position:fixed elements.
+  function _vpx(viewportPx) {
+    return viewportPx / (parseFloat(document.body.style.zoom) / 100 || 1);
+  }
   // Safe for embedding in onclick="fn('VALUE')" — escapes \, ', " for JS string + HTML attribute
   function jsSafe(s) {
     return String(s == null ? '' : s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;');
@@ -12073,18 +12099,9 @@ if (targetEl) {
 
     // Position: right of click, flip above if in lower half of screen
     panel.style.display = 'block';
-    const pw = panel.offsetWidth  || 290;
-    const ph = panel.offsetHeight || 160;
-    const margin = 8;
     const cx = evt?.clientX ?? window.innerWidth  / 2;
     const cy = evt?.clientY ?? window.innerHeight / 2;
-    let x = Math.min(cx + margin, window.innerWidth  - pw - margin);
-    let y = cy > window.innerHeight / 2
-      ? Math.max(cy - ph - margin, margin)
-      : cy + margin;
-    y = Math.max(margin, Math.min(y, window.innerHeight - ph - margin));
-    panel.style.left = x + 'px';
-    panel.style.top  = y + 'px';
+    _positionFixedPanel(panel, cx, cy);
 
     setTimeout(() => {
       document.addEventListener('click', () => { if (panel) panel.style.display = 'none'; }, { once: true });
@@ -17689,6 +17706,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     // compensate body height so zoomed layout fills viewport exactly
     // at zoom 120%: CSS height = 100vh/1.2 = 83.33vh → after zoom renders as 100vh
     document.body.style.height = (10000 / val).toFixed(2) + 'vh';
+    // expose zoom factor as CSS variable so vh-based max-heights can compensate
+    document.documentElement.style.setProperty('--body-zoom', (val / 100).toFixed(4));
     const slider = document.getElementById('settings-zoom-slider');
     if (slider) slider.value = val;
     const display = document.getElementById('settings-zoom-display');
@@ -20002,18 +20021,9 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     `;
 
     panel.style.display = 'block';
-    const pw = panel.offsetWidth  || 260;
-    const ph = panel.offsetHeight || 150;
-    const margin = 8;
     const cx = evt?.clientX ?? window.innerWidth  / 2;
     const cy = evt?.clientY ?? window.innerHeight / 2;
-    let x = Math.min(cx + margin, window.innerWidth  - pw - margin);
-    let y = cy > window.innerHeight / 2
-      ? Math.max(cy - ph - margin, margin)
-      : cy + margin;
-    y = Math.max(margin, Math.min(y, window.innerHeight - ph - margin));
-    panel.style.left = x + 'px';
-    panel.style.top  = y + 'px';
+    _positionFixedPanel(panel, cx, cy);
 
     setTimeout(() => {
       document.addEventListener('click', () => { if (panel) panel.style.display = 'none'; }, { once: true });
@@ -20092,7 +20102,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         dd.appendChild(item);
       });
       const rect = target.getBoundingClientRect();
-      dd.style.left = rect.left + 'px'; dd.style.top = (rect.bottom + 4) + 'px'; dd.style.display = 'block';
+      dd.style.left = _vpx(rect.left) + 'px'; dd.style.top = _vpx(rect.bottom + 4) + 'px'; dd.style.display = 'block';
     } else if (matchOverlay) {
       const startPos = cursor - matchOverlay[0].length;
       const query    = matchOverlay[1].toLowerCase();
@@ -20114,7 +20124,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         dd.appendChild(item);
       });
       const rect = target.getBoundingClientRect();
-      dd.style.left = rect.left + 'px'; dd.style.top = (rect.bottom + 4) + 'px'; dd.style.display = 'block';
+      dd.style.left = _vpx(rect.left) + 'px'; dd.style.top = _vpx(rect.bottom + 4) + 'px'; dd.style.display = 'block';
     } else {
       _tocHideMentionDropdown();
     }
@@ -20378,9 +20388,9 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       item.onmouseout = () => item.style.background = '';
     });
     const rect = input.getBoundingClientRect();
-    dd.style.left = rect.left + 'px';
-    dd.style.top = (rect.bottom + 4) + 'px';
-    dd.style.width = Math.max(rect.width, 200) + 'px';
+    dd.style.left  = _vpx(rect.left) + 'px';
+    dd.style.top   = _vpx(rect.bottom + 4) + 'px';
+    dd.style.width = _vpx(Math.max(rect.width, 200)) + 'px';
     dd.style.display = 'block';
   }
 

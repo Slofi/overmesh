@@ -11,6 +11,7 @@
       --green:       #3fb950;
       --yellow:      #d29922;
       --red:         #f85149;
+      --body-zoom:   1;
     }
     .mc-advert-item {
       display: flex; width: 100%; background: none; border: none;
@@ -909,7 +910,7 @@
     #action-modal .modal-box {
       width: min(760px, calc(100vw - 32px));
       max-width: calc(100vw - 32px);
-      max-height: calc(100vh - 32px);
+      max-height: calc(100vh / var(--body-zoom) - 32px);
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -1660,7 +1661,7 @@
       #action-modal .modal-box {
         width: calc(100vw - 16px) !important;
         max-width: calc(100vw - 16px);
-        max-height: calc(100vh - 16px);
+        max-height: calc(100vh / var(--body-zoom) - 16px);
         margin-top: 8px;
       }
       #action-modal .modal-body { padding: 12px; }

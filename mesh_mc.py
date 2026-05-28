@@ -39,9 +39,32 @@ _rc_collector_state: dict = {}
 # RC collect summaries: config_id → list of recent summary dicts (newest first, max 50)
 _rc_collect_summaries: dict = {}
 
+# Remote repeater/collector commands share one small RF command path per target.
+# Serializing them avoids overlapping login/read/CLI sessions, which can make RPTR
+# nodes stop returning admin replies until reset.
+_remote_admin_locks: dict = {}
+
+
+def _remote_admin_lock(config_id, full_key):
+    key = (str(config_id), str(full_key).lower()[:12])
+    lock = _remote_admin_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _remote_admin_locks[key] = lock
+    return lock
+
 
 def _rc_store_summary(config_id, summary):
     lst = _rc_collect_summaries.setdefault(config_id, [])
+    if summary.get("count_only") and lst:
+        prev = lst[0]
+        if (
+            prev.get("count_only")
+            and prev.get("collector_id") == summary.get("collector_id")
+            and prev.get("obs_count") == summary.get("obs_count")
+            and abs(int(summary.get("ts", 0)) - int(prev.get("ts", 0))) <= 3
+        ):
+            return
     lst.insert(0, summary)
     if len(lst) > 50:
         lst[:] = lst[:50]
@@ -74,15 +97,66 @@ def _rc_observed_ts(ts_s):
     return None
 
 
+def _rc_compact_marker(text):
+    return text.replace("_", "").replace("-", "").upper()
+
+
+def _rc_is_collect_start(text):
+    compact = _rc_compact_marker(text)
+    return compact.startswith("OMCOLL") and "START|" in compact
+
+
+def _rc_is_collect_end(text):
+    compact = _rc_compact_marker(text)
+    return compact.startswith("OMCOLL") and (compact.endswith("EN") or compact.endswith("END"))
+
+
+def _rc_parse_count_result(text):
+    if text.startswith(("OMCOUNT_RESULT|", "OMCOUNT_RESLT|", "OMUNT_RESULT|")):
+        parts = text.split("|")
+        collector_id = parts[1] if len(parts) > 1 else "?"
+        count_str = parts[2] if len(parts) > 2 else "?"
+        return collector_id, count_str
+
+    if text.startswith("OMCOUNT"):
+        parts = text.split("|")
+        if len(parts) >= 3:
+            return parts[-2], parts[-1]
+        if len(parts) == 2:
+            head, count_str = parts
+            for marker in ("RESULT", "RESLT", "ESULT", "RSLT"):
+                idx = head.rfind(marker)
+                if idx >= 0:
+                    collector_id = head[idx + len(marker):].strip("_-|")
+                    if collector_id:
+                        return collector_id, count_str
+
+    # Observed over the live T114/RP2040 relay when one delimiter is lost:
+    # OMC OUNT_RESULT + RC1|1 -> OMCOUNT_RESULTRC1|1
+    for marker in ("OMCOUNT_RESULT", "OMCOUNT_RESLT", "OMUNT_RESULT"):
+        if text.startswith(marker):
+            rest = text[len(marker):]
+            if rest.startswith("|"):
+                rest = rest[1:]
+            parts = rest.split("|")
+            if len(parts) >= 2 and parts[0]:
+                return parts[0], parts[1]
+    return None
+
+
 def _handle_rc_collector_line(config_id, sender_prefix, text):
     """Parse one RC collector relay line and write to passive_obs."""
     state_key = (config_id, sender_prefix)
     text = text.strip()
 
-    if text.startswith("OMCOLLECT_START|"):
+    if _rc_is_collect_start(text):
         parts = text.split("|")
         collector_id = parts[1] if len(parts) > 1 else sender_prefix
         count = parts[2] if len(parts) > 2 else "?"
+        existing = _rc_collector_state.get(state_key)
+        if existing and existing.get("collector_id") == collector_id and existing.get("obs_count", 0) > 0:
+            log.debug(f"[RC] Ignoring delayed duplicate collection start from {sender_prefix} ({collector_id})")
+            return
         _rc_collector_state[state_key] = {
             "collector_id": collector_id, "seen": set(),
             "obs_count": 0, "new_nodes": [], "best_rssi": None,
@@ -91,10 +165,9 @@ def _handle_rc_collector_line(config_id, sender_prefix, text):
         log.info(f"[RC] Collection started from {sender_prefix} ({collector_id}), {count} obs incoming")
         return
 
-    if text.startswith("OMCOUNT_RESULT|"):
-        parts = text.split("|")
-        collector_id = parts[1] if len(parts) > 1 else "?"
-        count_str = parts[2] if len(parts) > 2 else "?"
+    count_result = _rc_parse_count_result(text)
+    if count_result:
+        collector_id, count_str = count_result
         try:
             count = int(count_str)
         except (ValueError, TypeError):
@@ -113,7 +186,7 @@ def _handle_rc_collector_line(config_id, sender_prefix, text):
         log.info(f"[RC] Buffer count from {sender_prefix} ({collector_id}): {count} obs")
         return
 
-    if text == "OMCOLLECT_END":
+    if _rc_is_collect_end(text) or text in ("OCOLLECT_END", "OMOLLECT_END", "MCOLLECT_ED"):
         state = _rc_collector_state.pop(state_key, None)
         if state is None:
             return  # cleanup after OMCOUNT — no active collect session
@@ -1708,7 +1781,13 @@ def _subscribe_mc_events(mc, config_id, name):
                      f" | path={repr(sse_msg.get('path'))[:40]} path_len={sse_msg.get('path_len')} hash_size={sse_msg.get('path_hash_size')}")
             # RC collector relay: parse OMCOLLECT_START / OBS / OMCOLLECT_END lines
             dm_text = msg.get("text", "")
-            if dm_text.startswith("OMCOLLECT_START|") or dm_text.startswith("OBS|") or dm_text == "OMCOLLECT_END" or dm_text.startswith("OMCOUNT_RESULT|"):
+            if (
+                dm_text.startswith("OBS|")
+                or _rc_is_collect_start(dm_text)
+                or _rc_is_collect_end(dm_text)
+                or dm_text in ("OCOLLECT_END", "OMOLLECT_END", "MCOLLECT_ED")
+                or _rc_parse_count_result(dm_text)
+            ):
                 threading.Thread(
                     target=_handle_rc_collector_line,
                     args=(config_id, msg.get("pubkey_prefix", ""), dm_text),
@@ -3063,47 +3142,48 @@ async def _remote_read_async(config_id, pubkey_prefix, password=None, do_login=F
     with mc_connections_lock:
         contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
     full_key, contact = _resolve_mc_contact(contacts, pubkey_prefix)
-    result = {
-        "target": full_key[:12],
-        "full_key": full_key,
-        "name": contact.get("adv_name", full_key[:8]),
-        "type": contact.get("type", 0),
-    }
-    if do_login:
-        login = await _remote_login_async(mc, full_key, password or "")
-        result["login"] = login
-        if login_only or not login.get("ok"):
-            return result
+    async with _remote_admin_lock(config_id, full_key):
+        result = {
+            "target": full_key[:12],
+            "full_key": full_key,
+            "name": contact.get("adv_name", full_key[:8]),
+            "type": contact.get("type", 0),
+        }
+        if do_login:
+            login = await _remote_login_async(mc, full_key, password or "")
+            result["login"] = login
+            if login_only or not login.get("ok"):
+                return result
 
-    result["basic"] = await _remote_best_effort(
-        "basic",
-        lambda: mc.commands.req_basic_sync(contact, min_timeout=6),
-    )
-    result["owner"] = await _remote_best_effort(
-        "owner",
-        lambda: mc.commands.req_owner_sync(contact, min_timeout=8),
-    )
-    result["regions"] = await _remote_best_effort(
-        "regions",
-        lambda: mc.commands.req_regions_sync(contact, min_timeout=8),
-    )
-    result["status"] = await _remote_best_effort(
-        "status",
-        lambda: mc.commands.req_status_sync(contact, min_timeout=8),
-    )
-    result["telemetry"] = await _remote_best_effort(
-        "telemetry",
-        lambda: mc.commands.req_telemetry_sync(contact, min_timeout=8),
-    )
-    result["neighbours"] = await _remote_best_effort(
-        "neighbours",
-        lambda: mc.commands.fetch_all_neighbours(contact, min_timeout=10),
-    )
-    result["acl"] = await _remote_best_effort(
-        "acl",
-        lambda: mc.commands.req_acl_sync(contact, min_timeout=8),
-    )
-    return result
+        result["basic"] = await _remote_best_effort(
+            "basic",
+            lambda: mc.commands.req_basic_sync(contact, min_timeout=6),
+        )
+        result["owner"] = await _remote_best_effort(
+            "owner",
+            lambda: mc.commands.req_owner_sync(contact, min_timeout=8),
+        )
+        result["regions"] = await _remote_best_effort(
+            "regions",
+            lambda: mc.commands.req_regions_sync(contact, min_timeout=8),
+        )
+        result["status"] = await _remote_best_effort(
+            "status",
+            lambda: mc.commands.req_status_sync(contact, min_timeout=8),
+        )
+        result["telemetry"] = await _remote_best_effort(
+            "telemetry",
+            lambda: mc.commands.req_telemetry_sync(contact, min_timeout=8),
+        )
+        result["neighbours"] = await _remote_best_effort(
+            "neighbours",
+            lambda: mc.commands.fetch_all_neighbours(contact, min_timeout=10),
+        )
+        result["acl"] = await _remote_best_effort(
+            "acl",
+            lambda: mc.commands.req_acl_sync(contact, min_timeout=8),
+        )
+        return result
 
 
 def _validate_remote_admin_command(command):
@@ -3188,43 +3268,44 @@ async def _remote_command_async(config_id, pubkey_prefix, command):
         contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
     full_key, _contact = _resolve_mc_contact(contacts, pubkey_prefix)
     cmd = _validate_remote_admin_command(command)
-    dispatcher = getattr(mc.commands, "dispatcher", None)
-    reply_task = None
-    if dispatcher is not None:
-        reply_task = asyncio.create_task(
-            dispatcher.wait_for_event(
-                EventType.CONTACT_MSG_RECV,
-                attribute_filters={"pubkey_prefix": full_key[:12]},
-                timeout=15,
+    async with _remote_admin_lock(config_id, full_key):
+        dispatcher = getattr(mc.commands, "dispatcher", None)
+        reply_task = None
+        if dispatcher is not None:
+            reply_task = asyncio.create_task(
+                dispatcher.wait_for_event(
+                    EventType.CONTACT_MSG_RECV,
+                    attribute_filters={"pubkey_prefix": full_key[:12]},
+                    timeout=15,
+                )
             )
-        )
-    try:
-        sent = await mc.commands.send_cmd(full_key, cmd)
-        _raise_if_mc_error(sent, f"remote command {cmd}")
-        reply = None
-        if reply_task is not None:
-            try:
-                reply_event = await reply_task
-                if reply_event is not None:
-                    reply = _mc_event_payload(reply_event)
-            except Exception:
-                reply = None
-        reply_error = _remote_cli_reply_is_error(reply)
-        if reply_error and _remote_cli_reply_is_benign_for_command(cmd, reply):
-            reply_error = False
-        if reply is not None and not reply_error:
-            _remote_update_contact_from_command(config_id, full_key, cmd, reply)
-        return {
-            "ok": not reply_error,
-            "command": cmd,
-            "sent": _mc_event_type_name(sent),
-            "reply": reply,
-            "reply_error": reply_error,
-            "note": None if reply else "Command sent. No immediate text reply was received.",
-        }
-    finally:
-        if reply_task is not None and not reply_task.done():
-            reply_task.cancel()
+        try:
+            sent = await mc.commands.send_cmd(full_key, cmd)
+            _raise_if_mc_error(sent, f"remote command {cmd}")
+            reply = None
+            if reply_task is not None:
+                try:
+                    reply_event = await reply_task
+                    if reply_event is not None:
+                        reply = _mc_event_payload(reply_event)
+                except Exception:
+                    reply = None
+            reply_error = _remote_cli_reply_is_error(reply)
+            if reply_error and _remote_cli_reply_is_benign_for_command(cmd, reply):
+                reply_error = False
+            if reply is not None and not reply_error:
+                _remote_update_contact_from_command(config_id, full_key, cmd, reply)
+            return {
+                "ok": not reply_error,
+                "command": cmd,
+                "sent": _mc_event_type_name(sent),
+                "reply": reply,
+                "reply_error": reply_error,
+                "note": None if reply else "Command sent. No immediate text reply was received.",
+            }
+        finally:
+            if reply_task is not None and not reply_task.done():
+                reply_task.cancel()
 
 
 async def _req_status_async(config_id, pubkey_prefix, prime_trace=False):

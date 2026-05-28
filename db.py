@@ -226,7 +226,7 @@ def count_passive_obs_by_collector(radio_id):
         c.execute(
             'SELECT collector_id, COUNT(*) FROM passive_obs GROUP BY collector_id'
         )
-        return {row[0]: row[1] for row in c.fetchall()}
+        return {str(row[0] or "unknown"): row[1] for row in c.fetchall()}
 
 
 def cleanup_passive_obs(radio_id, ttl_days=30):

@@ -73,6 +73,26 @@ def _packet_rx_ts(packet):
     return max(0, min(ts or now, now))
 
 
+def _merge_dict(dst, src):
+    if not isinstance(dst, dict):
+        dst = {}
+    if not isinstance(src, dict):
+        return dst
+    for key, value in src.items():
+        if value is not None:
+            dst[key] = value
+    return dst
+
+
+def _node_num_from_id(node_id):
+    try:
+        if isinstance(node_id, str) and node_id.startswith("!"):
+            return int(node_id[1:], 16)
+        return int(node_id)
+    except (TypeError, ValueError):
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Packet handler
 # ---------------------------------------------------------------------------
@@ -91,25 +111,55 @@ def on_text_receive(packet, interface):
             if _rid:
                 with mt_last_heard_lock:
                     mt_last_heard[(_rid, _fid)] = _new_ts
-            _nodes = interface.nodes or {}
+            _nodes = getattr(interface, "nodes", None)
+            if _nodes is None:
+                _nodes = {}
+                try:
+                    interface.nodes = _nodes
+                except Exception:
+                    pass
             _hop_start = packet.get("hopStart")
             _hop_limit = packet.get("hopLimit")
             _hops = (_hop_start - _hop_limit) if (_hop_start is not None and _hop_limit is not None) else None
+            _node = None
             if _fid in _nodes:
-                _nodes[_fid]["lastHeard"] = _new_ts
-                if _hops is not None:
-                    _nodes[_fid]["hopsAway"] = _hops
+                _node = _nodes[_fid]
             else:
                 for _node in _nodes.values():
                     if (_node or {}).get("user", {}).get("id") == _fid:
-                        _node["lastHeard"] = _new_ts
-                        if _hops is not None:
-                            _node["hopsAway"] = _hops
                         break
+                else:
+                    _node = {"user": {"id": _fid}}
+                    _num = _node_num_from_id(_fid)
+                    if _num is not None:
+                        _node["num"] = _num
+                    _nodes[_fid] = _node
+            if isinstance(_node, dict):
+                _node["lastHeard"] = _new_ts
+                if _hops is not None:
+                    _node["hopsAway"] = _hops
+                if packet.get("rxSnr") is not None:
+                    _node["snr"] = packet.get("rxSnr")
+                if packet.get("rxRssi") is not None:
+                    _node["rssi"] = packet.get("rxRssi")
+                _node["user"] = _merge_dict(_node.get("user", {}), decoded.get("user"))
+                _node["position"] = _merge_dict(_node.get("position", {}), decoded.get("position"))
+                tel = decoded.get("telemetry", {}) or {}
+                _node["deviceMetrics"] = _merge_dict(
+                    _node.get("deviceMetrics", {}),
+                    tel.get("deviceMetrics") or decoded.get("deviceMetrics"),
+                )
             # Always push SSE for non-ACK packets so frontend can refresh map colours.
             # The frontend uses a debounced loadLive() as fallback for nodes without user.id.
             if portnum != "ROUTING_APP":
-                push_to_sse(json.dumps({"type": "node_last_heard", "from_id": _fid, "ts": _new_ts}))
+                push_to_sse(json.dumps({
+                    "type": "node_last_heard",
+                    "from_id": _fid,
+                    "ts": _new_ts,
+                    "hops_away": _hops,
+                    "snr": packet.get("rxSnr"),
+                    "rssi": packet.get("rxRssi"),
+                }))
 
         if portnum == "ROUTING_APP":
             request_id = decoded.get("requestId")

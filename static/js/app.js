@@ -88,6 +88,7 @@
   let historyShowMt = true;
   let historyShowMc = true;
   let currentView   = 'live';
+  let _liveRefreshTimer = null;
 
   // ── Notifications ──────────────────────────────────────────────────────────
   let notifReady  = false;
@@ -1389,6 +1390,9 @@
         const node = allNodes.find(n => n.id === data.from_id);
         if (node) {
           node.last_heard_ts = nodeTs(data.ts);
+          if (data.hops_away != null) node.hops_away = data.hops_away;
+          if (data.snr != null) node.snr = data.snr;
+          if (data.rssi != null) node.rssi = data.rssi;
           node._last_heard_live = true;
           node._last_heard_live_at = Math.floor(Date.now() / 1000);
           node.last_heard = nodeLastHeardLabel(node);
@@ -1396,6 +1400,7 @@
           updateMapMarkers(allNodes);
           updateHeaderNodeCount(allNodes);
         }
+        scheduleLiveRefresh(700);
         return;
       }
       if (data.type === 'ack') {
@@ -3362,6 +3367,11 @@ if (targetEl) {
   }
 
   // ── Data loading ───────────────────────────────────────────────────────────
+  function scheduleLiveRefresh(delay = 700) {
+    window.clearTimeout(_liveRefreshTimer);
+    _liveRefreshTimer = window.setTimeout(loadLive, delay);
+  }
+
   function loadLive() {
     const mtSelected = [...selectedRadioIds].filter(id => !id.startsWith('mc_'));
     const radioParam = mtSelected.length === 1 ? `?radio_id=${encodeURIComponent(mtSelected[0])}` : '';

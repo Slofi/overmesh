@@ -92,12 +92,19 @@ def on_text_receive(packet, interface):
                 with mt_last_heard_lock:
                     mt_last_heard[(_rid, _fid)] = _new_ts
             _nodes = interface.nodes or {}
+            _hop_start = packet.get("hopStart")
+            _hop_limit = packet.get("hopLimit")
+            _hops = (_hop_start - _hop_limit) if (_hop_start is not None and _hop_limit is not None) else None
             if _fid in _nodes:
                 _nodes[_fid]["lastHeard"] = _new_ts
+                if _hops is not None:
+                    _nodes[_fid]["hopsAway"] = _hops
             else:
                 for _node in _nodes.values():
                     if (_node or {}).get("user", {}).get("id") == _fid:
                         _node["lastHeard"] = _new_ts
+                        if _hops is not None:
+                            _node["hopsAway"] = _hops
                         break
             # Always push SSE for non-ACK packets so frontend can refresh map colours.
             # The frontend uses a debounced loadLive() as fallback for nodes without user.id.

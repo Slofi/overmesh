@@ -667,6 +667,7 @@
           <option value="CONTACT">CONTACT</option>
           <option value="POSITION">POSITION</option>
           <option value="INTEL">INTEL</option>
+          <option value="WEATHER">WEATHER</option>
         </select>
         <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">
           <input id="toc-date" type="date" title="Entry date"
@@ -684,6 +685,7 @@
           <option value="action">ACTION</option>
           <option value="position">POSITION UPDATE</option>
           <option value="intel">INTEL</option>
+          <option value="weather">WEATHER</option>
         </select>
         <button class="btn" id="toc-pin-template-btn" onclick="tocTogglePinnedTemplate()" title="Pin or unpin selected template" style="padding:4px 8px;font-size:12px">☆</button>
         <button class="btn" onclick="tocAttachLocalPosition()" title="Attach local/manual position to the entry. You can also type +GPS in a Log text field." style="padding:4px 8px;font-size:12px">+GPS</button>
@@ -749,6 +751,7 @@
         <option value="CONTACT">CONTACT</option>
         <option value="POSITION">POSITION</option>
         <option value="INTEL">INTEL</option>
+        <option value="WEATHER">WEATHER</option>
       </select>
       <select id="toc-filter-tag" onchange="tocRenderLog()" style="background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;max-width:170px">
         <option value="">Any tag</option>
@@ -847,6 +850,7 @@
           <button class="log-sop-rule" onclick="logSopUse('alert')" title="Prefill an ALERT entry"><strong>ALERT</strong><span>Actionable problem. Power, comms outage, weather, or safety. Requires a response now.</span></button>
           <button class="log-sop-rule" onclick="logSopUse('action')" title="Prefill an ACTION entry"><strong>ACTION</strong><span>Assigned task with owner and status. Must be closed or superseded when complete.</span></button>
           <button class="log-sop-rule" onclick="logSopUse('intel')" title="Prefill an INTEL entry"><strong>INTEL</strong><span>Observed pattern, RC find, signal, movement, or infrastructure. Tag and assess reliability.</span></button>
+          <button class="log-sop-rule" onclick="logSopUse('weather')" title="Prefill a WEATHER entry"><strong>WEATHER</strong><span>Conditions affecting operations. Temperature, wind, precipitation, visibility, and RF impact.</span></button>
         </div>
       </section>
 

@@ -2122,7 +2122,7 @@
       body: [
         'The Log tab has two sub-tabs: TOC for creating/searching entries, and SOP for the field logging procedure and quick-start actions.',
         'The TOC Log is a structured field journal: timestamped entries with a category, optional Mission / Folder, free-text or structured body, tags, and node/overlay mentions.',
-        'Categories: NOTE, PLAN, SITREP, ALERT, ACTION, COMMS, CONTACT, POSITION, INTEL. Each gets a colour-coded badge. Click a badge in the log to filter by that category.',
+        'Categories: NOTE, PLAN, SITREP, ALERT, ACTION, COMMS, CONTACT, POSITION, INTEL, WEATHER. Each gets a colour-coded badge. Click a badge in the log to filter by that category.',
         'Use PLAN before movement, basecamp watch, or collector work. Use SITREP for current state updates after the plan starts, at handover, on state changes, or at scheduled check-ins.',
         'Mission / Folder groups related reports together without changing export/share format. Click or type in the Mission / Folder field to show existing missions as selectable suggestions. The Missions / Folders strip lists every created mission with entry count and last activity; click one to filter it and continue composing into that folder.',
         'Type # in the body field to get a node/contact autocomplete dropdown. Arrow keys navigate, Enter inserts. The token #[Name](mt:id) or #[Name](mc:id:radioId) is stored and renders as a clickable chip that opens the action popup for that node. Works for both MT and MC.',
@@ -2142,6 +2142,7 @@
         ['Mission / Folder', 'Group related reports into a named mission/folder and filter or group by it later.'],
         ['PLAN', 'Pre-move or pre-watch plan: objective, route/area, timing, assets, MC/MT setup, risks, comms plan, and abort criteria.'],
         ['SITREP', 'Current state update after a plan starts, during watch, at handover, or on meaningful change.'],
+        ['WEATHER', 'Conditions affecting operations: temperature, wind, precipitation, visibility, pressure, forecast, and RF impact.'],
         ['+GPS', 'Insert local/manual coordinates into the current entry. Also works by typing +GPS in a Log text field.'],
         ['Log', 'Prefill a new TOC entry from a node, contact, message, alert, or overlay.'],
         ['Missions / Folders', 'Show all created missions/folders with counts and last activity. Click one to filter/select it.'],
@@ -19192,6 +19193,21 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         {name:'Notes', hint:'Extra context', multiline:true},
       ],
     },
+    weather: {
+      cat:'WEATHER', label:'WEATHER',
+      fields:[
+        {name:'Location / Area', hint:'Site, route, station, or operating area'},
+        {name:'Temperature', hint:'deg C, feel, trend'},
+        {name:'Wind', hint:'Direction, speed, gusts'},
+        {name:'Conditions', hint:'Clear, overcast, fog, rain, snow...'},
+        {name:'Visibility', hint:'km, good/limited/poor'},
+        {name:'Precipitation', hint:'None, light rain, heavy rain, snow, hail...'},
+        {name:'Pressure', hint:'hPa, rising/falling/stable'},
+        {name:'Forecast / Trend', hint:'Expected changes', multiline:true},
+        {name:'Operational Impact', hint:'Effect on RF, access, safety, power, or route', multiline:true},
+        {name:'Notes', hint:'Extra weather context', multiline:true},
+      ],
+    },
   };
 
   const LOG_SOP_PREFILLS = {
@@ -19390,7 +19406,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   const TOC_CAT_COLORS = {
     PLAN:'#14b8a6', SITREP:'#3b82f6', ALERT:'#ef4444', ACTION:'#f59e0b',
     COMMS:'#10b981',  CONTACT:'#8b5cf6', POSITION:'#06b6d4',
-    INTEL:'#a855f7', NOTE:'#64748b',
+    INTEL:'#a855f7', WEATHER:'#7dd3fc', NOTE:'#64748b',
   };
 
   let _tocActiveTemplate = null;

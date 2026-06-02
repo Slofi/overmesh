@@ -96,6 +96,18 @@ class TocRoutesTests(unittest.TestCase):
         self.assertIn("**Objective:** Mobile CD route", data["body"])
         self.assertIn("**Mission / Folder:** CD test", data["body"])
 
+    def test_weather_category_is_accepted(self):
+        resp = self.client.post("/api/toc", json={
+            "category": "WEATHER",
+            "body": {"Conditions": "Rain", "Wind": "NE 20 km/h"},
+            "ts": 37,
+        })
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertEqual(data["category"], "WEATHER")
+        self.assertIn("**Conditions:** Rain", data["body"])
+
     def test_text_export_formats_legacy_json_body_as_markdown(self):
         created = self.client.post("/api/toc", json={
             "category": "SITREP",

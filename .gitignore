@@ -6,6 +6,10 @@ bot_config*.json
 
 # Databases (message history, prefs, waypoints)
 *.db
+*.db.*
+
+# Runtime secrets
+secret.key
 
 # Runtime MC contact archive
 mc_contacts_archive.json

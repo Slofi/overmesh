@@ -838,6 +838,29 @@ class MeshMcPathHelperTests(unittest.TestCase):
         self.assertIn("meshcore://contact/add?", res.get_json()["uri"])
         self.assertTrue(res.get_json()["official"])
 
+    def test_sanitize_repairs_duplicated_ff_contact_record(self):
+        good = "faff04a08bd6b67e8499b774d60809d23683c0b706e235eac5eae0fcb694cfb6"
+        bad = "faffff04a08bd6b67e8499b774d60809d23683c0b706e235eac5eae0fcb694cf"
+        key, contact = mesh_mc._mc_sanitize_contact(bad, {
+            "public_key": bad,
+            "adv_name": "ERA-2 TST RPTR(SI)",
+            "type": 0xB6,
+            "flags": 2,
+            "out_path": "ffff",
+            "out_path_len": 0,
+            "out_path_hash_mode": 0,
+            "adv_lat": -1199.0,
+            "adv_lon": 541.0,
+        })
+
+        self.assertEqual(key, good)
+        self.assertEqual(contact["public_key"], good)
+        self.assertEqual(contact["type"], 2)
+        self.assertEqual(contact["flags"], 0)
+        self.assertEqual(contact["out_path_len"], -1)
+        self.assertNotIn("adv_lat", contact)
+        self.assertNotIn("adv_lon", contact)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -11978,6 +11978,26 @@ if (targetEl) {
     const source = incoming || {};
     const merged = Object.assign({}, prev || {}, source);
     if (!Object.prototype.hasOwnProperty.call(source, 'last_heard_ts')) delete merged.last_heard_ts;
+    const lat = Number(merged.latitude ?? merged.lat);
+    const lon = Number(merged.longitude ?? merged.lon);
+    if (merged.latitude != null || merged.longitude != null || merged.lat != null || merged.lon != null) {
+      if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+        if ((prev || {}).latitude != null && (prev || {}).longitude != null) {
+          merged.latitude = prev.latitude;
+          merged.longitude = prev.longitude;
+        } else {
+          delete merged.latitude;
+          delete merged.longitude;
+          delete merged.lat;
+          delete merged.lon;
+        }
+      }
+    }
+    const typ = Number(merged.type);
+    if (!Number.isFinite(typ) || typ < 0 || typ > 4) {
+      if ((prev || {}).type != null) merged.type = prev.type;
+      else delete merged.type;
+    }
     return merged;
   }
 

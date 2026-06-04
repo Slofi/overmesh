@@ -636,6 +636,79 @@ def _mc_json_safe(value):
     return str(value)
 
 
+def _mc_valid_pubkey(value):
+    text = str(value or "").lower()
+    return len(text) == 64 and all(c in "0123456789abcdef" for c in text)
+
+
+def _mc_valid_contact_type(value):
+    try:
+        return int(value) in (0, 1, 2, 3, 4)
+    except (TypeError, ValueError):
+        return False
+
+
+def _mc_valid_coord(lat, lon):
+    try:
+        lat = float(lat)
+        lon = float(lon)
+    except (TypeError, ValueError):
+        return False
+    return -90 <= lat <= 90 and -180 <= lon <= 180
+
+
+def _mc_repair_ff_escaped_contact(pubkey, contact):
+    """Repair contact records where an 0xff byte was duplicated in the stream.
+
+    Some ProMicro/v1.15 contact reads can return a record with one duplicated
+    ff byte inside the public key. The final key byte is then parsed as the
+    contact type, the real type appears in flags, and the rest of the fields
+    shift. Repair only that narrow signature.
+    """
+    contact = _mc_copy_contact(contact)
+    key = str(contact.get("public_key") or pubkey or "").lower()
+    if not _mc_valid_pubkey(key):
+        return pubkey, contact
+    try:
+        leaked_last_byte = int(contact.get("type"))
+    except (TypeError, ValueError):
+        return pubkey, contact
+    if _mc_valid_contact_type(leaked_last_byte) or not _mc_valid_contact_type(contact.get("flags")):
+        return pubkey, contact
+
+    for idx in range(0, len(key) - 3, 2):
+        if key[idx:idx + 4] != "ffff":
+            continue
+        repaired = key[:idx] + key[idx + 2:] + f"{leaked_last_byte:02x}"
+        if not _mc_valid_pubkey(repaired):
+            continue
+        contact["public_key"] = repaired
+        contact["type"] = int(contact.get("flags"))
+        contact["flags"] = 0
+        if str(contact.get("out_path", "")).startswith("ff"):
+            contact["out_path"] = ""
+            contact["out_path_len"] = -1
+            contact["out_path_hash_mode"] = -1
+        return repaired, contact
+    return pubkey, contact
+
+
+def _mc_sanitize_contact(pubkey, contact):
+    pubkey, contact = _mc_repair_ff_escaped_contact(pubkey, contact)
+    key = str(contact.get("public_key") or pubkey or "").lower()
+    if _mc_valid_pubkey(key):
+        pubkey = key
+        contact["public_key"] = key
+    lat, lon = contact.get("adv_lat"), contact.get("adv_lon")
+    if lat not in (None, "", 0, 0.0) or lon not in (None, "", 0, 0.0):
+        if not _mc_valid_coord(lat, lon):
+            contact.pop("adv_lat", None)
+            contact.pop("adv_lon", None)
+    if not _mc_valid_contact_type(contact.get("type")):
+        contact.pop("type", None)
+    return pubkey, contact
+
+
 def _mc_archive_load_locked():
     global _mc_contact_archive_cache
     if _mc_contact_archive_cache is not None:
@@ -654,11 +727,13 @@ def _mc_archive_load_locked():
     for radio_id, contacts in raw.items():
         if not isinstance(contacts, dict):
             continue
-        archive[str(radio_id)] = {
-            str(pubkey): _mc_copy_contact(contact)
-            for pubkey, contact in contacts.items()
-            if isinstance(contact, dict)
-        }
+        normalized = {}
+        for pubkey, contact in contacts.items():
+            if not isinstance(contact, dict):
+                continue
+            key, clean = _mc_sanitize_contact(str(pubkey), contact)
+            normalized[key] = _merge_mc_contact_records(normalized.get(key), clean)
+        archive[str(radio_id)] = normalized
     _mc_contact_archive_cache = archive
     return _mc_contact_archive_cache
 
@@ -1014,10 +1089,22 @@ def _mc_message_path_fields(msg, rx=None):
 
 
 def _merge_mc_contact_records(old_contact, new_contact):
-    merged = _mc_copy_contact(old_contact)
-    for key, value in dict(new_contact or {}).items():
+    old_key, old_clean = _mc_sanitize_contact("", old_contact or {})
+    new_key, new_clean = _mc_sanitize_contact("", new_contact or {})
+    merged = _mc_copy_contact(old_clean)
+    for key, value in dict(new_clean or {}).items():
         if value not in (None, "", [], {}):
+            if key in ("adv_lat", "adv_lon"):
+                other = new_clean.get("adv_lon" if key == "adv_lat" else "adv_lat")
+                if not _mc_valid_coord(value, other):
+                    continue
+            if key == "type" and not _mc_valid_contact_type(value):
+                continue
             merged[key] = copy.deepcopy(value)
+    if new_key and _mc_valid_pubkey(new_key):
+        merged["public_key"] = new_key
+    elif old_key and _mc_valid_pubkey(old_key):
+        merged["public_key"] = old_key
     return merged
 
 
@@ -1055,11 +1142,13 @@ def _merge_mc_contacts(old_contacts, new_contacts):
     new_contacts = dict(new_contacts or {})
     merged = {}
     for pubkey, contact in new_contacts.items():
-        merged[pubkey] = _merge_mc_contact_records(old_contacts.get(pubkey), contact)
+        clean_key, clean_contact = _mc_sanitize_contact(pubkey, contact)
+        merged[clean_key] = _merge_mc_contact_records(old_contacts.get(clean_key), clean_contact)
     for pubkey, contact in old_contacts.items():
-        if pubkey in merged:
+        clean_key, clean_contact = _mc_sanitize_contact(pubkey, contact)
+        if clean_key in merged:
             continue
-        merged[pubkey] = _mc_copy_contact(contact)
+        merged[clean_key] = _mc_copy_contact(clean_contact)
     return _dedup_mc_contacts(merged)
 
 

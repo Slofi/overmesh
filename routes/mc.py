@@ -682,12 +682,12 @@ def api_mc_advert(radio_id):
     if CONFIG.get("silent_mode"):
         return jsonify({"error": "Silent Running active — transmissions are blocked"}), 409
     try:
-        send_advert(radio_id, flood=flood)
+        result = send_advert(radio_id, flood=flood) or {}
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 503
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, **result})
 
 
 # ---------------------------------------------------------------------------

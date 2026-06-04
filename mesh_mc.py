@@ -2378,13 +2378,13 @@ async def _send_advert_async(config_id, flood=False):
     default_timeout for the OK response.  If an advert is already in-flight
     for this radio we skip the new one (no stacking).
     """
-    mc, _ = _get_mc(config_id)
-
     # Skip if an advert is already in-flight for this radio
     existing = _advert_tasks.get(config_id)
     if existing is not None and not existing.done():
         log.info(f"[MC:{config_id}] advert already in-flight, skipping duplicate")
-        return
+        return {"status": "in_progress", "flood": bool(flood)}
+
+    mc, _ = _get_mc(config_id)
 
     async def _do_advert():
         try:
@@ -2400,6 +2400,7 @@ async def _send_advert_async(config_id, flood=False):
 
     task = _mc_bg_task(_do_advert(), f"advert:{config_id}")
     _advert_tasks[config_id] = task
+    return {"status": "queued", "flood": bool(flood)}
 
 
 async def _remove_contact_async(config_id, pubkey_prefix):
@@ -2721,7 +2722,7 @@ def send_advert(config_id, flood=False, timeout=5):
     """Fire-and-forget advert — schedules background TX and returns immediately."""
     if CONFIG.get("silent_mode"):
         log.info(f"[MC:{config_id}] Silent Running active — advert suppressed")
-        return None
+        return {"status": "blocked", "flood": bool(flood)}
     return run_mc(_send_advert_async(config_id, flood=flood), timeout=timeout)
 
 

@@ -32,6 +32,7 @@ class MeshMcPathHelperTests(unittest.TestCase):
         mesh_mc.DATA_DIR = str(_DATA_DIR)
         mesh_mc.MC_CONTACT_ARCHIVE_PATH = str(_DATA_DIR / "mc_contacts_archive.json")
         mesh_mc._mc_contact_archive_cache = None
+        mesh_mc._advert_tasks.clear()
         archive_path = _DATA_DIR / "mc_contacts_archive.json"
         if archive_path.exists():
             archive_path.unlink()
@@ -42,6 +43,7 @@ class MeshMcPathHelperTests(unittest.TestCase):
 
     def tearDown(self):
         CONFIG["mc_nodes"] = list(self._orig_mc_nodes)
+        mesh_mc._advert_tasks.clear()
 
     def test_rx_path_hash_mode_is_used_when_explicit_size_missing(self):
         size = mesh_mc._mc_path_hash_size_from_msg({}, {"path_hash_mode": 1})
@@ -63,6 +65,27 @@ class MeshMcPathHelperTests(unittest.TestCase):
             mc_connections["mc1"] = {"config": {"passive_collection": False}}
 
         self.assertFalse(mesh_mc._mc_passive_collection_enabled("mc1"))
+
+    def test_send_advert_async_reports_duplicate_in_progress(self):
+        mesh_mc._advert_tasks["mc1"] = SimpleNamespace(done=lambda: False)
+
+        result = asyncio.run(mesh_mc._send_advert_async("mc1", flood=True))
+
+        self.assertEqual(result, {"status": "in_progress", "flood": True})
+
+    def test_send_advert_async_reports_queued(self):
+        fake_mc = SimpleNamespace(commands=SimpleNamespace(send_advert=None))
+
+        def fake_bg_task(coro, _name):
+            coro.close()
+            return SimpleNamespace(done=lambda: False)
+
+        with mock.patch.object(mesh_mc, "_get_mc", return_value=(fake_mc, {})):
+            with mock.patch.object(mesh_mc, "_mc_bg_task", side_effect=fake_bg_task):
+                result = asyncio.run(mesh_mc._send_advert_async("mc1", flood=True))
+
+        self.assertEqual(result, {"status": "queued", "flood": True})
+        self.assertIn("mc1", mesh_mc._advert_tasks)
 
     def test_create_meshcore_closes_transport_when_connect_raises(self):
         class FakeConnection:

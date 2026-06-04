@@ -14686,7 +14686,10 @@ if (targetEl) {
           renderMcSenseLog();
         }
         const modeLabel = flood ? 'flood' : 'local';
-        const statusText = d.error ? `Advert failed: ${d.error}` : `Advert sent (${modeLabel}).`;
+        let statusText = d.error ? `Advert failed: ${d.error}` : `Advert queued (${modeLabel}).`;
+        if (!d.error && d.status === 'in_progress') {
+          statusText = `Advert already in progress (${modeLabel}).`;
+        }
         mcMessages.push({
           type: 'mc_message', radio_id: activeMcRadioId,
           radio_name: mcLastStatus[activeMcRadioId]?.node_name || mcLastStatus[activeMcRadioId]?.name || '',

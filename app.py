@@ -69,7 +69,7 @@ def logout():
 
 from bot import motd_scheduler_loop
 from db import init_prefs_db, load_notes, load_waypoints
-from gps import _gps_start, gps_port_conflict, gps_watchdog_loop
+from gps import _gps_start, _gps_start_proxy, gps_port_conflict, gps_watchdog_loop
 import sense as _sense_mod
 from sense import (
     _active_auto_event, _active_auto_loop, _active_auto_running_lock, _sense_state,
@@ -193,15 +193,21 @@ def startup():
     load_waypoints()
     load_notes()
     gps_cfg = CONFIG.get("gps", {})
-    if gps_cfg.get("enabled") and gps_cfg.get("port"):
-        gps_conflict = gps_port_conflict(gps_cfg["port"])
-        if gps_conflict:
-            log.warning(
-                f"GPS start skipped: port {gps_cfg['port']} conflicts with enabled "
-                f"{gps_conflict['network']} radio {gps_conflict['name']}"
-            )
-        else:
-            _gps_start(gps_cfg["port"])
+    if gps_cfg.get("enabled"):
+        gps_source    = str(gps_cfg.get("source") or "direct").strip()
+        gps_proxy_url = str(gps_cfg.get("proxy_url") or "http://localhost:8090").strip()
+        gps_port      = str(gps_cfg.get("port") or "").strip()
+        if gps_source == "proxy":
+            _gps_start_proxy(gps_proxy_url, fallback_port=gps_port)
+        elif gps_port:
+            gps_conflict = gps_port_conflict(gps_port)
+            if gps_conflict:
+                log.warning(
+                    f"GPS start skipped: port {gps_port} conflicts with enabled "
+                    f"{gps_conflict['network']} radio {gps_conflict['name']}"
+                )
+            else:
+                _gps_start(gps_port)
     # per-radio message DBs are initialized in connect_node() as each radio connects
     pub.subscribe(on_text_receive, "meshtastic.receive")
     try:

@@ -2,7 +2,7 @@ from flask import Blueprint, jsonify, request
 
 from config import CONFIG, CONFIG_LOCK, save_config
 from gps import (
-    _gps_push_to_nodes, _gps_start, _gps_stop,
+    _gps_push_to_nodes, _gps_start, _gps_start_proxy, _gps_stop,
     gps_lock, gps_port_conflict, gps_port_present, gps_state, _gps_runtime,
 )
 
@@ -25,17 +25,23 @@ def api_settings_gps_get():
 @bp.route("/api/settings/gps", methods=["POST"])
 def api_settings_gps_set():
     data = request.get_json(silent=True) or {}
-    enabled = bool(data.get("enabled", False))
-    port    = str(data.get("port", "")).strip()
-    if enabled and port:
+    enabled   = bool(data.get("enabled", False))
+    port      = str(data.get("port", "")).strip()
+    source    = str(data.get("source", "direct")).strip()
+    proxy_url = str(data.get("proxy_url", "http://localhost:8090")).strip() or "http://localhost:8090"
+    if source not in ("direct", "proxy"):
+        source = "direct"
+    if enabled and source == "direct" and port:
         conflict = gps_port_conflict(port)
         if conflict:
             return jsonify({"error": f"GPS port {port} conflicts with enabled {conflict['network']} radio {conflict['name']}."}), 400
     with CONFIG_LOCK:
-        cfg  = CONFIG.setdefault("gps", {"enabled": False, "port": ""})
+        cfg = CONFIG.setdefault("gps", {"enabled": False, "port": ""})
         was_enabled = cfg.get("enabled", False)
-        cfg["enabled"] = enabled
-        cfg["port"]    = port
+        cfg["enabled"]   = enabled
+        cfg["port"]      = port
+        cfg["source"]    = source
+        cfg["proxy_url"] = proxy_url
         if "auto_push" in data:
             cfg["auto_push"] = bool(data["auto_push"])
         if "push_interval" in data:
@@ -55,12 +61,15 @@ def api_settings_gps_set():
                 pass
         save_config()
     warning = None
-    if enabled and port:
-        if gps_port_present(port):
-            _gps_start(port)
-        else:
-            _gps_stop()
-            warning = f"GPS enabled, but port {port} is not currently connected."
+    if enabled:
+        if source == "proxy":
+            _gps_start_proxy(proxy_url, fallback_port=port)
+        elif port:
+            if gps_port_present(port):
+                _gps_start(port)
+            else:
+                _gps_stop()
+                warning = f"GPS enabled, but port {port} is not currently connected."
     elif was_enabled and not enabled:
         _gps_stop()
     return jsonify({"ok": True, "warning": warning})

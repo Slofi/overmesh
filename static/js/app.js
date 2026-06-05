@@ -9989,6 +9989,8 @@ if (targetEl) {
         _gpsEnabled = cfg.enabled || false;
         document.getElementById('gps-enabled-toggle').checked   = _gpsEnabled;
         document.getElementById('gps-auto-push-toggle').checked = cfg.auto_push || false;
+        const srcSel = document.getElementById('gps-source-select');
+        if (srcSel) { srcSel.value = cfg.source || 'direct'; gpsSourceChanged(); }
         const storedSecs = cfg.push_interval ?? 30;
         const unitEl = document.getElementById('gps-push-interval-unit');
         const valEl  = document.getElementById('gps-push-interval-val');
@@ -10002,6 +10004,12 @@ if (targetEl) {
         _gpsUpdatePosition(cfg);
       })
       .catch(e => console.error('loadGpsSettings failed:', e));
+  }
+
+  function gpsSourceChanged() {
+    const v   = (document.getElementById('gps-source-select') || {}).value;
+    const row = document.getElementById('gps-port-row');
+    if (row) row.style.display = v === 'proxy' ? 'none' : 'flex';
   }
 
   function gpsRefreshPorts() {
@@ -10132,6 +10140,8 @@ if (targetEl) {
     const enabled    = document.getElementById('gps-enabled-toggle').checked;
     _gpsEnabled      = enabled;
     const port       = document.getElementById('gps-port-select').value;
+    const srcSel     = document.getElementById('gps-source-select');
+    const source     = srcSel ? srcSel.value : 'direct';
     const auto_push  = document.getElementById('gps-auto-push-toggle').checked;
     const precMeters = parseInt(document.getElementById('gps-precision-slider').value);
     const precision  = metersToBit(precMeters);
@@ -10142,7 +10152,8 @@ if (targetEl) {
     fetch(BASE_PATH + '/api/settings/gps', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({enabled, port, auto_push, precision, precision_meters: precMeters, push_interval}),
+      body: JSON.stringify({enabled, port, source, proxy_url: 'http://localhost:8090',
+                            auto_push, precision, precision_meters: precMeters, push_interval}),
     }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || `HTTP ${r.status}`); }))
       .then((d) => {
         statusEl.textContent = d.warning || (enabled ? '✓ GPS enabled' : '✓ Saved');

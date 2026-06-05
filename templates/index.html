@@ -1893,12 +1893,20 @@
     <!-- GPS Receiver -->
     <div class="settings-section">
       <h2 class="settings-title">GPS Receiver</h2>
-      <p style="color:var(--muted);font-size:12px;margin:0 0 12px 0">USB GPS receiver for location data. Can auto-push coordinates to connected nodes as their fixed position, or fill the fixed position fields manually in Meshtastic → Node → Position.</p>
+      <p style="color:var(--muted);font-size:12px;margin:0 0 12px 0">USB GPS receiver for location data. Two modes: <b>Direct serial</b> (OM owns the port) or <b>OPS-TOC proxy</b> (polls OPS-TOC when both apps run together — avoids serial conflicts). Can auto-push coordinates to connected nodes.</p>
       <div style="display:flex;gap:16px;align-items:flex-start">
         <!-- Controls (left) -->
         <div style="flex:1;min-width:0">
+          <!-- Source select -->
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+            <label class="settings-label" style="margin:0;white-space:nowrap">Source</label>
+            <select id="gps-source-select" class="settings-select" style="flex:1" onchange="gpsSourceChanged()">
+              <option value="direct">Direct serial port</option>
+              <option value="proxy">OPS-TOC proxy (localhost:8090)</option>
+            </select>
+          </div>
           <!-- Port + enable -->
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <div id="gps-port-row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <label class="settings-label" style="margin:0">Port</label>
             <select id="gps-port-select" class="settings-select" style="flex:1;min-width:140px" onchange="saveGpsSettings()"></select>
             <button class="btn" onclick="gpsRefreshPorts()" title="Rescan serial ports">↻</button>

@@ -1,11 +1,18 @@
 """
 GPS receiver thread and NMEA parsing.
 Owns all GPS state — nothing in state.py.
+
+Two modes:
+  - direct serial: OM reads the NMEA dongle itself
+  - OPS-TOC proxy: polls OPS-TOC /api/gps — avoids serial conflicts when both
+                   apps run on the same machine. Falls back to direct serial if
+                   OPS-TOC becomes unreachable and a fallback port is configured.
 """
 import json
 import logging
 import threading
 import time
+import urllib.request
 
 from config import CONFIG
 from helpers import push_to_sse
@@ -26,11 +33,14 @@ _gps_stop_event         = threading.Event()
 _gps_thread             = None
 _gps_last_push_ts       = 0.0      # epoch seconds — rate-limits auto-push to nodes
 _GPS_AUTO_PUSH_INTERVAL = 30       # default seconds between auto-pushes (overridden by config)
+_PROXY_FAIL_LIMIT = 5
+
 _gps_runtime = {
     "port": "",
     "running": False,
     "port_present": False,
     "error": "",
+    "source": "",
 }
 
 
@@ -238,7 +248,8 @@ def _gps_reader(port, stop_event):
     import serial as _serial
     log.info(f"GPS: opening {port}")
     with gps_lock:
-        _gps_runtime.update({"port": port, "running": False, "port_present": gps_port_present(port), "error": ""})
+        _gps_runtime.update({"port": port, "running": False, "port_present": gps_port_present(port),
+                              "error": "", "source": "direct"})
     try:
         # Open without toggling DTR so u-blox doesn't cold-reset on OM restart
         ser = _serial.Serial()
@@ -316,8 +327,89 @@ def _gps_stop():
     _gps_stop_event.set()
     with gps_lock:
         gps_state.update({"lat": None, "lon": None, "alt": None, "sats": 0, "fix": False})
-        _gps_runtime.update({"port": "", "running": False, "port_present": False, "error": ""})
+        _gps_runtime.update({"port": "", "running": False, "port_present": False, "error": "", "source": ""})
     _gps_thread = None
+
+
+# ---------------------------------------------------------------------------
+# OPS-TOC proxy reader
+# ---------------------------------------------------------------------------
+
+def _gps_proxy_reader(proxy_url, fallback_port, stop_event):
+    url = proxy_url.rstrip("/") + "/api/gps"
+    log.info(f"GPS: proxy mode → {url}")
+    with gps_lock:
+        _gps_runtime.update({"port": f"OPS-TOC ({proxy_url})", "running": True,
+                              "port_present": True, "error": "", "source": "proxy"})
+    fails = 0
+    while not stop_event.is_set():
+        try:
+            with urllib.request.urlopen(url, timeout=3) as resp:
+                d = json.loads(resp.read())
+            lat       = d.get("lat")
+            lon       = d.get("lon")
+            alt       = d.get("alt")
+            fix       = d.get("fix", False)
+            sats      = d.get("sats", 0)
+            sats_view = d.get("sats_view", 0)
+            with gps_lock:
+                gps_state["fix"]       = fix
+                gps_state["sats"]      = sats
+                gps_state["sats_view"] = sats_view
+                if fix and lat is not None and lon is not None:
+                    gps_state["lat"] = lat
+                    gps_state["lon"] = lon
+                    gps_state["alt"] = alt
+                _gps_runtime["error"] = ""
+            push_to_sse(json.dumps({
+                "type": "gps_position",
+                "lat":  lat if fix else None,
+                "lon":  lon if fix else None,
+                "alt":  alt if fix else None,
+                "sats": sats,
+                "fix":  fix,
+            }))
+            # Auto-push to nodes (same logic as direct reader)
+            if fix and lat is not None and lon is not None:
+                global _gps_last_push_ts
+                gps_cfg = CONFIG.get("gps", {})
+                if gps_cfg.get("auto_push"):
+                    now = time.time()
+                    interval = max(10, int(gps_cfg.get("push_interval", _GPS_AUTO_PUSH_INTERVAL)))
+                    if now - _gps_last_push_ts >= interval:
+                        _gps_last_push_ts = now
+                        precision_bits = gps_cfg.get("precision", 32)
+                        threading.Thread(
+                            target=_gps_push_to_nodes,
+                            args=(lat, lon, int(alt) if alt is not None else 0, precision_bits),
+                            daemon=True
+                        ).start()
+            fails = 0
+        except Exception as e:
+            fails += 1
+            with gps_lock:
+                _gps_runtime["error"] = f"OPS-TOC unreachable ({fails}x): {e}"
+            if fails >= _PROXY_FAIL_LIMIT and fallback_port and gps_port_present(fallback_port):
+                log.warning(f"GPS: OPS-TOC unreachable after {fails} tries — falling back to {fallback_port}")
+                break  # watchdog will restart as direct serial reader
+        time.sleep(2)
+    with gps_lock:
+        _gps_runtime.update({"running": False})
+    log.info("GPS: proxy reader stopped")
+
+
+def _gps_start_proxy(proxy_url, fallback_port=""):
+    global _gps_thread, _gps_stop_event
+    proxy_url = str(proxy_url or "").strip()
+    if not proxy_url:
+        return
+    _gps_stop_event.set()
+    time.sleep(0.2)
+    _gps_stop_event = threading.Event()
+    t = threading.Thread(target=_gps_proxy_reader,
+                         args=(proxy_url, fallback_port, _gps_stop_event), daemon=True)
+    t.start()
+    _gps_thread = t
 
 
 def gps_watchdog_loop():
@@ -325,10 +417,18 @@ def gps_watchdog_loop():
     while True:
         time.sleep(5)
         cfg = CONFIG.get("gps", {}) or {}
-        enabled = bool(cfg.get("enabled"))
-        port = str(cfg.get("port") or "").strip()
+        enabled   = bool(cfg.get("enabled"))
+        source    = str(cfg.get("source") or "direct").strip()
+        port      = str(cfg.get("port") or "").strip()
+        proxy_url = str(cfg.get("proxy_url") or "http://localhost:8090").strip()
         if not enabled:
             continue
+        if _gps_thread and _gps_thread.is_alive():
+            continue
+        if source == "proxy":
+            _gps_start_proxy(proxy_url, fallback_port=port)
+            continue
+        # direct serial path
         if not port:
             with gps_lock:
                 _gps_runtime.update({"port": "", "running": False, "port_present": False, "error": "No GPS port selected."})
@@ -351,7 +451,5 @@ def gps_watchdog_loop():
                     "port_present": False,
                     "error": "Selected GPS port is not currently connected.",
                 })
-            continue
-        if _gps_thread and _gps_thread.is_alive():
             continue
         _gps_start(port)

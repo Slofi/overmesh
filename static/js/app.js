@@ -5020,7 +5020,7 @@ if (targetEl) {
         if (!layer || !layer.id) return;
         const key = _mapAppLocalLayerKey(layer.id);
         next[key] = {
-          label: `Local DB: ${layer.name || layer.id}`,
+          label: layer.name || layer.id,
           url: `${_sharedTileServerUrl}/services/${encodeURIComponent(layer.id)}/tiles/{z}/{x}/{y}.png`,
           attribution: layer.attribution || `Local tiles · ${layer.name || layer.id}`,
           maxZoom: Number(layer.maxzoom || layer.maxZoom || 19),
@@ -6373,10 +6373,21 @@ if (targetEl) {
     if (!_baseLayerMenuPanel) return;
     _baseLayerMenuPanel.innerHTML = '';
     const saved = (() => { try { return localStorage.getItem('mapTileLayer') || 'osm'; } catch(e) { return 'osm'; } })();
-    Object.entries(allTileLayers()).forEach(([key, def]) => {
+    const addTitle = (label, note = '') => {
+      const title = L.DomUtil.create('div', '', _baseLayerMenuPanel);
+      title.textContent = label;
+      title.style.cssText = 'padding:6px 10px 3px 10px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px';
+      if (note) {
+        const help = L.DomUtil.create('div', '', _baseLayerMenuPanel);
+        help.textContent = note;
+        help.style.cssText = 'padding:0 10px 5px 10px;font-size:10px;color:var(--muted)';
+      }
+    };
+    const addLayer = (key, def) => {
       const opt = L.DomUtil.create('div', 'map-layer-opt', _baseLayerMenuPanel);
       opt.textContent  = def.label;
       opt.dataset.layer = key;
+      if (def.sharedTileServer) opt.title = 'Stored locally by OPS-TOC and available without internet when the shared tile server is running.';
       if (key === saved) opt.classList.add('active');
       L.DomEvent.on(opt, 'click', (e) => {
         L.DomEvent.stopPropagation(e);
@@ -6384,12 +6395,18 @@ if (targetEl) {
         const panel = document.getElementById('map-layer-panel');
         if (panel) panel.classList.remove('open');
       });
-    });
+    };
+    if (_sharedTileServerEnabled) {
+      addTitle('Locally Stored Maps', 'From OPS-TOC shared MBTiles. Works offline.');
+      Object.entries(_mapAppTileLayers).forEach(([key, def]) => addLayer(key, def));
+    }
     if (_sharedTileServerEnabled && _mapAppTileLayersLoaded && !Object.keys(_mapAppTileLayers).length) {
       const empty = L.DomUtil.create('div', '', _baseLayerMenuPanel);
       empty.textContent = 'No shared local layers found';
       empty.style.cssText = 'padding:4px 10px 6px 10px;font-size:11px;color:var(--muted)';
     }
+    addTitle('Online Maps', _sharedTileServerEnabled ? '' : 'Built-in layers. Browser cache may work offline only after viewing/downloading.');
+    Object.entries(TILE_LAYERS).forEach(([key, def]) => addLayer(key, def));
   }
 
   function refreshMapLayerPanelOptions() {

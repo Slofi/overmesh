@@ -32,9 +32,26 @@ const esc = s => String(s || "")
 // ════════════════════════════════════════════════════════
 // Accent color
 // ════════════════════════════════════════════════════════
-function applyAccent() {
-  const c = localStorage.getItem("overmesh_accent") || "#4a9eff";
+async function applyAccent() {
+  let c = "#e8b04f";
+  try {
+    const r = await fetch("http://localhost:8080/accent");
+    if (r.ok) { const d = await r.json(); if (d.color) c = d.color; }
+  } catch {
+    c = localStorage.getItem("overmesh_accent") || "#e8b04f";
+  }
   document.documentElement.style.setProperty("--accent", c);
+}
+
+function pollAccent() {
+  setInterval(async () => {
+    try {
+      const r = await fetch("http://localhost:8080/accent");
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d.color) document.documentElement.style.setProperty("--accent", d.color);
+    } catch {}
+  }, 10000);
 }
 
 // ════════════════════════════════════════════════════════
@@ -46,8 +63,8 @@ const mcMarkers = {};
 
 function initMap() {
   map = L.map("map", { center: [46.1, 14.8], zoom: 9, zoomControl: true });
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: "© OpenStreetMap", maxZoom: 18,
+  L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}", {
+    attribution: "Tiles © Esri", maxZoom: 18,
   }).addTo(map);
   mtGroup = L.layerGroup().addTo(map);
   mcGroup = L.layerGroup().addTo(map);
@@ -684,11 +701,119 @@ async function sendMsg() {
 // ════════════════════════════════════════════════════════
 // Log panel
 // ════════════════════════════════════════════════════════
-const LOG_CATS = ["NOTE", "SITREP", "COMMS CHECK", "CONTACT", "POSITION", "WEATHER", "PLAN", "ALERT", "ADMIN"];
+// ── Log templates (mirrors main OM) ─────────────────────────────────────────
+const LOG_TEMPLATES = {
+  NOTE: null, // plain textarea
+  SITREP: [
+    {name:"Location / Area", hint:"Site, route, grid, or operating area"},
+    {name:"Situation", hint:"What is happening now", multiline:true},
+    {name:"Status", hint:"Normal, degraded, blocked, urgent…"},
+    {name:"Known Nodes / Assets", hint:"Nodes, teams, vehicles, stations"},
+    {name:"Issues / Risks", hint:"Outages, safety, weather, access, interference"},
+    {name:"Intent / Plan", hint:"Next steps or operating plan", multiline:true},
+    {name:"Next Update", hint:"When another report is expected"},
+    {name:"Notes", hint:"Extra context", multiline:true},
+  ],
+  "COMMS CHECK": [
+    {name:"From", hint:"Calling station"},
+    {name:"To", hint:"Receiving station or group"},
+    {name:"Network / Channel", hint:"MT channel, MC room/contact"},
+    {name:"Message / Check", hint:"What was sent or tested", multiline:true},
+    {name:"Signal", hint:"SNR/RSSI/readability"},
+    {name:"Hops", hint:"Direct, 1 hop, 2 hops, flood, unknown"},
+    {name:"Distance", hint:"Estimated distance if known"},
+    {name:"Result", hint:"Good copy, weak, no ack, delayed, failed…"},
+    {name:"Notes", hint:"Extra RF/path context", multiline:true},
+  ],
+  CONTACT: [
+    {name:"Node / Station", hint:"Node or station heard"},
+    {name:"Network / Channel", hint:"MT channel, MC contact, or room"},
+    {name:"First Heard", hint:"Time first heard or observed"},
+    {name:"Signal", hint:"SNR/RSSI/quality report"},
+    {name:"Hops", hint:"Direct, 1 hop, 2 hops, flood, unknown"},
+    {name:"Distance", hint:"Estimated distance if known"},
+    {name:"Position", hint:"Coordinates, place, or unknown"},
+    {name:"Action / Follow-up", hint:"DM sent, pinged, added to contacts…"},
+    {name:"Notes", hint:"Extra contact details", multiline:true},
+  ],
+  POSITION: [
+    {name:"Node / Asset", hint:"Node, person, vehicle, or station"},
+    {name:"Coordinates / Place", hint:"Lat/lon, grid, landmark, or route point"},
+    {name:"Source", hint:"GPS, manual, report, map pick, inferred"},
+    {name:"Accuracy / Confidence", hint:"Exact, approximate, stale, unknown"},
+    {name:"Movement / Heading", hint:"Static, moving, heading/speed if known"},
+    {name:"Last Heard / Seen", hint:"Time or age of position"},
+    {name:"Notes", hint:"Extra position context", multiline:true},
+  ],
+  WEATHER: [
+    {name:"Location / Area", hint:"Site, route, or operating area"},
+    {name:"Temperature", hint:"°C, feel, trend"},
+    {name:"Wind", hint:"Direction, speed, gusts"},
+    {name:"Conditions", hint:"Clear, overcast, fog, rain, snow…"},
+    {name:"Visibility", hint:"km, good/limited/poor"},
+    {name:"Precipitation", hint:"None, light rain, heavy rain, snow, hail…"},
+    {name:"Forecast / Trend", hint:"Expected changes", multiline:true},
+    {name:"Operational Impact", hint:"Effect on RF, access, safety, power", multiline:true},
+    {name:"Notes", hint:"Extra weather context", multiline:true},
+  ],
+  PLAN: [
+    {name:"Area / Route", hint:"Basecamp, route, or work area"},
+    {name:"Objective", hint:"What should be achieved", multiline:true},
+    {name:"Window / Timing", hint:"Start time, end time, update cadence"},
+    {name:"People / Nodes / Assets", hint:"Operators, MC contacts, MT nodes"},
+    {name:"MC / MT Setup", hint:"Radios, channels, antenna, power, GPS", multiline:true},
+    {name:"Checkpoints / Triggers", hint:"When to log POSITION, COMMS, ALERT", multiline:true},
+    {name:"Risks / Constraints", hint:"Battery, weather, GPS, RF path, access", multiline:true},
+    {name:"Comms Plan", hint:"Who to ping, where to report, fallback"},
+    {name:"Abort / Change Criteria", hint:"When to stop or change plan"},
+    {name:"Notes", hint:"Extra planning context", multiline:true},
+  ],
+  ALERT: [
+    {name:"Priority", hint:"Low, medium, high, urgent"},
+    {name:"Type", hint:"Safety, weather, power, comms, security, other"},
+    {name:"Location", hint:"Place, grid, or affected area"},
+    {name:"Affected Node(s) / People", hint:"Who or what is affected"},
+    {name:"Details", hint:"What happened and why it matters", multiline:true},
+    {name:"Immediate Action", hint:"Action already taken or needed now", multiline:true},
+    {name:"Status", hint:"Open, monitoring, contained, resolved"},
+    {name:"Follow-up", hint:"Who checks next and when"},
+    {name:"Notes", hint:"Extra details", multiline:true},
+  ],
+  ADMIN: null, // plain textarea
+};
+
+function _logFieldId(name) {
+  return "lf-" + name.replace(/[^a-z0-9]/gi, "_").toLowerCase();
+}
+
+function renderLogCompose() {
+  const cat = ($("log-cat") || {}).value || "NOTE";
+  const fields = LOG_TEMPLATES[cat];
+  const composeEl = $("log-fields");
+  if (!composeEl) return;
+
+  if (!fields) {
+    composeEl.innerHTML = `<textarea id="log-body" placeholder="Entry text…" style="width:100%;min-height:80px;padding:8px 10px;background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);font-size:13px;font-family:inherit;resize:vertical"></textarea>`;
+    return;
+  }
+
+  composeEl.innerHTML = fields.map(f => {
+    const id = _logFieldId(f.name);
+    const input = f.multiline
+      ? `<textarea id="${id}" placeholder="${esc(f.hint)}" rows="2" style="width:100%;padding:6px 8px;background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:inherit;resize:vertical"></textarea>`
+      : `<input id="${id}" type="text" placeholder="${esc(f.hint)}" style="width:100%;padding:6px 8px;background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:12px">`;
+    return `<div style="margin-bottom:6px">
+      <div style="font-size:11px;color:var(--accent);font-weight:600;margin-bottom:3px">${esc(f.name)}</div>
+      ${input}
+    </div>`;
+  }).join("");
+}
 
 function renderLog() {
   const panel = $("panel-log");
-  const catOpts = LOG_CATS.map(c => `<option value="${c}">${c}</option>`).join("");
+  const catOpts = Object.keys(LOG_TEMPLATES).map(c =>
+    `<option value="${c}">${c}</option>`
+  ).join("");
 
   const entries = S.tocEntries.slice(0, 60).map(e =>
     `<div class="log-row">
@@ -702,20 +827,38 @@ function renderLog() {
 
   panel.innerHTML = `
     <div class="log-compose">
-      <select id="log-cat">${catOpts}</select>
-      <textarea id="log-body" placeholder="Entry text…"></textarea>
-      <button class="btn sm" id="log-submit" style="width:100%">Add entry</button>
+      <select id="log-cat" style="width:100%;margin-bottom:8px;padding:7px 10px;background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);font-size:13px">
+        ${catOpts}
+      </select>
+      <div id="log-fields"></div>
+      <button class="btn sm" id="log-submit" style="width:100%;margin-top:8px">Add entry</button>
     </div>
     <div class="shdr">Recent entries</div>
     ${entries}
   `;
 
+  $("log-cat").onchange = renderLogCompose;
   $("log-submit").onclick = submitLog;
+  renderLogCompose();
 }
 
 async function submitLog() {
-  const cat  = $("log-cat")?.value || "NOTE";
-  const body = $("log-body")?.value.trim();
+  const cat    = $("log-cat")?.value || "NOTE";
+  const fields = LOG_TEMPLATES[cat];
+  let body;
+
+  if (!fields) {
+    body = $("log-body")?.value.trim();
+  } else {
+    const lines = fields
+      .map(f => {
+        const val = ($(_logFieldId(f.name)) || {}).value?.trim() || "";
+        return val ? `**${f.name}:** ${val}` : null;
+      })
+      .filter(Boolean);
+    body = lines.join("\n");
+  }
+
   if (!body) { toast("Entry text required"); return; }
   try {
     await apiFetch("/api/toc", {
@@ -723,7 +866,9 @@ async function submitLog() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ category: cat, body }),
     });
-    $("log-body").value = "";
+    // Clear fields
+    if (!fields) { if ($("log-body")) $("log-body").value = ""; }
+    else fields.forEach(f => { const el = $(_logFieldId(f.name)); if (el) el.value = ""; });
     toast("Entry added");
     await loadToc();
     renderLog();
@@ -737,7 +882,7 @@ async function submitLog() {
 // ════════════════════════════════════════════════════════
 function renderSettings() {
   const panel = $("panel-settings");
-  const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#4a9eff";
+  const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#e8b04f";
   const radioOpts = S.mcRadios.length
     ? S.mcRadios.map(r =>
         `<option value="${esc(r.id)}" ${r.id === S.activeMcRadio ? "selected" : ""}>${esc(r.name)} (${r.status})</option>`
@@ -849,7 +994,8 @@ function ago(ts) {
 // Init
 // ════════════════════════════════════════════════════════
 async function init() {
-  applyAccent();
+  await applyAccent();
+  pollAccent();
   initMap();
 
   // Tab buttons

@@ -1004,7 +1004,7 @@ def _latlon_for_prefix(config_id, pubkey_pre):
             if str(pubkey).startswith(str(pubkey_pre)):
                 lat = c.get("adv_lat") or c.get("latitude")
                 lon = c.get("adv_lon") or c.get("longitude")
-                if lat and lon:
+                if lat is not None and lon is not None:
                     return float(lat), float(lon)
     except Exception:
         pass

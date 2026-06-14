@@ -3752,8 +3752,9 @@ if (targetEl) {
   // ---------------------------------------------------------------------------
 
   function _passiveIntelRadioId() {
-    // Use the currently selected MC radio
+    // Use the currently selected MC radio when it is connected.
     const ids = Object.keys(mcLastStatus).filter(id => mcLastStatus[id]?.status === 'connected');
+    if (activeMcRadioId && ids.includes(activeMcRadioId)) return activeMcRadioId;
     return ids[0] || null;
   }
 
@@ -6930,13 +6931,21 @@ if (targetEl) {
       const obs = await r.json();
       const points = [];
       for (const o of obs) {
-        if (!o.pubkey_pre || o.rssi == null) continue;
+        if (!o.pubkey_pre) continue;
         const contact = findMcContactByKeyPrefix(o.pubkey_pre, rid);
-        const lat = contact?.latitude ?? contact?.lat ?? o.collector_lat;
-        const lon = contact?.longitude ?? contact?.lon ?? o.collector_lon;
+        const lat = o.lat ?? contact?.adv_lat ?? contact?.latitude ?? contact?.lat ?? o.collector_lat;
+        const lon = o.lon ?? contact?.adv_lon ?? contact?.longitude ?? contact?.lon ?? o.collector_lon;
         if (lat == null || lon == null || !Number.isFinite(Number(lat)) || !Number.isFinite(Number(lon))) continue;
-        // Normalize RSSI: -50 → 1.0, -120 → 0.0
-        const intensity = Math.max(0, Math.min(1, (o.rssi + 120) / 70));
+        let intensity = null;
+        if (o.rssi != null && Number.isFinite(Number(o.rssi))) {
+          // Normalize RSSI: -50 → 1.0, -120 → 0.0
+          intensity = (Number(o.rssi) + 120) / 70;
+        } else if (o.snr != null && Number.isFinite(Number(o.snr))) {
+          // Normalize SNR fallback: -10 dB → 0.0, +20 dB → 1.0
+          intensity = (Number(o.snr) + 10) / 30;
+        }
+        if (intensity == null) continue;
+        intensity = Math.max(0, Math.min(1, intensity));
         points.push([Number(lat), Number(lon), intensity]);
       }
       _clearSignalHeatmap();
@@ -6975,7 +6984,7 @@ if (targetEl) {
         <div style="display:flex;align-items:center;justify-content:space-between;padding:3px 0">
           <div>
             <span style="font-size:12px;font-weight:600;color:var(--text)">Signal heatmap</span>
-            <span style="font-size:11px;color:var(--muted);margin-left:6px">RC passive obs · RSSI coverage</span>
+            <span style="font-size:11px;color:var(--muted);margin-left:6px">RC passive obs · RSSI/SNR coverage</span>
           </div>
           <div style="display:flex;gap:5px;align-items:center">
             <button class="btn" style="font-size:11px;padding:2px 8px" onclick="_refreshSignalHeatmap()" title="Reload heatmap from latest observations" ${_signalHeatmapEnabled ? '' : 'disabled'}>↻</button>

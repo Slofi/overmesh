@@ -43,6 +43,7 @@ _rc_collect_summaries: dict = {}
 # Serializing them avoids overlapping login/read/CLI sessions, which can make RPTR
 # nodes stop returning admin replies until reset.
 _remote_admin_locks: dict = {}
+_remote_login_clock_floor: dict = {}
 
 
 def _remote_admin_lock(config_id, full_key):
@@ -3216,6 +3217,20 @@ async def _remote_login_async(mc, full_key, password, timeout=12):
                 task.cancel()
 
 
+async def _sync_remote_login_clock(mc, config_id):
+    # The MC radio builds remote-login packets and stamps them with its own RTC.
+    # CLI commands are stamped by OM/Python. Keep the radio clock just ahead so a
+    # command cannot make the next login look like a replay to older RPTR builds.
+    now = int(time.time()) + 5
+    prev = _remote_login_clock_floor.get(config_id, 0)
+    ts = max(now, prev + 1)
+    _remote_login_clock_floor[config_id] = ts
+    try:
+        await mc.commands.set_time(ts)
+    except Exception as e:
+        log.info(f"[MC:{config_id}] pre-login clock sync skipped: {e}")
+
+
 async def _remote_best_effort(label, func):
     try:
         data = await func()
@@ -3240,6 +3255,7 @@ async def _remote_read_async(config_id, pubkey_prefix, password=None, do_login=F
             "type": contact.get("type", 0),
         }
         if do_login:
+            await _sync_remote_login_clock(mc, config_id)
             login = await _remote_login_async(mc, full_key, password or "")
             result["login"] = login
             if login_only or not login.get("ok"):
@@ -3319,6 +3335,9 @@ def _validate_remote_admin_command(command):
         "powersaving",
         "get channels",
         "get messages",
+        "region save",
+        "region home",
+        "region default",
     }
     prefixes = (
         "set name ",
@@ -3346,6 +3365,13 @@ def _validate_remote_admin_command(command):
         "powersaving ",
         "gps advert ",
         "set channel ",
+        "region get ",
+        "region put ",
+        "region remove ",
+        "region allowf ",
+        "region denyf ",
+        "region home ",
+        "region default ",
     )
     if lower in exact or any(lower.startswith(prefix) for prefix in prefixes):
         return cmd

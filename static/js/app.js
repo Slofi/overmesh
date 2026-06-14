@@ -14778,6 +14778,16 @@ if (targetEl) {
   let _mcRemoteManage = null;
   let _mcRemoteQueuedAdvert = null;
   const MC_REMOTE_AUTO_CLOCK_SYNC_KEY = 'mcRemoteAutoClockSync';
+  const MC_SLO_REGION_PRESETS = [
+    { code: 'si', label: 'Slovenija' },
+    { code: 'si-gor', label: 'Gorenjska' },
+    { code: 'si-kor', label: 'Koroška' },
+    { code: 'si-sta', label: 'Štajerska' },
+    { code: 'si-pre', label: 'Prekmurje' },
+    { code: 'si-pri', label: 'Primorska' },
+    { code: 'si-not', label: 'Notranjska' },
+    { code: 'si-dol', label: 'Dolenjska' },
+  ];
 
   function _mcRemoteAutoClockSyncEnabled() {
     return localStorage.getItem(MC_REMOTE_AUTO_CLOCK_SYNC_KEY) !== '0';
@@ -14886,6 +14896,36 @@ if (targetEl) {
         ${row('Loop detect', `<select id="mc-remote-set-loop" class="settings-select"><option value="off">Off</option><option value="minimal">Minimal</option><option value="moderate">Moderate</option><option value="strict">Strict</option></select>`, "mcRemoteApplySetting('loop')", 'get loop.detect')}
         ${row('Advert timers', `${input('mc-remote-set-advert-int', 96, 'zero-hop min', 'type="number" min="0" step="2"')} ${input('mc-remote-set-flood-advert-int', 96, 'flood hrs', 'type="number" min="0" step="1"')}`, "mcRemoteApplySetting('adverts')", 'get advert.interval')}
         ${row('Flood max', input('mc-remote-set-flood-max', 82, '0-64', 'type="number" min="0" max="64" step="1"'), "mcRemoteApplySetting('flood_max')", 'get flood.max')}
+        <div style="border-top:1px solid var(--border);padding-top:10px;margin-top:4px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+            <h3 class="settings-subtitle" style="margin:0">Regions</h3>
+            <button class="btn" onclick="mcRemoteRunCommand('region home', 'mc-remote-region-result')" title="Read home region">Home?</button>
+            <button class="btn" onclick="mcRemoteRunCommand('region default', 'mc-remote-region-result')" title="Read default flood scope region">Default?</button>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:8px;max-width:620px">
+            Slovenian presets create <code>si</code> plus the selected subregion, allow flood forwarding, set home/default to <code>si</code>, and save.
+            Use the selected subregion as channel scope when a channel is local-only.
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+            <select id="mc-remote-region-preset" class="settings-select" style="width:180px">
+              ${MC_SLO_REGION_PRESETS.map(r => `<option value="${r.code}">${r.code} — ${r.label}</option>`).join('')}
+            </select>
+            <button class="btn" onclick="mcRemoteApplyRegionPreset('slovenia')">Apply SI preset</button>
+            <button class="btn" onclick="mcRemoteApplyRegionPreset('default-selected')" title="Set default scope to the selected region">Default selected</button>
+            <button class="btn" onclick="mcRemoteApplyRegionPreset('legacy-allow')" title="Allow unscoped legacy flood traffic">Allow *</button>
+            <button class="btn" onclick="mcRemoteApplyRegionPreset('legacy-deny')" title="Deny unscoped legacy flood traffic">Deny *</button>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <input id="mc-remote-region-custom" class="settings-input" style="width:120px" placeholder="region code">
+            <input id="mc-remote-region-parent" class="settings-input" style="width:100px" placeholder="parent">
+            <button class="btn" onclick="mcRemoteApplyRegionPreset('custom-put')">Put</button>
+            <button class="btn" onclick="mcRemoteApplyRegionPreset('custom-allow')">Allow flood</button>
+            <button class="btn" onclick="mcRemoteApplyRegionPreset('custom-home')">Home</button>
+            <button class="btn" onclick="mcRemoteApplyRegionPreset('custom-default')">Default</button>
+            <button class="btn" onclick="mcRemoteApplyRegionPreset('save')">Save</button>
+          </div>
+          <div id="mc-remote-region-result" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
+        </div>
         <div style="border-top:1px solid var(--border);padding-top:10px;margin-top:4px">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
             <h3 class="settings-subtitle" style="margin:0">Channels</h3>
@@ -15337,6 +15377,10 @@ if (targetEl) {
             <option value="clock sync">clock sync</option>
             <option value="advert">advert</option>
             <option value="advert.zerohop">advert.zerohop</option>
+            <option value="region home">region home</option>
+            <option value="region default">region default</option>
+            <option value="region get si">region get si</option>
+            <option value="region save">region save</option>
             <option value="set repeat on">set repeat on</option>
             <option value="set repeat off">set repeat off</option>
           </select>
@@ -15479,6 +15523,95 @@ if (targetEl) {
     if (_mapPickEscHandler) document.removeEventListener('keydown', _mapPickEscHandler);
     _mapPickEscHandler = e => { if (e.key === 'Escape') cancelMapPick(); };
     document.addEventListener('keydown', _mapPickEscHandler);
+  }
+
+  function _mcRemoteRegionValue(id) {
+    return _mcRemoteStripPrompt(document.getElementById(id)?.value || '').trim().toLowerCase();
+  }
+
+  function _mcRemoteValidateRegionName(name, allowWildcard = false, allowNull = false) {
+    const value = String(name || '').trim().toLowerCase();
+    if (allowWildcard && value === '*') return value;
+    if (allowNull && value === '<null>') return value;
+    if (!/^[a-z0-9][a-z0-9-]{0,28}$/.test(value)) {
+      throw new Error('Region must use lowercase letters, numbers, and hyphen only.');
+    }
+    return value;
+  }
+
+  async function _mcRemoteRunRegionCommands(commands, label) {
+    const out = document.getElementById('mc-remote-region-result') || document.getElementById('mc-remote-quick-result');
+    if (out) out.textContent = `${label || 'Applying region settings'}…`;
+    const done = [];
+    for (const command of commands) {
+      await mcRemoteRunCommand(command, 'mc-remote-region-result', {silentError: true});
+      done.push(command);
+      if (out) out.innerHTML = `<span style="color:var(--accent)">Region command ${done.length}/${commands.length}</span><div style="margin-top:4px;color:var(--muted)">${escHtml(command)}</div>`;
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    if (out) {
+      out.innerHTML = `<span style="color:var(--green)">${escHtml(label || 'Region settings applied')}.</span>
+        <div style="margin-top:6px;color:var(--muted);white-space:pre-wrap">${escHtml(done.join('\n'))}</div>`;
+    }
+  }
+
+  async function mcRemoteApplyRegionPreset(kind) {
+    if (!_mcRemoteManage) return;
+    try {
+      const selected = _mcRemoteValidateRegionName(document.getElementById('mc-remote-region-preset')?.value || 'si');
+      const customRaw = _mcRemoteRegionValue('mc-remote-region-custom');
+      const parentRaw = _mcRemoteRegionValue('mc-remote-region-parent');
+      const custom = customRaw && customRaw !== '<null>' ? _mcRemoteValidateRegionName(customRaw, true) : customRaw;
+      const parent = parentRaw ? _mcRemoteValidateRegionName(parentRaw, true) : '';
+      let commands = [];
+      let label = 'Region preset applied';
+
+      if (kind === 'slovenia') {
+        commands = ['region put si', 'region allowf si'];
+        if (selected !== 'si') {
+          commands.push(`region put ${selected} si`, `region allowf ${selected}`);
+        }
+        commands.push('region home si', 'region default si', 'region save');
+        label = selected === 'si' ? 'Slovenia region preset applied' : `Slovenia + ${selected} region preset applied`;
+      } else if (kind === 'default-selected') {
+        commands = selected === 'si'
+          ? ['region put si', 'region allowf si', 'region default si']
+          : ['region put si', 'region allowf si', `region put ${selected} si`, `region allowf ${selected}`, `region default ${selected}`];
+        label = `Default scope set to ${selected}`;
+      } else if (kind === 'legacy-allow') {
+        commands = ['region allowf *', 'region save'];
+        label = 'Legacy unscoped flood allowed';
+      } else if (kind === 'legacy-deny') {
+        commands = ['region denyf *', 'region save'];
+        label = 'Legacy unscoped flood denied';
+      } else if (kind === 'custom-put') {
+        if (!custom) throw new Error('Enter a region code first.');
+        commands = parent ? [`region put ${custom} ${parent}`] : [`region put ${custom}`];
+        label = `Region ${custom} created/updated`;
+      } else if (kind === 'custom-allow') {
+        if (!custom) throw new Error('Enter a region code first.');
+        commands = [`region allowf ${custom}`];
+        label = `Flood allowed for ${custom}`;
+      } else if (kind === 'custom-home') {
+        if (!custom || custom === '*') throw new Error('Enter a named region code first.');
+        commands = [`region home ${custom}`];
+        label = `Home region set to ${custom}`;
+      } else if (kind === 'custom-default') {
+        const defaultRegion = _mcRemoteValidateRegionName(customRaw, false, true);
+        if (!defaultRegion) throw new Error('Enter a region code or <null> first.');
+        commands = [`region default ${defaultRegion}`];
+        label = `Default scope set to ${defaultRegion}`;
+      } else if (kind === 'save') {
+        commands = ['region save'];
+        label = 'Region settings saved';
+      }
+
+      if (!commands.length) throw new Error('No region command selected.');
+      await _mcRemoteRunRegionCommands(commands, label);
+    } catch (e) {
+      const out = document.getElementById('mc-remote-region-result') || document.getElementById('mc-remote-quick-result');
+      if (out) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
+    }
   }
 
   async function mcRemoteApplySetting(kind) {

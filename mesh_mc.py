@@ -1827,8 +1827,17 @@ def _subscribe_mc_events(mc, config_id, name):
                 daemon=True,
             ).start()
             # Bot command handling (background thread to avoid blocking asyncio loop)
+            bot_msg = dict(msg)
+            bot_msg.update({
+                "path": path_fields["path"],
+                "path_len": path_fields["path_len"],
+                "path_hash_mode": path_fields["path_hash_mode"],
+                "path_hash_size": path_fields["path_hash_size"],
+                "rssi": sse_msg.get("rx_rssi"),
+                "snr": sse_msg.get("rx_snr"),
+            })
             threading.Thread(
-                target=_invoke_mc_bot, args=(dict(msg), config_id, "channel"),
+                target=_invoke_mc_bot, args=(bot_msg, config_id, "channel"),
                 daemon=True,
             ).start()
         except Exception as e:
@@ -1891,8 +1900,17 @@ def _subscribe_mc_events(mc, config_id, name):
                     daemon=True,
                 ).start()
             # Bot command handling (background thread to avoid blocking asyncio loop)
+            bot_msg = dict(msg)
+            bot_msg.update({
+                "path": path_fields["path"],
+                "path_len": path_fields["path_len"],
+                "path_hash_mode": path_fields["path_hash_mode"],
+                "path_hash_size": path_fields["path_hash_size"],
+                "rssi": sse_msg.get("rx_rssi"),
+                "snr": sse_msg.get("rx_snr"),
+            })
             threading.Thread(
-                target=_invoke_mc_bot, args=(dict(msg), config_id, "dm"),
+                target=_invoke_mc_bot, args=(bot_msg, config_id, "dm"),
                 daemon=True,
             ).start()
         except Exception as e:

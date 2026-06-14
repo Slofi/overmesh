@@ -1753,7 +1753,7 @@
         'Map is the main geographic view. It shows MT nodes, MC contacts, local radios, mesh marks, self notes, overlays, and paths drawn by traceroutes, pings, and traces.',
         'Click any marker to open a popup with quick actions: DM, Ping, Trace, TR, Manage, Show in Nodes, and more depending on the contact type.',
         'MT and MC filter buttons at the top let you hide one network when the map is too busy.',
-        'Heat toggles the Signal heatmap directly from the Map/Sense toolbar. In Map mode it follows the MT/MC map filter buttons: MT shows MT node signal heat, MC shows MC passive/Remote Collector heat. When both are enabled, OM draws separate heat layers with distinct palettes so the sources stay distinguishable.',
+        'Heat toggles the Signal heatmap directly from the Map/Sense toolbar. It starts off after each app load. In Map mode it follows the MT/MC map filter buttons: MT shows MT node signal heat, MC shows MC passive/Remote Collector heat. When both are enabled, OM draws separate heat layers with distinct palettes so the sources stay distinguishable.',
         'Distance labels use the OM origin: live GPS first, then manual OM position (set in Settings → App), then a connected/local radio position as a fallback. If none is available, distances are shown as unknown.',
         'Marks are mesh waypoints shared over the network. Self Notes are local-only annotations stored in the browser. Overlays are locally drawn shapes and imported GeoJSON.'
       ],
@@ -1896,7 +1896,7 @@
         'The bot handles incoming text commands automatically. It is configured per radio — each MT and MC radio can have its own bot settings, label, enabled commands, and MOTD.',
         'Bot transmissions use the same safeguards as manual sends: Silent Running blocks them, byte limits are respected, and MT bot responses use the correct channel.',
         'Use the Activity tab to see what the bot received and what it replied with.',
-        'Bot responses to test and ping commands include RF metadata: SNR, RSSI, hop count, and hop-hash size (e.g. 2B/hop) when that data is available from the incoming packet. On MC, both uppercase (SNR) and lowercase (snr) key variants from the radio are handled.',
+        'MT bot responses to test and ping commands include RF metadata: SNR and RSSI when available. MC test replies replace RF/SNR with the observed hop path in the form Hops(x): ID, ID plus the path hash byte width, for example Hops(2): AA0, BB0 | 2byte.',
         'The sitrep command returns a summary of recently heard contacts. Entries are separated by semicolons for clarity — for example: TMP-rpt, 7m ago; CD-MC, 11m ago; CF878292, 32m ago.'
       ],
       buttons: [
@@ -1908,7 +1908,7 @@
         ['Same channel', 'Send bot response on the same channel the command arrived on.'],
         ['DM', 'Send bot response as a direct message when supported.'],
         ['ping', 'Bot replies with PONG + RF metadata (SNR, RSSI).'],
-        ['test', 'Bot replies with a random acknowledgement phrase + RF metadata (SNR, RSSI, hops, hop-hash size).'],
+        ['test', 'MT replies with RF metadata. MC replies with observed hop ID prefixes, direct/unknown path status, and byte width when known.'],
         ['ack', 'Bot replies with a short acknowledgement + RF metadata.'],
         ['sitrep', 'Bot replies with last-heard contacts, total count, and recently-heard count.'],
         ['cmd', 'Bot replies with a list of enabled commands.'],
@@ -4776,8 +4776,10 @@ if (targetEl) {
 
   // Signal heatmap
   let _signalHeatmapLayers = [];
-  let _signalHeatmapEnabled = localStorage.getItem('signalHeatmapEnabled') === '1';
+  let _signalHeatmapEnabled = false;
   let _signalHeatmapRefreshTimer = null;
+  let _signalHeatmapRefreshSeq = 0;
+  try { localStorage.removeItem('signalHeatmapEnabled'); } catch(e) {}
   let _geofenceStates = {};
 
   function _haversineMeters(lat1, lon1, lat2, lon2) {
@@ -6913,11 +6915,11 @@ if (targetEl) {
 
   function toggleSignalHeatmap() {
     _signalHeatmapEnabled = !_signalHeatmapEnabled;
-    localStorage.setItem('signalHeatmapEnabled', _signalHeatmapEnabled ? '1' : '0');
+    window.clearTimeout(_signalHeatmapRefreshTimer);
+    _signalHeatmapRefreshSeq += 1;
+    _clearSignalHeatmap();
     if (_signalHeatmapEnabled) {
-      _refreshSignalHeatmap();
-    } else {
-      _clearSignalHeatmap();
+      _scheduleSignalHeatmapRefresh(0);
     }
     _syncSignalHeatmapControls();
     renderOverlayPanel();
@@ -7010,6 +7012,7 @@ if (targetEl) {
 
   async function _refreshSignalHeatmap() {
     if (!_signalHeatmapEnabled || !leafletMap) return;
+    const refreshSeq = ++_signalHeatmapRefreshSeq;
     const rid = _passiveIntelRadioId();
     const sources = _signalHeatmapSources();
     const mtPoints = sources.mt ? _mtSignalHeatmapPoints() : [];
@@ -7035,6 +7038,7 @@ if (targetEl) {
       }
     }
     try {
+      if (refreshSeq !== _signalHeatmapRefreshSeq || !_signalHeatmapEnabled) return;
       _clearSignalHeatmap();
       if (!mtPoints.length && !mcPoints.length) {
         const sourceMsg = sources.mt || sources.mc
@@ -7603,7 +7607,7 @@ if (targetEl) {
     loadMapLayers({silent: true});
     renderMapOverlays();
     renderOverlayPanel();
-    if (_signalHeatmapEnabled) _refreshSignalHeatmap();
+    _scheduleSignalHeatmapRefresh(0);
     try {
       if (localStorage.getItem('overlayPanelCollapsed') === '0') {
         const body = document.getElementById('overlay-panel-body');

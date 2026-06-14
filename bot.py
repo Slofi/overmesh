@@ -608,6 +608,171 @@ def _build_mc_rf_info(msg):
     return f" [RF] {' | '.join(parts)}" if parts else ""
 
 
+def _mc_msg_path_hash_size(msg, path_hex="", hop_len=None, default=1):
+    for key in ("path_hash_size", "observed_path_hash_size"):
+        value = msg.get(key)
+        if value is not None:
+            try:
+                size = int(value)
+                if size > 0:
+                    return max(1, min(3, size))
+            except (TypeError, ValueError):
+                pass
+    for key in ("path_hash_mode", "observed_path_hash_mode"):
+        value = msg.get(key)
+        if value is not None:
+            try:
+                mode = int(value)
+                if mode >= 0:
+                    return max(1, min(3, mode + 1))
+            except (TypeError, ValueError):
+                pass
+    if path_hex and hop_len:
+        try:
+            chars_per_hop = len(path_hex) // int(hop_len)
+            if chars_per_hop >= 2:
+                return max(1, min(3, chars_per_hop // 2))
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
+    return default
+
+
+def _mc_configured_path_hash_size(config_id):
+    from state import mc_connections, mc_connections_lock
+    with mc_connections_lock:
+        conn = mc_connections.get(config_id, {})
+        for source in (conn.get("node_info") or {}, conn.get("config") or {}):
+            mode = source.get("path_hash_mode")
+            if mode is not None:
+                try:
+                    return max(1, min(3, int(mode) + 1))
+                except (TypeError, ValueError):
+                    pass
+    for node in CONFIG.get("mc_nodes", []) or []:
+        if str(node.get("id") or "") != str(config_id):
+            continue
+        mode = node.get("path_hash_mode")
+        if mode is not None:
+            try:
+                return max(1, min(3, int(mode) + 1))
+            except (TypeError, ValueError):
+                pass
+    return 3
+
+
+def _mc_msg_path_byte_suffix(msg, hashes=None, hop_len=None, config_id=None):
+    path = msg.get("path") if msg.get("path") is not None else msg.get("observed_path")
+    path_hex = "" if isinstance(path, list) else re.sub(r"[^0-9a-fA-F]", "", str(path or "")).lower()
+    size = _mc_msg_path_hash_size(msg, path_hex, hop_len, default=None)
+    if size is None and hashes:
+        size = max(1, min(3, (len(str(hashes[0])) + 1) // 2))
+    if size is None:
+        size = _mc_configured_path_hash_size(config_id)
+    return f" | {size}byte" if size else ""
+
+
+def _mc_msg_path_hashes(msg):
+    path = msg.get("path") if msg.get("path") is not None else msg.get("observed_path")
+    try:
+        hop_len = int(msg.get("path_len") if msg.get("path_len") is not None else msg.get("observed_path_len"))
+    except (TypeError, ValueError):
+        hop_len = None
+
+    if hop_len == 0:
+        return [], 0
+    if isinstance(path, list):
+        hashes = []
+        limit = hop_len if hop_len and hop_len > 0 else len(path)
+        for node in path[:limit]:
+            hop_hash = node.get("hash") if isinstance(node, dict) else node
+            if hop_hash:
+                hashes.append(str(hop_hash).lower())
+        return hashes, hop_len
+
+    path_hex = re.sub(r"[^0-9a-fA-F]", "", str(path or "")).lower()
+    if not path_hex:
+        return [], hop_len
+    hash_size = _mc_msg_path_hash_size(msg, path_hex, hop_len, default=1)
+    hash_chars = max(2, hash_size * 2)
+    count = hop_len if hop_len and hop_len > 0 else max(1, len(path_hex) // hash_chars)
+    hashes = [
+        path_hex[i * hash_chars:(i + 1) * hash_chars]
+        for i in range(count)
+        if path_hex[i * hash_chars:(i + 1) * hash_chars]
+    ]
+    return hashes, hop_len
+
+
+def _mc_contact_key(contact, fallback=""):
+    for key in ("public_key", "full_key", "id"):
+        value = (contact or {}).get(key)
+        if value:
+            return str(value)
+    return str(fallback or "")
+
+
+def _mc_hop_short_label(contact, fallback_hash):
+    clean_id = re.sub(r"[^A-Za-z0-9]", "", _mc_contact_key(contact, fallback_hash)).upper()
+    fallback = re.sub(r"[^A-Za-z0-9]", "", str(fallback_hash or "")).upper()
+    return (clean_id or fallback or "?")[:3]
+
+
+def _mc_contacts_by_prefix(config_id, prefix):
+    if not prefix:
+        return []
+    lp = str(prefix).lower()
+    from state import mc_connections, mc_connections_lock
+    with mc_connections_lock:
+        conn = mc_connections.get(config_id, {})
+        sources = [dict(conn.get("contacts", {})), dict(conn.get("live_contacts", {}))]
+    seen = set()
+    matches = []
+    for contacts in sources:
+        for key, contact in contacts.items():
+            full_key = _mc_contact_key(contact, key).lower()
+            if not full_key.startswith(lp):
+                continue
+            dedupe_key = full_key or str(key).lower()
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            matches.append(contact)
+    return matches
+
+
+def _mc_resolve_hop_contact(config_id, hop_hash):
+    matches = _mc_contacts_by_prefix(config_id, hop_hash)
+    if not matches:
+        return None
+    repeaters = []
+    for contact in matches:
+        try:
+            contact_type = int(contact.get("type") or 0)
+        except (TypeError, ValueError):
+            contact_type = 0
+        if contact_type == 2:
+            repeaters.append(contact)
+    candidates = repeaters or matches
+    return sorted(candidates, key=lambda c: _mc_contact_seen_ts(c), reverse=True)[0]
+
+
+def _build_mc_test_hops_info(msg, config_id):
+    hashes, hop_len = _mc_msg_path_hashes(msg)
+    display_hops = hop_len if hop_len is not None else len(hashes) if hashes else "?"
+    byte_suffix = _mc_msg_path_byte_suffix(msg, hashes, hop_len, config_id)
+    if hop_len == 0:
+        return f" | Hops(0): direct{byte_suffix}"
+    if hashes:
+        labels = []
+        for hop_hash in hashes:
+            contact = _mc_resolve_hop_contact(config_id, hop_hash)
+            labels.append(_mc_hop_short_label(contact, hop_hash))
+        return f" | Hops({display_hops}): {', '.join(labels)}{byte_suffix}"
+    if hop_len and hop_len > 0:
+        return f" | Hops({hop_len}): unknown{byte_suffix}"
+    return f" | Hops(?): unknown{byte_suffix}"
+
+
 def send_mc_bot_response(config_id, text, chan_idx, dest_pre=None):
     """Send bot reply via MC. Runs in a background thread — blocks until sent or timeout."""
     if CONFIG.get("silent_mode"):
@@ -738,7 +903,7 @@ def handle_mc_bot_command(msg, config_id, subtype):
         elif cmd == "ack":
             response = random.choice(["✋Ack to you!", "✋Copy that!", "✋Acknowledged", "✋Received!", "✋Loud and clear", "✋Message received, filing it away", "✋Got it, doing nothing about it", "✋Confirmed. Mostly.", "✋10-4, good buddy", "✋Wilco"]) + rf_info
         elif cmd == "test":
-            response = random.choice(["🎙Roger that!", "🎙Testing 1,2,3", "🎙Testing, testing", "🎙Read you loud and clear", "🎙Signal received", "🎙Loud and clear", "🎙You are coming through loud and hot", "🎙Heard you the first time", "🎙Five by five", "🎙Is this thing on? Yes, yes it is", "🎙Transmission received, sanity intact", "🎙Strength 5, readability 5", "🎙Clear as a bell", "🎙Your signal is better than my day", "🎙Mesh works, miracles do happen"]) + rf_info
+            response = random.choice(["🎙Roger that!", "🎙Testing 1,2,3", "🎙Testing, testing", "🎙Read you loud and clear", "🎙Signal received", "🎙Loud and clear", "🎙You are coming through loud and hot", "🎙Heard you the first time", "🎙Five by five", "🎙Is this thing on? Yes, yes it is", "🎙Transmission received, sanity intact", "🎙Strength 5, readability 5", "🎙Clear as a bell", "🎙Your signal is better than my day", "🎙Mesh works, miracles do happen"]) + _build_mc_test_hops_info(msg, config_id)
         elif cmd == "sitrep":
             response = build_mc_sitrep(config_id)
         elif cmd == "cmd":

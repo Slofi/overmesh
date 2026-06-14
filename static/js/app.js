@@ -1753,6 +1753,7 @@
         'Map is the main geographic view. It shows MT nodes, MC contacts, local radios, mesh marks, self notes, overlays, and paths drawn by traceroutes, pings, and traces.',
         'Click any marker to open a popup with quick actions: DM, Ping, Trace, TR, Manage, Show in Nodes, and more depending on the contact type.',
         'MT and MC filter buttons at the top let you hide one network when the map is too busy.',
+        'Heat toggles the Signal heatmap directly from the Map/Sense toolbar. In Map mode it follows the MT/MC map filter buttons: MT shows MT node signal heat, MC shows MC passive/Remote Collector heat. When both are enabled, OM draws separate heat layers with distinct palettes so the sources stay distinguishable.',
         'Distance labels use the OM origin: live GPS first, then manual OM position (set in Settings → App), then a connected/local radio position as a fallback. If none is available, distances are shown as unknown.',
         'Marks are mesh waypoints shared over the network. Self Notes are local-only annotations stored in the browser. Overlays are locally drawn shapes and imported GeoJSON.'
       ],
@@ -1792,6 +1793,7 @@
       buttons: [
         ['MT', 'Show or hide Meshtastic markers and paths on the map.'],
         ['MC', 'Show or hide MeshCore markers and paths on the map.'],
+        ['Heat', 'Toggle Signal heatmap. It follows the visible MT/MC selector and uses separate palettes when both networks are visible.'],
         ['Marks', 'Open the mesh waypoint panel.'],
         ['Self Notes', 'Open the local-only map annotation panel.'],
         ['Overlays', 'Open the overlay editor and import panel.'],
@@ -1816,7 +1818,8 @@
       body: [
         'Sense/Map is the live RF activity view. It is the best place to watch recent packets, adverts, messages, pings, traces, and resolved path hops.',
         'The left panel is the map. The right panel is the activity/response log. Clicking log entries draws paths on the map; clicking again clears them.',
-        'MT and MC show separate Sense panels because the two protocols expose different route metadata.'
+        'MT and MC show separate Sense panels because the two protocols expose different route metadata.',
+        'The Heat toolbar toggle is connected to Map → Overlays → Signal heatmap. In Sense mode it follows the Sense MT/MC selector: MT heat comes from live MT node positions plus RSSI/SNR, while MC heat comes from passive observations, including Remote Collector imports.'
       ],
       split: [
         {
@@ -1824,6 +1827,7 @@
           kind: 'mt',
           body: [
             'MT Sense logs heard packets and active Sense responses. Each entry can show SNR, RSSI, a message preview, and hop count from packet metadata.',
+            'When Heat is on and MT is selected in Sense, MT nodes with both position and RSSI/SNR contribute to the heatmap.',
             'A plain hop badge (e.g. 2 hops) comes from packet metadata and shows count only — no repeater identity. Use TR from Nodes to get exact route nodes.',
             'When a cached traceroute exists for the exact sender, hovering its log row previews the cached route on the map. Clicking pins that route; clicking again clears the pin.',
             'Active Sense periodically broadcasts a Sense request on a configured cooldown. Passive captures heard packets without transmitting anything.'
@@ -1844,6 +1848,7 @@
           kind: 'mc',
           body: [
             'MC Sense logs adverts, channel messages, DMs, pings, traces, scans, and bot replies. It is the primary place to inspect MC routing.',
+            'When Heat is on and MC is selected in Sense, MC passive observations contribute to the heatmap. Remote Collector observations are included through the same passive-observation store.',
             'Scan and Trace are separate on purpose. Scan sends the normal MC advert/scan request and listens for contact responses; it does not secretly run Trace.',
             'Trace sends one mesh-wide broadcast trace probe, then waits for TRACE_DATA and draws any returned hop chain. The amber warning and cooldown are there because this is active mesh traffic.',
             'Route source badges explain where OM resolved the path from: live = this packet\'s RX-log metadata (best), cached = stored contact route, inferred = fallback line, refreshed = newer data changed the entry after it was logged.',
@@ -2028,7 +2033,7 @@
         '--- Triggering a collection ---',
         'Press Collect in the collector row. OM sends an OMCOLLECT command to the RPTR over the mesh. The RPTR signals the RP2040 via serial, which responds with all buffered observations as RELAY| messages. The RPTR re-encrypts each one as a DM back to your OM radio. OM stores them automatically as passive observations.',
         '--- Signal heatmap ---',
-        'Enable the Signal Heatmap in Map → Overlays → Data layers. OM plots a weather-radar style heat overlay on the map: each node heard by the collector appears at its known position, colored by signal strength (blue = weak, red = strong). Requires passive observations with known node positions (OBS|ADV type).'
+        'Enable Signal heatmap with the Heat button in Map/Sense or in Map → Overlays → Data layers. With MC enabled in Map mode or selected in Sense mode, Remote Collector observations are included in the MC heat layer. OM prefers node position when known and falls back to collector position when that is all the observation has. RSSI drives intensity when available; SNR is used as fallback.'
       ],
       buttons: [
         ['Collect', 'Trigger an observation dump from this remote collector. Sends OMCOLLECT to the RPTR over the mesh.'],
@@ -2801,6 +2806,7 @@ if (targetEl) {
       _updateScanBtnVisibility();
     }
     _updateMapLegend();
+    _scheduleSignalHeatmapRefresh(0);
     renderLive();
   }
 
@@ -2841,6 +2847,7 @@ if (targetEl) {
       _updateScanBtnVisibility();
     }
     _updateMapLegend();
+    _scheduleSignalHeatmapRefresh(0);
     if (pipOpen) updatePipMarkers(allNodes);
     renderLive();
   }
@@ -4768,8 +4775,9 @@ if (targetEl) {
   let _mapLayerSelectedVertex = -1;
 
   // Signal heatmap
-  let _signalHeatmapLayer = null;
+  let _signalHeatmapLayers = [];
   let _signalHeatmapEnabled = localStorage.getItem('signalHeatmapEnabled') === '1';
+  let _signalHeatmapRefreshTimer = null;
   let _geofenceStates = {};
 
   function _haversineMeters(lat1, lon1, lat2, lon2) {
@@ -6911,54 +6919,134 @@ if (targetEl) {
     } else {
       _clearSignalHeatmap();
     }
+    _syncSignalHeatmapControls();
     renderOverlayPanel();
   }
 
   function _clearSignalHeatmap() {
-    if (_signalHeatmapLayer && leafletMap) {
-      leafletMap.removeLayer(_signalHeatmapLayer);
-      _signalHeatmapLayer = null;
+    if (_signalHeatmapLayers.length && leafletMap) {
+      _signalHeatmapLayers.forEach(layer => {
+        try { leafletMap.removeLayer(layer); } catch (e) {}
+      });
     }
+    _signalHeatmapLayers = [];
+  }
+
+  function _scheduleSignalHeatmapRefresh(delay = 400) {
+    if (!_signalHeatmapEnabled) return;
+    window.clearTimeout(_signalHeatmapRefreshTimer);
+    _signalHeatmapRefreshTimer = window.setTimeout(() => _refreshSignalHeatmap(), delay);
+  }
+
+  function _syncSignalHeatmapControls() {
+    const toolbarBtn = document.getElementById('signal-heatmap-toolbar-btn');
+    if (toolbarBtn) {
+      toolbarBtn.classList.toggle('active', _signalHeatmapEnabled);
+      toolbarBtn.textContent = _signalHeatmapEnabled ? 'Heat On' : 'Heat';
+    }
+    const overlayBtn = document.getElementById('signal-heatmap-overlay-btn');
+    if (overlayBtn) {
+      overlayBtn.classList.toggle('active', _signalHeatmapEnabled);
+      overlayBtn.textContent = _signalHeatmapEnabled ? 'On' : 'Off';
+    }
+    const refreshBtn = document.getElementById('signal-heatmap-refresh-btn');
+    if (refreshBtn) refreshBtn.disabled = !_signalHeatmapEnabled;
+  }
+
+  function _signalHeatmapIntensity(rssi, snr) {
+    if (rssi != null && Number.isFinite(Number(rssi))) {
+      // Normalize RSSI: -50 → 1.0, -120 → 0.0
+      return Math.max(0, Math.min(1, (Number(rssi) + 120) / 70));
+    }
+    if (snr != null && Number.isFinite(Number(snr))) {
+      // Normalize SNR fallback: -10 dB → 0.0, +20 dB → 1.0
+      return Math.max(0, Math.min(1, (Number(snr) + 10) / 30));
+    }
+    return null;
+  }
+
+  function _mtSignalHeatmapPoints() {
+    const points = [];
+    for (const n of allNodes || []) {
+      if (!n || n.latitude == null || n.longitude == null) continue;
+      if (!Number.isFinite(Number(n.latitude)) || !Number.isFinite(Number(n.longitude))) continue;
+      const intensity = _signalHeatmapIntensity(n.rssi, n.snr);
+      if (intensity == null) continue;
+      points.push([Number(n.latitude), Number(n.longitude), intensity]);
+    }
+    return points;
+  }
+
+  function _isSensePanelOpen() {
+    const panel = document.getElementById('sense-panel');
+    return !!panel && panel.style.display !== 'none';
+  }
+
+  function _signalHeatmapSources() {
+    if (_isSensePanelOpen()) {
+      return {mt: _senseNet === 'mt', mc: _senseNet === 'mc', context: 'sense'};
+    }
+    return {mt: mapShowMt, mc: mapShowMc, context: 'map'};
+  }
+
+  function _signalHeatmapGradient(kind) {
+    if (kind === 'mc') {
+      return {0.0: '#312e81', 0.35: '#7c3aed', 0.6: '#db2777', 0.8: '#f97316', 1.0: '#fff7ed'};
+    }
+    return {0.0: '#0000ff', 0.35: '#00ffff', 0.55: '#00ff00', 0.75: '#ffff00', 1.0: '#ff0000'};
+  }
+
+  function _addSignalHeatmapLayer(points, kind) {
+    if (!points.length || !leafletMap) return;
+    const layer = L.heatLayer(points, {
+      radius: kind === 'mc' ? 34 : 40,
+      blur: kind === 'mc' ? 20 : 25,
+      maxZoom: 14,
+      minOpacity: kind === 'mc' ? 0.25 : 0.18,
+      gradient: _signalHeatmapGradient(kind),
+    }).addTo(leafletMap);
+    _signalHeatmapLayers.push(layer);
   }
 
   async function _refreshSignalHeatmap() {
     if (!_signalHeatmapEnabled || !leafletMap) return;
     const rid = _passiveIntelRadioId();
-    if (!rid) { showToast('Signal Heatmap', 'No MC radio selected in Passive Intel settings.', 'node'); return; }
-    try {
-      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/passive_obs?limit=500`);
-      if (!r.ok) return;
-      const obs = await r.json();
-      const points = [];
-      for (const o of obs) {
-        if (!o.pubkey_pre) continue;
-        const contact = findMcContactByKeyPrefix(o.pubkey_pre, rid);
-        const lat = o.lat ?? contact?.adv_lat ?? contact?.latitude ?? contact?.lat ?? o.collector_lat;
-        const lon = o.lon ?? contact?.adv_lon ?? contact?.longitude ?? contact?.lon ?? o.collector_lon;
-        if (lat == null || lon == null || !Number.isFinite(Number(lat)) || !Number.isFinite(Number(lon))) continue;
-        let intensity = null;
-        if (o.rssi != null && Number.isFinite(Number(o.rssi))) {
-          // Normalize RSSI: -50 → 1.0, -120 → 0.0
-          intensity = (Number(o.rssi) + 120) / 70;
-        } else if (o.snr != null && Number.isFinite(Number(o.snr))) {
-          // Normalize SNR fallback: -10 dB → 0.0, +20 dB → 1.0
-          intensity = (Number(o.snr) + 10) / 30;
+    const sources = _signalHeatmapSources();
+    const mtPoints = sources.mt ? _mtSignalHeatmapPoints() : [];
+    const mcPoints = [];
+    if (sources.mc && rid) {
+      try {
+        const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/passive_obs?limit=500`);
+        if (r.ok) {
+          const obs = await r.json();
+          for (const o of obs) {
+            if (!o.pubkey_pre) continue;
+            const contact = findMcContactByKeyPrefix(o.pubkey_pre, rid);
+            const lat = o.lat ?? contact?.adv_lat ?? contact?.latitude ?? contact?.lat ?? o.collector_lat;
+            const lon = o.lon ?? contact?.adv_lon ?? contact?.longitude ?? contact?.lon ?? o.collector_lon;
+            if (lat == null || lon == null || !Number.isFinite(Number(lat)) || !Number.isFinite(Number(lon))) continue;
+            const intensity = _signalHeatmapIntensity(o.rssi, o.snr);
+            if (intensity == null) continue;
+            mcPoints.push([Number(lat), Number(lon), intensity]);
+          }
         }
-        if (intensity == null) continue;
-        intensity = Math.max(0, Math.min(1, intensity));
-        points.push([Number(lat), Number(lon), intensity]);
+      } catch (e) {
+        console.warn('Signal heatmap MC passive source error:', e);
       }
+    }
+    try {
       _clearSignalHeatmap();
-      if (!points.length) {
-        showToast('Signal Heatmap', 'No observations with known positions yet.', 'node');
+      if (!mtPoints.length && !mcPoints.length) {
+        const sourceMsg = sources.mt || sources.mc
+          ? 'No enabled MT/MC source has signal and position yet.'
+          : sources.context === 'sense'
+            ? 'Select MT or MC in Sense to show a signal heatmap.'
+            : 'Enable the MT or MC map pill to show a signal heatmap.';
+        showToast('Signal Heatmap', sourceMsg, 'node');
         return;
       }
-      _signalHeatmapLayer = L.heatLayer(points, {
-        radius: 40,
-        blur: 25,
-        maxZoom: 14,
-        gradient: {0.0: '#0000ff', 0.35: '#00ffff', 0.55: '#00ff00', 0.75: '#ffff00', 1.0: '#ff0000'},
-      }).addTo(leafletMap);
+      _addSignalHeatmapLayer(mtPoints, 'mt');
+      _addSignalHeatmapLayer(mcPoints, 'mc');
     } catch (e) {
       console.warn('Signal heatmap error:', e);
     }
@@ -6984,11 +7072,11 @@ if (targetEl) {
         <div style="display:flex;align-items:center;justify-content:space-between;padding:3px 0">
           <div>
             <span style="font-size:12px;font-weight:600;color:var(--text)">Signal heatmap</span>
-            <span style="font-size:11px;color:var(--muted);margin-left:6px">RC passive obs · RSSI/SNR coverage</span>
+            <span style="font-size:11px;color:var(--muted);margin-left:6px">Follows visible MT/MC selector · MT rainbow, MC violet/orange</span>
           </div>
           <div style="display:flex;gap:5px;align-items:center">
-            <button class="btn" style="font-size:11px;padding:2px 8px" onclick="_refreshSignalHeatmap()" title="Reload heatmap from latest observations" ${_signalHeatmapEnabled ? '' : 'disabled'}>↻</button>
-            <button class="overlay-tool-btn ${_signalHeatmapEnabled ? 'active' : ''}" onclick="toggleSignalHeatmap()" title="Toggle signal strength heatmap on the map">${_signalHeatmapEnabled ? 'On' : 'Off'}</button>
+            <button id="signal-heatmap-refresh-btn" class="btn" style="font-size:11px;padding:2px 8px" onclick="_refreshSignalHeatmap()" title="Reload heatmap from latest observations" ${_signalHeatmapEnabled ? '' : 'disabled'}>↻</button>
+            <button id="signal-heatmap-overlay-btn" class="overlay-tool-btn ${_signalHeatmapEnabled ? 'active' : ''}" onclick="toggleSignalHeatmap()" title="Toggle signal strength heatmap on the map">${_signalHeatmapEnabled ? 'On' : 'Off'}</button>
           </div>
         </div>
       </div>
@@ -7075,6 +7163,7 @@ if (targetEl) {
       `;
       }).join('') : '<div style="padding:8px 10px;font-size:11px;color:var(--muted)">No overlays yet.</div>'}</div>
     `;
+    _syncSignalHeatmapControls();
   }
 
   function renderMapLayerList() {
@@ -9034,6 +9123,7 @@ if (targetEl) {
 
     applyMapSearch();
     _refreshAllGeofences();
+    _scheduleSignalHeatmapRefresh();
   }
 
   // ── Bot ────────────────────────────────────────────────────────────────────
@@ -12341,6 +12431,7 @@ if (targetEl) {
       }
       _updateMapLegend();
     }
+    _scheduleSignalHeatmapRefresh(0);
   }
 
   // MeshCore CONTACT_TYPENAMES: 0=NONE, 1=CLI, 2=REP, 3=ROOM, 4=SENS
@@ -17251,6 +17342,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       renderMcMapMarkers();
       _updateScanBtnVisibility?.();
       _updateMapNodeCount();
+      _scheduleSignalHeatmapRefresh(0);
       settleMapLayout();
     }
   }
@@ -18810,6 +18902,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   initLogSubtab();
   initNodesFilterPills();
   initMapFilterPills();
+  _syncSignalHeatmapControls();
   requestNotifPermission();
   installNotificationSoundArm();
   _alertsBadgeUpdate();

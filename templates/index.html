@@ -354,6 +354,7 @@
         <div id="map-mt-pill" class="btn btn-net-mt active" onclick="toggleMapFilter('mt')" title="Show/hide Meshtastic nodes on map">MT</div>
         <div id="map-mc-pill" class="btn btn-net-mc active" onclick="toggleMapFilter('mc')" title="Show/hide MeshCore contacts on map">MC</div>
       </div>
+      <button id="signal-heatmap-toolbar-btn" class="btn" onclick="toggleSignalHeatmap()" title="Toggle signal heatmap. It follows the visible MT/MC selector and uses separate palettes when both are enabled." style="margin-left:8px">Heat</button>
       <!-- Sense mode: MT/MC sense selector pill (hidden when Map is active) -->
       <div class="view-toggle" id="sense-net-filter" style="margin-left:8px;display:none">
         <div class="btn btn-net-mt active" id="sense-net-mt" onclick="switchSenseNet('mt')" title="Meshtastic Sense">MT</div>

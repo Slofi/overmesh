@@ -20269,6 +20269,110 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     }
   }
 
+  // ── Template picker (message → log) ─────────────────────────────────────
+
+  let _tocPickCtx = null;
+
+  function _tocMsgBodyForTemplate(key, ctx) {
+    const tmpl = TOC_TEMPLATES[key];
+    if (!tmpl) {
+      return _tocStructuredMarkdown({ Note: ctx.text || '', From: ctx.sender || '', Notes: ctx.meta || '' });
+    }
+    const cat = tmpl.cat;
+    if (cat === 'COMMS') {
+      return _tocStructuredMarkdown({
+        From: ctx.sender || '',
+        To: ctx.target || '',
+        'Network / Channel': ctx.network || '',
+        'Message / Check': ctx.text || '',
+        Signal: ctx.signal || '',
+        Hops: ctx.hops || '',
+        Distance: ctx.distance || '',
+        Result: ctx.result || '',
+        'Follow-up': '',
+        Notes: ctx.time || '',
+      });
+    }
+    if (cat === 'INTEL') {
+      return _tocStructuredMarkdown({
+        'Who / Source': ctx.sender || '',
+        'Where / Location': '',
+        'When Observed': ctx.time || '',
+        'What Happened': ctx.text || '',
+        'Intel Tags': '',
+        'Reliability / Confidence': '',
+        'Source Type': ctx.network || '',
+        'Direction / Movement': '',
+        'Related Nodes / Assets': '',
+        Assessment: '',
+        'Required Action': '',
+        Notes: [ctx.signal, ctx.hops ? `Hops: ${ctx.hops}` : '', ctx.distance ? `Distance: ${ctx.distance}` : ''].filter(Boolean).join('\n'),
+      });
+    }
+    if (cat === 'CONTACT') {
+      return _tocStructuredMarkdown({
+        'Node / Station': ctx.sender || '',
+        'Callsign / Handle': ctx.senderName || '',
+        'Network / Channel': ctx.network || '',
+        'First Heard': ctx.time || '',
+        Signal: ctx.signal || '',
+        Hops: ctx.hops || '',
+        Distance: ctx.distance || '',
+        Position: '',
+        'Action / Follow-up': '',
+        Notes: ctx.text ? `Message: ${ctx.text}` : '',
+      });
+    }
+    // All other templates: try Notes + a free-form summary
+    const notes = [ctx.text ? `Message: ${ctx.text}` : '', ctx.signal || '', ctx.time || ''].filter(Boolean).join('\n');
+    const obj = {};
+    tmpl.fields.forEach(f => { obj[_tocFieldName(f)] = ''; });
+    if (obj['Notes'] !== undefined) obj['Notes'] = notes;
+    else { const first = tmpl.fields[0]; if (first) obj[_tocFieldName(first)] = notes; }
+    obj['From'] !== undefined && (obj['From'] = ctx.sender || '');
+    return _tocStructuredMarkdown(obj);
+  }
+
+  function _tocPickTemplate(ctx) {
+    _tocPickCtx = ctx;
+    switchTab('log');
+    const modal = document.getElementById('toc-tpl-picker-modal');
+    if (!modal) return;
+    const preview = document.getElementById('toc-tpl-picker-preview');
+    if (preview) preview.textContent = ctx.text ? `"${ctx.text.slice(0, 120)}"` : '';
+    const grid = document.getElementById('toc-tpl-picker-grid');
+    if (grid) {
+      grid.innerHTML = Object.entries(TOC_TEMPLATES).map(([key, tmpl]) =>
+        `<button class="btn" onclick="_tocPickTemplatePick('${jsSafe(key)}')"
+          style="flex:1;min-width:100px;padding:6px 10px;font-size:12px">${_tocEscape(tmpl.label)}</button>`
+      ).join('') +
+      `<button class="btn-secondary" onclick="_tocPickTemplatePick('')"
+        style="flex:1;min-width:100px;padding:6px 10px;font-size:12px">Free text</button>`;
+    }
+    modal.classList.add('open');
+  }
+
+  function _tocPickTemplatePick(key) {
+    document.getElementById('toc-tpl-picker-modal')?.classList.remove('open');
+    const ctx = _tocPickCtx;
+    _tocPickCtx = null;
+    if (!ctx) return;
+    const body = key ? _tocMsgBodyForTemplate(key, ctx) : _tocStructuredMarkdown({
+      From: ctx.sender || '', To: ctx.target || '', 'Network / Channel': ctx.network || '',
+      'Message / Check': ctx.text || '', Signal: ctx.signal || '', Hops: ctx.hops || '',
+      Distance: ctx.distance || '', Result: ctx.result || '', 'Follow-up': '', Notes: ctx.time || '',
+    });
+    const cat = (key && TOC_TEMPLATES[key]) ? TOC_TEMPLATES[key].cat : ctx.category;
+    _tocPrefill(cat, body, ctx.ts, key);
+  }
+
+  function _tocPickTemplateClose() {
+    document.getElementById('toc-tpl-picker-modal')?.classList.remove('open');
+    _tocPickCtx = null;
+  }
+
+  // ── Entry prefill ────────────────────────────────────────────────────────
+
   function _tocPrefill(category, body, ts = null, templateKey = '') {
     switchTab('log');
     document.getElementById('toc-category').value = category || 'NOTE';
@@ -21105,24 +21209,24 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       ? (allNodes || []).find(n => n.id === msg.from_id && (!msg.radio_id || !n.radio_id || n.radio_id === msg.radio_id))
         || (allNodes || []).find(n => n.id === msg.from_id)
       : null;
-    const sender = msg.sent ? 'You' : (msg.from_name || msg.from_id || '?');
-    const target = msg.is_dm ? (msg.sent ? (msg.to_name || msg.to_id || '?') : 'You') : `CH${msg.channel ?? 0}`;
+    const senderName = msg.sent ? 'You' : (msg.from_name || msg.from_id || '?');
     const mention = !msg.sent && msg.from_id && msg.from_id !== 'bot'
       ? _tocMentionToken('mt', msg.from_name || msg.from_id, msg.from_id)
-      : sender;
-    const body = _tocStructuredMarkdown({
-      From: mention,
-      To: target,
-      'Network / Channel': msg.is_dm ? 'Meshtastic DM' : `Meshtastic CH${msg.channel ?? 0}`,
-      'Message / Check': msg.text || '',
-      Signal: msg.snr != null ? `SNR ${msg.snr} dB` : '',
-      Hops: node?.hops_away != null ? `${node.hops_away}` : '',
-      Distance: node ? _mtNodeDistanceLabel(node) : '',
-      Result: msg.sent ? (msg.status || 'sent') : 'received',
-      'Follow-up': '',
-      Notes: `Time: ${_formatAppDateTime(msg.ts || Math.floor(Date.now() / 1000))}`,
+      : senderName;
+    _tocPickTemplate({
+      category: 'COMMS',
+      ts: msg.ts || Math.floor(Date.now() / 1000),
+      sender: mention,
+      senderName,
+      target: msg.is_dm ? (msg.sent ? (msg.to_name || msg.to_id || '?') : 'You') : `CH${msg.channel ?? 0}`,
+      network: msg.is_dm ? 'Meshtastic DM' : `Meshtastic CH${msg.channel ?? 0}`,
+      text: msg.text || '',
+      signal: msg.snr != null ? `SNR ${msg.snr} dB` : '',
+      hops: node?.hops_away != null ? `${node.hops_away}` : '',
+      distance: node ? _mtNodeDistanceLabel(node) : '',
+      result: msg.sent ? (msg.status || 'sent') : 'received',
+      time: _formatAppDateTime(msg.ts || Math.floor(Date.now() / 1000)),
     });
-    _tocPrefill('COMMS', body, msg.ts || Math.floor(Date.now() / 1000), 'commscheck');
   }
 
   function tocFromMcMessage(routeKey) {
@@ -21133,21 +21237,21 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const mention = !sent && msg.from_id
       ? _tocMentionToken('mc', name || msg.from_id, msg.from_id, msg.radio_id || '')
       : 'You';
-    const target = sent ? (msg.to_name || msg.to_id || `CH${msg.channel ?? 0}`) : (msg.subtype === 'dm' ? 'You' : `CH${msg.channel ?? 0}`);
     const contact = !sent && msg.from_id ? _mcResolveMessageContact(msg) : null;
-    const body = _tocStructuredMarkdown({
-      From: mention,
-      To: target,
-      'Network / Channel': msg.subtype === 'dm' ? 'MeshCore DM' : `MeshCore CH${msg.channel ?? 0}`,
-      'Message / Check': _mcMsgText(msg, name),
-      Signal: msg.rx_snr != null ? `SNR ${msg.rx_snr} dB` : '',
-      Hops: msg.path_len != null ? mcPathHopLabel(msg.path_len, true) : '',
-      Distance: contact ? _mcNodeDistanceLabel(contact, msg.radio_id || '') : '',
-      Result: sent ? (msg.status || 'sent') : 'received',
-      'Follow-up': '',
-      Notes: `Time: ${_formatAppDateTime(msg.ts || Math.floor(Date.now() / 1000))}`,
+    _tocPickTemplate({
+      category: 'COMMS',
+      ts: msg.ts || Math.floor(Date.now() / 1000),
+      sender: mention,
+      senderName: name || msg.from_id || '?',
+      target: sent ? (msg.to_name || msg.to_id || `CH${msg.channel ?? 0}`) : (msg.subtype === 'dm' ? 'You' : `CH${msg.channel ?? 0}`),
+      network: msg.subtype === 'dm' ? 'MeshCore DM' : `MeshCore CH${msg.channel ?? 0}`,
+      text: _mcMsgText(msg, name),
+      signal: msg.rx_snr != null ? `SNR ${msg.rx_snr} dB` : '',
+      hops: msg.path_len != null ? mcPathHopLabel(msg.path_len, true) : '',
+      distance: contact ? _mcNodeDistanceLabel(contact, msg.radio_id || '') : '',
+      result: sent ? (msg.status || 'sent') : 'received',
+      time: _formatAppDateTime(msg.ts || Math.floor(Date.now() / 1000)),
     });
-    _tocPrefill('COMMS', body, msg.ts || Math.floor(Date.now() / 1000), 'commscheck');
   }
 
   function tocFromMtNode(nodeId) {

@@ -99,6 +99,23 @@
   </div>
 </div>
 
+<!-- TOC template picker modal -->
+<div id="toc-tpl-picker-modal" class="modal-overlay" onclick="if(event.target===this)_tocPickTemplateClose()">
+  <div class="modal-box" style="width:360px;max-width:calc(100vw - 24px)">
+    <div class="modal-header">
+      <span class="modal-title">Log as...</span>
+      <button class="modal-close" onclick="_tocPickTemplateClose()" title="Close">&#x2715;</button>
+    </div>
+    <div class="modal-body">
+      <div id="toc-tpl-picker-preview" style="font-size:11px;color:var(--muted);margin-bottom:12px;max-height:42px;overflow:hidden;text-overflow:ellipsis;line-height:1.4"></div>
+      <div id="toc-tpl-picker-grid" style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:12px"></div>
+      <div style="display:flex;justify-content:flex-end">
+        <button class="btn-secondary" onclick="_tocPickTemplateClose()">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- First launch modal -->
 <div id="intro-modal" class="modal-overlay" onclick="if(event.target===this)closeOmIntro(true)">
   <div class="modal-box" style="width:420px;max-width:calc(100vw - 24px)">

@@ -7518,6 +7518,9 @@ if (targetEl) {
         const panel = L.DomUtil.create('div', '', wrap);
         panel.id = 'map-layer-panel';
         L.DomEvent.disableScrollPropagation(panel);
+        ['touchstart', 'touchmove'].forEach(t =>
+          panel.addEventListener(t, e => e.stopPropagation(), { passive: true })
+        );
         _baseLayerMenuPanel = L.DomUtil.create('div', '', panel);
         refreshBaseLayerPanelOptions();
         _mapLayerMenuPanel = L.DomUtil.create('div', '', panel);

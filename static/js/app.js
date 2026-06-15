@@ -5028,12 +5028,14 @@ if (targetEl) {
       const local = await r.json();
       const next = {};
       (Array.isArray(local) ? local : []).forEach(layer => {
-        if (!layer || !layer.id) return;
-        const key = _mapAppLocalLayerKey(layer.id);
+        const id = layer.id || (layer.url ? layer.url.split('/').pop() : null);
+        if (!id) return;
+        const ext = (layer.imageType || 'png').toLowerCase();
+        const key = _mapAppLocalLayerKey(id);
         next[key] = {
-          label: layer.name || layer.id,
-          url: `${_sharedTileServerUrl}/services/${encodeURIComponent(layer.id)}/tiles/{z}/{x}/{y}.png`,
-          attribution: layer.attribution || `Local tiles · ${layer.name || layer.id}`,
+          label: layer.name || id,
+          url: `${_sharedTileServerUrl}/services/${encodeURIComponent(id)}/tiles/{z}/{x}/{y}.${ext}`,
+          attribution: layer.attribution || `Local tiles · ${layer.name || id}`,
           maxZoom: Number(layer.maxzoom || layer.maxZoom || 19),
           sharedTileServer: true,
         };

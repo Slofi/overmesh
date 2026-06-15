@@ -11054,6 +11054,10 @@ if (targetEl) {
             (cd.channels || []).forEach(ch => { if (ch.name) mcKnownChannels[ch.idx] = ch.name; });
             renderMcChatTabs();
           }).catch(() => {});
+        // Heatmap: if MC was the source but radio ID was null at enable-time, redraw now
+        if (prevStatus !== 'connected' && _signalHeatmapEnabled && _signalHeatmapSources().mc) {
+          _scheduleSignalHeatmapRefresh(800);
+        }
       } else {
         if (data.status === 'disconnected') {
           if (mcContacts[data.radio_id]) {

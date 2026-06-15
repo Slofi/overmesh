@@ -496,6 +496,21 @@
       border-left-color: #5eead4;
       background: var(--bg3);
     }
+    .toc-mission-chip.excluded {
+      border-color: #f8717155;
+      border-left-color: #f87171;
+      background: var(--bg3);
+      opacity: 0.75;
+    }
+    .toc-mission-chip.excluded .toc-mission-chip-name {
+      color: #f87171;
+      text-decoration: line-through;
+    }
+    .toc-mission-chip.excluded .toc-mission-chip-count {
+      background: rgba(248, 113, 113, 0.12);
+      color: #f87171;
+      border-color: rgba(248, 113, 113, 0.28);
+    }
     .toc-mission-chip-name {
       color: #5eead4;
       font-size: 12px;

@@ -20661,7 +20661,11 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     }
     if (tag && !_tocTagsFromBody(entry.body).some(t => t.toLowerCase() === tag)) return false;
     if (mention && !_tocMentionTokens(entry.body).some(t => t.key === mention)) return false;
-    if (mission && _tocMissionFromBody(entry.body).toLowerCase() !== mission) return false;
+    if (mission) {
+      const entryMission = _tocMissionFromBody(entry.body).toLowerCase();
+      const missionMode = document.getElementById('toc-filter-mission-mode')?.value || 'include';
+      if (missionMode === 'exclude' ? entryMission === mission : entryMission !== mission) return false;
+    }
     if (from) {
       const fromTs = Math.floor(new Date(`${from}T00:00`).getTime() / 1000);
       if (Number.isFinite(fromTs) && Number(entry.ts) < fromTs) return false;
@@ -20741,6 +20745,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const wrap = document.getElementById('toc-mission-summary');
     if (!wrap) return;
     const active = (document.getElementById('toc-filter-mission')?.value || '').trim().toLowerCase();
+    const missionMode = document.getElementById('toc-filter-mission-mode')?.value || 'include';
     const stats = _tocMissionStats();
     if (!stats.length) {
       wrap.innerHTML = '<span style="color:var(--muted);font-size:12px">No missions yet. Add a Mission / Folder name to any log entry.</span>';
@@ -20752,7 +20757,11 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         .slice(0, 3)
         .map(([cat, count]) => `${cat}:${count}`)
         .join(' ');
-      return `<button class="toc-mission-chip ${active === m.name.toLowerCase() ? 'active' : ''}" onclick="tocFilterMission('${jsSafe(m.name)}')" title="Filter Mission / Folder: ${_tocEscape(m.name)}">` +
+      const isActive  = active === m.name.toLowerCase() && missionMode === 'include';
+      const isExclude = active === m.name.toLowerCase() && missionMode === 'exclude';
+      const chipClass = isExclude ? 'excluded' : isActive ? 'active' : '';
+      const title = isExclude ? `Hiding folder: ${m.name} (click to clear)` : `Filter Mission / Folder: ${m.name}`;
+      return `<button class="toc-mission-chip ${chipClass}" onclick="tocFilterMission('${jsSafe(m.name)}')" title="${_tocEscape(title)}">` +
         `<span class="toc-mission-chip-name">📁 ${_tocEscape(m.name)}</span>` +
         `<span class="toc-mission-chip-count">${m.count}</span>` +
         `<span class="toc-mission-chip-meta">Last ${_tocEscape(_formatAppDateTime(m.lastTs))}${cats ? ' · ' + _tocEscape(cats) : ''}</span>` +
@@ -20761,24 +20770,38 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   }
 
   function tocFilterMission(value) {
-    const sel = document.getElementById('toc-filter-mission');
+    const sel  = document.getElementById('toc-filter-mission');
+    const modeEl = document.getElementById('toc-filter-mission-mode');
     const active = (sel?.value || '').trim().toLowerCase();
+    const curMode = modeEl?.value || 'include';
     if (value && active === value.toLowerCase()) {
-      if (sel) sel.value = '';
-      tocRenderLog();
+      if (curMode === 'include') {
+        // second click → exclude mode
+        if (modeEl) modeEl.value = 'exclude';
+        tocRenderLog();
+      } else {
+        // third click → clear filter
+        if (sel) sel.value = '';
+        if (modeEl) modeEl.value = 'include';
+        tocRenderLog();
+      }
       return;
     }
+    // first click → include mode
     const input = document.getElementById('toc-mission');
     if (sel) sel.value = value || '';
     if (input) input.value = value || '';
-    const mode = document.getElementById('toc-view-mode');
-    if (mode) mode.value = 'mission';
+    if (modeEl) modeEl.value = 'include';
+    const viewMode = document.getElementById('toc-view-mode');
+    if (viewMode) viewMode.value = 'mission';
     tocRenderLog();
   }
 
   function tocClearMissionFilter() {
     const sel = document.getElementById('toc-filter-mission');
+    const modeEl = document.getElementById('toc-filter-mission-mode');
     if (sel) sel.value = '';
+    if (modeEl) modeEl.value = 'include';
     tocRenderLog();
   }
 

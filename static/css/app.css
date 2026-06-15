@@ -465,9 +465,9 @@
     }
     .toc-mission-summary {
       display: flex;
-      gap: 7px;
+      gap: 10px;
       flex-wrap: wrap;
-      align-items: center;
+      align-items: flex-start;
     }
     .toc-mission-chip {
       display: grid;
@@ -477,16 +477,23 @@
       max-width: 260px;
       background: var(--bg2);
       border: 1px solid var(--border);
+      border-left: 3px solid var(--border);
       border-radius: 6px;
       color: var(--text);
       cursor: pointer;
-      padding: 7px 9px;
+      padding: 7px 9px 7px 8px;
       text-align: left;
       font: inherit;
+      transition: border-color 0.15s;
     }
-    .toc-mission-chip:hover,
-    .toc-mission-chip.active {
+    .toc-mission-chip:hover {
       border-color: var(--accent);
+      border-left-color: #5eead4;
+      background: var(--bg3);
+    }
+    .toc-mission-chip.active {
+      border-color: #5eead4;
+      border-left-color: #5eead4;
       background: var(--bg3);
     }
     .toc-mission-chip-name {
@@ -499,9 +506,17 @@
       white-space: nowrap;
     }
     .toc-mission-chip-count {
-      color: var(--muted);
+      background: rgba(94, 234, 212, 0.12);
+      color: #5eead4;
+      border: 1px solid rgba(94, 234, 212, 0.28);
+      border-radius: 10px;
+      padding: 0 6px;
       font-size: 11px;
+      font-weight: 600;
       white-space: nowrap;
+      min-width: 20px;
+      text-align: center;
+      align-self: center;
     }
     .toc-mission-chip-meta {
       grid-column: 1 / -1;

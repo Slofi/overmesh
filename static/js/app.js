@@ -20762,6 +20762,12 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   function tocFilterMission(value) {
     const sel = document.getElementById('toc-filter-mission');
+    const active = (sel?.value || '').trim().toLowerCase();
+    if (value && active === value.toLowerCase()) {
+      if (sel) sel.value = '';
+      tocRenderLog();
+      return;
+    }
     const input = document.getElementById('toc-mission');
     if (sel) sel.value = value || '';
     if (input) input.value = value || '';

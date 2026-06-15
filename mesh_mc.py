@@ -595,7 +595,7 @@ def _mc_contact_seen_ts(contact, now=None):
 # Asyncio event loop — lives in its own daemon thread
 # ---------------------------------------------------------------------------
 
-_mc_loop: asyncio.AbstractEventLoop | None = None
+_mc_loop = None  # Optional[asyncio.AbstractEventLoop]
 _mc_loop_ready = threading.Event()
 
 # ---------------------------------------------------------------------------

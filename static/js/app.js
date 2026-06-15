@@ -20279,6 +20279,15 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     if (templateEl) templateEl.value = templateKey;
     if (templateKey) {
       tocApplyTemplate(templateKey);
+      if (body) {
+        const _prefillObj = _tocStructuredObject(body);
+        if (_prefillObj && typeof _prefillObj === 'object') {
+          document.querySelectorAll('#toc-fields [data-toc-field]').forEach(inp => {
+            const val = _prefillObj[inp.dataset.tocField];
+            if (val != null) inp.value = String(val);
+          });
+        }
+      }
     } else {
       tocApplyTemplate('');
       _tocSetBodyText(_tocWithoutMission(body) || '');
@@ -21113,7 +21122,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       'Follow-up': '',
       Notes: `Time: ${_formatAppDateTime(msg.ts || Math.floor(Date.now() / 1000))}`,
     });
-    _tocPrefill('COMMS', body, msg.ts || Math.floor(Date.now() / 1000));
+    _tocPrefill('COMMS', body, msg.ts || Math.floor(Date.now() / 1000), 'commscheck');
   }
 
   function tocFromMcMessage(routeKey) {
@@ -21138,7 +21147,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       'Follow-up': '',
       Notes: `Time: ${_formatAppDateTime(msg.ts || Math.floor(Date.now() / 1000))}`,
     });
-    _tocPrefill('COMMS', body, msg.ts || Math.floor(Date.now() / 1000));
+    _tocPrefill('COMMS', body, msg.ts || Math.floor(Date.now() / 1000), 'commscheck');
   }
 
   function tocFromMtNode(nodeId) {

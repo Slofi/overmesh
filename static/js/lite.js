@@ -154,6 +154,7 @@ function updateStatusDots() {
 // SSE
 // ════════════════════════════════════════════════════════
 let sseSource, sseRetry;
+let _liteUpdatePoll = null;
 
 function connectSSE() {
   if (sseSource) { try { sseSource.close(); } catch {} }
@@ -878,6 +879,148 @@ async function submitLog() {
 }
 
 // ════════════════════════════════════════════════════════
+// Update helpers
+// ════════════════════════════════════════════════════════
+function _liteUpdateSummaryHTML(info, state) {
+  if (!info || !info.managed) {
+    return `<span style="color:var(--text2)">${esc(info?.error || 'Not a Git install')}</span>`;
+  }
+  const parts = [
+    `v<code>${esc(info.version || '?')}</code>`,
+    info.remote_commit ? `GitHub <code>${esc(info.remote_commit)}</code>` : null,
+  ].filter(Boolean);
+  if (info.dirty) {
+    parts.push('<span style="color:#e57373">local changes</span>');
+  } else if ((info.ahead || 0) > 0) {
+    parts.push(`<span style="color:#ffb74d">ahead by ${info.ahead}</span>`);
+  } else if (info.update_available) {
+    parts.push(`<span style="color:var(--accent)">${info.behind} update${info.behind !== 1 ? 's' : ''} available</span>`);
+  } else if (info.remote_commit) {
+    parts.push('<span style="color:#81c784">up to date</span>');
+  }
+  if (state?.message) {
+    const color = state.ok === false ? '#e57373' : state.ok === true ? '#81c784' : 'var(--text2)';
+    parts.push(`<span style="color:${color}">${esc(state.message)}</span>`);
+  }
+  return parts.join(' \xb7 ');
+}
+
+function _liteApplyUpdatePayload(payload) {
+  const info       = payload?.info  || {};
+  const state      = payload?.state || {};
+  const sumEl      = $('update-summary');
+  const runBtn     = $('update-run-btn');
+  const checkBtn   = $('update-check-btn');
+  const logEl      = $('update-log');
+  const restartRow = $('update-restart-row');
+  if (!sumEl) return;
+  if (payload?.error) {
+    sumEl.innerHTML = `<span style="color:#e57373">${esc(payload.error)}</span>`;
+  } else {
+    sumEl.innerHTML = _liteUpdateSummaryHTML(info, state);
+  }
+  const running = !!state?.running;
+  if (checkBtn) checkBtn.disabled = running;
+  if (runBtn) {
+    let blocked = '';
+    if (!info.managed)           blocked = 'Not a Git install';
+    else if (info.dirty)         blocked = 'Local changes present';
+    else if ((info.ahead || 0) > 0) blocked = 'Local commits ahead of GitHub';
+    else if (!info.update_available) blocked = 'Already up to date';
+    runBtn.disabled    = running || !!blocked;
+    runBtn.title       = blocked || (running ? 'Updating…' : 'Pull latest from GitHub');
+    runBtn.textContent = running ? 'Updating…' : 'Update';
+  }
+  if (logEl) {
+    const lines = Array.isArray(state?.log) ? state.log : [];
+    logEl.style.display = lines.length ? '' : 'none';
+    logEl.textContent   = lines.join('\n');
+    if (lines.length) logEl.scrollTop = logEl.scrollHeight;
+  }
+  if (restartRow) {
+    restartRow.style.display = (state?.ok && /Restart required/i.test(state?.message || '')) ? '' : 'none';
+  }
+}
+
+async function liteCheckUpdate(fetchRemote) {
+  const checkBtn = $('update-check-btn');
+  const sumEl    = $('update-summary');
+  if (fetchRemote && checkBtn) { checkBtn.disabled = true; checkBtn.textContent = 'Checking…'; }
+  if (fetchRemote && sumEl)    sumEl.innerHTML = '<span style="color:var(--text2)">Checking GitHub…</span>';
+  try {
+    const r    = await fetch(`/api/settings/update/status${fetchRemote ? '?fetch=1' : ''}`);
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) data.error = data.error || `HTTP ${r.status}`;
+    _liteApplyUpdatePayload(data);
+    if (data.state?.running && !_liteUpdatePoll) {
+      _liteUpdatePoll = setInterval(() => liteCheckUpdate(false), 1500);
+    }
+    if (!data.state?.running && _liteUpdatePoll) {
+      clearInterval(_liteUpdatePoll);
+      _liteUpdatePoll = null;
+    }
+  } catch(e) {
+    const s = $('update-summary');
+    if (s) s.innerHTML = `<span style="color:#e57373">${esc(String(e.message || e))}</span>`;
+  } finally {
+    const btn = $('update-check-btn');
+    if (btn) { btn.disabled = false; btn.textContent = 'Check'; }
+  }
+}
+
+let _liteUpdateConfirmTimer = null;
+async function liteRunUpdate() {
+  const runBtn = $('update-run-btn');
+  if (runBtn && runBtn.dataset.confirm !== '1') {
+    runBtn.dataset.confirm  = '1';
+    runBtn.textContent      = 'Confirm?';
+    runBtn.style.background = 'var(--accent)';
+    runBtn.style.color      = '#000';
+    clearTimeout(_liteUpdateConfirmTimer);
+    _liteUpdateConfirmTimer = setTimeout(() => {
+      if (runBtn) {
+        runBtn.dataset.confirm  = '';
+        runBtn.textContent      = 'Update';
+        runBtn.style.background = '';
+        runBtn.style.color      = '';
+      }
+    }, 3000);
+    return;
+  }
+  if (runBtn) {
+    runBtn.dataset.confirm  = '';
+    runBtn.textContent      = 'Updating…';
+    runBtn.style.background = '';
+    runBtn.style.color      = '';
+    runBtn.disabled         = true;
+  }
+  clearTimeout(_liteUpdateConfirmTimer);
+  try {
+    const r    = await fetch('/api/settings/update/run', { method: 'POST' });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    _liteApplyUpdatePayload(data);
+    if (!_liteUpdatePoll) _liteUpdatePoll = setInterval(() => liteCheckUpdate(false), 1500);
+  } catch(e) {
+    toast('Update failed: ' + (e.message || e), 4000);
+    await liteCheckUpdate(false);
+  }
+}
+
+async function liteRestartOM() {
+  const btn = $('update-restart-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Restarting…'; }
+  try {
+    await fetch('/api/restart', { method: 'POST' });
+    toast('Restarting OM… page will reload shortly', 5000);
+    setTimeout(() => location.reload(), 6000);
+  } catch(e) {
+    toast('Restart failed: ' + (e.message || e), 3500);
+    if (btn) { btn.disabled = false; btn.textContent = 'Restart'; }
+  }
+}
+
+// ════════════════════════════════════════════════════════
 // Settings panel
 // ════════════════════════════════════════════════════════
 function renderSettings() {
@@ -919,6 +1062,21 @@ function renderSettings() {
       <a href="/" class="btn sm muted" style="text-decoration:none">Open →</a>
     </div>
 
+
+    <div class="shdr" style="margin-top:14px">System</div>
+    <div id="update-summary" style="font-size:11px;color:var(--text2);margin:4px 10px 8px">—</div>
+    <div class="srow">
+      <div><div class="slbl">Update</div><div class="ssub">Pull latest from GitHub</div></div>
+      <div style="display:flex;gap:6px">
+        <button class="btn sm muted" id="update-check-btn">Check</button>
+        <button class="btn sm" id="update-run-btn" disabled title="Check for updates first">Update</button>
+      </div>
+    </div>
+    <pre id="update-log" style="display:none;margin:4px 10px;padding:8px;background:var(--bg3);border-radius:6px;font-size:10px;color:var(--text2);max-height:100px;overflow-y:auto;white-space:pre-wrap;word-break:break-word"></pre>
+    <div class="srow" id="update-restart-row" style="display:none">
+      <div><div class="slbl">Restart required</div><div class="ssub">Apply the update</div></div>
+      <button class="btn sm" id="update-restart-btn">Restart</button>
+    </div>
     ${ver ? `<div style="margin-top:20px;font-size:11px;color:var(--text2);text-align:center">OM Lite · ${esc(ver)}</div>` : ""}
   `;
 
@@ -945,6 +1103,12 @@ function renderSettings() {
     document.documentElement.style.setProperty("--accent", e.target.value);
     localStorage.setItem("overmesh_accent", e.target.value);
   };
+
+  $("update-check-btn").onclick = () => liteCheckUpdate(true);
+  $("update-run-btn").onclick   = liteRunUpdate;
+  const restBtn = $("update-restart-btn");
+  if (restBtn) restBtn.onclick = liteRestartOM;
+  liteCheckUpdate(false);
 }
 
 // ════════════════════════════════════════════════════════

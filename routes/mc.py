@@ -468,6 +468,20 @@ def api_mc_delete_all_messages(radio_id):
     removed = delete_mc_all_messages(radio_id)
     return jsonify({"ok": True, "removed_db": removed})
 
+@bp.route("/api/mc/<radio_id>/dm_messages", methods=["DELETE"])
+def api_mc_delete_dm_messages(radio_id):
+    from db import get_mc_msgs_db
+    with get_mc_msgs_db(radio_id) as conn:
+        conn.execute("DELETE FROM messages WHERE subtype='dm'")
+    return jsonify({"ok": True})
+
+@bp.route("/api/mc/<radio_id>/dm_messages/<node_id>", methods=["DELETE"])
+def api_mc_delete_dm_node(radio_id, node_id):
+    from db import get_mc_msgs_db
+    with get_mc_msgs_db(radio_id) as conn:
+        conn.execute("DELETE FROM messages WHERE subtype='dm' AND (from_id=? OR to_id=?)", (node_id, node_id))
+    return jsonify({"ok": True})
+
 
 @bp.route("/api/mc/<radio_id>/contacts/all", methods=["DELETE"])
 def api_mc_delete_all_contacts(radio_id):

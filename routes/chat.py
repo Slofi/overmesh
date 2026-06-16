@@ -52,6 +52,22 @@ def api_chat_channels():
         return jsonify([{"index": 0, "name": "Primary", "role": 1}])
 
 
+@bp.route("/api/chat/messages")
+def api_chat_messages():
+    radio_id = request.args.get("radio_id")
+    try:
+        limit = max(1, min(500, int(request.args.get("limit", 200))))
+    except (TypeError, ValueError):
+        limit = 200
+    with chat_lock:
+        msgs = [
+            dict(m) for m in chat_messages
+            if not radio_id or m.get("radio_id") == radio_id
+        ]
+    msgs.sort(key=lambda m: m.get("ts", 0))
+    return jsonify({"messages": msgs[-limit:]})
+
+
 @bp.route("/api/chat/stream")
 def api_chat_stream():
     q = queue.Queue(maxsize=100)
@@ -166,6 +182,6 @@ def api_chat_send():
                 "radio_id": radio_id,
             }
             threading.Thread(target=maybe_forward_mt_message, args=(forward_msg,), daemon=True).start()
-        return jsonify({"ok": True})
+        return jsonify({"ok": True, "message": msg})
     except Exception as e:
         return jsonify({"error": str(e)}), 500

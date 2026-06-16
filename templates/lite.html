@@ -116,7 +116,8 @@
       border-left: 3px solid var(--border);
     }
     .msg-row.sent { border-left-color: var(--accent); }
-    .msg-row.mc   { border-left-color: #4ade80; }
+    .msg-row.mt   { border-left-color: #4ade80; }
+    .msg-row.mc   { border-left-color: #60a5fa; }
     .msg-row.dm   { border-left-color: #d29922; }
     .msg-hdr {
       display: flex; justify-content: space-between;
@@ -271,6 +272,17 @@
     .leaflet-control-attribution a { color: var(--text2) !important; }
     .leaflet-popup-content-wrapper { background: var(--bg2) !important; color: var(--text) !important; border: 1px solid var(--border) !important; border-radius: var(--radius) !important; box-shadow: 0 4px 16px rgba(0,0,0,0.5) !important; }
     .leaflet-popup-tip { background: var(--bg2) !important; }
+
+    /* ── Search bar ── */
+    #search-input {
+      flex: 1; min-width: 0; box-sizing: border-box;
+      padding: 5px 10px; font-size: 13px;
+      background: var(--bg3); color: var(--text);
+      border: 1px solid var(--border); border-radius: var(--radius);
+      outline: none;
+    }
+    #search-input:focus { border-color: var(--accent); }
+    #search-input::placeholder { color: var(--text2); }
   </style>
 </head>
 <body data-version="{{ version }}">
@@ -285,8 +297,11 @@
     <span id="dot-gps" class="sdot" title="GPS"></span>
     <span class="slabel">GPS</span>
   </div>
-  <div class="hdr-space"></div>
-  <a href="/" class="hdr-link">Full OM →</a>
+  <div style="flex:1"></div>
+  <div style="width:var(--side);flex-shrink:0;display:flex;align-items:center;gap:10px;padding-right:14px">
+    <input id="search-input" type="search" placeholder="Search nodes…" autocomplete="off" style="display:none">
+    <span id="hdr-clock" style="font-size:13px;color:var(--text2);white-space:nowrap;flex-shrink:0"></span>
+  </div>
 </header>
 
 <div id="main">
@@ -340,6 +355,15 @@
 </div>
 
 <div id="toast"></div>
+<div id="confirm-overlay" class="overlay hidden">
+  <div class="action-box" style="max-width:280px">
+    <div id="confirm-msg" class="abox-title" style="margin-bottom:1.2rem"></div>
+    <div class="abox-btns">
+      <button class="btn" id="confirm-cancel" style="flex:1">Cancel</button>
+      <button class="btn" id="confirm-ok" style="flex:1;background:rgba(239,68,68,.15);color:#ef4444;border-color:#ef4444">OK</button>
+    </div>
+  </div>
+</div>
 
 <script src="/static/leaflet/leaflet.js"></script>
 <script src="/static/js/lite.js?v={{ version }}"></script>

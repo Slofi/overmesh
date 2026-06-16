@@ -13,12 +13,15 @@ const S = {
   messages:     [],   // all messages (MT + MC)
   tocEntries:   [],
   mtChannels:   [],   // [{index, name}]
+  mcChannels:   [],   // [{index, name}]
   activeMsgNet: "mt",
   activeMtCh:   0,
   activeMcCh:   0,
   gpsOk:        false,
   action:       null, // current action sheet node object
   dmTarget:     null, // current DM target node object
+  activeDmNodeId: null, // DM conversation in messages panel
+  searchQuery:    "",
 };
 
 // ════════════════════════════════════════════════════════
@@ -70,12 +73,82 @@ function initMap() {
   mcGroup = L.layerGroup().addTo(map);
 }
 
-function _divIcon(color, border, size) {
-  const s = size || 12;
+function _mtMarkerColor(node) {
+  if (node.is_local) return "#3b82f6";
+  const ts = Number(node.last_heard_ts || node.last_heard || 0);
+  if (!ts) return "#6e7681";
+  const age = Date.now() / 1000 - ts;
+  if (age < 1800) return "#86efac";
+  if (age < 7200) return "#e07b30";
+  return "#f85149";
+}
+
+function _svgIcon(svg, size, popupY) {
+  const s = size || 24;
+  const c = s / 2;
   return L.divIcon({
-    html: `<div style="width:${s}px;height:${s}px;background:${color};border:2px solid ${border};border-radius:50%;box-shadow:0 1px 3px rgba(0,0,0,.5)"></div>`,
-    className: "", iconSize: [s, s], iconAnchor: [s / 2, s / 2],
+    html: svg,
+    className: "",
+    iconSize: [s, s],
+    iconAnchor: [c, c],
+    popupAnchor: [0, popupY || -(c + 2)],
   });
+}
+
+function _mtIcon(node) {
+  const color = _mtMarkerColor(node);
+  const isLocal = !!node.is_local;
+  const outer = isLocal ? 10 : 7;
+  const inner = isLocal ? 7 : 4;
+  const sz = (outer + 5) * 2;
+  const c = sz / 2;
+  const pulse = isLocal
+    ? `<circle cx="${c}" cy="${c}" r="${outer + 4}" fill="none" stroke="${color}" stroke-width="1.5" opacity="0.75"/>`
+    : "";
+  return _svgIcon(`<svg xmlns="http://www.w3.org/2000/svg" width="${sz}" height="${sz}" viewBox="0 0 ${sz} ${sz}" style="filter:drop-shadow(0 1px 4px rgba(0,0,0,0.8));overflow:visible">
+    ${pulse}
+    <circle cx="${c}" cy="${c}" r="${outer}" fill="white"/>
+    <circle cx="${c}" cy="${c}" r="${inner}" fill="${color}"/>
+  </svg>`, sz);
+}
+
+function _mcType(contact) {
+  const raw = contact.type ?? contact.contact_type ?? contact.node_type ?? contact.role;
+  const num = Number(raw);
+  if (Number.isFinite(num)) return num;
+  const text = String(raw ?? contact.long_name ?? "").toLowerCase();
+  if (text.includes("room")) return 3;
+  if (text.includes("rptr") || text.includes("repeat")) return 2;
+  return 0;
+}
+
+function _mcIcon(contact) {
+  const type = _mcType(contact);
+  const isRptr = type === 2;
+  const isRoom = type === 3;
+  const color = isRptr ? "#3b82f6" : isRoom ? "#fb923c" : "#60a5fa";
+  const outer = 7;
+  const inner = 4;
+  const sz = (outer + 5) * 2;
+  const c = sz / 2;
+  const o = c - outer;
+  const i = c - inner;
+  const shape = (isRptr || isRoom)
+    ? `<rect x="${o}" y="${o}" width="${outer * 2}" height="${outer * 2}" fill="white" rx="2"/>
+       <rect x="${i}" y="${i}" width="${inner * 2}" height="${inner * 2}" fill="${color}" rx="1"/>`
+    : `<circle cx="${c}" cy="${c}" r="${outer}" fill="white"/>
+       <circle cx="${c}" cy="${c}" r="${inner}" fill="${color}"/>`;
+  return _svgIcon(`<svg xmlns="http://www.w3.org/2000/svg" width="${sz}" height="${sz}" viewBox="0 0 ${sz} ${sz}" style="filter:drop-shadow(0 1px 4px rgba(0,0,0,0.8));overflow:visible">
+    ${shape}
+  </svg>`, sz);
+}
+
+function _mcRadioIcon() {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30" style="filter:drop-shadow(0 0 5px #10b981) drop-shadow(0 1px 4px rgba(0,0,0,0.8));overflow:visible">
+    <rect x="7" y="7" width="16" height="16" fill="white" transform="rotate(45,15,15)" rx="1.5"/>
+    <rect x="10" y="10" width="10" height="10" fill="#10b981" transform="rotate(45,15,15)" rx="1"/>
+  </svg>`;
+  return _svgIcon(svg, 30, -17);
 }
 
 function upsertMtMarker(node) {
@@ -84,7 +157,7 @@ function upsertMtMarker(node) {
   if (!id) return;
   const ll   = [node.latitude, node.longitude];
   const name = node.long_name || id;
-  const icon = node.is_local ? _divIcon("var(--accent)", "#fff", 14) : _divIcon("#1565c0", "#90caf9");
+  const icon = _mtIcon(node);
   if (mtMarkers[id]) {
     mtMarkers[id].setLatLng(ll).setIcon(icon).setTooltipContent(name);
   } else {
@@ -102,10 +175,11 @@ function upsertMcMarker(contact) {
   if (!id) return;
   const ll   = [contact.latitude, contact.longitude];
   const name = contact.long_name || id;
+  const icon = contact._kind === "radio" ? _mcRadioIcon() : _mcIcon(contact);
   if (mcMarkers[id]) {
-    mcMarkers[id].setLatLng(ll).setTooltipContent(name);
+    mcMarkers[id].setLatLng(ll).setIcon(icon).setTooltipContent(name);
   } else {
-    const m = L.marker(ll, { icon: _divIcon("#1b5e20", "#a5d6a7") })
+    const m = L.marker(ll, { icon })
       .bindTooltip(name, { permanent: false, direction: "top" })
       .on("click", () => openActionForNode({ ...contact, network: "mc", _id: id }))
       .addTo(mcGroup);
@@ -188,6 +262,7 @@ function onSSE(d) {
     pushMsg(msg);
     if (S.tab === "messages") renderMsgList();
     if (S.dmTarget && d.subtype === "dm" && d.from_id === S.dmTarget._id) renderDmHistory();
+    if (d.subtype === "dm" && !msg.sent) { toast("DM from " + (msg.from_name || d.from_id)); if (S.tab === "messages") { const chSel = $("msg-ch"); if (chSel) chSel.innerHTML = renderMsgChannelOptions(); if (S.activeDmNodeId === msg.from_id) renderMsgList(); } }
     return;
   }
 
@@ -199,9 +274,29 @@ function onSSE(d) {
 
   if (t === "mc_status") {
     const idx = S.mcRadios.findIndex(r => r.id === d.radio_id);
-    if (idx >= 0) S.mcRadios[idx].status = d.status;
-    else S.mcRadios.push({ id: d.radio_id, name: d.name || d.radio_id, status: d.status });
+    const radio = {
+      ...(idx >= 0 ? S.mcRadios[idx] : {}),
+      ...d,
+      id: d.radio_id,
+      name: d.name || d.radio_id,
+      status: d.status,
+    };
+    if (idx >= 0) S.mcRadios[idx] = radio;
+    else S.mcRadios.push(radio);
     if (!S.activeMcRadio && d.status === "connected") S.activeMcRadio = d.radio_id;
+    if (radio.status === "connected" && radio.lat != null && radio.lon != null) {
+      upsertMcMarker({
+        id: radio.id,
+        long_name: radio.name || radio.id,
+        latitude: radio.lat,
+        longitude: radio.lon,
+        radio_id: radio.id,
+        _kind: "radio",
+      });
+    } else if (mcMarkers[radio.id]) {
+      try { mcGroup.removeLayer(mcMarkers[radio.id]); } catch {}
+      delete mcMarkers[radio.id];
+    }
     updateStatusDots();
     if (S.tab === "settings") renderSettings();
     return;
@@ -260,7 +355,7 @@ function normMtMsg(d) {
     from_id:   d.from_id,
     text:      d.text || "",
     ts:        d.ts || 0,
-    channel:   d.channel ?? 0,
+    channel:   d.channel ?? d.channel_idx ?? d.channel_index ?? 0,
     is_dm:     !!d.is_dm,
     sent:      !!d.sent,
     radio_id:  d.radio_id,
@@ -274,6 +369,8 @@ function normMcMsg(d) {
     network:   "mc",
     from_name: d.from_name || resolveMcName(d.from_id),
     from_id:   d.from_id,
+    to_id:     d.to_id || null,
+    to_name:   d.to_name || resolveMcName(d.to_id),
     text:      d.text || "",
     ts:        d.ts || 0,
     channel:   d.channel ?? 0,
@@ -282,6 +379,21 @@ function normMcMsg(d) {
     radio_id:  d.radio_id,
     subtype:   d.subtype || "channel",
   };
+}
+
+
+function showConfirm(msg, onOk) {
+  const overlay = $("confirm-overlay");
+  const msgEl   = $("confirm-msg");
+  const okBtn   = $("confirm-ok");
+  const cancelBtn = $("confirm-cancel");
+  if (!overlay) { if (confirm(msg)) onOk(); return; }
+  msgEl.textContent = msg;
+  overlay.classList.remove("hidden");
+  const cleanup = () => overlay.classList.add("hidden");
+  okBtn.onclick = () => { cleanup(); onOk(); };
+  cancelBtn.onclick = cleanup;
+  overlay.onclick = e => { if (e.target === overlay) cleanup(); };
 }
 
 function resolveMcName(fromId) {
@@ -317,10 +429,11 @@ async function loadAll() {
     loadMcStatus(),
     loadMtNodes(),
     loadMtChannels(),
+    loadMtMessages(),
     loadToc(),
   ]);
   if (S.activeMcRadio) {
-    await Promise.allSettled([loadMcContacts(), loadMcMessages()]);
+    await Promise.allSettled([loadMcChannels(), loadMcContacts(), loadMcMessages()]);
   }
   updateStatusDots();
   renderContacts();
@@ -339,11 +452,22 @@ async function loadMtStatus() {
 async function loadMcStatus() {
   try {
     const data = await apiFetch("/api/mc/status");
-    S.mcRadios = (data.mc_nodes || []).map(r => ({ id: r.id, name: r.name, status: r.status }));
+    S.mcRadios = (data.mc_nodes || []).map(r => ({ ...r, id: r.id, name: r.name, status: r.status }));
     if (!S.activeMcRadio) {
       const connected = S.mcRadios.find(r => r.status === "connected");
       S.activeMcRadio = connected ? connected.id : (S.mcRadios[0]?.id || null);
     }
+    S.mcRadios.forEach(r => {
+      if (r.status !== "connected" || r.lat == null || r.lon == null) return;
+      upsertMcMarker({
+        id: r.id,
+        long_name: r.name || r.id,
+        latitude: r.lat,
+        longitude: r.lon,
+        radio_id: r.id,
+        _kind: "radio",
+      });
+    });
   } catch {}
 }
 
@@ -376,6 +500,45 @@ async function loadMtChannels() {
   } catch {
     S.mtChannels = [{ index: 0, name: "Primary" }];
   }
+}
+
+function normalizeChannel(ch, idx) {
+  if (typeof ch === "string") return { index: Number(idx || 0), name: ch || `Channel ${idx || 0}`, hash: "" };
+  const index = Number(ch.index ?? ch.idx ?? ch.channel ?? idx ?? 0);
+  const rawName = String(ch.name || "").trim();
+  return {
+    index,
+    name: rawName || `Channel ${index}`,
+    hash: ch.hash || "",
+  };
+}
+
+async function loadMcChannels() {
+  if (!S.activeMcRadio) {
+    S.mcChannels = [{ index: 0, name: "Channel 0" }];
+    return;
+  }
+  try {
+    const data = await apiFetch(`/api/mc/${S.activeMcRadio}/channels`);
+    const list = (data.channels || data || []).map(normalizeChannel);
+    S.mcChannels = list.length ? list : [{ index: 0, name: "Channel 0" }];
+    if (!S.mcChannels.some(ch => ch.index === S.activeMcCh)) {
+      S.activeMcCh = S.mcChannels[0].index;
+    }
+  } catch {
+    S.mcChannels = [{ index: 0, name: "Channel 0" }];
+    S.activeMcCh = 0;
+  }
+}
+
+async function loadMtMessages() {
+  try {
+    const data = await apiFetch("/api/chat/messages?limit=300");
+    for (const m of (data.messages || [])) {
+      pushMsg(normMtMsg(m));
+    }
+    S.messages.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  } catch {}
 }
 
 async function loadMcMessages() {
@@ -430,12 +593,15 @@ function renderContacts() {
       })),
   ].sort((a, b) => b.last_ts - a.last_ts);
 
-  if (!all.length) {
-    panel.innerHTML = '<div class="empty">No nodes heard yet</div>';
+  const cq = S.searchQuery.toLowerCase();
+  const filtered = cq ? all.filter(n => (n.long_name || "").toLowerCase().includes(cq) || (n._id || "").toLowerCase().includes(cq)) : all;
+
+  if (!filtered.length) {
+    panel.innerHTML = cq ? `<div class="empty">No nodes match "${esc(S.searchQuery)}"</div>` : '<div class="empty">No nodes heard yet</div>';
     return;
   }
 
-  panel.innerHTML = all.map(n => {
+  panel.innerHTML = filtered.map(n => {
     const local = n.is_local ? ' <span style="font-size:10px;color:var(--accent)">●</span>' : "";
     const pos   = n.has_pos ? "📍 " : "";
     const ts    = n.last_ts ? ago(n.last_ts) : "—";
@@ -542,9 +708,9 @@ function renderDmHistory() {
     return;
   }
   el.innerHTML = hist.map(m =>
-    `<div class="msg-row ${m.sent ? "sent" : m.network}">
+    `<div class="msg-row ${m.is_dm ? (m.sent ? "sent" : "dm") : (m.sent ? "sent" : m.network)}">
       <div class="msg-hdr">
-        <span class="msg-sender">${esc(m.from_name)}</span>
+        <span class="msg-sender">${m.is_dm ? (m.sent ? "\u2192 " + esc(m.to_name || m.to_id || "?") : "\u2190 " + esc(m.from_name || m.from_id || "?")) : esc(m.from_name)}</span>
         <span>${ago(m.ts)}</span>
       </div>
       <div class="msg-text">${esc(m.text)}</div>
@@ -560,19 +726,27 @@ async function sendDm() {
   if (!text) return;
   try {
     if (target.network === "mt") {
-      await apiFetch(`/api/node/${target._id}/dm`, {
+      const d = await apiFetch(`/api/node/${target._id}/dm`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ message: text }),
       });
+      if (d.message) {
+        pushMsg(normMtMsg(d.message));
+        renderDmHistory();
+      }
     } else {
       const rid = target.radio_id || S.activeMcRadio;
       if (!rid) { toast("No MC radio"); return; }
-      await apiFetch(`/api/mc/${rid}/send_dm`, {
+      const d = await apiFetch(`/api/mc/${rid}/send_dm`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, dest_id: target._id }),
+        body: JSON.stringify({ text, target: target._id }),
       });
+      if (d.message) {
+        pushMsg(d.message);
+        renderDmHistory();
+      }
     }
     $("dm-input").value = "";
     toast("DM sent");
@@ -599,21 +773,64 @@ async function pingMc(contactId, radioId) {
 // ════════════════════════════════════════════════════════
 // Messages panel
 // ════════════════════════════════════════════════════════
+function msgChannelsForActiveNet() {
+  if (S.activeMsgNet === "mt") {
+    return (S.mtChannels.length ? S.mtChannels : [{ index: 0, name: "Primary" }]).map(normalizeChannel);
+  }
+  return (S.mcChannels.length ? S.mcChannels : [{ index: 0, name: "Channel 0" }]).map(normalizeChannel);
+}
+
+function dmConversations(net) {
+  const seen = {};
+  for (const m of S.messages) {
+    if (m.network !== net || !m.is_dm) continue;
+    const nodeId   = m.sent ? m.to_id   : m.from_id;
+    const nodeName = m.sent ? (m.to_name || m.to_id || nodeId) : (m.from_name || m.from_id || nodeId);
+    if (nodeId && !seen[nodeId]) seen[nodeId] = nodeName;
+  }
+  return Object.entries(seen).map(([id, name]) => ({ id, name }));
+}
+
+function renderMsgChannelOptions() {
+  const net = S.activeMsgNet;
+  const activeCh = net === "mt" ? S.activeMtCh : S.activeMcCh;
+  const usedChs = new Set(S.messages.filter(m => m.network === net && !m.is_dm).map(m => m.channel ?? 0));
+  const channels = msgChannelsForActiveNet().filter(ch => usedChs.has(ch.index) || (!S.activeDmNodeId && ch.index === activeCh));
+  const convs = dmConversations(net);
+  if (!convs.length) {
+    return channels.map(ch => `<option value="ch:${ch.index}" ${!S.activeDmNodeId && ch.index === activeCh ? "selected" : ""}>${esc(ch.name)}</option>`).join("");
+  }
+  const chOpts = channels.map(ch => `<option value="ch:${ch.index}" ${!S.activeDmNodeId && ch.index === activeCh ? "selected" : ""}>${esc(ch.name)}</option>`).join("");
+  const dmOpts = convs.map(c => `<option value="dm:${c.id}" ${S.activeDmNodeId === c.id ? "selected" : ""}>DM: ${esc(c.name)}</option>`).join("");
+  return `<optgroup label="Channels">${chOpts}</optgroup><optgroup label="Direct Messages">${dmOpts}</optgroup>`;
+}
+
+function setMsgNet(net) {
+  S.activeMsgNet = net === "mc" ? "mc" : "mt";
+  S.activeDmNodeId = null;
+  const chSel = $("msg-ch");
+  if (chSel) chSel.innerHTML = renderMsgChannelOptions();
+  document.querySelectorAll("[data-msg-net]").forEach(btn => {
+    const active = btn.dataset.msgNet === S.activeMsgNet;
+    btn.classList.toggle("active", active);
+    btn.style.color = active ? "var(--accent)" : "";
+  });
+  renderMsgList();
+}
+
 function renderMessages() {
   const panel = $("panel-messages");
-  const mtOpts = (S.mtChannels.length ? S.mtChannels : [{ index: 0, name: "Primary" }])
-    .map(ch => `<option value="${ch.index}" ${ch.index === S.activeMtCh ? "selected" : ""}>${esc(ch.name)}</option>`)
-    .join("");
 
   panel.innerHTML = `
     <div class="ctrl-row">
-      <select id="msg-net">
-        <option value="mt" ${S.activeMsgNet === "mt" ? "selected" : ""}>Meshtastic</option>
-        <option value="mc" ${S.activeMsgNet === "mc" ? "selected" : ""}>MeshCore</option>
+      <div style="display:flex;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;flex-shrink:0">
+        <button class="btn sm muted ${S.activeMsgNet === "mt" ? "active" : ""}" data-msg-net="mt" style="border-radius:0;border:0;min-width:48px;color:${S.activeMsgNet === "mt" ? "var(--accent)" : ""}">MT</button>
+        <button class="btn sm muted ${S.activeMsgNet === "mc" ? "active" : ""}" data-msg-net="mc" style="border-radius:0;border:0;min-width:48px;color:${S.activeMsgNet === "mc" ? "var(--accent)" : ""}">MC</button>
+      </div>
+      <select id="msg-ch" style="flex:1;min-width:0">
+        ${renderMsgChannelOptions()}
       </select>
-      <select id="msg-ch">
-        ${S.activeMsgNet === "mt" ? mtOpts : '<option value="0">Channel 0</option>'}
-      </select>
+      <button id="dm-del-btn" title="Delete this DM conversation" style="display:${S.activeDmNodeId ? "" : "none"};background:rgba(239,68,68,.15);color:#ef4444;border:1px solid #ef4444;border-radius:var(--radius);padding:4px 10px;font-size:16px;cursor:pointer;flex-shrink:0">✕</button>
     </div>
     <div id="msg-list"></div>
     <div class="compose-wrap">
@@ -622,27 +839,47 @@ function renderMessages() {
     </div>
   `;
 
-  $("msg-net").onchange = e => {
-    S.activeMsgNet = e.target.value;
-    const chSel = $("msg-ch");
-    if (S.activeMsgNet === "mt") {
-      chSel.innerHTML = (S.mtChannels.length ? S.mtChannels : [{ index: 0, name: "Primary" }])
-        .map(ch => `<option value="${ch.index}">${esc(ch.name)}</option>`).join("");
+  document.querySelectorAll("[data-msg-net]").forEach(btn => {
+    btn.onclick = () => setMsgNet(btn.dataset.msgNet);
+  });
+
+  $("msg-ch").onchange = e => {
+    const val = e.target.value;
+    if (val.startsWith("dm:")) {
+      S.activeDmNodeId = val.slice(3);
     } else {
-      chSel.innerHTML = '<option value="0">Channel 0</option>';
+      S.activeDmNodeId = null;
+      const idx = parseInt(val.replace("ch:", ""));
+      if (S.activeMsgNet === "mt") S.activeMtCh = idx;
+      else S.activeMcCh = idx;
     }
+    updateDmDelBtn();
     renderMsgList();
   };
 
-  $("msg-ch").onchange = e => {
-    if (S.activeMsgNet === "mt") S.activeMtCh = parseInt(e.target.value);
-    else S.activeMcCh = parseInt(e.target.value);
-    renderMsgList();
-  };
+  function updateDmDelBtn() {
+    const btn = $("dm-del-btn");
+    if (!btn) return;
+    btn.style.display = S.activeDmNodeId ? "" : "none";
+    btn.onclick = async () => {
+      if (!confirm("Delete DM conversation with this contact?")) return;
+      const net = S.activeMsgNet;
+      if (net === "mc" && S.activeMcRadio) {
+        await apiFetch(`/api/mc/${S.activeMcRadio}/dm_messages/${S.activeDmNodeId}`, { method: "DELETE" });
+      }
+      S.messages = S.messages.filter(m => !(m.network === net && m.is_dm && (m.from_id === S.activeDmNodeId || m.to_id === S.activeDmNodeId)));
+      S.activeDmNodeId = null;
+      const chSel = $("msg-ch");
+      if (chSel) chSel.innerHTML = renderMsgChannelOptions();
+      updateDmDelBtn();
+      renderMsgList();
+    };
+  }
 
   $("msg-input").onkeydown = e => { if (e.key === "Enter") sendMsg(); };
   $("msg-send-btn").onclick = sendMsg;
 
+  if (typeof updateDmDelBtn === "function") updateDmDelBtn();
   renderMsgList();
   setTimeout(() => $("msg-input")?.focus(), 50);
 }
@@ -652,9 +889,11 @@ function renderMsgList() {
   if (!listEl) return;
   const net = S.activeMsgNet;
   const ch  = net === "mt" ? S.activeMtCh : S.activeMcCh;
-  const msgs = S.messages
-    .filter(m => m.network === net && !m.is_dm && (m.channel ?? 0) === ch)
-    .slice(-80);
+  const mq = S.searchQuery.toLowerCase();
+  const msgs = (S.activeDmNodeId
+    ? S.messages.filter(m => m.network === net && m.is_dm && (m.from_id === S.activeDmNodeId || m.to_id === S.activeDmNodeId))
+    : S.messages.filter(m => m.network === net && !m.is_dm && (m.channel ?? 0) === ch)
+  ).filter(m => !mq || (m.text || "").toLowerCase().includes(mq) || (m.from_name || "").toLowerCase().includes(mq)).slice(-80);
 
   if (!msgs.length) {
     listEl.innerHTML = '<div class="empty">No messages yet</div>';
@@ -679,18 +918,37 @@ async function sendMsg() {
   if (!text) return;
   try {
     if (S.activeMsgNet === "mt") {
-      await apiFetch("/api/chat/send", {
+      const d = await apiFetch("/api/chat/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text, channel: S.activeMtCh }),
       });
-    } else {
+      if (d.message) {
+        pushMsg(normMtMsg(d.message));
+        renderMsgList();
+      }
+    } else if (S.activeDmNodeId) {
       if (!S.activeMcRadio) { toast("No MC radio connected"); return; }
-      await apiFetch(`/api/mc/${S.activeMcRadio}/send_chan`, {
+      const d = await apiFetch(`/api/mc/${S.activeMcRadio}/send_dm`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, channel_idx: S.activeMcCh }),
+        body: JSON.stringify({ target: S.activeDmNodeId, text }),
       });
+      if (d.message) {
+        pushMsg(normMcMsg ? normMcMsg(d.message) : d.message);
+        renderMsgList();
+      }
+    } else {
+      if (!S.activeMcRadio) { toast("No MC radio connected"); return; }
+      const d = await apiFetch(`/api/mc/${S.activeMcRadio}/send_chan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, channel: S.activeMcCh }),
+      });
+      if (d.message) {
+        pushMsg(d.message);
+        renderMsgList();
+      }
     }
     input.value = "";
     toast("Sent");
@@ -816,7 +1074,11 @@ function renderLog() {
     `<option value="${c}">${c}</option>`
   ).join("");
 
-  const entries = S.tocEntries.slice(0, 60).map(e =>
+  const lq = S.searchQuery.toLowerCase();
+  const logFiltered = lq
+    ? S.tocEntries.filter(e => (e.body || "").toLowerCase().includes(lq) || (e.category || "").toLowerCase().includes(lq))
+    : S.tocEntries;
+  const entries = logFiltered.slice(0, 60).map(e =>
     `<div class="log-row">
       <div class="log-hdr">
         <span class="log-cat">${esc(e.category || "NOTE")}</span>
@@ -1077,23 +1339,48 @@ function renderSettings() {
       <div><div class="slbl">Restart required</div><div class="ssub">Apply the update</div></div>
       <button class="btn sm" id="update-restart-btn">Restart</button>
     </div>
+    <div class="shdr" style="margin-top:14px">Device</div>
+    <div class="srow">
+      <div><div class="slbl">Restart</div><div class="ssub">Reboot the Hand-Deck</div></div>
+      <button class="btn sm" id="sys-restart-btn" style="background:rgba(214,158,46,.15);color:#d69e2e;border:1px solid #d69e2e">Restart</button>
+    </div>
+    <div class="srow">
+      <div><div class="slbl">Shutdown</div><div class="ssub">Power off the Hand-Deck</div></div>
+      <button class="btn sm" id="sys-shutdown-btn" style="background:rgba(239,68,68,.12);color:#ef4444;border:1px solid #ef4444">Shutdown</button>
+    </div>
     ${ver ? `<div style="margin-top:20px;font-size:11px;color:var(--text2);text-align:center">OM Lite · ${esc(ver)}</div>` : ""}
   `;
 
+  const sysRestart = $("sys-restart-btn");
+  if (sysRestart) sysRestart.onclick = () => {
+    showConfirm("Restart OM Lite?", async () => {
+      try { await apiFetch("/api/system/restart", { method: "POST" }); } catch(e) {}
+      toast("Restarting OM Lite…", 4000);
+    });
+  };
+  const sysShutdown = $("sys-shutdown-btn");
+  if (sysShutdown) sysShutdown.onclick = () => {
+    showConfirm("Stop OM Lite?", async () => {
+      try { await apiFetch("/api/system/shutdown", { method: "POST" }); } catch(e) {}
+      toast("Stopping OM Lite…", 4000);
+    });
+  };
   $("mc-radio-sel").onchange = e => {
     S.activeMcRadio = e.target.value;
     S.mcContacts = {};
+    S.mcChannels = [];
+    S.activeMcCh = 0;
     Object.values(mcMarkers).forEach(m => m.remove());
     Object.keys(mcMarkers).forEach(k => delete mcMarkers[k]);
-    loadMcContacts().then(() => loadMcMessages()).then(() => {
+    loadMcChannels().then(() => loadMcContacts()).then(() => loadMcMessages()).then(() => {
       if (S.tab === "contacts") renderContacts();
-      if (S.tab === "messages") renderMsgList();
+      if (S.tab === "messages") renderMessages();
     });
   };
 
   $("reload-btn").onclick = async () => {
     toast("Refreshing…");
-    await Promise.allSettled([loadMtNodes(), loadMcContacts()]);
+    await Promise.allSettled([loadMtNodes(), loadMcChannels(), loadMcContacts()]);
     if (S.tab === "contacts") renderContacts();
     toast("Refreshed");
   };
@@ -1109,11 +1396,33 @@ function renderSettings() {
   const restBtn = $("update-restart-btn");
   if (restBtn) restBtn.onclick = liteRestartOM;
   liteCheckUpdate(false);
+
 }
+
+// ── header clock (module-level) ──
+function updateClock() {
+  const el = $("hdr-clock");
+  if (!el) return;
+  const now = new Date();
+  const d = String(now.getDate()).padStart(2,"0");
+  const m = String(now.getMonth()+1).padStart(2,"0");
+  const yy = String(now.getFullYear()).slice(-2);
+  const hh = String(now.getHours()).padStart(2,"0");
+  const mm = String(now.getMinutes()).padStart(2,"0");
+  el.textContent = `${d}/${m}/${yy} ${hh}:${mm}`;
+}
+updateClock();
+setInterval(updateClock, 10000);
 
 // ════════════════════════════════════════════════════════
 // Tab switching
 // ════════════════════════════════════════════════════════
+const SEARCH_PLACEHOLDERS = {
+  contacts: "Search nodes…",
+  messages: "Search messages…",
+  log:      "Search log entries…",
+};
+
 function switchTab(tab) {
   S.tab = tab;
   document.querySelectorAll(".tab-btn").forEach(b =>
@@ -1123,6 +1432,12 @@ function switchTab(tab) {
   const panel = $(`panel-${tab}`);
   if (!panel) return;
   panel.classList.add("active");
+
+  
+  const si = $("search-input");
+  const showSearch = tab in SEARCH_PLACEHOLDERS;
+  if (si) si.style.display = showSearch ? "" : "none";
+  if (si && showSearch) si.placeholder = SEARCH_PLACEHOLDERS[tab];
 
   if (tab === "contacts") renderContacts();
   else if (tab === "messages") renderMessages();
@@ -1176,6 +1491,20 @@ async function init() {
   $("dm-overlay").onclick = e => { if (e.target === $("dm-overlay")) closeDm(); };
   $("dm-send-btn").onclick = sendDm;
   $("dm-input").addEventListener("keydown", e => { if (e.key === "Enter") sendDm(); });
+
+  // Search bar
+  const si = $("search-input");
+  if (si) {
+    si.addEventListener("input", () => {
+      S.searchQuery = si.value;
+      if (S.tab === "contacts") renderContacts();
+      else if (S.tab === "messages") renderMsgList();
+      else if (S.tab === "log") renderLog();
+    });
+    si.addEventListener("search", () => {
+      if (!si.value) { S.searchQuery = ""; if (S.tab === "contacts") renderContacts(); else if (S.tab === "messages") renderMsgList(); else if (S.tab === "log") renderLog(); }
+    });
+  }
 
   connectSSE();
   await loadAll();

@@ -1025,3 +1025,23 @@ def api_settings_auth_set():
     if password:
         set_auth_setting("auth_password_hash", generate_password_hash(password))
     return jsonify({"ok": True})
+
+
+@bp.route("/api/system/restart", methods=["POST"])
+def api_system_restart():
+    import threading, os
+    def _do():
+        import time; time.sleep(1)
+        os.system("XDG_RUNTIME_DIR=/run/user/1000 systemctl --user restart overmesh.service")
+    threading.Thread(target=_do, daemon=True).start()
+    return jsonify({"ok": True, "message": "Restarting…"})
+
+
+@bp.route("/api/system/shutdown", methods=["POST"])
+def api_system_shutdown():
+    import threading, os
+    def _do():
+        import time; time.sleep(1)
+        os.system("XDG_RUNTIME_DIR=/run/user/1000 systemctl --user stop overmesh.service")
+    threading.Thread(target=_do, daemon=True).start()
+    return jsonify({"ok": True, "message": "Shutting down…"})

@@ -558,7 +558,7 @@ def api_dm(node_id):
     if not _valid_node_id(node_id):
         return jsonify({"error": "Invalid node ID"}), 400
     data         = request.get_json(silent=True) or {}
-    msg          = (data.get("message") or "").strip()
+    msg          = (data.get("message") or data.get("text") or "").strip()
     if not msg:
         return jsonify({"error": "Empty message"}), 400
     radio_id_req = data.get("radio_id")
@@ -597,7 +597,7 @@ def api_dm(node_id):
             with pending_acks_lock:
                 pending_acks[pkt_id] = (chat_msg["id"], radio_id, time.time())
         push_to_sse(json.dumps(chat_msg))
-        return jsonify({"ok": True})
+        return jsonify({"ok": True, "message": chat_msg})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

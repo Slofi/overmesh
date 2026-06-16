@@ -2,6 +2,7 @@ import datetime
 import json
 import re
 import time
+import uuid as _uuid
 
 from flask import Blueprint, jsonify, request
 
@@ -146,10 +147,11 @@ def api_toc_add():
         return jsonify({'error': 'Body required'}), 400
     category = _normalize_category(data.get('category'))
     ts = _normalize_ts(data.get('ts'))
+    uid = str(_uuid.uuid4())
     with get_prefs_db() as conn:
         cur = conn.execute(
-            'INSERT INTO toc_log (ts, category, body) VALUES (?, ?, ?)',
-            (ts, category, body)
+            'INSERT INTO toc_log (ts, category, body, uuid) VALUES (?, ?, ?, ?)',
+            (ts, category, body, uid)
         )
         entry_id = cur.lastrowid
     return jsonify({'ok': True, 'id': entry_id, 'ts': ts, 'category': category, 'body': body})
@@ -199,8 +201,8 @@ def api_toc_import():
     with get_prefs_db() as conn:
         for entry in entries:
             cur = conn.execute(
-                'INSERT INTO toc_log (ts, category, body) VALUES (?, ?, ?)',
-                (entry['ts'], entry['category'], entry['body']),
+                'INSERT INTO toc_log (ts, category, body, uuid) VALUES (?, ?, ?, ?)',
+                (entry['ts'], entry['category'], entry['body'], str(_uuid.uuid4())),
             )
             imported.append({
                 'id': cur.lastrowid,

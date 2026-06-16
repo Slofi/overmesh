@@ -3,6 +3,7 @@ import hashlib
 import logging
 import math
 import os
+import uuid
 import shutil
 import sqlite3
 import threading
@@ -450,6 +451,13 @@ def init_prefs_db():
             category TEXT NOT NULL DEFAULT 'NOTE',
             body     TEXT NOT NULL
         )''')
+        try:
+            c.execute("ALTER TABLE toc_log ADD COLUMN uuid TEXT")
+        except Exception:
+            pass
+        rows = c.execute("SELECT id FROM toc_log WHERE uuid IS NULL").fetchall()
+        for (rid,) in rows:
+            c.execute("UPDATE toc_log SET uuid=? WHERE id=?", (str(uuid.uuid4()), rid))
 
 
 def init_msgs_db(db_path):

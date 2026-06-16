@@ -10237,8 +10237,10 @@ if (targetEl) {
     if (altEl)  altEl.textContent  = pos.alt  != null ? pos.alt + ' m'      : '—';
     if (speedEl) speedEl.textContent = pos.speed != null ? pos.speed.toFixed(1) + ' m/s' : '—';
     if (gpsBtn) gpsBtn.disabled = !hasFix;
-    if (hasFix) _gpsPlaceMarker(pos.lat, pos.lon, pos.alt, pos.sats);
-    else _gpsRemoveMarker();
+    if (hasFix) {
+      _gpsPlaceMarker(pos.lat, pos.lon, pos.alt, pos.sats);
+      if (mapLocked && leafletMap) leafletMap.panTo([pos.lat, pos.lon], { animate: true, duration: 0.6 });
+    } else _gpsRemoveMarker();
   }
 
   function _gpsPlaceMarker(lat, lon, alt, sats) {

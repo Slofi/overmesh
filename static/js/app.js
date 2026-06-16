@@ -13712,13 +13712,15 @@ if (targetEl) {
     const suffix = uncertain ? ' · estimated' : '';
     const labelSuffix = uncertain ? '?' : '';
     const routeColor = uncertain ? '#f59e0b' : '#8b5cf6';
+    const hashBytes = entry?.pathHashSize ?? (entry?.pathHashMode != null ? Number(entry.pathHashMode) + 1 : null);
+    const byteSuffix = hashBytes != null ? `|${hashBytes}b` : '';
     if (hopLen === 255) {
       if (routeType === 'FLOOD') return { label: 'flood mode', detail: 'Flood mode', color: 'rgba(148,163,184,0.8)' };
       return { label: 'direct route', detail: 'Direct route', color: '#38bdf8' };
     }
     if (path?.flood) return { label: 'flood mode', detail: 'Flood mode', color: 'rgba(148,163,184,0.8)' };
     if (hopLen === 0) return { label: 'direct', detail: 'Direct', color: '#22c55e' };
-    if (hopLen > 0) return { label: `${hopLen} hop${hopLen !== 1 ? 's' : ''}${labelSuffix}`, detail: `${hopLen} hop${hopLen !== 1 ? 's' : ''}${suffix}`, color: routeColor };
+    if (hopLen > 0) return { label: `${hopLen} hop${hopLen !== 1 ? 's' : ''}${labelSuffix}${byteSuffix}`, detail: `${hopLen} hop${hopLen !== 1 ? 's' : ''}${suffix}`, color: routeColor };
     return null;
   }
 

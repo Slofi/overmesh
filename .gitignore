@@ -7,6 +7,8 @@ bot_config*.json
 # Databases (message history, prefs, waypoints)
 *.db
 *.db.*
+*.db-shm
+*.db-wal
 
 # Runtime secrets
 secret.key

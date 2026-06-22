@@ -25,7 +25,7 @@ def api_settings_gps_get():
 @bp.route("/api/settings/gps", methods=["POST"])
 def api_settings_gps_set():
     data = request.get_json(silent=True) or {}
-    enabled   = bool(data.get("enabled", False))
+    enabled   = bool(data.get("enabled", CONFIG.get("gps", {}).get("enabled", True)))
     port      = str(data.get("port", "")).strip()
     source    = str(data.get("source", "direct")).strip()
     proxy_url = str(data.get("proxy_url", "http://localhost:8090")).strip() or "http://localhost:8090"

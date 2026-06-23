@@ -4700,10 +4700,7 @@ if (targetEl) {
   async function restartOverMeshNow(btn) {
       btnFeedback(btn, '✓ Restarting…', 3000);
       try { await fetch(BASE_PATH + '/api/restart', {method: 'POST'}); } catch(_) {}
-      document.body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;color:var(--muted)">
-        <div style="font-size:32px">&#x21BA;</div>
-        <div style="font-size:16px">OverMesh will restart in a few seconds…</div>
-      </div>`;
+      document.body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui,sans-serif"><div style="text-align:center;padding:32px"><div style="font-size:clamp(2.5rem,8vw,5.5rem);font-weight:700;color:var(--accent);letter-spacing:0.04em;line-height:1;margin-bottom:28px">OverMesh</div><div style="font-size:1.5rem;color:var(--muted);margin-bottom:16px">&#x21BA;</div><div style="font-size:0.95rem;color:#666;letter-spacing:0.05em">OverMesh will restart in a few seconds…</div></div></div>`;
       setTimeout(() => location.reload(), 8000);
   }
 
@@ -4720,13 +4717,7 @@ if (targetEl) {
     document.getElementById('confirm-ok').textContent = 'Shut down';
     showConfirm('Shut down the OverMesh server?', async () => {
       try { await fetch(BASE_PATH + '/api/shutdown', {method: 'POST'}); } catch(_) {}
-      document.body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;color:var(--muted)">
-        <div style="font-size:24px;color:var(--accent)">&#x23FB;</div>
-        <div style="font-size:16px">OverMesh stopped.</div>
-        <div style="font-size:12px;max-width:320px;text-align:center">Restart OverMesh using the same method you normally use on this machine.</div>
-        <div style="font-size:11px;color:var(--muted);margin-top:4px">Or run:</div>
-        <code onclick="navigator.clipboard.writeText('systemctl --user start overmesh')" title="Click to copy" style="font-size:12px;background:var(--bg2);border:1px solid var(--border);padding:4px 10px;border-radius:6px;cursor:pointer;user-select:all">systemctl --user start overmesh</code>
-      </div>`;
+      document.body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui,sans-serif"><div style="text-align:center;padding:32px;max-width:440px"><div style="font-size:clamp(2.5rem,8vw,5.5rem);font-weight:700;color:var(--accent);letter-spacing:0.04em;line-height:1;margin-bottom:28px">OverMesh</div><div style="font-size:2rem;color:var(--muted);margin-bottom:14px">&#x23FB;</div><div style="font-size:1rem;color:#ccc;margin-bottom:10px">OverMesh stopped.</div><div style="font-size:0.85rem;color:#666;line-height:1.5;margin-bottom:18px">Restart OverMesh using the same method you normally use on this machine.</div><div style="font-size:0.78rem;color:#555;margin-bottom:6px">Or run:</div><code onclick="navigator.clipboard.writeText(this.textContent)" title="Click to copy" style="display:inline-block;font-size:0.78rem;background:var(--bg2);border:1px solid var(--border);padding:6px 14px;border-radius:8px;cursor:pointer;user-select:all;color:#aaa">systemctl --user start overmesh</code><div style="font-size:0.78rem;color:#555;margin-top:14px">Or launch from the Dashboard.</div></div></div>`;
     });
   }
 

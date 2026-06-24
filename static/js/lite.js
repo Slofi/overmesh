@@ -262,7 +262,18 @@ function onSSE(d) {
     pushMsg(msg);
     if (S.tab === "messages") renderMsgList();
     if (S.dmTarget && d.subtype === "dm" && d.from_id === S.dmTarget._id) renderDmHistory();
-    if (d.subtype === "dm" && !msg.sent) { toast("DM from " + (msg.from_name || d.from_id)); if (S.tab === "messages") { const chSel = $("msg-ch"); if (chSel) chSel.innerHTML = renderMsgChannelOptions(); if (S.activeDmNodeId === msg.from_id) renderMsgList(); } }
+    if (d.subtype === "dm" && !msg.sent) {
+      toast("DM from " + (msg.from_name || d.from_id));
+      if (S.tab === "messages") {
+        const chSel = $("msg-ch");
+        if (chSel) {
+          const prevVal = chSel.value;
+          chSel.innerHTML = renderMsgChannelOptions();
+          chSel.value = prevVal || (S.activeDmNodeId ? `dm:${S.activeDmNodeId}` : `ch:${S.activeMsgNet === "mc" ? S.activeMcCh : S.activeMtCh}`);
+        }
+        if (S.activeDmNodeId === msg.from_id) renderMsgList();
+      }
+    }
     return;
   }
 
@@ -809,7 +820,10 @@ function setMsgNet(net) {
   S.activeMsgNet = net === "mc" ? "mc" : "mt";
   S.activeDmNodeId = null;
   const chSel = $("msg-ch");
-  if (chSel) chSel.innerHTML = renderMsgChannelOptions();
+  if (chSel) {
+    chSel.innerHTML = renderMsgChannelOptions();
+    chSel.value = `ch:${S.activeMsgNet === "mc" ? S.activeMcCh : S.activeMtCh}`;
+  }
   document.querySelectorAll("[data-msg-net]").forEach(btn => {
     const active = btn.dataset.msgNet === S.activeMsgNet;
     btn.classList.toggle("active", active);
@@ -870,7 +884,10 @@ function renderMessages() {
       S.messages = S.messages.filter(m => !(m.network === net && m.is_dm && (m.from_id === S.activeDmNodeId || m.to_id === S.activeDmNodeId)));
       S.activeDmNodeId = null;
       const chSel = $("msg-ch");
-      if (chSel) chSel.innerHTML = renderMsgChannelOptions();
+      if (chSel) {
+        chSel.innerHTML = renderMsgChannelOptions();
+        chSel.value = `ch:${S.activeMsgNet === "mc" ? S.activeMcCh : S.activeMtCh}`;
+      }
       updateDmDelBtn();
       renderMsgList();
     };

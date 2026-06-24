@@ -19,7 +19,7 @@ const S = {
   editingLogId: null,
   chatCtx:    null, // {type:'mt_chan'|'mt_dm'|'mc_chan'|'mc_dm', radioId, key}
   chatFilter: 'all',
-  mapMsgFeed: [], // [{type,radioId,key,from,text,ts,label,pathLen?,routeType?,rssi?,snr?}]
+  mapMsgFeed: [], // [{type,radioId,key,from,text,ts,label,pathLen?,pathHashSize?,routeType?,rssi?,snr?}]
   activeTab:  'map',
   nFilter:    'all',
   selectedNode: null, // {type:'mt'|'mc', id, radioId}
@@ -358,6 +358,24 @@ function addMsgToFeed(type, radioId, key, from, text, ts, label, extra) {
   if (S.activeTab === 'map') renderMapActivity();
 }
 
+function resolveMcName(radioId, fromId) {
+  if (!fromId || fromId === '?') return '?';
+  const contacts = S.mcNodes[radioId] || {};
+  if (contacts[fromId]) return contacts[fromId].name || contacts[fromId].long_name || fromId.slice(0, 8);
+  const found = Object.values(contacts).find(c => {
+    const k = c.contact_id || c.id || '';
+    return k && (k.startsWith(fromId) || fromId.startsWith(k));
+  });
+  return found ? (found.name || found.long_name || fromId.slice(0, 8)) : fromId.slice(0, 8);
+}
+
+function _hopLabel(pathLen) {
+  if (pathLen === 255) return 'route';
+  if (pathLen === 0) return 'direct';
+  if (pathLen > 0) return pathLen + ' hop' + (pathLen !== 1 ? 's' : '');
+  return 'flood';
+}
+
 function addActivity(kind, title, sub) {
   S.activity.unshift({ kind, title, sub, ts: Math.floor(Date.now() / 1000) });
   if (S.activity.length > 80) S.activity.pop();
@@ -477,13 +495,18 @@ function onMcMessage(d) {
     bumpUnread();
   }
   if (!d.sent) {
-    const _mcContact = S.mcNodes[rid]?.[d.from_id];
+    const _mcContact = (() => {
+      const cs = S.mcNodes[rid] || {};
+      if (cs[d.from_id]) return cs[d.from_id];
+      return Object.values(cs).find(c => { const k = c.contact_id || c.id || ''; return k && (k.startsWith(d.from_id) || d.from_id.startsWith(k)); });
+    })();
     if (_mcContact?.lat) drawMsgPath(_mcContact.lat, _mcContact.lon, '#22d3ee');
   }
   const _mcChanName = (S.mcChannels[rid] || []).find(c => c.index === (d.channel ?? 0))?.name || ('ch' + (d.channel ?? 0));
   const _mcFeedType = dmId ? 'mc_dm' : 'mc_chan';
   const _mcFeedKey = dmId || (d.channel ?? 0);
-  addMsgToFeed(_mcFeedType, rid, _mcFeedKey, d.from_name || d.from_id || '?', d.text || '', d.ts || Math.floor(Date.now()/1000), 'MC #' + _mcChanName, { pathLen: d.path_len, routeType: d.route_type, rssi: d.rx_rssi, snr: d.rx_snr });
+  const _mcFrom = d.from_name || resolveMcName(rid, d.from_id);
+  addMsgToFeed(_mcFeedType, rid, _mcFeedKey, _mcFrom, d.text || '', d.ts || Math.floor(Date.now()/1000), 'MC #' + _mcChanName, { pathLen: d.path_len, pathHashSize: d.path_hash_size, routeType: d.route_type, rssi: d.rx_rssi, snr: d.rx_snr });
 }
 
 function onMcTrace(d) {
@@ -738,7 +761,7 @@ function renderMapActivity() {
       <div class="mact-body">
         <div class="mact-from">${esc(m.from)}</div>
         <div class="mact-text">${esc(m.text)}</div>
-        <div class="mact-meta">${esc(m.label)} · ${relTime(m.ts)}${S.senseOn && m.pathLen != null ? '<br>' + m.pathLen + ' hop' + (m.pathLen !== 1 ? 's' : '') + (m.routeType ? ' · ' + esc(m.routeType) : '') + (m.rssi != null ? ' · ' + m.rssi + 'dB' : '') : ''}</div>
+        <div class="mact-meta">${esc(m.label)} · ${relTime(m.ts)}${m.pathLen != null ? '<br>' + _hopLabel(m.pathLen) + (m.pathHashSize ? ' · ' + m.pathHashSize + 'B' : '') + (m.routeType ? ' · ' + esc(m.routeType) : '') + (m.rssi != null ? ' · ' + m.rssi + 'dBm' : '') : ''}</div>
       </div>
     </div>`;
   }).join('');
@@ -851,11 +874,23 @@ function renderMessages() {
 
   el.innerHTML = msgs.map(m => {
     const out = m.from_me || m.is_mine;
-    const sender = out ? 'Me' : esc(m.sender || m.from_name || m.from_id || '?');
-    const ts = m.timestamp ? new Date(m.timestamp * 1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
+    const isMc = ctx.type.startsWith('mc');
+    const rawSender = isMc
+      ? (m.from_name || resolveMcName(ctx.radioId, m.from_id))
+      : (m.sender || m.from_name || m.from_id || '?');
+    const sender = out ? 'Me' : esc(rawSender);
+    const rawTs = m.timestamp || m.ts;
+    const ts = rawTs ? new Date(rawTs * 1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
+    let pathInfo = '';
+    if (isMc && !out && m.path_len != null) {
+      const parts = [_hopLabel(m.path_len)];
+      if (m.path_hash_size) parts.push(m.path_hash_size + 'B');
+      if (m.rx_rssi != null) parts.push(m.rx_rssi + 'dBm');
+      pathInfo = parts.join(' · ');
+    }
     return `<div class="msg-row ${out ? 'out' : 'in'}">
       <div class="msg-bubble">${esc(m.text || m.message || '')}</div>
-      <div class="msg-meta">${out ? '' : sender + ' · '}${ts}</div>
+      <div class="msg-meta">${out ? '' : sender + ' · '}${ts}${pathInfo ? ' · ' + esc(pathInfo) : ''}</div>
     </div>`;
   }).join('');
   el.scrollTop = el.scrollHeight;

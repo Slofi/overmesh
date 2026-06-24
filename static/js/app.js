@@ -8939,6 +8939,25 @@ if (targetEl) {
     });
   }
 
+  function makeGpsIcon() {
+    const sz = 30, c = 15, r = 9, color = '#3b82f6';
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${sz}" height="${sz}" viewBox="0 0 ${sz} ${sz}" style="filter:drop-shadow(0 1px 4px rgba(0,0,0,0.8));overflow:visible">
+      <circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="white" stroke-width="2.5"/>
+      <circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="${color}" stroke-width="1.5"/>
+      <circle cx="${c}" cy="${c}" r="2.5" fill="white"/>
+      <circle cx="${c}" cy="${c}" r="1.5" fill="${color}"/>
+      <line x1="${c}" y1="0" x2="${c}" y2="${c-r-2}" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+      <line x1="${c}" y1="${c+r+2}" x2="${c}" y2="${sz}" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+      <line x1="0" y1="${c}" x2="${c-r-2}" y2="${c}" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+      <line x1="${c+r+2}" y1="${c}" x2="${sz}" y2="${c}" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+      <line x1="${c}" y1="0" x2="${c}" y2="${c-r-2}" stroke="${color}" stroke-width="1.5" stroke-linecap="round"/>
+      <line x1="${c}" y1="${c+r+2}" x2="${c}" y2="${sz}" stroke="${color}" stroke-width="1.5" stroke-linecap="round"/>
+      <line x1="0" y1="${c}" x2="${c-r-2}" y2="${c}" stroke="${color}" stroke-width="1.5" stroke-linecap="round"/>
+      <line x1="${c+r+2}" y1="${c}" x2="${sz}" y2="${c}" stroke="${color}" stroke-width="1.5" stroke-linecap="round"/>
+    </svg>`;
+    return L.divIcon({ html: svg, className: '', iconSize: [sz, sz], iconAnchor: [c, c], popupAnchor: [0, -(c+2)] });
+  }
+
   function battStr(b) { return b != null ? (b === 101 ? '⚡' : `${b}%`) : '—'; }
   function snrStr(s)  { return s != null ? `${s} dB` : '—'; }
 
@@ -10236,7 +10255,7 @@ if (targetEl) {
 
   function _gpsPlaceMarker(lat, lon, alt, sats) {
     if (!leafletMap) return;
-    const icon    = makeIcon('#3b82f6', false);  // blue — matches local node colour
+    const icon    = makeGpsIcon();
     const popup   = `<div style="font-size:13px"><b>📡 GPS Receiver</b><br>
       <span style="color:var(--muted);font-size:11px">${lat.toFixed(6)}, ${lon.toFixed(6)}${alt != null ? ' · ' + alt + 'm' : ''}${sats ? ' · ' + sats + ' sats' : ''}</span></div>`;
     if (_gpsMarker) {

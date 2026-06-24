@@ -1510,15 +1510,9 @@ async def _connect_mc_node_async(node_cfg):
             result = await _set_path_hash_mode_on_mc(mc, saved_hash_mode)
             node_info["path_hash_mode"] = result["applied"]
             if result["applied"] != _valid_path_hash_mode(saved_hash_mode):
-                with CONFIG_LOCK:
-                    for node in CONFIG.get("mc_nodes", []):
-                        if node.get("id") == config_id:
-                            node["path_hash_mode"] = result["applied"]
-                            break
-                    save_config()
                 log.warning(
                     f"[MC:{name}] Requested path hash mode {saved_hash_mode} unavailable; "
-                    f"using {result['applied']}"
+                    f"using {result['applied']} — preference kept in config"
                 )
             else:
                 log.info(f"[MC:{name}] Applied path hash mode {result['applied']}")

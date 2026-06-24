@@ -1294,12 +1294,23 @@ function renderSettings() {
       ).join("")
     : '<option value="">None</option>';
   const ver = document.body.dataset.version || "";
+  const activeRadio = S.mcRadios.find(r => r.id === S.activeMcRadio);
+  const hashMode = activeRadio?.path_hash_mode ?? 2;
+  const noRadio = !S.activeMcRadio;
 
   panel.innerHTML = `
     <div class="shdr">Radio</div>
     <div class="srow">
       <div><div class="slbl">MC Radio</div><div class="ssub">Active MeshCore radio</div></div>
       <select id="mc-radio-sel">${radioOpts}</select>
+    </div>
+    <div class="srow">
+      <div><div class="slbl">Path hash</div><div class="ssub">Bytes per hop in route</div></div>
+      <select id="path-hash-sel" ${noRadio ? "disabled" : ""}>
+        <option value="0"${Number(hashMode) === 0 ? " selected" : ""}>1B/hop</option>
+        <option value="1"${Number(hashMode) === 1 ? " selected" : ""}>2B/hop</option>
+        <option value="2"${Number(hashMode) === 2 ? " selected" : ""}>3B/hop</option>
+      </select>
     </div>
 
     <div class="shdr" style="margin-top:14px">Map</div>
@@ -1376,6 +1387,31 @@ function renderSettings() {
       if (S.tab === "contacts") renderContacts();
       if (S.tab === "messages") renderMessages();
     });
+  };
+
+  const hashSel = $("path-hash-sel");
+  if (hashSel) hashSel.onchange = async e => {
+    if (!S.activeMcRadio) return;
+    const requested = parseInt(e.target.value, 10);
+    try {
+      const res = await apiFetch(`/api/settings/mc_nodes/${S.activeMcRadio}/path_hash_mode`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path_hash_mode: requested }),
+      });
+      const applied = res.applied ?? requested;
+      const radio = S.mcRadios.find(r => r.id === S.activeMcRadio);
+      if (radio) radio.path_hash_mode = res.requested ?? requested;
+      if (res.fallback) {
+        const labels = ["1B", "2B", "3B"];
+        toast(`Radio only supports ${labels[applied] || applied + "B"}/hop — preference saved`, 4000);
+      } else {
+        toast("Path hash mode updated");
+      }
+    } catch (err) {
+      toast("Failed to set path hash mode");
+      e.target.value = String(hashMode);
+    }
   };
 
   $("reload-btn").onclick = async () => {

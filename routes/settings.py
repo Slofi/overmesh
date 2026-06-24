@@ -928,15 +928,9 @@ def api_settings_mc_nodes_path_hash_mode(node_id):
             fallback = True
             warning = "Radio did not accept path hash mode command; using 1B/hop fallback."
 
-        if applied_mode != requested_mode:
-            with CONFIG_LOCK:
-                node = next((n for n in CONFIG.get("mc_nodes", []) if n["id"] == node_id), None)
-                if node:
-                    node["path_hash_mode"] = applied_mode
-                    save_config()
         with mc_connections_lock:
             if node_id in mc_connections:
-                mc_connections[node_id].setdefault("config", {})["path_hash_mode"] = applied_mode
+                mc_connections[node_id].setdefault("config", {})["path_hash_mode"] = requested_mode
                 mc_connections[node_id].setdefault("node_info", {})["path_hash_mode"] = applied_mode
 
     return jsonify({

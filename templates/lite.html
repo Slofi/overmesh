@@ -1,369 +1,608 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>OM Lite</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>OverMesh Lite</title>
   <link rel="stylesheet" href="/static/leaflet/leaflet.css">
   <link rel="icon" type="image/png" href="/static/favicon.png">
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     :root {
-      --accent:      #e8b04f;
-      --accent-dim:  #3a2a10;
-      --bg:          #0d1117;
-      --bg2:         #161b22;
-      --bg3:         #21262d;
-      --border:      #30363d;
-      --text:        #c9d1d9;
-      --text2:       #8b949e;
-      --radius:      10px;
-      --hdr:         44px;
-      --side:        380px;
-      --tab:         52px;
+      --accent:     #e8b04f;
+      --accent-dim: #3a2a10;
+      --bg:         #0d1117;
+      --bg2:        #161b22;
+      --bg3:        #21262d;
+      --border:     #30363d;
+      --text:       #c9d1d9;
+      --muted:      #8b949e;
+      --yellow:     #d29922;
+      --red:        #f85149;
+      --blue:       #58a6ff;
+      --nav-h:      48px;
+      --tap:        44px;
     }
-
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
     html, body {
-      width: 100%; height: 100%; overflow: hidden;
+      width: 100%; height: 100%; overflow: hidden; margin: 0;
       background: var(--bg); color: var(--text);
-      font-family: system-ui, -apple-system, sans-serif;
-      font-size: 14px;
+      font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px;
+    }
+    .tab-panel {
+      position: fixed; top: 0; left: 0; right: 0; bottom: var(--nav-h);
+      overflow: hidden; display: flex; flex-direction: column;
+    }
+    .tab-panel[hidden] { display: none !important; }
+
+    /* ── Bottom nav ── */
+    #bottom-nav {
+      position: fixed; bottom: 0; left: 0; right: 0;
+      height: var(--nav-h); background: var(--bg2); border-top: 1px solid var(--border);
+      display: flex; z-index: 500;
+    }
+    .nav-btn {
+      flex: 1; background: none; border: none; color: var(--muted);
+      font-size: 10px; cursor: pointer; position: relative;
+      display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 2px;
+      min-height: var(--tap);
+    }
+    .nav-btn .nav-icon { font-size: 18px; line-height: 1; }
+    .nav-btn span:last-child { font-size: 9px; line-height: 1; }
+    .nav-btn.active { color: var(--accent); }
+    .nav-badge {
+      position: absolute; top: 6px; right: calc(50% - 16px);
+      background: var(--red); color: #fff; border-radius: 10px;
+      font-size: 9px; padding: 1px 4px; min-width: 16px; text-align: center;
     }
 
-    /* ── Header ── */
-    #header {
-      position: fixed; top: 0; left: 0; right: 0;
-      height: var(--hdr);
-      background: var(--bg2);
-      border-bottom: 1px solid var(--border);
-      display: flex; align-items: center; gap: 12px; padding: 0 14px;
-      z-index: 1000;
-    }
-    .brand { font-weight: 700; font-size: 15px; color: var(--accent); letter-spacing: 1.5px; }
-    .status-row { display: flex; align-items: center; gap: 5px; }
-    .sdot { width: 9px; height: 9px; border-radius: 50%; background: var(--bg3); display: inline-block; flex-shrink: 0; }
-    .sdot.ok   { background: #3fb950; box-shadow: 0 0 5px rgba(63,185,80,0.5); }
-    .sdot.warn { background: #d29922; }
-    .sdot.err  { background: #f85149; }
-    .slabel { font-size: 11px; color: var(--text2); margin-right: 6px; }
-    .hdr-space { flex: 1; }
-    .hdr-link {
-      font-size: 12px; color: var(--text2); text-decoration: none;
-      padding: 5px 10px; border: 1px solid var(--border); border-radius: var(--radius);
-    }
-    .hdr-link:hover { color: var(--text); border-color: var(--accent); }
-
-    /* ── Layout ── */
-    #main {
-      position: fixed; top: var(--hdr); left: 0; right: 0; bottom: 0;
-      display: flex;
-    }
-    #map-pane { flex: 1; min-width: 0; }
+    /* ── Map tab ── */
     #map { width: 100%; height: 100%; }
-
-    /* ── Side pane ── */
-    #side-pane {
-      width: var(--side); flex-shrink: 0;
-      background: var(--bg);
-      border-left: 1px solid var(--border);
-      display: flex; flex-direction: column;
+    #map-status-bar {
+      position: absolute; top: 8px; left: 58px; right: auto;
+      background: rgba(13,17,23,0.88); backdrop-filter: blur(4px);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 3px 8px; display: flex; align-items: center; gap: 5px;
+      font-size: 11px; z-index: 1000; pointer-events: all;
+      max-width: calc(100% - 120px);
     }
-    #panel-body { flex: 1; overflow: hidden; position: relative; }
-
-    /* ── Panels ── */
-    .panel { display: none; height: 100%; }
-    .panel.active { display: block; overflow-y: auto; padding: 10px; }
-    #panel-messages.active { display: flex; flex-direction: column; padding: 10px; gap: 8px; overflow: hidden; }
-
-    /* ── Tab bar ── */
-    #tab-bar {
-      height: var(--tab); flex-shrink: 0;
-      border-top: 1px solid var(--border);
-      display: flex; background: var(--bg2);
+    #map-status-bar .msep { color: var(--border); padding: 0 2px; pointer-events: none; }
+    #map-node-count { font-size: 10px; color: var(--muted); white-space: nowrap; padding-left: 4px; }
+    .mmpill { padding: 3px 10px; font-size: 11px; font-weight: 600; color: var(--muted); cursor: pointer; border: none; background: none; white-space: nowrap; line-height: 1.6; }
+    .mmpill.active { background: var(--accent); color: #000; border-radius: 4px; }
+    .mfpill { font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 99px; border: 1px solid var(--border); background: transparent; color: var(--muted); cursor: pointer; line-height: 1.5; white-space: nowrap; }
+    .mfpill.active { background: var(--accent); border-color: var(--accent); color: #000; }
+    .map-fab {
+      position: absolute; z-index: 1000; background: var(--bg2); border: 1px solid var(--border);
+      color: var(--text); border-radius: 8px; width: 42px; height: 42px;
+      display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 18px;
+      box-shadow: 0 4px 18px rgba(0,0,0,0.35);
     }
-    .tab-btn {
-      flex: 1; background: none; border: none; color: var(--text2);
-      font-size: 11px; cursor: pointer;
-      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
-      padding: 0; transition: color 0.15s; border-top: 2px solid transparent;
+    .map-fab.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+    #btn-map-menu { top: 8px; left: 8px; font-size: 17px; }
+    #btn-layers   { top: 8px; right: 8px; }
+    #btn-follow   { bottom: 10px; right: 8px; }
+    #map-menu-panel {
+      position: absolute; top: 58px; left: 8px; z-index: 1001;
+      background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+      padding: 6px; min-width: 160px;
     }
-    .tab-icon { font-size: 17px; line-height: 1; }
-    .tab-btn.active { color: var(--accent); border-top-color: var(--accent); }
-    .tab-btn:hover { color: var(--text); }
+    #layer-panel {
+      position: absolute; top: 58px; right: 8px; z-index: 1001;
+      background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+      padding: 6px; min-width: 170px; max-height: 340px; overflow-y: auto;
+    }
+    .layer-item {
+      display: flex; align-items: center; gap: 8px; padding: 10px 10px;
+      cursor: pointer; border-radius: 6px; font-size: 13px; min-height: 40px;
+    }
+    .layer-item:hover { background: var(--bg3); }
+    .layer-item.active { color: var(--accent); }
 
-    /* ── Contact rows ── */
-    .contact-row {
+
+    #map-act-panel { position:absolute; top:0; right:0; bottom:0; width:30%; min-width:130px; max-width:220px; z-index:999; background:rgba(13,17,23,0.92); backdrop-filter:blur(6px); border-left:1px solid var(--border); display:flex; flex-direction:column; }
+    #map-act-panel h4 { font-size:11px; font-weight:700; padding:7px 10px; border-bottom:1px solid var(--border); margin:0; flex-shrink:0; letter-spacing:0.04em; color:var(--muted); }
+    #map-act-body { flex:1; overflow-y:auto; }
+    .mact-item { display:flex; align-items:flex-start; gap:7px; padding:9px 8px; border-bottom:1px solid var(--border); cursor:pointer; min-height:54px; }
+    .mact-item:active { background:var(--bg3); }
+    .mact-badge { font-size:9px; font-weight:700; padding:2px 5px; border-radius:4px; flex-shrink:0; margin-top:1px; }
+    .mact-badge.mt { background:#1d4ed8; color:#fff; }
+    .mact-badge.mc { background:#065f46; color:#4ade80; }
+    .mact-body { flex:1; min-width:0; }
+    .mact-from { font-size:12px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .mact-text { font-size:11px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:2px; }
+    .mact-meta { font-size:10px; color:var(--muted); margin-top:3px; opacity:0.7; }
+
+    /* ── Nodes tab ── */
+    #nodes-filter-bar {
+      background: var(--bg2); border-bottom: 1px solid var(--border);
+      padding: 8px; display: flex; gap: 6px; flex-shrink: 0; align-items: center; flex-wrap: wrap;
+    }
+    #nodes-search {
+      flex: 1; background: var(--bg3); border: 1px solid var(--border);
+      border-radius: 8px; color: var(--text); padding: 9px 10px; font-size: 13px;
+      min-height: 40px;
+    }
+    .fpill {
+      padding: 7px 12px; border-radius: 99px; font-size: 12px; cursor: pointer;
+      background: var(--bg3); border: 1px solid var(--border); color: var(--muted);
+      white-space: nowrap; min-height: 34px;
+    }
+    .fpill.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+    #nodes-list { flex: 1; overflow-y: auto; }
+    .node-row {
+      display: flex; align-items: center; gap: 10px; padding: 13px 14px;
+      border-bottom: 1px solid var(--border); cursor: pointer;
+      min-height: 52px;
+    }
+    .node-row:active { background: var(--bg2); }
+    .ntype { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .ntype.mt { background: var(--blue); } .ntype.mc { background: var(--accent); }
+    .node-name { font-weight: 500; flex: 1; font-size: 13px; }
+    .node-meta { font-size: 11px; color: var(--muted); text-align: right; }
+    #nodes-summary {
+      width: 100%; display: flex; gap: 6px; overflow-x: auto; padding-top: 2px;
+    }
+    .mini-chip {
+      flex: 0 0 auto; font-size: 11px; color: var(--muted);
+      background: rgba(13,17,23,0.35); border: 1px solid var(--border);
+      border-radius: 999px; padding: 4px 8px;
+    }
+
+    /* ── Chat tab ── */
+    #chat-header-bar {
       display: flex; align-items: center; gap: 8px;
-      padding: 9px 8px; border-bottom: 1px solid var(--border);
-      cursor: pointer; border-radius: var(--radius);
+      background: var(--bg2); border-bottom: 1px solid var(--border);
+      padding: 0 8px; min-height: 42px; flex-shrink: 0; cursor: pointer;
     }
-    .contact-row:hover { background: var(--bg2); }
-    .net-badge {
-      width: 28px; height: 18px; border-radius: 4px;
-      font-size: 9px; font-weight: 700;
-      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    #chat-header-bar:active { background: var(--bg3); }
+    #chat-net-pills { display: flex; gap: 4px; }
+    .cpill { background: var(--bg3); border: 1px solid var(--border); color: var(--muted); font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 99px; cursor: pointer; line-height: 1.6; white-space: nowrap; }
+    .cpill.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+    #btn-chat-select {
+      background: none; border: none; color: var(--text); font-size: 14px;
+      cursor: pointer; padding: 0 8px; border-radius: 8px; line-height: 1; min-height: 34px;
     }
-    .net-badge.mt { background: rgba(74,222,128,0.15); color: #4ade80; border: 1px solid rgba(74,222,128,0.3); }
-    .net-badge.mc { background: rgba(232,176,79,0.15); color: var(--accent); border: 1px solid rgba(232,176,79,0.3); }
-    .cname { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .cmeta { font-size: 11px; color: var(--text2); flex-shrink: 0; }
+    #btn-chat-select:active { background: var(--bg3); }
+    #chat-current-name { flex: 1; font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #chat-messages { flex: 1; overflow-y: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 5px; }
+    #chat-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 13px; }
+    #chat-input-bar {
+      border-top: 1px solid var(--border); background: var(--bg2);
+      padding: 5px 8px; display: flex; gap: 6px; align-items: flex-end; flex-shrink: 0;
+    }
+    #chat-input {
+      flex: 1; background: var(--bg3); border: 1px solid var(--border);
+      border-radius: 6px; color: var(--text); padding: 5px 8px;
+      font-size: 12px; resize: none; min-height: 28px; max-height: 72px; font-family: inherit;
+    }
+    #chat-send { background: var(--accent); color: #000; border: none; border-radius: 8px; padding: 0 14px; height: 36px; min-width: 58px; font-size: 12px; font-weight: 600; cursor: pointer; }
+    #chat-send:disabled { opacity: 0.55; cursor: wait; }
+    .adv-btn { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 99px; border: 1px solid var(--border); background: var(--bg3); color: var(--text); cursor: pointer; line-height: 1.6; white-space: nowrap; }
+    .adv-btn:active { background: var(--accent); color: #000; border-color: var(--accent); }
+    .msg-row { display: flex; flex-direction: column; max-width: 82%; }
+    .msg-row.out { align-self: flex-end; align-items: flex-end; }
+    .msg-row.in  { align-self: flex-start; }
+    .msg-bubble { padding: 6px 10px; border-radius: 8px; font-size: 13px; line-height: 1.45; word-break: break-word; }
+    .msg-row.out .msg-bubble { background: var(--accent-dim); border: 1px solid var(--accent); }
+    .msg-row.in  .msg-bubble { background: var(--bg3); border: 1px solid var(--border); }
+    .msg-meta { font-size: 10px; color: var(--muted); padding: 2px 2px; }
+    /* chat selector sheet items */
+    .cg-header { font-size: 10px; font-weight: 700; color: var(--muted); padding: 10px 14px 4px; text-transform: uppercase; letter-spacing: 0.06em; }
+    .ch-item { padding: 11px 14px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); }
+    .ch-item:active { background: var(--bg3); }
+    .ch-item.active { color: var(--accent); }
+    .ch-unread { margin-left: auto; background: var(--red); color: #fff; border-radius: 10px; font-size: 9px; padding: 1px 5px; min-width: 16px; text-align: center; }
 
-    /* ── Message rows ── */
-    .msg-row {
-      padding: 8px 10px;
-      background: var(--bg2); border-radius: var(--radius);
-      border-left: 3px solid var(--border);
+    /* ── Log tab ── */
+    #tab-log { background: var(--bg); }
+    #log-toolbar {
+      background: var(--bg2); border-bottom: 1px solid var(--border);
+      padding: 8px; display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; align-items: center;
     }
-    .msg-row.sent { border-left-color: var(--accent); }
-    .msg-row.mt   { border-left-color: #4ade80; }
-    .msg-row.mc   { border-left-color: #60a5fa; }
-    .msg-row.dm   { border-left-color: #d29922; }
-    .msg-hdr {
-      display: flex; justify-content: space-between;
-      font-size: 11px; color: var(--text2); margin-bottom: 3px;
+    .view-toggle { display: flex; gap: 0; }
+    .view-toggle .btn { border-radius: 0; border-right-width: 0; }
+    .view-toggle .btn:first-child { border-radius: 6px 0 0 6px; }
+    .view-toggle .btn:last-child { border-radius: 0 6px 6px 0; border-right-width: 1px; }
+    .view-toggle .btn.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+    #log-toc-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+    #log-summary {
+      padding: 7px 10px; border-bottom: 1px solid var(--border);
+      color: var(--muted); font-size: 11px; display: flex; gap: 8px; flex-wrap: wrap;
+      background: rgba(13,17,23,0.35);
     }
-    .msg-sender { font-weight: 600; color: var(--text); }
-    .msg-text { font-size: 13px; word-break: break-word; white-space: pre-wrap; }
-
-    /* ── Compose ── */
-    .compose-wrap { display: flex; gap: 6px; flex-shrink: 0; }
-    .compose-wrap input {
-      flex: 1; padding: 9px 12px; min-height: 40px;
-      background: var(--bg2); color: var(--text);
-      border: 1px solid var(--border); border-radius: var(--radius); font-size: 13px;
+    .summary-chip {
+      background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+      padding: 3px 7px; color: var(--muted);
     }
-    .compose-wrap input:focus { outline: none; border-color: var(--accent); }
-
-    /* ── Selects ── */
-    .ctrl-row { display: flex; gap: 6px; flex-shrink: 0; }
-    .ctrl-row select, select.std {
-      flex: 1; padding: 7px 10px;
-      background: var(--bg2); color: var(--text);
-      border: 1px solid var(--border); border-radius: var(--radius); font-size: 12px;
-    }
-    .ctrl-row select:focus, select.std:focus { outline: none; border-color: var(--accent); }
-    #msg-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 5px; }
-
-    /* ── Log ── */
-    .log-compose { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px; margin-bottom: 10px; }
-    .log-compose select,
-    .log-compose textarea {
-      width: 100%; margin-bottom: 8px; padding: 8px 10px;
-      background: var(--bg3); color: var(--text);
-      border: 1px solid var(--border); border-radius: var(--radius);
-      font-size: 13px; font-family: inherit;
-    }
-    .log-compose select:focus,
-    .log-compose textarea:focus { outline: none; border-color: var(--accent); }
-    .log-compose textarea { min-height: 64px; resize: vertical; }
+    #log-entries { flex: 1; overflow-y: auto; }
     .log-row {
-      padding: 8px 10px; margin-bottom: 6px;
-      background: var(--bg2); border-radius: var(--radius);
-      border-left: 3px solid var(--accent);
+      display: grid; grid-template-columns: 52px auto 1fr auto; align-items: flex-start;
+      gap: 9px; padding: 9px 12px;
+      border-bottom: 1px solid var(--border); cursor: pointer;
     }
-    .log-hdr {
-      display: flex; gap: 8px; align-items: center;
-      font-size: 11px; color: var(--text2); margin-bottom: 4px;
-    }
+    .log-row:active, .log-row:hover { background: var(--bg2); }
     .log-cat {
-      font-weight: 700; color: var(--accent);
-      background: var(--accent-dim); padding: 1px 6px; border-radius: 4px; font-size: 10px;
+      font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 4px;
+      background: var(--bg3); color: var(--muted); flex-shrink: 0; margin-top: 2px;
+      text-transform: uppercase;
     }
-    .log-body { font-size: 13px; word-break: break-word; white-space: pre-wrap; }
-
-    /* ── Settings ── */
-    .srow {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 10px 0; border-bottom: 1px solid var(--border);
+    .log-cat.SITREP  { background: #1c2b1c; color: var(--accent); }
+    .log-cat.ALERT   { background: #2b1c1c; color: var(--red); }
+    .log-cat.COMMS   { background: #1c1c2b; color: var(--blue); }
+    .log-cat.PLAN    { background: #2b2b1c; color: var(--yellow); }
+    .log-cat.POSITION{ background: #1c2b2b; color: #56d8d8; }
+    .log-cat.CONTACT { background: #2b1c2b; color: #c47cf5; }
+    .log-cat.ACTION  { background: #2b1e1c; color: #f0a070; }
+    .log-text { font-size: 13px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.45; }
+    .log-ts { font-size: 10px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, monospace; white-space: nowrap; }
+    .log-mission {
+      align-self: flex-start; max-width: 120px; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; border: 1px solid rgba(20,184,166,.35);
+      background: rgba(20,184,166,.12); color: #5eead4; border-radius: 4px;
+      padding: 1px 6px; font-size: 10px; font-weight: 650;
     }
-    .slbl { font-size: 13px; }
-    .ssub { font-size: 11px; color: var(--text2); margin-top: 2px; }
+    .log-actions { display: flex; gap: 2px; align-items: center; }
+    .icon-btn {
+      width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center;
+      background: transparent; border: 1px solid transparent; color: var(--muted);
+      border-radius: 6px; cursor: pointer; font-size: 13px;
+    }
+    .icon-btn:hover { background: var(--bg3); border-color: var(--border); color: var(--text); }
+    .icon-btn.danger:hover { color: var(--red); border-color: rgba(248,81,73,.45); }
+    .toc-missions-panel {
+      padding: 8px 10px; border-bottom: 1px solid var(--border);
+      display: flex; gap: 7px; overflow-x: auto; background: rgba(13,17,23,0.2);
+      min-height: 43px; flex-shrink: 0;
+    }
+    .toc-mission-chip {
+      flex: 0 0 auto; display: grid; grid-template-columns: 1fr auto; gap: 2px 8px;
+      min-width: 150px; max-width: 220px; background: var(--bg2);
+      border: 1px solid var(--border); border-radius: 6px; color: var(--text);
+      cursor: pointer; padding: 6px 8px; text-align: left; font: inherit;
+    }
+    .toc-mission-chip.active, .toc-mission-chip:hover { border-color: var(--accent); background: var(--bg3); }
+    .toc-mission-chip-name { color: #5eead4; font-size: 12px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .toc-mission-chip-count { color: var(--muted); font-size: 11px; }
+    .toc-mission-chip-meta { grid-column: 1 / -1; color: var(--muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .toc-field-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
+    .toc-field-row .form-group { flex: 1; min-width: 130px; }
 
-    /* ── Buttons ── */
+    /* ── Settings tab ── */
+    #tab-settings { overflow-y: auto; }
+    .set-section { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+    .set-h { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
+    .radio-row { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--border); }
+    .radio-row:last-child { border: none; }
+    .radio-name { flex: 1; font-size: 13px; }
+    .radio-status { font-size: 11px; color: var(--muted); }
+    .radio-status.on { color: var(--accent); }
+    #rptr-manage { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 12px; margin-top: 8px; }
+    #rptr-log { font-size: 11px; color: var(--muted); font-family: monospace; margin-top: 8px; max-height: 120px; overflow-y: auto; white-space: pre-wrap; }
+    .settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 8px; }
+    .color-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .color-row input[type="color"] {
+      width: 52px; height: 40px; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--bg3); padding: 4px;
+    }
+    .sys-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .update-log {
+      margin-top: 8px; max-height: 120px; overflow-y: auto; white-space: pre-wrap;
+      background: var(--bg3); border: 1px solid var(--border); border-radius: 6px;
+      padding: 8px; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, monospace;
+    }
+
+    /* ── Shared buttons ── */
     .btn {
-      padding: 8px 14px; min-height: 38px;
-      background: var(--accent); color: #0d1117;
-      border: none; border-radius: var(--radius);
-      cursor: pointer; font-size: 13px; font-weight: 700;
+      padding: 9px 13px; border-radius: 8px; font-size: 13px; cursor: pointer;
+      border: 1px solid var(--border); background: var(--bg3); color: var(--text);
+      min-height: 40px; white-space: nowrap;
     }
-    .btn:hover { opacity: 0.85; }
-    .btn.sm { padding: 5px 12px; min-height: 30px; font-size: 12px; }
-    .btn.muted { background: var(--bg3); color: var(--text); font-weight: 500; border: 1px solid var(--border); }
-    .btn.muted:hover { border-color: var(--accent); color: var(--accent); }
+    .btn:active { opacity: 0.7; }
+    .btn:disabled { opacity: 0.55; cursor: wait; }
+    .btn-accent { background: var(--accent); border-color: var(--accent); color: #000; font-weight: 600; }
+    .btn-danger { background: rgba(248,81,73,0.12); border-color: var(--red); color: var(--red); }
+    .btn-sm { padding: 6px 10px; font-size: 12px; min-height: 34px; }
 
-    /* ── Section header ── */
-    .shdr {
-      font-size: 11px; font-weight: 700; color: var(--text2);
-      text-transform: uppercase; letter-spacing: 0.5px;
-      margin: 10px 0 6px; padding-bottom: 4px;
-      border-bottom: 1px solid var(--border);
+    /* ── Form elements ── */
+    .form-group { margin-bottom: 10px; }
+    .form-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; display: block; }
+    .form-input, .form-select, .form-textarea {
+      width: 100%; background: var(--bg3); border: 1px solid var(--border);
+      border-radius: 6px; color: var(--text); padding: 7px 10px; font-size: 13px; font-family: inherit;
     }
+    .form-textarea { resize: vertical; min-height: 90px; }
+    .form-input:focus, .form-select:focus, .form-textarea:focus { outline: none; border-color: var(--accent); }
 
-    /* ── Overlays ── */
-    .overlay {
-      position: fixed; inset: 0; z-index: 2000;
-      background: rgba(0,0,0,0.7);
-      display: flex; align-items: center; justify-content: center;
+    /* ── Bottom sheets ── */
+    #sheet-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 1999; display: none; }
+    #sheet-overlay.show { display: block; }
+    .bsheet {
+      position: fixed; bottom: var(--nav-h); left: 0; right: 0;
+      background: var(--bg2); border-top: 1px solid var(--border); border-radius: 12px 12px 0 0;
+      z-index: 2000; max-height: 72vh; overflow-y: auto;
+      transform: translateY(calc(100% + var(--nav-h))); transition: transform 0.22s ease;
     }
-    .overlay.hidden { display: none; }
-
-    .action-box {
-      background: var(--bg2); border: 1px solid var(--border);
-      border-radius: 14px; padding: 20px;
-      min-width: 280px; max-width: 340px; width: 90%;
-      position: relative;
+    .bsheet.open { transform: translateY(0); }
+    .sh-handle { width: 40px; height: 4px; background: var(--border); border-radius: 2px; margin: 10px auto 0; }
+    .sh-head { display: flex; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+    .sh-head h3 { flex: 1; font-size: 15px; font-weight: 600; }
+    .sh-close { background: none; border: none; color: var(--muted); font-size: 22px; cursor: pointer; line-height: 1; }
+    .sh-body { padding: 14px 16px 20px; }
+    .confirm-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+    .activity-item {
+      display: grid; grid-template-columns: auto 1fr auto; gap: 8px;
+      padding: 11px 14px; border-bottom: 1px solid var(--border);
+      align-items: start; font-size: 13px;
     }
-    .abox-title { font-weight: 700; font-size: 15px; margin-bottom: 2px; }
-    .abox-sub { font-size: 11px; color: var(--text2); margin-bottom: 12px; }
-    .info-grid {
-      display: grid; grid-template-columns: auto 1fr; gap: 4px 14px;
-      font-size: 12px; margin-bottom: 14px;
-      background: var(--bg3); border-radius: var(--radius); padding: 8px 10px;
-    }
-    .ig-key { color: var(--text2); }
-    .ig-val { font-weight: 600; }
-    .abox-btns { display: flex; flex-direction: column; gap: 8px; }
-    .abox-btns .btn { width: 100%; text-align: left; }
-
-    .dm-box {
-      background: var(--bg2); border: 1px solid var(--border);
-      border-radius: 14px; padding: 20px;
-      width: 420px; max-width: 95vw;
-      display: flex; flex-direction: column; gap: 10px;
-      max-height: 520px; position: relative;
-    }
-    .dm-title { font-weight: 700; font-size: 14px; color: var(--accent); }
-    .dm-history {
-      flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 5px;
-      min-height: 80px; max-height: 300px;
-    }
-    .close-x {
-      position: absolute; top: 12px; right: 14px;
-      background: none; border: none; color: var(--text2);
-      font-size: 18px; cursor: pointer; line-height: 1;
-    }
-    .close-x:hover { color: var(--text); }
+    .activity-kind { color: var(--accent); font-size: 15px; line-height: 1; }
+    .activity-title { font-weight: 600; }
+    .activity-sub { color: var(--muted); font-size: 11px; margin-top: 2px; }
+    .activity-time { color: var(--muted); font-size: 10px; white-space: nowrap; }
 
     /* ── Toast ── */
     #toast {
-      position: fixed; bottom: 66px; left: 50%; transform: translateX(-50%);
-      background: var(--bg3); color: var(--text); border: 1px solid var(--border);
-      padding: 7px 20px; border-radius: 20px;
-      font-size: 13px; z-index: 3000;
-      opacity: 0; transition: opacity 0.2s; pointer-events: none;
-      white-space: nowrap;
+      position: fixed; bottom: calc(var(--nav-h) + 10px); left: 50%;
+      transform: translateX(-50%) translateY(8px);
+      background: var(--bg3); border: 1px solid var(--border); border-radius: 6px;
+      padding: 8px 16px; font-size: 13px; z-index: 9000; opacity: 0;
+      transition: opacity 0.2s, transform 0.2s; pointer-events: none;
     }
-    #toast.show { opacity: 1; }
-
-    /* ── Scrollbars ── */
-    ::-webkit-scrollbar { width: 4px; }
-    ::-webkit-scrollbar-track { background: var(--bg); }
-    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-    ::-webkit-scrollbar-thumb:hover { background: var(--text2); }
-
-    /* ── Empty state ── */
-    .empty { padding: 24px 16px; color: var(--text2); text-align: center; font-size: 13px; }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
     /* ── Leaflet overrides ── */
-    .leaflet-control-zoom a { background: var(--bg2) !important; color: var(--text) !important; border-color: var(--border) !important; }
-    .leaflet-control-zoom a:hover { background: var(--bg3) !important; color: var(--accent) !important; }
-    .leaflet-control-attribution { background: rgba(13,17,23,0.7) !important; color: var(--text2) !important; font-size: 10px !important; }
-    .leaflet-control-attribution a { color: var(--text2) !important; }
-    .leaflet-popup-content-wrapper { background: var(--bg2) !important; color: var(--text) !important; border: 1px solid var(--border) !important; border-radius: var(--radius) !important; box-shadow: 0 4px 16px rgba(0,0,0,0.5) !important; }
-    .leaflet-popup-tip { background: var(--bg2) !important; }
-
-    /* ── Search bar ── */
-    #search-input {
-      flex: 1; min-width: 0; box-sizing: border-box;
-      padding: 5px 10px; font-size: 13px;
-      background: var(--bg3); color: var(--text);
-      border: 1px solid var(--border); border-radius: var(--radius);
-      outline: none;
+    .leaflet-control-attribution { font-size: 9px !important; }
+    .leaflet-control-zoom { border: 1px solid var(--border) !important; border-radius: 8px !important; overflow: hidden; box-shadow: 0 4px 18px rgba(0,0,0,0.35) !important; }
+    .leaflet-control-zoom a {
+      width: 42px !important; height: 42px !important; line-height: 40px !important;
+      background: var(--bg2) !important; color: var(--text) !important; border-color: var(--border) !important;
+      font-size: 24px !important;
     }
-    #search-input:focus { border-color: var(--accent); }
-    #search-input::placeholder { color: var(--text2); }
+    .leaflet-control-zoom a:active { background: var(--accent-dim) !important; color: var(--accent) !important; }
+    .leaflet-popup-content-wrapper {
+      background: var(--bg2) !important; color: var(--text) !important;
+      border: 1px solid var(--border) !important; border-radius: 8px !important; box-shadow: none !important;
+    }
+    .leaflet-popup-tip { background: var(--bg2) !important; }
+    .leaflet-popup-close-button { color: var(--muted) !important; }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
   </style>
 </head>
-<body data-version="{{ version }}">
+<body>
 
-<header id="header">
-  <span class="brand">OM·LITE</span>
-  <div class="status-row">
-    <span id="dot-mt" class="sdot" title="Meshtastic"></span>
-    <span class="slabel">MT</span>
-    <span id="dot-mc" class="sdot" title="MeshCore"></span>
-    <span class="slabel">MC</span>
-    <span id="dot-gps" class="sdot" title="GPS"></span>
-    <span class="slabel">GPS</span>
+<!-- ── MAP TAB ── -->
+<div id="tab-map" class="tab-panel">
+  <div id="map"></div>
+  <div id="map-status-bar">
+    <button class="mmpill active" data-mode="map" onclick="mapModeSet('map')">Map</button>
+    <button class="mmpill" data-mode="sense" onclick="mapModeSet('sense')">Sense</button>
+    <span class="msep">|</span>
+    <button class="mfpill active" id="mf-all" onclick="setMapFilter('all')">All</button>
+    <button class="mfpill" id="mf-mt" onclick="setMapFilter('mt')">MT</button>
+    <button class="mfpill" id="mf-mc" onclick="setMapFilter('mc')">MC</button>
+    <span id="map-node-count"></span>
   </div>
-  <div style="flex:1"></div>
-  <div style="width:var(--side);flex-shrink:0;display:flex;align-items:center;gap:10px;padding-right:14px">
-    <input id="search-input" type="search" placeholder="Search nodes…" autocomplete="off" style="display:none">
-    <span id="hdr-clock" style="font-size:13px;color:var(--text2);white-space:nowrap;flex-shrink:0"></span>
-  </div>
-</header>
+  <button class="map-fab" id="btn-map-menu" onclick="toggleMapMenu()" title="Map actions">☰</button>
+  <button class="map-fab" id="btn-layers" onclick="toggleLayerPanel()" title="Map layers">⧉</button>
+  <button class="map-fab" id="btn-follow" onclick="gpsButton()" title="Center / follow GPS">⌖</button>
 
-<div id="main">
-  <div id="map-pane"><div id="map"></div></div>
-  <div id="side-pane">
-    <div id="panel-body">
-      <div id="panel-contacts" class="panel active"></div>
-      <div id="panel-messages" class="panel"></div>
-      <div id="panel-log" class="panel"></div>
-      <div id="panel-settings" class="panel"></div>
-    </div>
-    <nav id="tab-bar">
-      <button class="tab-btn active" data-tab="contacts">
-        <span class="tab-icon">📡</span><span>Nodes</span>
-      </button>
-      <button class="tab-btn" data-tab="messages">
-        <span class="tab-icon">💬</span><span>Msgs</span>
-      </button>
-      <button class="tab-btn" data-tab="log">
-        <span class="tab-icon">📋</span><span>Log</span>
-      </button>
-      <button class="tab-btn" data-tab="settings">
-        <span class="tab-icon">⚙</span><span>Set</span>
-      </button>
-    </nav>
+  <div id="map-act-panel">
+    <h4>RECENT MESSAGES</h4>
+    <div id="map-act-body"></div>
   </div>
+  <div id="map-menu-panel" hidden></div>
+  <div id="layer-panel" hidden></div>
 </div>
 
-<!-- Action sheet overlay -->
-<div id="action-overlay" class="overlay hidden">
-  <div class="action-box">
-    <button class="close-x" id="action-close">✕</button>
-    <div id="action-title" class="abox-title"></div>
-    <div id="action-sub" class="abox-sub"></div>
-    <div id="action-info" class="info-grid"></div>
-    <div id="action-btns" class="abox-btns"></div>
+<!-- ── NODES TAB ── -->
+<div id="tab-nodes" class="tab-panel" hidden>
+  <div id="nodes-filter-bar">
+    <input id="nodes-search" class="form-input" type="search" placeholder="Search nodes…" oninput="renderNodes()" style="flex:1">
+    <button class="fpill active" onclick="setNFilter('all',this)">All</button>
+    <button class="fpill" onclick="setNFilter('fresh',this)">Fresh</button>
+    <button class="fpill" onclick="setNFilter('pos',this)">GPS</button>
+    <button class="fpill" onclick="setNFilter('mt',this)">MT</button>
+    <button class="fpill" onclick="setNFilter('mc',this)">MC</button>
+    <div id="nodes-summary"></div>
   </div>
+  <div id="nodes-list"></div>
 </div>
 
-<!-- DM overlay -->
-<div id="dm-overlay" class="overlay hidden">
-  <div class="dm-box">
-    <button class="close-x" id="dm-close">✕</button>
-    <div id="dm-title" class="dm-title">DM</div>
-    <div id="dm-history" class="dm-history"></div>
-    <div class="compose-wrap">
-      <input id="dm-input" type="text" autocomplete="off" placeholder="Message…">
-      <button class="btn" id="dm-send-btn">Send</button>
+<!-- ── CHAT TAB ── -->
+<div id="tab-chat" class="tab-panel" hidden>
+  <div id="chat-header-bar" onclick="openSheet('chat-select-sheet')">
+    <button id="btn-chat-select" title="Select channel" style="pointer-events:none">☰</button>
+    <span id="chat-current-name" style="color:var(--muted)">Select a channel…</span>
+    <div id="chat-net-pills" onclick="event.stopPropagation()">
+      <button class="adv-btn" id="adv-btn-local" onclick="sendAdvert(false)" hidden>Local</button>
+      <button class="adv-btn" id="adv-btn-flood" onclick="sendAdvert(true)" hidden>Flood</button>
+      <span id="adv-sep" style="color:var(--border);padding:0 2px" hidden>|</span>
+      <button class="cpill" id="cpill-mt" onclick="setChatFilter('mt');openSheet('chat-select-sheet')">MT</button>
+      <button class="cpill" id="cpill-mc" onclick="setChatFilter('mc');openSheet('chat-select-sheet')">MC</button>
     </div>
   </div>
+  <div id="chat-messages"></div>
+  <div id="chat-empty">Tap the header bar to choose a channel or contact</div>
+  <div id="chat-input-bar" hidden>
+    <textarea id="chat-input" class="form-input" placeholder="Message…" rows="1"
+      onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg()}"
+      oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,80)+'px'"></textarea>
+    <button id="chat-send" onclick="sendMsg()">Send</button>
+  </div>
 </div>
 
+<!-- ── LOG TAB ── -->
+<div id="tab-log" class="tab-panel" hidden>
+  <div id="log-toolbar">
+    <button class="btn btn-accent btn-sm" onclick="openLogForm()">+ New</button>
+    <input id="log-search" class="form-input" type="search" placeholder="Search log…" oninput="renderLog()" style="flex:1;min-width:110px;min-height:28px;padding:4px 8px;font-size:12px">
+    <select id="log-cat-filter" class="form-select" style="width:108px;min-height:28px;padding:4px 8px;font-size:12px" onchange="renderLog()">
+      <option value="">All categories</option>
+      <option>SITREP</option><option>COMMS</option><option>POSITION</option>
+      <option>CONTACT</option><option>ALERT</option><option>PLAN</option>
+      <option>ACTION</option><option>INTEL</option><option>NOTE</option>
+    </select>
+    <select id="log-mission-filter" class="form-select" style="width:112px;min-height:28px;padding:4px 8px;font-size:12px" onchange="renderLog()">
+      <option value="">All missions</option>
+    </select>
+    <button class="btn btn-sm" onclick="exportLog('text')">TXT</button>
+    <button class="btn btn-sm" onclick="exportLog('json')">JSON</button>
+    <label class="btn btn-sm" style="cursor:pointer">Import
+      <input type="file" accept=".json,.txt" style="display:none" onchange="importLog(event)">
+    </label>
+  </div>
+  <div id="log-toc-wrap">
+    <div id="log-summary"></div>
+    <div id="log-missions" class="toc-missions-panel"></div>
+    <div id="log-entries"></div>
+  </div>
+</div>
+
+<!-- ── SETTINGS TAB ── -->
+<div id="tab-settings" class="tab-panel" hidden>
+  <div id="settings-content"></div>
+</div>
+
+<!-- ── BOTTOM NAV ── -->
+<nav id="bottom-nav">
+  <button class="nav-btn active" data-tab="map" onclick="switchTab('map')">
+    <span class="nav-icon">🗺</span><span>Map</span>
+  </button>
+  <button class="nav-btn" data-tab="nodes" onclick="switchTab('nodes')">
+    <span class="nav-icon">📡</span><span>Nodes</span>
+  </button>
+  <button class="nav-btn" data-tab="chat" onclick="switchTab('chat')">
+    <span class="nav-icon">💬</span><span>Chat</span>
+    <span id="chat-badge" class="nav-badge" hidden>0</span>
+  </button>
+  <button class="nav-btn" data-tab="log" onclick="switchTab('log')">
+    <span class="nav-icon">📋</span><span>Log</span>
+  </button>
+  <button class="nav-btn" data-tab="settings" onclick="switchTab('settings')">
+    <span class="nav-icon">⚙</span><span>Settings</span>
+  </button>
+</nav>
+
+<!-- ── SHEET OVERLAY ── -->
+<div id="sheet-overlay" onclick="closeAllSheets()"></div>
+
+<!-- ── NODE DETAIL SHEET ── -->
+<div id="node-sheet" class="bsheet">
+  <div class="sh-handle"></div>
+  <div class="sh-head">
+    <h3 id="ns-name">Node</h3>
+    <button class="sh-close" onclick="closeSheet('node-sheet')">✕</button>
+  </div>
+  <div class="sh-body">
+    <div id="ns-meta" style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.7"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-sm" id="ns-dm"    onclick="nodeAction('dm')">DM</button>
+      <button class="btn btn-sm" id="ns-ping"  onclick="nodeAction('ping')">Ping</button>
+      <button class="btn btn-sm" id="ns-trace" onclick="nodeAction('trace')">Traceroute</button>
+      <button class="btn btn-sm" id="ns-map"   onclick="nodeAction('map')">Show on map</button>
+    </div>
+    <div id="ns-result" style="margin-top:10px;font-size:12px;color:var(--muted);font-family:monospace;white-space:pre-wrap"></div>
+  </div>
+</div>
+
+<!-- ── LOG FORM SHEET ── -->
+<div id="log-form-sheet" class="bsheet">
+  <div class="sh-handle"></div>
+  <div class="sh-head">
+    <h3 id="log-form-title">New Log Entry</h3>
+    <button class="sh-close" onclick="closeSheet('log-form-sheet')">✕</button>
+  </div>
+  <div class="sh-body">
+    <div class="toc-field-row">
+      <div class="form-group">
+        <label class="form-label">Category</label>
+        <select id="lf-cat" class="form-select" onchange="onLogCatChange()">
+          <option>NOTE</option><option>PLAN</option><option>SITREP</option><option>COMMS</option>
+          <option>POSITION</option><option>CONTACT</option><option>ALERT</option>
+          <option>ACTION</option><option>INTEL</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Mission / Folder</label>
+        <input id="lf-mission" class="form-input" list="log-mission-list" placeholder="optional">
+        <datalist id="log-mission-list"></datalist>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Quick fill</label>
+      <div id="lf-tpl-btns" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Body</label>
+      <textarea id="lf-body" class="form-textarea" placeholder="Entry text…"></textarea>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button class="btn btn-accent" onclick="submitLog()">Save</button>
+      <button class="btn" onclick="clearLogForm()">Clear</button>
+      <span id="lf-status" style="font-size:12px;color:var(--muted)"></span>
+    </div>
+  </div>
+</div>
+
+<!-- ── LOG DETAIL SHEET ── -->
+<div id="log-detail-sheet" class="bsheet">
+  <div class="sh-handle"></div>
+  <div class="sh-head">
+    <h3 id="ld-cat">Log Entry</h3>
+    <button class="sh-close" onclick="closeSheet('log-detail-sheet')">✕</button>
+  </div>
+  <div class="sh-body">
+    <div id="ld-ts" style="font-size:11px;color:var(--muted);margin-bottom:8px"></div>
+    <div id="ld-body" style="font-size:13px;white-space:pre-wrap;line-height:1.65"></div>
+    <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-sm" onclick="editLogEntry()">Edit</button>
+      <button class="btn btn-sm" onclick="duplicateLogEntry()">Duplicate</button>
+      <button class="btn btn-danger btn-sm" onclick="deleteLogEntry()">Delete entry</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── CHAT SELECT SHEET ── -->
+<div id="chat-select-sheet" class="bsheet">
+  <div class="sh-handle"></div>
+  <div class="sh-head">
+    <h3>Select Channel / Contact</h3>
+    <button class="sh-close" onclick="closeSheet('chat-select-sheet')">✕</button>
+  </div>
+  <div id="chat-select-body" class="sh-body" style="padding:0"></div>
+</div>
+
+<!-- ── ACTIVITY SHEET ── -->
+<div id="activity-sheet" class="bsheet">
+  <div class="sh-handle"></div>
+  <div class="sh-head">
+    <h3>Recent Activity</h3>
+    <button class="sh-close" onclick="closeSheet('activity-sheet')">✕</button>
+  </div>
+  <div id="activity-body" class="sh-body" style="padding:0"></div>
+</div>
+
+<!-- ── CONFIRM SHEET ── -->
+<div id="confirm-sheet" class="bsheet">
+  <div class="sh-handle"></div>
+  <div class="sh-head">
+    <h3 id="confirm-title">Confirm</h3>
+    <button class="sh-close" onclick="closeSheet('confirm-sheet')">✕</button>
+  </div>
+  <div class="sh-body">
+    <div id="confirm-body" style="font-size:13px;color:var(--muted);line-height:1.55"></div>
+    <div class="confirm-actions">
+      <button id="confirm-ok" class="btn btn-danger">Confirm</button>
+      <button class="btn" onclick="closeSheet('confirm-sheet')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── TOAST ── -->
 <div id="toast"></div>
-<div id="confirm-overlay" class="overlay hidden">
-  <div class="action-box" style="max-width:280px">
-    <div id="confirm-msg" class="abox-title" style="margin-bottom:1.2rem"></div>
-    <div class="abox-btns">
-      <button class="btn" id="confirm-cancel" style="flex:1">Cancel</button>
-      <button class="btn" id="confirm-ok" style="flex:1;background:rgba(239,68,68,.15);color:#ef4444;border-color:#ef4444">OK</button>
-    </div>
-  </div>
-</div>
 
 <script src="/static/leaflet/leaflet.js"></script>
 <script src="/static/js/lite.js?v={{ version }}"></script>

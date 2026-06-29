@@ -10,6 +10,7 @@ Two modes:
 """
 import json
 import logging
+import os
 import threading
 import time
 import urllib.request
@@ -42,6 +43,17 @@ _gps_runtime = {
     "error": "",
     "source": "",
 }
+
+
+def _is_internal_uart(port: str) -> bool:
+    return os.path.basename(str(port or "")).startswith("ttyAS")
+
+
+def _baud_for_port(port: str) -> int:
+    try:
+        return int(CONFIG.get("gps", {}).get("baud") or (115200 if _is_internal_uart(port) else 9600))
+    except (TypeError, ValueError):
+        return 115200 if _is_internal_uart(port) else 9600
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +140,8 @@ def gps_port_present(port):
     port = str(port or "").strip()
     if not port:
         return False
+    if _is_internal_uart(port):
+        return os.path.exists(port)
     try:
         import serial.tools.list_ports
         return any(p.device == port for p in serial.tools.list_ports.comports())
@@ -246,15 +260,16 @@ def _gps_init(ser):
 
 def _gps_reader(port, stop_event):
     import serial as _serial
-    log.info(f"GPS: opening {port}")
+    baud = _baud_for_port(port)
+    log.info(f"GPS: opening {port} at {baud}")
     with gps_lock:
         _gps_runtime.update({"port": port, "running": False, "port_present": gps_port_present(port),
-                              "error": "", "source": "direct"})
+                              "error": "", "source": "direct", "baud": baud})
     try:
         # Open without toggling DTR so u-blox doesn't cold-reset on OM restart
         ser = _serial.Serial()
         ser.port     = port
-        ser.baudrate = 9600
+        ser.baudrate = baud
         ser.timeout  = 1
         ser.dtr      = False
         ser.open()
@@ -265,12 +280,14 @@ def _gps_reader(port, stop_event):
         push_to_sse(json.dumps({"type": "gps_error", "message": str(e)}))
         return
 
-    # Restore NMEA sentences in case gpsd left the device in UBX-only mode
-    try:
-        _gps_init(ser)
-        log.info("GPS: NMEA sentences configured")
-    except Exception as e:
-        log.warning(f"GPS: init commands failed (continuing anyway): {e}")
+    # Restore NMEA sentences on USB u-blox-style dongles. GPIO UART GNSS modules
+    # such as the HD BE-222Q already stream NMEA and may run at a different baud.
+    if not _is_internal_uart(port):
+        try:
+            _gps_init(ser)
+            log.info("GPS: NMEA sentences configured")
+        except Exception as e:
+            log.warning(f"GPS: init commands failed (continuing anyway): {e}")
 
     with gps_lock:
         _gps_runtime.update({"port": port, "running": True, "port_present": True, "error": ""})

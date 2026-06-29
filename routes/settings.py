@@ -281,6 +281,7 @@ def _run_update_job():
 
 @bp.route("/api/settings/ports")
 def api_settings_ports():
+    import glob
     import serial.tools.list_ports
     all_ports = serial.tools.list_ports.comports()
     port_by_serial = {}
@@ -322,6 +323,15 @@ def api_settings_ports():
             "vid":         p.vid,
             "pid":         p.pid,
             "in_use":      p.device in used_devices,
+        })
+    for dev in sorted(glob.glob("/dev/ttyAS*")):
+        ports.append({
+            "device":      dev,
+            "description": "GPIO UART GPS (A7A header)",
+            "usb_serial":  "",
+            "vid":         None,
+            "pid":         None,
+            "in_use":      dev in used_devices,
         })
     ports.sort(key=lambda x: x["device"])
     return jsonify({"ports": ports})

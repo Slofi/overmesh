@@ -25,6 +25,7 @@ const S = {
   selectedNode: null, // {type:'mt'|'mc', id, radioId}
   selectedLogId: null,
   unread:     0,
+  chUnread:   {}, // 'type:radioId:key' → count, per-channel unread badge
   senseOn:    false, traceOn: false,
   sseSource:  null,
   layerOpen:  false,
@@ -544,15 +545,20 @@ function onMtMessage(d) {
   const idx = d.channel ?? 0;
   if (!S.mtMsgs[idx]) S.mtMsgs[idx] = [];
   S.mtMsgs[idx].push(d);
+  const _mtChName = (S.mtChannels.find(c => c.index === idx)?.name) || ('ch' + idx);
   if (S.chatCtx?.type === 'mt_chan' && S.chatCtx.key === idx) {
     renderMessages();
   } else {
     addActivity('💬', d.from_name || d.from_id || 'MT message', d.text || d.message || '');
     bumpUnread();
+    if (!d.from_me && !d.sent) {
+      bumpChUnread('mt_chan', null, idx);
+      showMsgToast(`${d.from_name || d.from_id || '?'} · #${_mtChName}`, d.text || d.message || '',
+        () => { switchTab('chat'); selectChat('mt_chan', null, idx); });
+    }
   }
   const _mtNode = S.nodes[d.from_id];
   if (_mtNode?.lat && !d.from_me) drawMsgPath(_mtNode.lat, _mtNode.lon, '#facc15');
-  const _mtChName = (S.mtChannels.find(c => c.index === idx)?.name) || ('ch' + idx);
   addMsgToFeed('mt_chan', null, idx, d.from_name || d.from_id || '?', d.text || d.message || '', d.ts || Math.floor(Date.now()/1000), 'MT #' + _mtChName);
 }
 
@@ -573,6 +579,18 @@ function onMcMessage(d) {
   else {
     addActivity('💬', d.from_name || d.from_id || 'MC message', d.text || d.message || '');
     bumpUnread();
+    if (!d.sent) {
+      const _mcFrom0 = d.from_name || _mcNameFor(rid, d.from_id);
+      if (dmId) {
+        bumpChUnread('mc_dm', rid, dmId);
+        showMsgToast(`${_mcFrom0} (DM)`, d.text || '', () => { switchTab('chat'); selectChat('mc_dm', rid, dmId); });
+      } else {
+        const idx = d.channel ?? d.channel_index ?? 0;
+        const _mcChName0 = (S.mcChannels[rid] || []).find(c => c.index === idx)?.name || ('ch' + idx);
+        bumpChUnread('mc_chan', rid, idx);
+        showMsgToast(`${_mcFrom0} · #${_mcChName0}`, d.text || '', () => { switchTab('chat'); selectChat('mc_chan', rid, idx); });
+      }
+    }
   }
   if (!d.sent) {
     const _allMcC = S.mcNodes[rid] || {};
@@ -800,7 +818,9 @@ function renderChatSelector() {
   if (f === 'all' || f === 'mt') {
     S.mtChannels.forEach(ch => {
       const active = isActiveChat('mt_chan', null, ch.index);
-      pillsHtml += `<button class="cpill${active?' active':''}" onclick="selectChat('mt_chan',null,${ch.index})">#${esc(ch.name || 'ch' + ch.index)}</button>`;
+      const unread = S.chUnread[_chKey('mt_chan', null, ch.index)];
+      const badge = unread ? `<span class="cpill-badge">${unread > 9 ? '9+' : unread}</span>` : '';
+      pillsHtml += `<button class="cpill${active?' active':''}" onclick="selectChat('mt_chan',null,${ch.index})">#${esc(ch.name || 'ch' + ch.index)}${badge}</button>`;
     });
   }
 
@@ -809,7 +829,9 @@ function renderChatSelector() {
     (S.mcChannels[r.id] || []).forEach(ch => {
       if (!ch.name && !(S.mcMsgs[r.id]?.chan[ch.index]?.length)) return;
       const active = isActiveChat('mc_chan', r.id, ch.index);
-      pillsHtml += `<button class="cpill${active?' active':''}" onclick="selectChat('mc_chan','${esc(r.id)}',${ch.index})">#${esc(ch.name || 'ch' + ch.index)}</button>`;
+      const unread = S.chUnread[_chKey('mc_chan', r.id, ch.index)];
+      const badge = unread ? `<span class="cpill-badge">${unread > 9 ? '9+' : unread}</span>` : '';
+      pillsHtml += `<button class="cpill${active?' active':''}" onclick="selectChat('mc_chan','${esc(r.id)}',${ch.index})">#${esc(ch.name || 'ch' + ch.index)}${badge}</button>`;
     });
   });
 
@@ -820,7 +842,9 @@ function renderChatSelector() {
     if (type === 'mt_dm') name = S.nodes[nodeId]?.name || nodeId;
     else if (type === 'mc_dm') name = S.mcNodes[radioId]?.[nodeId]?.name || nodeId;
     const active = S.chatCtx?.type === type && S.chatCtx?.key == nodeId && S.chatCtx?.radioId == (radioId || null);
-    pillsHtml += `<button class="cpill${active?' active':''}" style="display:inline-flex;align-items:center;gap:4px" onclick="selectChat('${type}','${radioId}','${nodeId}')">@${esc(name)}<span onclick="event.stopPropagation();removeDm('${key}')" style="opacity:0.6;font-size:9px;margin-left:1px">✕</span></button>`;
+    const unread = S.chUnread[_chKey(type, radioId, nodeId)];
+    const badge = unread ? `<span class="cpill-badge">${unread > 9 ? '9+' : unread}</span>` : '';
+    pillsHtml += `<button class="cpill${active?' active':''}" style="display:inline-flex;align-items:center;gap:4px" onclick="selectChat('${type}','${radioId}','${nodeId}')">@${esc(name)}${badge}<span onclick="event.stopPropagation();removeDm('${key}')" style="opacity:0.6;font-size:9px;margin-left:1px">✕</span></button>`;
   });
 
   if (!pillsHtml) pillsHtml = `<span style="font-size:11px;color:var(--muted);padding:0 4px">No channels</span>`;
@@ -972,6 +996,7 @@ function selectChat(type, radioId, key) {
   closeSheet('chat-select-sheet');
   if (type.startsWith('mc') && radioId) loadMcMessages(radioId);
   renderMessages();
+  clearChUnread(type, radioId || null, key);
 
   // Track active DMs
   if (type === 'mt_dm' || type === 'mc_dm') {
@@ -1099,6 +1124,30 @@ function bumpUnread() {
 function clearUnread() {
   S.unread = 0;
   document.getElementById('chat-badge').hidden = true;
+}
+
+function _chKey(type, radioId, key) { return `${type}:${radioId || ''}:${key}`; }
+
+function bumpChUnread(type, radioId, key) {
+  const k = _chKey(type, radioId, key);
+  S.chUnread[k] = (S.chUnread[k] || 0) + 1;
+  if (S.activeTab === 'chat') renderChatSelector();
+}
+
+function clearChUnread(type, radioId, key) {
+  delete S.chUnread[_chKey(type, radioId, key)];
+  renderChatSelector();
+}
+
+function showMsgToast(title, body, onTap) {
+  const el = document.getElementById('toast');
+  if (!el) return;
+  el.innerHTML = `<div class="toast-title">${esc(title)}</div><div class="toast-body">${esc(body)}</div>`;
+  el.classList.add('show');
+  el.classList.toggle('tappable', !!onTap);
+  el.onclick = onTap ? () => { el.classList.remove('show'); onTap(); } : null;
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove('show'), 5000);
 }
 
 // ── Log tab ───────────────────────────────────────────────────────────────────
@@ -1889,6 +1938,7 @@ let _toastTimer;
 function toast(msg, dur=2500) {
   const el = document.getElementById('toast');
   el.textContent = msg; el.classList.add('show');
+  el.classList.remove('tappable'); el.onclick = null;
   clearTimeout(_toastTimer);
   _toastTimer = setTimeout(() => el.classList.remove('show'), dur);
 }

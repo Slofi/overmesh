@@ -31,6 +31,9 @@ const S = {
   layerOpen:  false,
   activeDms:  new Set(), // 'type:radioId:nodeId' keys for active DM threads
   gpsMarker:  null,
+  selfMarker: null, // HD's own set/advertised position marker
+  activeTraceLine: null, // single persistent trace line drawn from tapping a message
+  activeTraceMsgIdx: null, // mapMsgFeed index the active trace belongs to (for toggle-off)
   markers:    {},   // node_id/contact_id → L.circleMarker
   markerTypes: {}, // node_id → 'mt'|'mc'
   mapFilter:  'all',
@@ -42,6 +45,7 @@ const S = {
   accent:     localStorage.getItem('om_accent') || '#e8b04f',
   updateInfo: null,
   updateRunning: false,
+  pendingLogContext: null, // sender/network/time/text captured from "Log this message"
   favNodes:   new Set(JSON.parse(localStorage.getItem('om_favs') || '[]')),
 };
 
@@ -463,6 +467,7 @@ function drawMsgPath(lat, lon, color) {
   if (!lat || !lon || !map) return;
   let to;
   if (S.gpsMarker) { const p = S.gpsMarker.getLatLng(); to = [p.lat, p.lng]; }
+  else if (S.selfMarker) { const p = S.selfMarker.getLatLng(); to = [p.lat, p.lng]; }
   else {
     const me = Object.values(S.nodes).find(n => n.is_me || n.my_node);
     if (!me?.lat) return;
@@ -476,6 +481,531 @@ function drawMsgPath(lat, lon, color) {
     try { map.removeLayer(line); } catch(e) {}
     _pathLines = _pathLines.filter(l => l !== line);
   }, 7000);
+}
+
+// ── MC multi-hop path resolution ─────────────────────────────────────────────
+// Ported from the full OM app: decodes a message's raw per-hop path hash string
+// into real relay/repeater positions, resolving each hash against known contacts
+// with the same geometry/plausibility scoring desktop uses (detour distance,
+// bearing, segment length, contact freshness). Falls back progressively: this
+// message's own embedded path -> contact's last-known cached route -> a plain
+// direct line when no path can be resolved at all. No fabricated positions —
+// unresolved hops are simply omitted and the result is marked partial.
+
+const MC_PATH_SOFT_DETOUR_KM = 45;
+const MC_PATH_HARD_DETOUR_KM = 180;
+const MC_PATH_IMPLAUSIBLE_SEGMENT_KM = 200;
+const MC_PATH_RADIO_ONLY_MAX_KM = 200;
+const MC_PATH_SOFT_BEARING_DELTA_DEG = 55;
+const MC_PATH_HARD_BEARING_DELTA_DEG = 105;
+const MC_PATH_STALE_REMOTE_KM = 120;
+
+function _mcTraceRadioPos() {
+  if (S.gpsMarker) { const p = S.gpsMarker.getLatLng(); return [p.lat, p.lng]; }
+  if (S.selfMarker) { const p = S.selfMarker.getLatLng(); return [p.lat, p.lng]; }
+  return [null, null];
+}
+
+function _haversineMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  const clamped = Math.max(0, Math.min(1, a));
+  return 2 * R * Math.atan2(Math.sqrt(clamped), Math.sqrt(1 - clamped));
+}
+
+function _mcPathDirectKm(lat1, lon1, lat2, lon2) {
+  if (lat1 == null || lon1 == null || lat2 == null || lon2 == null) return Number.POSITIVE_INFINITY;
+  return _haversineMeters(lat1, lon1, lat2, lon2) / 1000;
+}
+
+function _mcPathDistanceScore(candidate, expectedLat, expectedLon) {
+  const lat = candidate.latitude ?? candidate.lat;
+  const lon = candidate.longitude ?? candidate.lon;
+  if (lat == null || lon == null) return Number.POSITIVE_INFINITY;
+  const dLat = lat - expectedLat;
+  const dLon = (lon - expectedLon) * Math.cos((expectedLat || 0) * Math.PI / 180);
+  return dLat * dLat + dLon * dLon;
+}
+
+function _mcPathGeoKm(candidate, expectedLat, expectedLon) {
+  const score = _mcPathDistanceScore(candidate, expectedLat, expectedLon);
+  if (!Number.isFinite(score)) return Number.POSITIVE_INFINITY;
+  return Math.sqrt(score) * 111.32;
+}
+
+function _mcPathDetourKm(candidate, radioLat, radioLon, endpointLat, endpointLon) {
+  const lat = candidate.latitude ?? candidate.lat;
+  const lon = candidate.longitude ?? candidate.lon;
+  if (lat == null || lon == null) return Number.POSITIVE_INFINITY;
+  const directKm = _mcPathDirectKm(radioLat, radioLon, endpointLat, endpointLon);
+  if (!Number.isFinite(directKm)) return Number.POSITIVE_INFINITY;
+  const viaKm = _mcPathDirectKm(radioLat, radioLon, lat, lon) + _mcPathDirectKm(lat, lon, endpointLat, endpointLon);
+  return Math.max(0, viaKm - directKm);
+}
+
+function _mcPathSegmentMaxKm(candidate, radioLat, radioLon, endpointLat, endpointLon) {
+  const lat = candidate.latitude ?? candidate.lat;
+  const lon = candidate.longitude ?? candidate.lon;
+  if (lat == null || lon == null) return Number.POSITIVE_INFINITY;
+  const a = _mcPathDirectKm(radioLat, radioLon, lat, lon);
+  const b = _mcPathDirectKm(lat, lon, endpointLat, endpointLon);
+  return Math.max(a, b);
+}
+
+function _mcPathBearingDeg(lat1, lon1, lat2, lon2) {
+  if (lat1 == null || lon1 == null || lat2 == null || lon2 == null) return null;
+  const toRad = d => d * Math.PI / 180;
+  const lat1r = toRad(lat1), lat2r = toRad(lat2);
+  const dLon = toRad(lon2 - lon1);
+  const y = Math.sin(dLon) * Math.cos(lat2r);
+  const x = Math.cos(lat1r) * Math.sin(lat2r) - Math.sin(lat1r) * Math.cos(lat2r) * Math.cos(dLon);
+  const deg = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+  return Number.isFinite(deg) ? deg : null;
+}
+
+function _mcPathBearingDeltaDeg(a, b) {
+  if (a == null || b == null) return null;
+  const diff = Math.abs(a - b) % 360;
+  return diff > 180 ? 360 - diff : diff;
+}
+
+function _mcContactSeenTs(contact) {
+  if (!contact) return 0;
+  return contact.last_heard_ts || contact.last_seen_ts || contact.last_advert || 0;
+}
+
+function _mcPathCandidateScore(candidate, ctx = {}) {
+  const hashBytes = Number(ctx.hashBytes || 1);
+  let score = hashBytes >= 3 ? 46 : hashBytes === 2 ? 34 : 16;
+  // Lite tags contact.type with the literal string 'mc'; the original numeric
+  // MeshCore type (0/1/2, 2=repeater) is preserved separately as contact_type.
+  const type = Number(candidate.contact_type ?? 0);
+  if (type === 2) score += 24;
+  else if (type > 0) score += 3;
+
+  const lat = candidate.latitude ?? candidate.lat;
+  const lon = candidate.longitude ?? candidate.lon;
+  if (lat != null && lon != null) score += 8;
+
+  const seenTs = _mcContactSeenTs(candidate);
+  let age = null;
+  if (seenTs) {
+    age = Math.max(0, Math.floor(Date.now() / 1000) - seenTs);
+    if (age < 3600) score += 16;
+    else if (age < 6 * 3600) score += 11;
+    else if (age < 24 * 3600) score += 7;
+    else if (age < 7 * 24 * 3600) score += 3;
+  }
+
+  if (ctx.expectedLat != null && ctx.expectedLon != null && lat != null && lon != null) {
+    const km = _mcPathGeoKm(candidate, ctx.expectedLat, ctx.expectedLon);
+    score += Math.max(0, 42 - Math.min(42, km * 1.35));
+  }
+  if ((ctx.expectedLat == null || ctx.expectedLon == null) && ctx.radioLat != null && ctx.radioLon != null && lat != null && lon != null) {
+    const radioKm = _mcPathDirectKm(ctx.radioLat, ctx.radioLon, lat, lon);
+    if (Number.isFinite(radioKm)) {
+      score += Math.max(0, 26 - Math.min(26, radioKm * 0.22));
+      if (ctx.hashBytes <= 1 && radioKm > MC_PATH_RADIO_ONLY_MAX_KM) {
+        score -= Math.min(180, (radioKm - MC_PATH_RADIO_ONLY_MAX_KM) * 1.4 + 42);
+      }
+      if (ctx.hashBytes <= 1 && age != null && age > 24 * 3600 && radioKm > MC_PATH_STALE_REMOTE_KM) {
+        score -= Math.min(96, ((age - 24 * 3600) / 3600) * 0.35 + (radioKm - MC_PATH_STALE_REMOTE_KM) * 0.22 + 14);
+      }
+    }
+  }
+
+  if (ctx.radioLat != null && ctx.radioLon != null && ctx.endpointLat != null && ctx.endpointLon != null && lat != null && lon != null) {
+    const directKm = _mcPathDirectKm(ctx.radioLat, ctx.radioLon, ctx.endpointLat, ctx.endpointLon);
+    const radioKm = _mcPathDirectKm(ctx.radioLat, ctx.radioLon, lat, lon);
+    const detourKm = _mcPathDetourKm(candidate, ctx.radioLat, ctx.radioLon, ctx.endpointLat, ctx.endpointLon);
+    if (Number.isFinite(directKm) && Number.isFinite(detourKm)) {
+      const softLimit = Math.max(MC_PATH_SOFT_DETOUR_KM, directKm * 0.25);
+      const hardLimit = Math.max(MC_PATH_HARD_DETOUR_KM, directKm * 0.55);
+      if (detourKm > hardLimit) score -= Math.min(180, (detourKm - hardLimit) * 1.6 + 36);
+      else if (detourKm > softLimit) score -= Math.min(48, (detourKm - softLimit) * 0.7 + 10);
+    }
+    const segmentMaxKm = _mcPathSegmentMaxKm(candidate, ctx.radioLat, ctx.radioLon, ctx.endpointLat, ctx.endpointLon);
+    if (Number.isFinite(segmentMaxKm) && segmentMaxKm > MC_PATH_IMPLAUSIBLE_SEGMENT_KM) {
+      score -= Math.min(160, (segmentMaxKm - MC_PATH_IMPLAUSIBLE_SEGMENT_KM) * 1.25 + 40);
+    }
+    if (Number.isFinite(directKm) && Number.isFinite(radioKm) && directKm > 20) {
+      const expectedFrac = Number.isFinite(ctx.expectedFrac) ? ctx.expectedFrac : null;
+      if (expectedFrac != null) {
+        const expectedKm = directKm * expectedFrac;
+        const fracTolKm = Math.max(20, directKm * 0.18);
+        const fracMiss = Math.abs(radioKm - expectedKm);
+        if (fracMiss > fracTolKm) {
+          const missScale = ctx.hashBytes <= 1 ? 0.65 : 0.4;
+          score -= Math.min(ctx.hashBytes <= 1 ? 80 : 48, (fracMiss - fracTolKm) * missScale + 8);
+        }
+      }
+      const endpointBearing = _mcPathBearingDeg(ctx.radioLat, ctx.radioLon, ctx.endpointLat, ctx.endpointLon);
+      const candidateBearing = _mcPathBearingDeg(ctx.radioLat, ctx.radioLon, lat, lon);
+      const bearingDelta = _mcPathBearingDeltaDeg(endpointBearing, candidateBearing);
+      if (bearingDelta != null && radioKm > 15) {
+        const soft = ctx.hashBytes <= 1 ? MC_PATH_SOFT_BEARING_DELTA_DEG : MC_PATH_SOFT_BEARING_DELTA_DEG + 15;
+        const hard = ctx.hashBytes <= 1 ? MC_PATH_HARD_BEARING_DELTA_DEG : MC_PATH_HARD_BEARING_DELTA_DEG + 20;
+        if (bearingDelta > hard) score -= Math.min(ctx.hashBytes <= 1 ? 130 : 84, (bearingDelta - hard) * 1.25 + 34);
+        else if (bearingDelta > soft) score -= Math.min(ctx.hashBytes <= 1 ? 52 : 34, (bearingDelta - soft) * 0.75 + 8);
+      }
+    }
+  }
+
+  const outLen = Number(candidate.out_path_len);
+  if (Number.isFinite(outLen) && outLen >= 0) score += 2;
+  return score;
+}
+
+function _mcPathConfidence(hashBytes, matchCount, selectedCount, scoreGap, ambiguous) {
+  if (ambiguous) return 'ambiguous';
+  if (matchCount <= 1) {
+    if (hashBytes >= 3) return 'exact';
+    if (hashBytes === 2) return 'unique-2B';
+    return 'unique-1B';
+  }
+  if (hashBytes >= 3 && scoreGap >= 6) return 'likely';
+  if (hashBytes === 2 && scoreGap >= 10) return 'likely';
+  if (hashBytes === 1 && scoreGap >= 16) return 'estimated';
+  return selectedCount <= 1 ? 'likely' : 'estimated';
+}
+
+function findMcContactsByKeyPrefix(prefix, radioId = null) {
+  if (!prefix) return [];
+  const lp = String(prefix || '').toLowerCase();
+  const seen = new Set();
+  const matches = [];
+  const addMatches = (contacts) => {
+    for (const c of Object.values(contacts || {})) {
+      const fk = (c.full_key || c.id || '').toLowerCase();
+      if (!fk || !fk.startsWith(lp)) continue;
+      const key = c.full_key || c.id;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      matches.push(c);
+    }
+  };
+  if (radioId && S.mcNodes[radioId]) addMatches(S.mcNodes[radioId]);
+  else Object.values(S.mcNodes).forEach(addMatches);
+  return matches;
+}
+
+function _mcPickPathHopResolution(hashHex, radioId, radioLat, radioLon, endpointLat, endpointLon, hopIdx, hopCount, opts = {}) {
+  const hash = String(hashHex || '').toLowerCase();
+  if (!hash) return null;
+  const hashBytes = Math.max(1, Math.min(3, Math.ceil(hash.length / 2)));
+  const allMatches = findMcContactsByKeyPrefix(hash, radioId);
+  if (!allMatches.length) return null;
+
+  let candidates = opts.requireGps === false
+    ? [...allMatches]
+    : allMatches.filter(c => (c.latitude ?? c.lat) != null && (c.longitude ?? c.lon) != null);
+  if (!candidates.length) return null;
+
+  const repeaters = candidates.filter(c => (c.contact_type ?? 0) === 2);
+  if (repeaters.length) candidates = repeaters;
+
+  let expectedLat = null, expectedLon = null;
+  if (radioLat != null && radioLon != null && endpointLat != null && endpointLon != null) {
+    const frac = (hopIdx + 1) / (hopCount + 1);
+    expectedLat = radioLat + (endpointLat - radioLat) * frac;
+    expectedLon = radioLon + (endpointLon - radioLon) * frac;
+  }
+
+  const ranked = candidates.map(contact => ({
+    contact,
+    score: _mcPathCandidateScore(contact, {
+      hashBytes, expectedLat, expectedLon, radioLat, radioLon, endpointLat, endpointLon,
+      expectedFrac: hopCount >= 0 ? ((hopIdx + 1) / (hopCount + 1)) : null,
+    }),
+  })).sort((a, b) => b.score - a.score);
+  const best = ranked[0];
+  if (!best) return null;
+
+  const second = ranked[1] || null;
+  const scoreGap = second ? best.score - second.score : Number.POSITIVE_INFINITY;
+  const gapNeeded = hashBytes >= 3 ? 4 : hashBytes === 2 ? 8 : 14;
+  const noGeometry = expectedLat == null || expectedLon == null;
+  const bestDetourKm = _mcPathDetourKm(best.contact, radioLat, radioLon, endpointLat, endpointLon);
+  const directKm = _mcPathDirectKm(radioLat, radioLon, endpointLat, endpointLon);
+  const bestSegmentMaxKm = _mcPathSegmentMaxKm(best.contact, radioLat, radioLon, endpointLat, endpointLon);
+  const bestRadioOnlyKm = _mcPathDirectKm(radioLat, radioLon, best.contact?.latitude ?? best.contact?.lat, best.contact?.longitude ?? best.contact?.lon);
+  const absurdDetour = Number.isFinite(bestDetourKm) && Number.isFinite(directKm) && bestDetourKm > Math.max(MC_PATH_HARD_DETOUR_KM, directKm * 1.1);
+  const implausibleSegment = Number.isFinite(bestSegmentMaxKm) && bestSegmentMaxKm > MC_PATH_IMPLAUSIBLE_SEGMENT_KM;
+  const implausibleRadioOnly = noGeometry && hashBytes <= 1 && Number.isFinite(bestRadioOnlyKm) && bestRadioOnlyKm > MC_PATH_RADIO_ONLY_MAX_KM;
+  const ambiguous = ranked.length > 1 && (
+    scoreGap < gapNeeded
+    || (noGeometry && hashBytes <= 1 && scoreGap < 22)
+    || ((absurdDetour || implausibleSegment || implausibleRadioOnly) && scoreGap < gapNeeded + 18)
+  );
+
+  if ((absurdDetour || implausibleSegment || implausibleRadioOnly) && (ranked.length > 1 || hashBytes <= 1) && scoreGap < gapNeeded + 18) return null;
+
+  return {
+    contact: best.contact, hash, hashBytes,
+    matchCount: allMatches.length, selectedCount: candidates.length, ambiguous,
+    confidence: _mcPathConfidence(hashBytes, allMatches.length, candidates.length, scoreGap, ambiguous),
+    scoreGap,
+  };
+}
+
+function _mcPathHopMeta(hashHex, contact, pointIndex, resolution = null) {
+  const name = contact ? (contact.long_name || contact.name || contact.id || hashHex) : (hashHex || '?');
+  return {
+    hash: String(hashHex || '').toLowerCase(), name, pointIndex,
+    contactId: contact?.id || contact?.full_key || null,
+    confidence: resolution?.confidence || null,
+    ambiguous: !!resolution?.ambiguous,
+    matchCount: resolution?.matchCount || null,
+  };
+}
+
+function _mcPathHashSize(value, mode = null) {
+  const size = Number(value);
+  if (Number.isFinite(size) && size >= 1 && size <= 3) return size;
+  const m = Number(mode);
+  if (Number.isFinite(m) && m >= 0 && m <= 2) return m + 1;
+  return 1;
+}
+
+function _mcExplicitPathHashSize(evt) {
+  const size = Number(evt?.pathHashSize);
+  if (Number.isFinite(size) && size >= 1 && size <= 3) return size;
+  const mode = Number(evt?.pathHashMode);
+  if (Number.isFinite(mode) && mode >= 0 && mode <= 2) return mode + 1;
+  return null;
+}
+
+function _mcPathLengthKm(points) {
+  if (!points || points.length < 2) return Number.POSITIVE_INFINITY;
+  let meters = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i], b = points[i + 1];
+    if (!a || !b) continue;
+    meters += _haversineMeters(a[0], a[1], b[0], b[1]);
+  }
+  return meters / 1000;
+}
+
+function _mcPathMonotonicPenalty(points) {
+  if (!points || points.length < 3) return 0;
+  const start = points[0], end = points[points.length - 1];
+  let penalty = 0;
+  const tolKm = 5;
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1], cur = points[i];
+    const prevFromStart = _mcPathDirectKm(start[0], start[1], prev[0], prev[1]);
+    const curFromStart = _mcPathDirectKm(start[0], start[1], cur[0], cur[1]);
+    if (Number.isFinite(prevFromStart) && Number.isFinite(curFromStart) && curFromStart + tolKm < prevFromStart) {
+      penalty += (prevFromStart - curFromStart);
+    }
+    const prevToEnd = _mcPathDirectKm(prev[0], prev[1], end[0], end[1]);
+    const curToEnd = _mcPathDirectKm(cur[0], cur[1], end[0], end[1]);
+    if (Number.isFinite(prevToEnd) && Number.isFinite(curToEnd) && curToEnd > prevToEnd + tolKm) {
+      penalty += (curToEnd - prevToEnd);
+    }
+  }
+  return penalty;
+}
+
+function _mcRelayProgressPenalty(points) {
+  if (!points || points.length < 3) return 0;
+  const start = points[0];
+  let penalty = 0;
+  const tolKm = 5;
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1], cur = points[i];
+    const prevDist = _mcPathDirectKm(start[0], start[1], prev[0], prev[1]);
+    const curDist = _mcPathDirectKm(start[0], start[1], cur[0], cur[1]);
+    if (Number.isFinite(prevDist) && Number.isFinite(curDist) && curDist + tolKm < prevDist) {
+      penalty += (prevDist - curDist);
+    }
+  }
+  return penalty;
+}
+
+function _mcDecodedPathScore(result, expectedHopCount) {
+  if (!result?.points || result.points.length < 2) return Number.POSITIVE_INFINITY;
+  const directKm = _mcPathLengthKm([result.points[0], result.points[result.points.length - 1]]);
+  const pathKm = _mcPathLengthKm(result.points);
+  const missing = Math.max(0, (expectedHopCount || 0) - (result.hops || []).length);
+  const ambiguity = (result.hops || []).filter(h => h.ambiguous || ['likely', 'estimated'].includes(h.confidence)).length;
+  const detourKm = Number.isFinite(directKm) ? Math.max(0, pathKm - directKm) : pathKm;
+  const monotonicPenalty = _mcPathMonotonicPenalty(result.points);
+  return pathKm + detourKm * 0.75 + missing * 250 + ambiguity * 60 + monotonicPenalty * 12;
+}
+
+function _mcReversePathResult(pathResult) {
+  if (!pathResult?.points) return pathResult;
+  const lastIdx = pathResult.points.length - 1;
+  const hops = (pathResult.hops || []).map(h => ({ ...h, pointIndex: lastIdx - h.pointIndex }));
+  return { ...pathResult, points: [...pathResult.points].reverse(), hops };
+}
+
+function decodeMcPath(contact, radioLat, radioLon, radioId = null) {
+  const pathHex = contact.out_path || '';
+  const hashBytes = _mcPathHashSize(contact.out_path_hash_size, contact.out_path_hash_mode);
+  const hashChars = hashBytes * 2;
+  const hopCount = contact.out_path_len ?? -1;
+  const cLat = contact.latitude ?? contact.lat;
+  const cLon = contact.longitude ?? contact.lon;
+  if (cLat == null || cLon == null) return null;
+
+  if (hopCount < 0) {
+    if (radioLat != null && radioLon != null) return { points: [[radioLat, radioLon], [cLat, cLon]], partial: false, flood: true };
+    return null;
+  }
+  if (hopCount === 0) {
+    if (radioLat != null && radioLon != null) return { points: [[radioLat, radioLon], [cLat, cLon]], partial: false };
+    return null;
+  }
+
+  const points = [];
+  const hops = [];
+  let partial = false;
+  if (radioLat != null && radioLon != null) points.push([radioLat, radioLon]);
+
+  for (let i = 0; i < hopCount; i++) {
+    const hashHex = pathHex.slice(i * hashChars, (i + 1) * hashChars);
+    if (!hashHex || hashHex.replace(/0/g, '') === '') break;
+    const hopResolution = _mcPickPathHopResolution(hashHex, radioId, radioLat, radioLon, cLat, cLon, i, hopCount);
+    const hopContact = hopResolution?.contact || null;
+    if (!hopContact) { partial = true; continue; }
+    const hLat = hopContact.latitude ?? hopContact.lat;
+    const hLon = hopContact.longitude ?? hopContact.lon;
+    if (hLat == null || hLon == null) { partial = true; continue; }
+    points.push([hLat, hLon]);
+    hops.push(_mcPathHopMeta(hashHex, hopContact, points.length - 1, hopResolution));
+    if (hopResolution?.ambiguous) partial = true;
+  }
+  points.push([cLat, cLon]);
+  return points.length >= 2 ? { points, partial, hops } : null;
+}
+
+function decodeMcEventPath(evt, endpointLat, endpointLon, radioLat, radioLon, radioId = null) {
+  const pathHex = evt?.path || '';
+  const hopCount = evt?.pathLen;
+  if (endpointLat == null || endpointLon == null) return null;
+  if (hopCount == null || hopCount < 0 || hopCount === 255) return null;
+  if (hopCount === 0) {
+    if (radioLat != null && radioLon != null) return { points: [[radioLat, radioLon], [endpointLat, endpointLon]], partial: false };
+    return null;
+  }
+  if (!pathHex) return null;
+  const explicitSize = _mcExplicitPathHashSize(evt);
+  const candidateSizes = explicitSize ? [explicitSize] : [1, 2, 3].filter(size => pathHex.length >= hopCount * size * 2);
+  const build = (hashes, orderLabel, hashSize) => {
+    const points = [];
+    const hops = [];
+    let partial = false;
+    if (radioLat != null && radioLon != null) points.push([radioLat, radioLon]);
+    hashes.forEach((hashHex, i) => {
+      const hopResolution = _mcPickPathHopResolution(hashHex, radioId, radioLat, radioLon, endpointLat, endpointLon, i, hashes.length);
+      const hopContact = hopResolution?.contact || null;
+      if (!hopContact) { partial = true; return; }
+      const hLat = hopContact.latitude ?? hopContact.lat;
+      const hLon = hopContact.longitude ?? hopContact.lon;
+      if (hLat == null || hLon == null) { partial = true; return; }
+      points.push([hLat, hLon]);
+      hops.push(_mcPathHopMeta(hashHex, hopContact, points.length - 1, hopResolution));
+      if (hopResolution?.ambiguous) partial = true;
+    });
+    points.push([endpointLat, endpointLon]);
+    return points.length >= 2 ? { points, partial, hops, rawPathOrder: orderLabel, inferredPathHashSize: hashSize } : null;
+  };
+  let best = null;
+  candidateSizes.forEach(hashSize => {
+    const hashChars = hashSize * 2;
+    const hashList = [];
+    for (let i = 0; i < hopCount; i++) {
+      const hashHex = pathHex.slice(i * hashChars, (i + 1) * hashChars);
+      if (!hashHex || hashHex.replace(/0/g, '') === '') break;
+      hashList.push(hashHex);
+    }
+    const forward = build(hashList, 'as-received', hashSize);
+    const reverse = hashList.length > 1 ? build([...hashList].reverse(), 'reversed', hashSize) : null;
+    const chosen = (!reverse) ? forward
+      : (!forward) ? reverse
+      : ((_mcDecodedPathScore(forward, hopCount) + 25 < _mcDecodedPathScore(reverse, hopCount)) ? forward : reverse);
+    if (!chosen) return;
+    const score = _mcDecodedPathScore(chosen, hopCount);
+    if (!best || score < best.score) best = { score, result: chosen };
+  });
+  return best?.result || null;
+}
+
+function decodeMcRelayPath(evt, radioLat, radioLon, radioId = null) {
+  const pathHex = evt?.path || '';
+  if (radioLat == null || radioLon == null) return null;
+  if (!pathHex) return null;
+  const rawHopCount = evt?.pathLen;
+  const explicitSize = _mcExplicitPathHashSize(evt);
+  const candidates = explicitSize ? [explicitSize] : [1, 2, 3].filter(size => pathHex.length >= size * 2);
+  let best = null;
+  candidates.forEach(hashSize => {
+    const hashChars = hashSize * 2;
+    const hopCount = (rawHopCount != null && rawHopCount > 0 && rawHopCount !== 255)
+      ? rawHopCount : Math.floor(pathHex.length / hashChars);
+    if (!hopCount) return;
+    const hashList = [];
+    for (let i = 0; i < hopCount; i++) {
+      const hashHex = pathHex.slice(i * hashChars, (i + 1) * hashChars);
+      if (!hashHex || hashHex.replace(/0/g, '') === '') break;
+      hashList.push(hashHex);
+    }
+    const build = (hashes) => {
+      const points = [[radioLat, radioLon]];
+      const hops = [];
+      let unresolved = 0;
+      hashes.forEach((hashHex, i) => {
+        const hopResolution = _mcPickPathHopResolution(hashHex, radioId, radioLat, radioLon, null, null, i, hashes.length);
+        const hopContact = hopResolution?.contact || null;
+        if (!hopContact) { unresolved++; return; }
+        const hLat = hopContact.latitude ?? hopContact.lat;
+        const hLon = hopContact.longitude ?? hopContact.lon;
+        if (hLat == null || hLon == null) { unresolved++; return; }
+        points.push([hLat, hLon]);
+        hops.push(_mcPathHopMeta(hashHex, hopContact, points.length - 1, hopResolution));
+        if (hopResolution?.ambiguous) unresolved += 0.5;
+      });
+      if (points.length < 2) return null;
+      const progressPenalty = _mcRelayProgressPenalty(points);
+      const score = (hops.length * 100) - (unresolved * 20) - (Math.abs(hopCount - hops.length) * 12) - (progressPenalty * 10);
+      return { score, result: { points, partial: true, endpointUnknown: true, hops, unresolved, inferredPathHashSize: hashSize, inferredHopLen: hopCount } };
+    };
+    const forward = build(hashList);
+    const reverse = hashList.length > 1 ? build([...hashList].reverse()) : null;
+    [forward, reverse].filter(Boolean).forEach(cand => {
+      if (!best || cand.score > best.score) best = cand;
+    });
+  });
+  return best?.result || null;
+}
+
+// Single persistent trace showing the full resolved hop chain (sender -> known
+// relays -> HD) for deliberately tapping a message. Matches the full OM app's
+// "message" trace style (violet, dashed) with a dark halo for contrast, drawn
+// per segment; unresolved hops are simply omitted (path shown as partial).
+// Stays until toggled off or replaced by tapping another message.
+function showMsgTrace(pathResult, msgIdx) {
+  if (!pathResult?.points || pathResult.points.length < 2 || !map) return;
+  if (S.activeTraceLine) map.removeLayer(S.activeTraceLine);
+  const points = pathResult.points;
+  const group = L.layerGroup();
+  for (let i = 0; i < points.length - 1; i++) {
+    const seg = [points[i], points[i + 1]];
+    L.polyline(seg, { color: '#111', weight: 6, opacity: 0.4, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(group);
+    L.polyline(seg, { color: '#8b5cf6', weight: 3, opacity: 1.0, dashArray: '2,6', lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(group);
+  }
+  points.forEach(p => {
+    L.circleMarker(p, { radius: 6, color: '#000', fillColor: '#8b5cf6', fillOpacity: 1.0, weight: 2, interactive: false }).addTo(group);
+  });
+  group.addTo(map);
+  S.activeTraceLine = group;
+  S.activeTraceMsgIdx = msgIdx;
+  if (pathResult.partial) toast('Partial path — some hops unresolved', 3000);
 }
 
 function addMsgToFeed(type, radioId, key, from, text, ts, label, extra) {
@@ -581,7 +1111,7 @@ function onMtMessage(d) {
   }
   const _mtNode = S.nodes[d.from_id];
   if (_mtNode?.lat && !d.from_me) drawMsgPath(_mtNode.lat, _mtNode.lon, '#facc15');
-  addMsgToFeed('mt_chan', null, idx, d.from_name || d.from_id || '?', d.text || d.message || '', d.ts || Math.floor(Date.now()/1000), 'MT #' + _mtChName);
+  addMsgToFeed('mt_chan', null, idx, d.from_name || d.from_id || '?', d.text || d.message || '', d.ts || Math.floor(Date.now()/1000), 'MT #' + _mtChName, { fromId: d.from_id });
 }
 
 function onMcMessage(d) {
@@ -606,6 +1136,12 @@ function onMcMessage(d) {
     if (!d.sent) {
       const _mcFrom0 = d.from_name || _mcNameFor(rid, d.from_id);
       if (dmId) {
+        const dmKey = `mc_dm:${rid}:${dmId}`;
+        if (!S.activeDms.has(dmKey)) {
+          S.activeDms.add(dmKey);
+          renderActiveDms();
+          if (S.activeTab === 'chat') renderChatSelector();
+        }
         bumpChUnread('mc_dm', rid, dmId);
         showMsgToast(`${_mcFrom0} (DM)`, d.text || '', () => { switchTab('chat'); selectChat('mc_dm', rid, dmId); });
       } else {
@@ -627,7 +1163,7 @@ function onMcMessage(d) {
   const _mcFeedType = dmId ? 'mc_dm' : 'mc_chan';
   const _mcFeedKey = dmId || (d.channel ?? 0);
   const _mcFrom = d.from_name || _mcNameFor(rid, d.from_id);
-  addMsgToFeed(_mcFeedType, rid, _mcFeedKey, _mcFrom, d.text || '', d.ts || Math.floor(Date.now()/1000), 'MC #' + _mcChanName, { pathLen: d.path_len, pathHashSize: d.path_hash_size, routeType: d.route_type, rssi: d.rx_rssi, snr: d.rx_snr });
+  addMsgToFeed(_mcFeedType, rid, _mcFeedKey, _mcFrom, d.text || '', d.ts || Math.floor(Date.now()/1000), 'MC #' + _mcChanName, { pathLen: d.path_len, pathHashSize: d.path_hash_size, pathHashMode: d.path_hash_mode, path: d.path, routeType: d.route_type, rssi: d.rx_rssi, snr: d.rx_snr, fromId: dmId || d.from_id });
 }
 
 function onMcTrace(d) {
@@ -923,7 +1459,7 @@ function renderMapActivity() {
   el.innerHTML = filtered.map((m) => {
     const i = S.mapMsgFeed.indexOf(m);
     const isMc = m.type.startsWith('mc');
-    return `<div class="mact-item" onclick="tapMsgFeed(${i})">
+    return `<div class="mact-item${S.activeTraceMsgIdx === i ? ' active' : ''}" onclick="tapMsgFeed(${i})">
       <span class="mact-badge ${isMc?'mc':'mt'}">${isMc?'MC':'MT'}</span>
       <div class="mact-body">
         <div class="mact-from">${m.from && m.from !== '?' ? esc(m.from) + ' ' : ''}<span style="font-size:9px;color:var(--muted);font-weight:400">${esc(m.label)}</span></div>
@@ -937,16 +1473,64 @@ function renderMapActivity() {
 function tapMsgFeed(i) {
   const m = S.mapMsgFeed[i];
   if (!m) return;
-  // Pan map to sender's location
-  if (m.type.startsWith('mt')) {
-    const node = Object.values(S.nodes).find(n => n.name === m.from || n.id === m.from);
-    if (node?.lat) { drawMsgPath(node.lat, node.lon, '#facc15'); map.panTo([node.lat, node.lon]); }
+  // Toggle off if tapping the same message again
+  if (S.activeTraceMsgIdx === i) {
+    if (S.activeTraceLine) map.removeLayer(S.activeTraceLine);
+    S.activeTraceLine = null;
+    S.activeTraceMsgIdx = null;
+  } else if (m.type.startsWith('mt')) {
+    // MT: direct line only (no hop-hash path decoding exists for Meshtastic here)
+    const node = (m.fromId && S.nodes[m.fromId])
+      || Object.values(S.nodes).find(n => n.name === m.from || n.id === m.from);
+    const [radioLat, radioLon] = _mcTraceRadioPos();
+    if (node?.lat && radioLat != null) {
+      showMsgTrace({ points: [[node.lat, node.lon], [radioLat, radioLon]] }, i);
+      map.panTo([node.lat, node.lon]);
+    } else toast('No known position for sender', 3000);
   } else {
+    // MC: resolve the sender contact, then decode the full hop-by-hop path
     const allC = m.radioId ? (S.mcNodes[m.radioId] || {}) : {};
-    const c = Object.values(allC).find(c => c.name === m.from || c.id === m.from || c.contact_id === m.from);
-    if (c?.lat) { drawMsgPath(c.lat, c.lon, '#22d3ee'); map.panTo([c.lat, c.lon]); }
+    let c = null;
+    if (m.fromId && m.fromId !== '?') {
+      c = allC[m.fromId] || Object.values(allC).find(x => {
+        const k = x.contact_id || x.id || '';
+        return k && (k.startsWith(m.fromId) || m.fromId.startsWith(k));
+      });
+    }
+    // Channel broadcasts often carry no real sender id ("?") — the sender rides
+    // inside the text itself ("Name: message"), so fall back to matching that.
+    if (!c) {
+      const parsedName = _parseChannelSenderName(m.text).toLowerCase();
+      if (parsedName) {
+        c = Object.values(allC).find(x => {
+          const cands = [x.name, x.long_name, x.short_name].filter(Boolean).map(s => String(s).toLowerCase());
+          return cands.some(cand => cand === parsedName || cand.startsWith(parsedName) || parsedName.startsWith(cand));
+        });
+      }
+    }
+    if (!c) c = Object.values(allC).find(x => x.name === m.from || x.id === m.from || x.contact_id === m.from);
+
+    const [radioLat, radioLon] = _mcTraceRadioPos();
+    const endLat = c?.lat ?? null, endLon = c?.lon ?? null;
+
+    let pathResult = null;
+    if (endLat != null && endLon != null) pathResult = decodeMcEventPath(m, endLat, endLon, radioLat, radioLon, m.radioId);
+    if (!pathResult) pathResult = decodeMcRelayPath(m, radioLat, radioLon, m.radioId);
+    if (!pathResult && c) pathResult = decodeMcPath(c, radioLat, radioLon, m.radioId);
+    if (!pathResult && endLat != null && endLon != null && radioLat != null) {
+      pathResult = { points: [[radioLat, radioLon], [endLat, endLon]], flood: true };
+    }
+    if (pathResult?.points) pathResult = _mcReversePathResult(pathResult);
+
+    if (pathResult?.points?.length >= 2) { showMsgTrace(pathResult, i); map.panTo(pathResult.points[0]); }
+    else toast('No known position for sender', 3000);
   }
-  // Jump to Chat tab and select the message's channel
+  renderMapActivity();
+
+  // In Sense mode, tapping an entry just shows the trace on the map — stay put.
+  if (S.senseOn) return;
+
+  // Normal Map mode: jump to Chat tab and select the message's channel
   if (m.type && m.key != null) {
     switchTab('chat');
     selectChat(m.type, m.radioId || null, m.key);
@@ -1061,18 +1645,9 @@ function renderMessages() {
       ? [_hopLabel(m.path_len)].concat(m.path_hash_size ? [m.path_hash_size + 'B'] : []).concat(m.rx_rssi != null ? [m.rx_rssi + 'dBm'] : [])
       : [];
     const pathInfo = pathParts.join(' · ');
-    const hasSender = !out && m.from_id && senderName && senderName !== '?';
-    const isDmView = ctx.type === 'mt_dm' || ctx.type === 'mc_dm';
-    let actions = '';
-    if (hasSender) {
-      if (!isDmView) actions += `<button class="msg-act-btn" onclick="event.stopPropagation();msgStartDm(${i})">DM</button>`;
-      actions += `<button class="msg-act-btn" onclick="event.stopPropagation();msgReply(${i})">↩ Reply</button>`;
-    }
-    actions += `<button class="msg-act-btn" onclick="event.stopPropagation();msgToLog(${i})">Log</button>`;
-    return `<div class="msg-row ${out ? 'out' : 'in'}" data-ts="${rawTs || ''}">
+    return `<div class="msg-row ${out ? 'out' : 'in'}" data-ts="${rawTs || ''}" onclick="openMsgActions(${i})">
       <div class="msg-bubble">${esc(m.text || m.message || '')}</div>
       <div class="msg-meta">${out ? '' : sender + ' · '}${ts}${pathInfo ? ' · ' + esc(pathInfo) : ''}</div>
-      <div class="msg-actions">${actions}</div>
     </div>`;
   }).join('');
   el.scrollTop = el.scrollHeight;
@@ -1083,12 +1658,48 @@ function renderMessages() {
   }
 }
 
+// MeshCore channel broadcasts don't carry verified sender identity — the sender
+// commonly rides inside the text itself as "Name: message". Used as a Reply/Log
+// fallback only (never for DM, which needs a real contact id to target).
+function _parseChannelSenderName(text) {
+  const m = /^([^:]{1,32}):\s?/.exec(text || '');
+  return m ? m[1].trim() : '';
+}
+
+function _msgDisplayName(ctx, m) {
+  const isMc = ctx.type.startsWith('mc');
+  let name = isMc ? (_mcNameFor(ctx.radioId, m.from_id) || m.from_name || '') : (m.sender || m.from_name || m.from_id || '');
+  if ((!name || name === '?') && ctx.type === 'mc_chan') name = _parseChannelSenderName(m.text);
+  return name;
+}
+
+function openMsgActions(i) {
+  const ctx = S.chatCtx;
+  const m = S.chatMsgsView?.[i];
+  if (!ctx || !m) return;
+  const out = m.from_me || m.is_mine || m.sent;
+  const name = out ? '' : _msgDisplayName(ctx, m);
+  const isDmView = ctx.type === 'mt_dm' || ctx.type === 'mc_dm';
+  const canDm = !out && !isDmView && !!m.from_id;
+  const canReply = !out && !!name;
+
+  document.getElementById('msg-actions-preview').textContent =
+    (out ? 'Me' : (name || '?')) + ': ' + (m.text || m.message || '');
+
+  let btns = '';
+  if (canDm) btns += `<button class="btn btn-sm" onclick="closeSheet('msg-actions-sheet');msgStartDm(${i})">DM ${esc(name)}</button>`;
+  if (canReply) btns += `<button class="btn btn-sm" onclick="closeSheet('msg-actions-sheet');msgReply(${i})">↩ Reply</button>`;
+  btns += `<button class="btn btn-sm" onclick="closeSheet('msg-actions-sheet');msgToLog(${i})">Log this message</button>`;
+  document.getElementById('msg-actions-btns').innerHTML = btns;
+  openSheet('msg-actions-sheet');
+}
+
 function msgReply(i) {
   const ctx = S.chatCtx;
   const m = S.chatMsgsView?.[i];
   if (!ctx || !m) return;
   const isMc = ctx.type.startsWith('mc');
-  const name = isMc ? (_mcNameFor(ctx.radioId, m.from_id) || m.from_name || '') : (m.sender || m.from_name || m.from_id || '');
+  const name = _msgDisplayName(ctx, m);
   if (!name) return;
   const input = document.getElementById('chat-input');
   if (!input) return;
@@ -1114,13 +1725,21 @@ function msgToLog(i) {
   if (!ctx || !m) return;
   const isMc = ctx.type.startsWith('mc');
   const out = m.from_me || m.is_mine || m.sent;
-  const senderName = isMc ? (_mcNameFor(ctx.radioId, m.from_id) || m.from_name || '?') : (m.sender || m.from_name || m.from_id || '?');
+  const senderName = out ? 'Me' : (_msgDisplayName(ctx, m) || '?');
   const network = isMc
     ? (ctx.type === 'mc_dm' ? 'MeshCore DM' : `MeshCore #${(S.mcChannels[ctx.radioId] || []).find(c => c.index === ctx.key)?.name || ('ch' + ctx.key)}`)
     : (ctx.type === 'mt_dm' ? 'Meshtastic DM' : `Meshtastic CH${ctx.key}`);
-  const body = `From:\t${out ? 'Me' : senderName}\nTo:\t${out ? network : 'Me'}\nNetwork / Channel:\t${network}\nResult:\t${out ? 'sent' : 'received'}\nFollow-up:\n\n"${m.text || m.message || ''}"`;
+  const rawTs = m.timestamp || m.ts;
+  S.pendingLogContext = {
+    sender: senderName,
+    to: out ? network : 'Me',
+    network,
+    result: out ? 'sent' : 'received',
+    time: rawTs ? new Date(rawTs * 1000).toLocaleString() : '',
+    text: m.text || m.message || '',
+  };
   switchTab('log');
-  setTimeout(() => openLogForm('COMMS', body), 100);
+  setTimeout(() => _openLogFormInner('COMMS'), 100);
 }
 
 function sendMsg() {
@@ -1385,15 +2004,21 @@ function renderLog() {
 }
 
 function openLogForm(cat, body) {
+  S.pendingLogContext = null;
+  _openLogFormInner(cat, body);
+}
+
+function _openLogFormInner(cat, body) {
   S.editingLogId = null;
   document.getElementById('log-form-title').textContent = 'New TOC Entry';
   document.getElementById('lf-status').textContent = '';
   const catEl = document.getElementById('lf-cat');
   catEl.value = cat || 'NOTE';
   document.getElementById('lf-mission').value = '';
-  if (body) document.getElementById('lf-body').value = body;
-  else document.getElementById('lf-body').value = '';
   onLogCatChange();
+  if (body != null) document.getElementById('lf-body').value = body;
+  else if (S.pendingLogContext) document.getElementById('lf-body').value = _smartFillLogTemplate(LOG_TEMPLATES[LOG_CAT_TPL[catEl.value]], S.pendingLogContext);
+  else document.getElementById('lf-body').value = '';
   openSheet('log-form-sheet');
 }
 
@@ -1413,21 +2038,57 @@ const LOG_TEMPLATES = {
   action: `Task:\nAssigned To:\nStatus:\nFollow-up:`,
 };
 
+const LOG_CAT_TPL = {
+  PLAN: 'plan', SITREP: 'sitrep', COMMS: 'commscheck',
+  CONTACT: 'contact', POSITION: 'position', ALERT: 'alert', ACTION: 'action',
+};
+
+// Maps template field labels (lowercased) to keys on a pendingLogContext object,
+// so "Log this message" can fill in whichever fields are actually applicable
+// per category instead of dumping one fixed body shape.
+const LOG_FIELD_ALIASES = {
+  'from': 'sender',
+  'node / station': 'sender',
+  'node / asset': 'sender',
+  'to': 'to',
+  'network / channel': 'network',
+  'result': 'result',
+  'first heard': 'time',
+};
+
+function _smartFillLogTemplate(tpl, ctx) {
+  if (!tpl) return '';
+  if (!ctx) return tpl;
+  const lines = tpl.split('\n').map(line => {
+    const idx = line.indexOf(':');
+    if (idx === -1) return line;
+    const label = line.slice(0, idx).trim().toLowerCase();
+    const key = LOG_FIELD_ALIASES[label];
+    const val = key ? ctx[key] : null;
+    return val ? `${line.slice(0, idx + 1)} ${val}` : line;
+  });
+  let out = lines.join('\n');
+  if (ctx.text) out += `\n\n"${ctx.text}"`;
+  return out;
+}
+
+function fillLogTemplate(tpl) {
+  const raw = LOG_TEMPLATES[tpl] || '';
+  document.getElementById('lf-body').value = _smartFillLogTemplate(raw, S.pendingLogContext);
+}
+
 function onLogCatChange() {
   const cat = document.getElementById('lf-cat').value;
-  const tplMap = {
-    PLAN: 'plan', SITREP: 'sitrep', COMMS: 'commscheck',
-    CONTACT: 'contact', POSITION: 'position', ALERT: 'alert', ACTION: 'action',
-  };
   const btns = document.getElementById('lf-tpl-btns');
-  const tpl = tplMap[cat];
+  const tpl = LOG_CAT_TPL[cat];
   btns.innerHTML = tpl
-    ? `<button class="btn btn-sm" onclick="document.getElementById('lf-body').value=LOG_TEMPLATES['${tpl}']">Fill template</button>`
+    ? `<button class="btn btn-sm" onclick="fillLogTemplate('${tpl}')">Fill template</button>`
     : '';
 }
 
 function clearLogForm() {
   S.editingLogId = null;
+  S.pendingLogContext = null;
   document.getElementById('log-form-title').textContent = 'New TOC Entry';
   document.getElementById('lf-cat').value = 'NOTE';
   document.getElementById('lf-mission').value = '';
@@ -1708,6 +2369,7 @@ function renderSettings() {
         <span class="radio-name" style="font-size:11px;color:var(--muted)">Position</span>
         <button class="btn btn-sm" onclick="toggleMcLocPolicy('${esc(r.id)}',${r.adv_loc_policy ? 1 : 0})">Advertise: ${r.adv_loc_policy == null ? '…' : (r.adv_loc_policy ? 'ON' : 'OFF')}</button>
         <button class="btn btn-sm" onclick="startMcPositionPick('${esc(r.id)}')">📍 Pick on map</button>
+        <button class="btn btn-sm" onclick="useGpsForMcPosition('${esc(r.id)}')">Use GPS position</button>
       </div>`;
     });
   } else {
@@ -1891,15 +2553,47 @@ function loadRadios() {
         renderChatSidebar();
       }).catch(() => {});
     });
+    // Load self position (for the map self-marker) regardless of whether Settings has been opened
+    S.mcRadios.forEach(r => loadMcSelfInfo(r.id));
   }).catch(() => {});
 }
 
 function loadMcSelfInfo(radioId) {
   fetch(`/api/mc/${encodeURIComponent(radioId)}/self`).then(r => r.json()).then(d => {
     const r = S.mcRadios.find(x => x.id === radioId);
-    if (r) r.adv_loc_policy = d.node_info?.adv_loc_policy;
+    if (r) {
+      r.adv_loc_policy = d.node_info?.adv_loc_policy;
+      r.adv_lat = d.node_info?.adv_lat;
+      r.adv_lon = d.node_info?.adv_lon;
+    }
+    if (r?.adv_loc_policy && r.adv_lat != null && r.adv_lon != null) updateSelfMarker(r.adv_lat, r.adv_lon);
+    else clearSelfMarker();
     if (S.activeTab === 'settings') renderSettings();
   }).catch(() => {});
+}
+
+function updateSelfMarker(lat, lon) {
+  const pos = [lat, lon];
+  if (!S.selfMarker) {
+    S.selfMarker = L.marker(pos, {
+      icon: L.divIcon({
+        html: `<div style="width:12px;height:12px;background:var(--accent);border:2px solid #fff;transform:rotate(45deg);box-shadow:0 0 6px rgba(0,0,0,.5)"></div>`,
+        className: '', iconSize: [16, 16], iconAnchor: [8, 8],
+      }),
+    }).bindTooltip('HD (set position)').addTo(map);
+  } else {
+    S.selfMarker.setLatLng(pos);
+  }
+}
+
+function clearSelfMarker() {
+  if (S.selfMarker) { map.removeLayer(S.selfMarker); S.selfMarker = null; }
+}
+
+function useGpsForMcPosition(radioId) {
+  if (!S.gpsMarker) { toast('No GPS fix yet', 3000); return; }
+  const pos = S.gpsMarker.getLatLng();
+  setMcPosition(radioId, pos.lat, pos.lng);
 }
 
 function toggleMcLocPolicy(radioId, current) {
@@ -1928,8 +2622,11 @@ function setMcPosition(radioId, lat, lon) {
   fetch(`/api/mc/${encodeURIComponent(radioId)}/coords`, {
     method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ lat, lon })
   }).then(r => r.json()).then(d => {
-    if (d.ok) { toast(`Position set: ${lat.toFixed(5)}, ${lon.toFixed(5)}`, 4000); switchTab('settings'); }
-    else toast('Failed to set position: ' + (d.error || '?'), 4000);
+    if (d.ok) {
+      toast(`Position set: ${lat.toFixed(5)}, ${lon.toFixed(5)}`, 4000);
+      updateSelfMarker(lat, lon);
+      switchTab('settings');
+    } else toast('Failed to set position: ' + (d.error || '?'), 4000);
   }).catch(() => toast('Position set error', 3500));
 }
 

@@ -162,8 +162,9 @@
     #map-act-panel { position:absolute; top:0; right:0; bottom:0; width:var(--map-panel-w); z-index:999; background:rgba(13,17,23,0.92); backdrop-filter:blur(6px); border-left:1px solid var(--border); display:flex; flex-direction:column; pointer-events:none; }
     #map-act-panel h4 { font-size:11px; font-weight:700; padding:7px 10px; border-bottom:1px solid var(--border); margin:0; flex-shrink:0; letter-spacing:0.04em; color:var(--muted); pointer-events:none; }
     #map-act-body { flex:1; overflow-y:auto; pointer-events:auto; }
-    .mact-item { display:flex; align-items:flex-start; gap:7px; padding:9px 8px; border-bottom:1px solid var(--border); cursor:pointer; min-height:54px; }
+    .mact-item { display:flex; align-items:flex-start; gap:7px; padding:9px 8px; border-bottom:1px solid var(--border); cursor:pointer; min-height:54px; border-left:2px solid transparent; }
     .mact-item:active { background:var(--bg3); }
+    .mact-item.active { background:rgba(139,92,246,0.12); border-left-color:#8b5cf6; }
     .mact-badge { font-size:9px; font-weight:700; padding:2px 5px; border-radius:4px; flex-shrink:0; margin-top:1px; }
     .mact-badge.mt { background:#1d4ed8; color:#fff; }
     .mact-badge.mc { background:#065f46; color:#4ade80; }
@@ -242,17 +243,13 @@
     #chat-send:disabled { opacity: 0.55; cursor: wait; }
     .adv-btn { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 99px; border: 1px solid var(--border); background: var(--bg3); color: var(--text); cursor: pointer; line-height: 1.6; white-space: nowrap; }
     .adv-btn:active { background: var(--accent); color: #000; border-color: var(--accent); }
-    .msg-row { display: flex; flex-direction: column; max-width: 82%; }
+    .msg-row { display: flex; flex-direction: column; max-width: 82%; cursor: pointer; }
     .msg-row.out { align-self: flex-end; align-items: flex-end; }
     .msg-row.in  { align-self: flex-start; }
     .msg-bubble { padding: 6px 10px; border-radius: 8px; font-size: 13px; line-height: 1.45; word-break: break-word; }
     .msg-row.out .msg-bubble { background: var(--accent-dim); border: 1px solid var(--accent); }
     .msg-row.in  .msg-bubble { background: var(--bg3); border: 1px solid var(--border); }
     .msg-meta { font-size: 10px; color: var(--muted); padding: 2px 2px; }
-    .msg-actions { display: flex; gap: 4px; padding: 1px 2px 0; }
-    .msg-row.out .msg-actions { justify-content: flex-end; }
-    .msg-act-btn { background: none; border: none; color: var(--muted); font-size: 10px; padding: 3px 4px; cursor: pointer; min-height: 24px; }
-    .msg-act-btn:active { color: var(--accent); }
     /* chat selector sheet items */
     .cg-header { font-size: 10px; font-weight: 700; color: var(--muted); padding: 10px 14px 4px; text-transform: uppercase; letter-spacing: 0.06em; }
     .ch-item { padding: 11px 14px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); }
@@ -713,6 +710,19 @@
     <button class="sh-close" onclick="closeSheet('activity-sheet')">✕</button>
   </div>
   <div id="activity-body" class="sh-body" style="padding:0"></div>
+</div>
+
+<!-- ── MESSAGE ACTIONS SHEET ── -->
+<div id="msg-actions-sheet" class="bsheet">
+  <div class="sh-handle"></div>
+  <div class="sh-head">
+    <h3>Message</h3>
+    <button class="sh-close" onclick="closeSheet('msg-actions-sheet')">✕</button>
+  </div>
+  <div class="sh-body">
+    <div id="msg-actions-preview" style="font-size:12px;color:var(--muted);margin-bottom:14px;line-height:1.5"></div>
+    <div id="msg-actions-btns" style="display:flex;flex-direction:column;gap:8px"></div>
+  </div>
 </div>
 
 <!-- ── CONFIRM SHEET ── -->

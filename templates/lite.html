@@ -120,6 +120,13 @@
     }
     #map-status-bar .msep { color: var(--border); padding: 0 2px; pointer-events: none; }
     #map-node-count { font-size: 10px; color: var(--muted); white-space: nowrap; padding-left: 4px; }
+    #map-pick-banner {
+      position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+      background: var(--accent); color: #000; font-weight: 600; font-size: 12px;
+      padding: 6px 14px; border-radius: 99px; z-index: 1001; cursor: pointer;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+    }
+    #map-pick-banner[hidden] { display: none; }
     .mmpill { padding: 3px 10px; font-size: 11px; font-weight: 600; color: var(--muted); cursor: pointer; border: none; background: none; white-space: nowrap; line-height: 1.6; }
     .mmpill.active { background: var(--accent); color: #000; border-radius: 4px; }
     .mfpill { font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 99px; border: 1px solid var(--border); background: transparent; color: var(--muted); cursor: pointer; line-height: 1.5; white-space: nowrap; }
@@ -242,6 +249,10 @@
     .msg-row.out .msg-bubble { background: var(--accent-dim); border: 1px solid var(--accent); }
     .msg-row.in  .msg-bubble { background: var(--bg3); border: 1px solid var(--border); }
     .msg-meta { font-size: 10px; color: var(--muted); padding: 2px 2px; }
+    .msg-actions { display: flex; gap: 4px; padding: 1px 2px 0; }
+    .msg-row.out .msg-actions { justify-content: flex-end; }
+    .msg-act-btn { background: none; border: none; color: var(--muted); font-size: 10px; padding: 3px 4px; cursor: pointer; min-height: 24px; }
+    .msg-act-btn:active { color: var(--accent); }
     /* chat selector sheet items */
     .cg-header { font-size: 10px; font-weight: 700; color: var(--muted); padding: 10px 14px 4px; text-transform: uppercase; letter-spacing: 0.06em; }
     .ch-item { padding: 11px 14px; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); }
@@ -500,6 +511,7 @@
   <button class="map-fab" id="btn-map-menu" onclick="toggleMapMenu()" title="Map actions">☰</button>
   <button class="map-fab" id="btn-layers" onclick="toggleLayerPanel()" title="Map layers">⧉</button>
   <button class="map-fab" id="btn-follow" onclick="gpsButton()" title="Center / follow GPS">⌖</button>
+  <div id="map-pick-banner" hidden onclick="cancelMcPositionPick()"></div>
 
   <div id="map-act-panel">
     <h4>RECENT MESSAGES</h4>

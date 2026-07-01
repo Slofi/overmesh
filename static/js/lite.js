@@ -47,6 +47,7 @@ const S = {
 
 // ── Map ──────────────────────────────────────────────────────────────────────
 let map, activeLayer;
+let _mcPosPickRadio = null;
 
 const LAYERS = {
   voyager: { label: 'Voyager',          url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', attr: '© OSM © CARTO', maxZoom: 19 },
@@ -72,7 +73,16 @@ function initMap() {
   const saved = LAYERS[savedKey] ? savedKey : 'voyager';
   applyLayer(saved);
   renderLayerPanel();
-  map.on('click', () => { closeLayerPanel(); closeMapMenu(); });
+  map.on('click', (e) => {
+    if (_mcPosPickRadio) {
+      const radioId = _mcPosPickRadio;
+      _mcPosPickRadio = null;
+      document.getElementById('map-pick-banner')?.setAttribute('hidden', '');
+      setMcPosition(radioId, e.latlng.lat, e.latlng.lng);
+      return;
+    }
+    closeLayerPanel(); closeMapMenu();
+  });
   map.on('dragstart zoomstart', () => {
     if (S.followGps) {
       S.followGps = false;
@@ -100,7 +110,7 @@ function installTouchPanFallback() {
   const el = document.getElementById('map');
   if (!el || el.dataset.touchPanFallback === '1') return;
   el.dataset.touchPanFallback = '1';
-  const state = { active: false, moved: false, x: 0, y: 0, pointerId: null };
+  const state = { active: false, moved: false, x: 0, y: 0, pointerId: null, mode: null };
   const isControl = target => !!target.closest?.(
     '.leaflet-control, .leaflet-marker-icon, .leaflet-popup, .map-fab, #map-status-bar, #map-menu-panel, #layer-panel'
   );
@@ -114,15 +124,18 @@ function installTouchPanFallback() {
   el.addEventListener('touchstart', ev => {
     if (ev.touches.length !== 1 || isControl(ev.target)) {
       state.active = false;
+      state.mode = null;
       return;
     }
     state.active = true;
     state.moved = false;
+    state.mode = 'touch';
+    state.pointerId = null;
     state.x = ev.touches[0].clientX;
     state.y = ev.touches[0].clientY;
   }, { passive: true });
   el.addEventListener('touchmove', ev => {
-    if (!state.active || ev.touches.length !== 1 || !map) return;
+    if (!state.active || state.mode !== 'touch' || ev.touches.length !== 1 || !map) return;
     const t = ev.touches[0];
     const dx = t.clientX - state.x;
     const dy = t.clientY - state.y;
@@ -135,24 +148,32 @@ function installTouchPanFallback() {
     state.y = t.clientY;
   }, { passive: false });
   el.addEventListener('touchend', () => {
-    state.active = false;
+    if (state.mode === 'touch') {
+      state.active = false;
+      state.mode = null;
+    }
   }, { passive: true });
   el.addEventListener('touchcancel', () => {
-    state.active = false;
+    if (state.mode === 'touch') {
+      state.active = false;
+      state.mode = null;
+    }
   }, { passive: true });
 
   el.addEventListener('pointerdown', ev => {
+    if (state.mode === 'touch') return;
     if (!ev.isPrimary || isControl(ev.target)) return;
     if (ev.pointerType === 'mouse' && ev.button !== 0) return;
     state.active = true;
     state.moved = false;
+    state.mode = 'pointer';
     state.pointerId = ev.pointerId;
     state.x = ev.clientX;
     state.y = ev.clientY;
     try { el.setPointerCapture(ev.pointerId); } catch {}
   }, { passive: true });
   el.addEventListener('pointermove', ev => {
-    if (!state.active || state.pointerId !== ev.pointerId || !map) return;
+    if (!state.active || state.mode !== 'pointer' || state.pointerId !== ev.pointerId || !map) return;
     const dx = ev.clientX - state.x;
     const dy = ev.clientY - state.y;
     if (!state.moved && Math.hypot(dx, dy) < 4) return;
@@ -166,6 +187,7 @@ function installTouchPanFallback() {
   const endPointerPan = ev => {
     if (state.pointerId === ev.pointerId) {
       state.active = false;
+      state.mode = null;
       state.pointerId = null;
       try { el.releasePointerCapture(ev.pointerId); } catch {}
     }
@@ -546,7 +568,7 @@ function onMtMessage(d) {
   if (!S.mtMsgs[idx]) S.mtMsgs[idx] = [];
   S.mtMsgs[idx].push(d);
   const _mtChName = (S.mtChannels.find(c => c.index === idx)?.name) || ('ch' + idx);
-  if (S.chatCtx?.type === 'mt_chan' && S.chatCtx.key === idx) {
+  if (S.activeTab === 'chat' && S.chatCtx?.type === 'mt_chan' && S.chatCtx.key === idx) {
     renderMessages();
   } else {
     addActivity('💬', d.from_name || d.from_id || 'MT message', d.text || d.message || '');
@@ -566,15 +588,17 @@ function onMcMessage(d) {
   const rid = d.radio_id;
   if (!S.mcMsgs[rid]) S.mcMsgs[rid] = { chan: {}, dm: {} };
   const dmId = d.contact_id || (d.subtype === 'dm' ? (d.sent ? d.to_id : d.from_id) : '');
+  const idx = d.channel ?? d.channel_index ?? 0;
   if (dmId) {
     if (!S.mcMsgs[rid].dm[dmId]) S.mcMsgs[rid].dm[dmId] = [];
     S.mcMsgs[rid].dm[dmId].push(d);
   } else {
-    const idx = d.channel ?? d.channel_index ?? 0;
     if (!S.mcMsgs[rid].chan[idx]) S.mcMsgs[rid].chan[idx] = [];
     S.mcMsgs[rid].chan[idx].push(d);
   }
-  const active = S.chatCtx?.type?.startsWith('mc') && S.chatCtx?.radioId === rid;
+  const active = S.activeTab === 'chat' && S.chatCtx?.radioId === rid &&
+    (dmId ? (S.chatCtx?.type === 'mc_dm' && String(S.chatCtx?.key) === String(dmId))
+          : (S.chatCtx?.type === 'mc_chan' && Number(S.chatCtx?.key) === Number(idx)));
   if (active) renderMessages();
   else {
     addActivity('💬', d.from_name || d.from_id || 'MC message', d.text || d.message || '');
@@ -585,7 +609,6 @@ function onMcMessage(d) {
         bumpChUnread('mc_dm', rid, dmId);
         showMsgToast(`${_mcFrom0} (DM)`, d.text || '', () => { switchTab('chat'); selectChat('mc_dm', rid, dmId); });
       } else {
-        const idx = d.channel ?? d.channel_index ?? 0;
         const _mcChName0 = (S.mcChannels[rid] || []).find(c => c.index === idx)?.name || ('ch' + idx);
         bumpChUnread('mc_chan', rid, idx);
         showMsgToast(`${_mcFrom0} · #${_mcChName0}`, d.text || '', () => { switchTab('chat'); selectChat('mc_chan', rid, idx); });
@@ -903,7 +926,7 @@ function renderMapActivity() {
     return `<div class="mact-item" onclick="tapMsgFeed(${i})">
       <span class="mact-badge ${isMc?'mc':'mt'}">${isMc?'MC':'MT'}</span>
       <div class="mact-body">
-        <div class="mact-from">${esc(m.from)} <span style="font-size:9px;color:var(--muted);font-weight:400">${esc(m.label)}</span></div>
+        <div class="mact-from">${m.from && m.from !== '?' ? esc(m.from) + ' ' : ''}<span style="font-size:9px;color:var(--muted);font-weight:400">${esc(m.label)}</span></div>
         <div class="mact-text">${esc(m.text)}</div>
         <div class="mact-meta">${relTime(m.ts)}${m.pathLen != null ? ' · ' + _hopLabel(m.pathLen) + (m.rssi != null ? ' · ' + m.rssi + 'dBm' : '') : ''}</div>
       </div>
@@ -1019,29 +1042,37 @@ function selectChat(type, radioId, key) {
 function renderMessages() {
   const el = document.getElementById('chat-messages');
   const ctx = S.chatCtx;
-  if (!ctx) { el.innerHTML = ''; return; }
+  if (!ctx) { el.innerHTML = ''; S.chatMsgsView = []; return; }
   let msgs = [];
   if (ctx.type === 'mt_chan') msgs = S.mtMsgs[ctx.key] || [];
   else if (ctx.type === 'mt_dm') msgs = S.mtDmMsgs[ctx.key] || [];
   else if (ctx.type === 'mc_chan') msgs = S.mcMsgs[ctx.radioId]?.chan[ctx.key] || [];
   else if (ctx.type === 'mc_dm') msgs = S.mcMsgs[ctx.radioId]?.dm[ctx.key] || [];
+  S.chatMsgsView = msgs;
 
-  el.innerHTML = msgs.map(m => {
+  el.innerHTML = msgs.map((m, i) => {
     const out = m.from_me || m.is_mine || m.sent;
     const isMc = ctx.type.startsWith('mc');
-    const sender = out ? 'Me' : esc(
-      isMc ? _mcNameFor(ctx.radioId, m.from_id) || m.from_name || '?'
-           : (m.sender || m.from_name || m.from_id || '?')
-    );
+    const senderName = isMc ? (_mcNameFor(ctx.radioId, m.from_id) || m.from_name || '') : (m.sender || m.from_name || m.from_id || '');
+    const sender = out ? 'Me' : esc(senderName || '?');
     const rawTs = m.timestamp || m.ts;
     const ts = rawTs ? new Date(rawTs * 1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
     const pathParts = isMc && !out && m.path_len != null
       ? [_hopLabel(m.path_len)].concat(m.path_hash_size ? [m.path_hash_size + 'B'] : []).concat(m.rx_rssi != null ? [m.rx_rssi + 'dBm'] : [])
       : [];
     const pathInfo = pathParts.join(' · ');
+    const hasSender = !out && m.from_id && senderName && senderName !== '?';
+    const isDmView = ctx.type === 'mt_dm' || ctx.type === 'mc_dm';
+    let actions = '';
+    if (hasSender) {
+      if (!isDmView) actions += `<button class="msg-act-btn" onclick="event.stopPropagation();msgStartDm(${i})">DM</button>`;
+      actions += `<button class="msg-act-btn" onclick="event.stopPropagation();msgReply(${i})">↩ Reply</button>`;
+    }
+    actions += `<button class="msg-act-btn" onclick="event.stopPropagation();msgToLog(${i})">Log</button>`;
     return `<div class="msg-row ${out ? 'out' : 'in'}" data-ts="${rawTs || ''}">
       <div class="msg-bubble">${esc(m.text || m.message || '')}</div>
       <div class="msg-meta">${out ? '' : sender + ' · '}${ts}${pathInfo ? ' · ' + esc(pathInfo) : ''}</div>
+      <div class="msg-actions">${actions}</div>
     </div>`;
   }).join('');
   el.scrollTop = el.scrollHeight;
@@ -1050,6 +1081,46 @@ function renderMessages() {
     sendBtn.disabled = !!S.sending;
     sendBtn.textContent = S.sending ? '...' : 'Send';
   }
+}
+
+function msgReply(i) {
+  const ctx = S.chatCtx;
+  const m = S.chatMsgsView?.[i];
+  if (!ctx || !m) return;
+  const isMc = ctx.type.startsWith('mc');
+  const name = isMc ? (_mcNameFor(ctx.radioId, m.from_id) || m.from_name || '') : (m.sender || m.from_name || m.from_id || '');
+  if (!name) return;
+  const input = document.getElementById('chat-input');
+  if (!input) return;
+  input.value = isMc ? `@[${String(name).replace(/[[\]\r\n]/g, '').trim()}] ` : `@${name}: `;
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 80) + 'px';
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
+function msgStartDm(i) {
+  const ctx = S.chatCtx;
+  const m = S.chatMsgsView?.[i];
+  if (!ctx || !m || !m.from_id) return;
+  const isMc = ctx.type.startsWith('mc');
+  switchTab('chat');
+  selectChat(isMc ? 'mc_dm' : 'mt_dm', isMc ? ctx.radioId : null, m.from_id);
+}
+
+function msgToLog(i) {
+  const ctx = S.chatCtx;
+  const m = S.chatMsgsView?.[i];
+  if (!ctx || !m) return;
+  const isMc = ctx.type.startsWith('mc');
+  const out = m.from_me || m.is_mine || m.sent;
+  const senderName = isMc ? (_mcNameFor(ctx.radioId, m.from_id) || m.from_name || '?') : (m.sender || m.from_name || m.from_id || '?');
+  const network = isMc
+    ? (ctx.type === 'mc_dm' ? 'MeshCore DM' : `MeshCore #${(S.mcChannels[ctx.radioId] || []).find(c => c.index === ctx.key)?.name || ('ch' + ctx.key)}`)
+    : (ctx.type === 'mt_dm' ? 'Meshtastic DM' : `Meshtastic CH${ctx.key}`);
+  const body = `From:\t${out ? 'Me' : senderName}\nTo:\t${out ? network : 'Me'}\nNetwork / Channel:\t${network}\nResult:\t${out ? 'sent' : 'received'}\nFollow-up:\n\n"${m.text || m.message || ''}"`;
+  switchTab('log');
+  setTimeout(() => openLogForm('COMMS', body), 100);
 }
 
 function sendMsg() {
@@ -1095,7 +1166,7 @@ function sendMsg() {
             ,S.mcMsgs[ctx.radioId].dm);
         if (!store[ctx.key]) store[ctx.key] = [];
         store[ctx.key].push({ text, from_me: true, timestamp: Date.now()/1000 });
-        addActivity('✓', 'Message sent', chatTitle(ctx));
+        addActivity('✓', d.queued ? 'Message queued' : 'Message sent', chatTitle(ctx));
         renderMessages();
       } else { toast('Send failed: ' + (d.error || d.message || '?')); }
     }).catch(() => toast('Send error'))
@@ -1626,11 +1697,17 @@ function renderSettings() {
   html += `<div class="set-section"><div class="set-h">MC Radios (MeshCore)</div>`;
   if (S.mcRadios.length) {
     S.mcRadios.forEach(r => {
+      if (r.adv_loc_policy === undefined) { r.adv_loc_policy = null; loadMcSelfInfo(r.id); }
       html += `<div class="radio-row">
         <span class="radio-name">${esc(r.name || r.port || r.id)}</span>
         <span class="radio-status ${r.connected ? 'on' : ''}">${r.connected ? 'Online' : 'Offline'}</span>
         <button class="btn btn-sm" onclick="toggleRadio('mc','${esc(r.id)}',${r.enabled !== false})">${r.enabled !== false ? 'Disable' : 'Enable'}</button>
         <button class="btn btn-danger btn-sm" onclick="removeRadio('mc','${esc(r.id)}')">Remove</button>
+      </div>
+      <div class="radio-row" style="padding-top:0">
+        <span class="radio-name" style="font-size:11px;color:var(--muted)">Position</span>
+        <button class="btn btn-sm" onclick="toggleMcLocPolicy('${esc(r.id)}',${r.adv_loc_policy ? 1 : 0})">Advertise: ${r.adv_loc_policy == null ? '…' : (r.adv_loc_policy ? 'ON' : 'OFF')}</button>
+        <button class="btn btn-sm" onclick="startMcPositionPick('${esc(r.id)}')">📍 Pick on map</button>
       </div>`;
     });
   } else {
@@ -1815,6 +1892,45 @@ function loadRadios() {
       }).catch(() => {});
     });
   }).catch(() => {});
+}
+
+function loadMcSelfInfo(radioId) {
+  fetch(`/api/mc/${encodeURIComponent(radioId)}/self`).then(r => r.json()).then(d => {
+    const r = S.mcRadios.find(x => x.id === radioId);
+    if (r) r.adv_loc_policy = d.node_info?.adv_loc_policy;
+    if (S.activeTab === 'settings') renderSettings();
+  }).catch(() => {});
+}
+
+function toggleMcLocPolicy(radioId, current) {
+  const next = current ? 0 : 1;
+  fetch(`/api/mc/${encodeURIComponent(radioId)}/loc_policy`, {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ policy: next })
+  }).then(r => r.json()).then(d => {
+    if (d.ok) { toast(next ? 'Advertising position: ON' : 'Advertising position: OFF', 3000); loadMcSelfInfo(radioId); }
+    else toast('Failed: ' + (d.error || '?'), 3500);
+  }).catch(() => toast('Error', 3000));
+}
+
+function startMcPositionPick(radioId) {
+  _mcPosPickRadio = radioId;
+  switchTab('map');
+  const banner = document.getElementById('map-pick-banner');
+  if (banner) { banner.textContent = 'Tap the map to set HD position'; banner.hidden = false; }
+}
+
+function cancelMcPositionPick() {
+  _mcPosPickRadio = null;
+  document.getElementById('map-pick-banner')?.setAttribute('hidden', '');
+}
+
+function setMcPosition(radioId, lat, lon) {
+  fetch(`/api/mc/${encodeURIComponent(radioId)}/coords`, {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ lat, lon })
+  }).then(r => r.json()).then(d => {
+    if (d.ok) { toast(`Position set: ${lat.toFixed(5)}, ${lon.toFixed(5)}`, 4000); switchTab('settings'); }
+    else toast('Failed to set position: ' + (d.error || '?'), 4000);
+  }).catch(() => toast('Position set error', 3500));
 }
 
 function loadChannels() {

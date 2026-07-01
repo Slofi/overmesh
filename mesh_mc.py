@@ -15,6 +15,10 @@ import json
 import logging
 import os
 import tempfile
+try:
+    import termios
+except ImportError:
+    termios = None  # non-POSIX platform; hupcl fix is a no-op there
 import threading
 import time
 
@@ -442,6 +446,41 @@ def _mc_bg_task(coro, label=""):
     return task
 
 
+async def _mc_reboot_for_startup_rx_recovery(config_id, name, mc):
+    """Reboot one MC radio when startup stats show TX works but RX never starts."""
+    now = time.time()
+    last = _mc_startup_rx_recovery.get(config_id, 0)
+    if now - last < 300:
+        log.warning(f"[MC:{name}] Startup RX watchdog already ran recently; not rebooting again")
+        return
+    _mc_startup_rx_recovery[config_id] = now
+
+    log.warning(f"[MC:{name}] Startup RX watchdog: rebooting MC radio and forcing reconnect")
+    try:
+        await mc.commands.reboot()
+    except Exception as e:
+        log.warning(f"[MC:{name}] Startup RX watchdog firmware reboot failed: {e}")
+    try:
+        await mc.disconnect()
+    except Exception:
+        pass
+
+    now = time.time()
+    with mc_connections_lock:
+        state = mc_connections.get(config_id)
+        if state and state.get("mc") is mc:
+            state["status"] = "disconnected"
+            state["status_ts"] = now
+            state["mc"] = None
+    push_to_sse({
+        "type": "mc_status",
+        "radio_id": config_id,
+        "status": "disconnected",
+        "status_ts": now,
+        "name": name,
+    })
+
+
 async def _force_close_meshcore(mc):
     """Close a MeshCore transport even if connect failed before normal state was set."""
     if mc is None:
@@ -520,6 +559,19 @@ class OMSerialConnection(SerialConnection):
                     serial_obj.rts = False
                 except Exception as e:
                     log.warning(f"[MC] Serial RTS release failed during connect; continuing: {e!r}")
+                # Clear HUPCL so a future close of this port (process exit/restart)
+                # doesn't drop DTR and reset the radio's MCU, wiping in-RAM state
+                # (channel keys) even though we never asked for a reset. The radio
+                # resets on this same line transition — see _dtr_reset_port(), which
+                # deliberately pulses it to force a reset.
+                if termios is not None:
+                    try:
+                        fd = serial_obj.fileno()
+                        attrs = termios.tcgetattr(fd)
+                        attrs[2] &= ~termios.HUPCL  # cflags
+                        termios.tcsetattr(fd, termios.TCSANOW, attrs)
+                    except Exception as e:
+                        log.warning(f"[MC] Clearing HUPCL failed during connect; continuing: {e!r}")
             self.cx._connected_event.set()
 
 
@@ -606,6 +658,7 @@ _mc_recent_rx_logs: dict[str, list[dict]] = {}  # radio id -> recent RX_LOG_DATA
 _mc_drain_active: set[str] = set()
 _mc_drain_pending: set[str] = set()   # fired MESSAGES_WAITING while drain was active — re-drain on finish
 _mc_path_refresh_active: set[str] = set()  # rate-limit concurrent get_contacts() from PATH_UPDATE
+_mc_startup_rx_recovery: dict[str, float] = {}  # avoid reboot loops from the startup RX watchdog
 _mc_debug_lock = threading.Lock()
 _mc_debug_until: dict[str, float] = {}
 _mc_debug_raw_handler = None
@@ -1622,6 +1675,71 @@ async def _connect_mc_node_async(node_cfg):
         await _send_advert_async(config_id, flood=True)
         log.info(f"[MC:{name}] Startup flood advert sent — remote nodes will learn our identity")
     _mc_bg_task(_startup_advert(), "startup_advert")
+
+    async def _startup_rx_watchdog():
+        def _still_ours():
+            with mc_connections_lock:
+                state = mc_connections.get(config_id) or {}
+                still_connected = state.get("status") == "connected" and state.get("mc") is mc
+                node_type = (state.get("config", {}).get("type") or "serial").lower()
+            return still_connected and node_type in ("serial", "usb")
+
+        async def _stats_sample():
+            core_r = await asyncio.wait_for(mc.commands.get_stats_core(), timeout=8)
+            radio_r = await asyncio.wait_for(mc.commands.get_stats_radio(), timeout=8)
+            pkts_r = await asyncio.wait_for(mc.commands.get_stats_packets(), timeout=8)
+            core = core_r.payload if core_r.type == EventType.STATS_CORE else {}
+            radio = radio_r.payload if radio_r.type == EventType.STATS_RADIO else {}
+            pkts = pkts_r.payload if pkts_r.type == EventType.STATS_PACKETS else {}
+            return {
+                "queue_len": int(core.get("queue_len") or 0),
+                "uptime": int(core.get("uptime_secs") or 0),
+                "recv": int(pkts.get("recv") or 0),
+                "sent": int(pkts.get("sent") or 0),
+                "flood_tx": int(pkts.get("flood_tx") or 0),
+                "rx_air": int(radio.get("rx_air_secs") or 0),
+            }
+
+        await asyncio.sleep(12)
+        if not _still_ours():
+            return
+        try:
+            first = await _stats_sample()
+        except Exception as e:
+            log.debug(f"[MC:{name}] Startup RX watchdog first stats fetch skipped: {e}")
+            return
+
+        await asyncio.sleep(43)
+        if not _still_ours():
+            return
+        try:
+            last = await _stats_sample()
+        except Exception as e:
+            log.debug(f"[MC:{name}] Startup RX watchdog final stats fetch skipped: {e}")
+            return
+
+        recv_delta = last["recv"] - first["recv"]
+        rx_air_delta = last["rx_air"] - first["rx_air"]
+        sent_delta = last["sent"] - first["sent"]
+        flood_tx_delta = last["flood_tx"] - first["flood_tx"]
+        fresh_radio_rx_seen = last["uptime"] < 180 and (last["recv"] > 0 or last["rx_air"] > 0)
+
+        if recv_delta <= 0 and rx_air_delta <= 0 and not fresh_radio_rx_seen:
+            log.warning(
+                f"[MC:{name}] Startup RX watchdog: RX counters did not advance after startup "
+                f"(recv {first['recv']}->{last['recv']}, rx_air {first['rx_air']}->{last['rx_air']}s, "
+                f"sent_delta={sent_delta}, flood_tx_delta={flood_tx_delta}, "
+                f"uptime={last['uptime']}s, queue={last['queue_len']})"
+            )
+            await _mc_reboot_for_startup_rx_recovery(config_id, name, mc)
+        else:
+            log.info(
+                f"[MC:{name}] Startup RX watchdog OK: "
+                f"recv_delta={recv_delta} rx_air_delta={rx_air_delta}s "
+                f"sent_delta={sent_delta} flood_tx_delta={flood_tx_delta} "
+                f"uptime={last['uptime']}s queue={last['queue_len']}"
+            )
+    _mc_bg_task(_startup_rx_watchdog(), "startup_rx_watchdog")
 
     # Retry if initial fetch looks incomplete (empty or fewer than previously stored).
     # TTLP (and similar devices) can take 15–30s to load flash storage after USB reconnect.

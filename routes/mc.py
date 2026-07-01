@@ -514,12 +514,15 @@ def api_mc_send_chan(radio_id):
         return jsonify({"error": f"Message too long ({byte_len} bytes, max {max_bytes})"}), 400
 
     try:
-        send_chan_msg(radio_id, chan, text)
+        result = send_chan_msg(radio_id, chan, text)
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 503
     except Exception as e:
         log.warning(f"[MC] send_chan failed: {e}")
         return jsonify({"error": str(e)}), 500
+    result_type = getattr(getattr(result, "type", None), "name", None)
+    if result_type == "ERROR":
+        return jsonify({"error": f"Device rejected channel message: {getattr(result, 'payload', {})}"}), 502
     msg = {
         "type": "mc_message",
         "radio_id": radio_id,
@@ -532,13 +535,15 @@ def api_mc_send_chan(radio_id):
         "text": text,
         "ts": int(time.time()),
         "sent": True,
-        "status": "delivered",
+        # MeshCore channel sends return OK when the device accepts the message.
+        # Unlike DMs, this is not a TX confirmation.
+        "status": "queued",
     }
     msg["id"] = _mc_sent_message_id(msg)
     save_mc_message(msg)
     threading.Thread(target=maybe_forward_mc_message, args=(dict(msg),), daemon=True).start()
 
-    return jsonify({"ok": True, "message": msg})
+    return jsonify({"ok": True, "queued": True, "tx_event": result_type, "message": msg})
 
 
 @bp.route("/api/mc/<radio_id>/send_dm", methods=["POST"])
@@ -558,7 +563,7 @@ def api_mc_send_dm(radio_id):
         return jsonify({"error": f"Message too long ({byte_len} bytes, max {MC_MAX_DM_MSG_BYTES})"}), 400
 
     try:
-        send_dm(radio_id, target, text)
+        result = send_dm(radio_id, target, text)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     except RuntimeError as e:
@@ -566,6 +571,9 @@ def api_mc_send_dm(radio_id):
     except Exception as e:
         log.warning(f"[MC] send_dm failed: {e}")
         return jsonify({"error": str(e)}), 500
+    result_type = getattr(getattr(result, "type", None), "name", None)
+    if result_type == "ERROR":
+        return jsonify({"error": f"Device rejected DM: {getattr(result, 'payload', {})}"}), 502
 
     msg = {
         "type": "mc_message",
@@ -582,7 +590,7 @@ def api_mc_send_dm(radio_id):
     }
     msg["id"] = _mc_sent_message_id(msg)
     save_mc_message(msg)
-    return jsonify({"ok": True, "message": msg})
+    return jsonify({"ok": True, "tx_event": result_type, "message": msg})
 
 
 @bp.route("/api/mc/<radio_id>/statusreq/<node_id>", methods=["POST"])
@@ -877,9 +885,20 @@ def api_mc_reboot(radio_id):
     if state.get("status") != "connected":
         return jsonify({"error": "MC radio not connected"}), 503
     try:
-        reboot_device_dtr(radio_id)
+        reboot_device(radio_id)
+        with mc_connections_lock:
+            if radio_id in mc_connections:
+                mc_connections[radio_id]["status"] = "disconnected"
+                mc_connections[radio_id]["status_ts"] = time.time()
+                mc_connections[radio_id]["mc"] = None
     except RuntimeError as e:
-        return jsonify({"error": str(e)}), 503
+        log.warning(f"[MC] firmware reboot failed, falling back to DTR reset: {e}")
+        try:
+            reboot_device_dtr(radio_id)
+        except RuntimeError as e2:
+            return jsonify({"error": str(e2)}), 503
+        except Exception as e2:
+            return jsonify({"error": str(e2)}), 500
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     return jsonify({"ok": True})

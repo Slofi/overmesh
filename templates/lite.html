@@ -162,6 +162,18 @@
     #map-act-panel { position:absolute; top:0; right:0; bottom:0; width:var(--map-panel-w); z-index:999; background:rgba(13,17,23,0.92); backdrop-filter:blur(6px); border-left:1px solid var(--border); display:flex; flex-direction:column; pointer-events:none; }
     #map-act-panel h4 { font-size:11px; font-weight:700; padding:7px 10px; border-bottom:1px solid var(--border); margin:0; flex-shrink:0; letter-spacing:0.04em; color:var(--muted); pointer-events:none; }
     #map-act-body { flex:1; overflow-y:auto; pointer-events:auto; }
+    #trace-hops-panel { flex-shrink:0; border-bottom:1px solid var(--border); pointer-events:auto; max-height:45%; display:flex; flex-direction:column; }
+    #trace-hops-panel[hidden] { display: none; }
+    #trace-hops-head { display:flex; align-items:center; gap:6px; padding:6px 8px; font-size:10px; font-weight:700; letter-spacing:0.04em; color:#8b5cf6; background:rgba(139,92,246,0.08); flex-shrink:0; }
+    #trace-hops-count { font-weight:400; color:var(--muted); flex:1; }
+    .hop-close-btn { background:var(--bg3); border:1px solid var(--border); color:var(--text); font-size:11px; font-weight:600; cursor:pointer; padding:5px 12px; border-radius:99px; min-height:28px; }
+    .hop-close-btn:active { background:#8b5cf6; border-color:#8b5cf6; color:#fff; }
+    #trace-hops-list { overflow-y:auto; }
+    .hop-item { display:flex; align-items:center; gap:6px; padding:5px 8px; font-size:11px; border-bottom:1px solid rgba(255,255,255,0.04); }
+    .hop-num { flex-shrink:0; width:16px; height:16px; border-radius:50%; background:#8b5cf6; color:#000; font-size:9px; font-weight:700; display:flex; align-items:center; justify-content:center; }
+    .hop-item.end .hop-num { background:var(--accent); }
+    .hop-name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .hop-sub { color:var(--muted); font-size:9px; flex-shrink:0; }
     .mact-item { display:flex; align-items:flex-start; gap:7px; padding:9px 8px; border-bottom:1px solid var(--border); cursor:pointer; min-height:54px; border-left:2px solid transparent; }
     .mact-item:active { background:var(--bg3); }
     .mact-item.active { background:rgba(139,92,246,0.12); border-left-color:#8b5cf6; }
@@ -198,7 +210,9 @@
     .node-row:active { background: var(--bg2); }
     .ntype { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
     .ntype.mt { background: var(--blue); } .ntype.mc { background: var(--accent); }
-    .node-name { font-weight: 500; flex: 1; font-size: 13px; }
+    .node-name-wrap { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .node-name { font-weight: 500; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .node-id { font-size: 10px; color: var(--muted); font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .node-meta { font-size: 11px; color: var(--muted); text-align: right; }
     #nodes-summary {
       width: 100%; display: flex; gap: 6px; overflow-x: auto; padding-top: 2px;
@@ -500,9 +514,9 @@
     <button class="mmpill active" data-mode="map" onclick="mapModeSet('map')">Map</button>
     <button class="mmpill" data-mode="sense" onclick="mapModeSet('sense')">Sense</button>
     <span class="msep">|</span>
-    <button class="mfpill active" id="mf-all" onclick="setMapFilter('all')">All</button>
+    <button class="mfpill" id="mf-all" onclick="setMapFilter('all')">All</button>
+    <button class="mfpill active" id="mf-mc" onclick="setMapFilter('mc')">MC</button>
     <button class="mfpill" id="mf-mt" onclick="setMapFilter('mt')">MT</button>
-    <button class="mfpill" id="mf-mc" onclick="setMapFilter('mc')">MC</button>
     <span id="map-node-count"></span>
   </div>
   <button class="map-fab" id="btn-map-menu" onclick="toggleMapMenu()" title="Map actions">☰</button>
@@ -512,6 +526,14 @@
 
   <div id="map-act-panel">
     <h4>RECENT MESSAGES</h4>
+    <div id="trace-hops-panel" hidden>
+      <div id="trace-hops-head">
+        <span>PATH</span>
+        <span id="trace-hops-count"></span>
+        <button class="hop-close-btn" onclick="hideTraceHops()">Close</button>
+      </div>
+      <div id="trace-hops-list"></div>
+    </div>
     <div id="map-act-body"></div>
   </div>
   <div id="map-menu-panel" hidden></div>
@@ -526,8 +548,8 @@
     <button class="fpill" onclick="setNFilter('fav',this)">★ Fav</button>
     <button class="fpill" onclick="setNFilter('fresh',this)">Fresh</button>
     <button class="fpill" onclick="setNFilter('pos',this)">GPS</button>
-    <button class="fpill" onclick="setNFilter('mt',this)">MT</button>
     <button class="fpill" onclick="setNFilter('mc',this)">MC</button>
+    <button class="fpill" onclick="setNFilter('mt',this)">MT</button>
     <div id="nodes-summary"></div>
   </div>
   <div id="active-dms-bar" hidden style="background:var(--bg2);border-bottom:1px solid var(--border);padding:5px 8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
@@ -546,8 +568,8 @@
       <button class="adv-btn" id="adv-btn-local" onclick="sendAdvert(false)" hidden>Local</button>
       <button class="adv-btn" id="adv-btn-flood" onclick="sendAdvert(true)" hidden>Flood</button>
       <span id="adv-sep" style="color:var(--border);padding:0 2px" hidden>|</span>
-      <button class="cpill" id="cpill-mt" onclick="setChatFilter('mt')">MT</button>
       <button class="cpill" id="cpill-mc" onclick="setChatFilter('mc')">MC</button>
+      <button class="cpill" id="cpill-mt" onclick="setChatFilter('mt')">MT</button>
     </div>
   </div>
   <div id="chat-messages"></div>

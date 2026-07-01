@@ -18,7 +18,7 @@ const S = {
   logSubtab:  'toc',
   editingLogId: null,
   chatCtx:    null, // {type:'mt_chan'|'mt_dm'|'mc_chan'|'mc_dm', radioId, key}
-  chatFilter: 'all',
+  chatFilter: 'mc',
   mapMsgFeed: [], // [{type,radioId,key,from,text,ts,label,pathLen?,routeType?,rssi?,snr?}]
   activeTab:  'map',
   nFilter:    'all',
@@ -36,7 +36,7 @@ const S = {
   activeTraceMsgIdx: null, // mapMsgFeed index the active trace belongs to (for toggle-off)
   markers:    {},   // node_id/contact_id → L.circleMarker
   markerTypes: {}, // node_id → 'mt'|'mc'
-  mapFilter:  'all',
+  mapFilter:  'mc',
   traceLines: [],
   followGps:  localStorage.getItem('lm_follow_gps') === '1',
   gpsCenterPrimed: false,
@@ -989,7 +989,7 @@ function decodeMcRelayPath(evt, radioLat, radioLon, radioId = null) {
 // "message" trace style (violet, dashed) with a dark halo for contrast, drawn
 // per segment; unresolved hops are simply omitted (path shown as partial).
 // Stays until toggled off or replaced by tapping another message.
-function showMsgTrace(pathResult, msgIdx) {
+function showMsgTrace(pathResult, msgIdx, senderName) {
   if (!pathResult?.points || pathResult.points.length < 2 || !map) return;
   if (S.activeTraceLine) map.removeLayer(S.activeTraceLine);
   const points = pathResult.points;
@@ -1005,7 +1005,48 @@ function showMsgTrace(pathResult, msgIdx) {
   group.addTo(map);
   S.activeTraceLine = group;
   S.activeTraceMsgIdx = msgIdx;
+  // Hop/RPTR name list is Sense-mode-only — Map mode just gets the line + chat jump.
+  if (S.senseOn) renderTraceHops(pathResult, senderName);
+  else hideTraceHops();
   if (pathResult.partial) toast('Partial path — some hops unresolved', 3000);
+}
+
+// Textual hop list to go with the trace line — sender at one end, HD at the
+// other, resolved relays in between. Unresolved hops are simply absent from
+// pathResult.points (never guessed), so the count reflects only known hops.
+function renderTraceHops(pathResult, senderName) {
+  const panel = document.getElementById('trace-hops-panel');
+  const list = document.getElementById('trace-hops-list');
+  const countEl = document.getElementById('trace-hops-count');
+  if (!panel || !list || !countEl) return;
+  const points = pathResult.points || [];
+  const hopsByIdx = new Map((pathResult.hops || []).map(h => [h.pointIndex, h]));
+  list.innerHTML = points.map((p, idx) => {
+    const isEnd = idx === 0 || idx === points.length - 1;
+    let label, sub = '';
+    if (idx === 0) label = senderName || 'Sender';
+    else if (idx === points.length - 1) label = 'HD (you)';
+    else {
+      const hop = hopsByIdx.get(idx);
+      label = hop?.name || '?';
+      if (hop?.ambiguous) sub = 'uncertain';
+      else if (hop?.confidence && !['exact', 'unique-1B', 'unique-2B'].includes(hop.confidence)) sub = hop.confidence;
+    }
+    return `<div class="hop-item${isEnd ? ' end' : ''}">
+      <span class="hop-num">${idx + 1}</span>
+      <span class="hop-name">${esc(label)}</span>
+      <span class="hop-sub">${esc(sub)}</span>
+    </div>`;
+  }).join('');
+  const knownRelays = Math.max(0, points.length - 2);
+  countEl.textContent = pathResult.partial ? `partial — ${knownRelays} known`
+    : (knownRelays > 0 ? `${knownRelays} hop${knownRelays !== 1 ? 's' : ''}` : 'direct');
+  panel.hidden = false;
+}
+
+function hideTraceHops() {
+  const panel = document.getElementById('trace-hops-panel');
+  if (panel) panel.hidden = true;
 }
 
 function addMsgToFeed(type, radioId, key, from, text, ts, label, extra) {
@@ -1265,7 +1306,10 @@ function nodeRow(id, type, name, n, radioId, isFav) {
   const star = isFav ? `<span style="color:var(--accent);font-size:12px;flex-shrink:0;margin-left:auto;padding-left:6px">★</span>` : '';
   return `<div class="node-row" onclick="openNodeDetail('${esc(id)}','${type}','${esc(radioId||'')}')">
     <span class="ntype ${type}"></span>
-    <span class="node-name">${esc(name)}</span>
+    <div class="node-name-wrap">
+      <span class="node-name">${esc(name)}</span>
+      <span class="node-id">${esc(id)}</span>
+    </div>
     <div class="node-meta">${meta}</div>
     ${star}
   </div>`;
@@ -1478,13 +1522,14 @@ function tapMsgFeed(i) {
     if (S.activeTraceLine) map.removeLayer(S.activeTraceLine);
     S.activeTraceLine = null;
     S.activeTraceMsgIdx = null;
+    hideTraceHops();
   } else if (m.type.startsWith('mt')) {
     // MT: direct line only (no hop-hash path decoding exists for Meshtastic here)
     const node = (m.fromId && S.nodes[m.fromId])
       || Object.values(S.nodes).find(n => n.name === m.from || n.id === m.from);
     const [radioLat, radioLon] = _mcTraceRadioPos();
     if (node?.lat && radioLat != null) {
-      showMsgTrace({ points: [[node.lat, node.lon], [radioLat, radioLon]] }, i);
+      showMsgTrace({ points: [[node.lat, node.lon], [radioLat, radioLon]] }, i, node?.name || m.from);
       map.panTo([node.lat, node.lon]);
     } else toast('No known position for sender', 3000);
   } else {
@@ -1522,7 +1567,8 @@ function tapMsgFeed(i) {
     }
     if (pathResult?.points) pathResult = _mcReversePathResult(pathResult);
 
-    if (pathResult?.points?.length >= 2) { showMsgTrace(pathResult, i); map.panTo(pathResult.points[0]); }
+    const senderName = c?.name || (m.from && m.from !== '?' ? m.from : '') || _parseChannelSenderName(m.text) || 'Sender';
+    if (pathResult?.points?.length >= 2) { showMsgTrace(pathResult, i, senderName); map.panTo(pathResult.points[0]); }
     else toast('No known position for sender', 3000);
   }
   renderMapActivity();
@@ -1583,6 +1629,8 @@ function _applyMapMode(mode) {
     renderMapActivity();
     refreshMapLayout();
   }
+  // Hop/RPTR list is Sense-only — never show it when switching into plain Map mode.
+  if (mode !== 'sense') hideTraceHops();
   document.querySelectorAll('[data-mode]').forEach(el => {
     el.classList.toggle('active', el.dataset.mode === mode);
   });
@@ -2321,8 +2369,8 @@ function renderSettings() {
 
   html += `<div class="set-section"><div class="set-h">Field Status</div>
     <div class="settings-grid">
-      <div class="summary-chip" style="text-align:center;padding:8px"><div style="color:var(--accent);font-weight:700">${mtOnline}/${mtTotal}</div><div>MT</div></div>
       <div class="summary-chip" style="text-align:center;padding:8px"><div style="color:var(--accent);font-weight:700">${mcOnline}/${mcTotal}</div><div>MC</div></div>
+      <div class="summary-chip" style="text-align:center;padding:8px"><div style="color:var(--accent);font-weight:700">${mtOnline}/${mtTotal}</div><div>MT</div></div>
       <div class="summary-chip" style="text-align:center;padding:8px"><div style="color:var(--accent);font-weight:700">${S.followGps ? 'FOLLOW' : (S.gpsMarker ? 'FIX' : 'NO FIX')}</div><div>GPS</div></div>
     </div>
   </div>`;
@@ -2335,26 +2383,7 @@ function renderSettings() {
     </div>
   </div>`;
 
-  // MT Radios
-  html += `<div class="set-section"><div class="set-h">MT Radios (Meshtastic)</div>`;
-  if (S.mtRadios.length) {
-    S.mtRadios.forEach(r => {
-      html += `<div class="radio-row">
-        <span class="radio-name">${esc(r.name || r.port || r.id)}</span>
-        <span class="radio-status ${r.connected ? 'on' : ''}">${r.connected ? 'Online' : 'Offline'}</span>
-        <button class="btn btn-sm" onclick="toggleRadio('mt','${esc(r.id)}',${r.enabled !== false})">${r.enabled !== false ? 'Disable' : 'Enable'}</button>
-        <button class="btn btn-danger btn-sm" onclick="removeRadio('mt','${esc(r.id)}')">Remove</button>
-      </div>`;
-    });
-  } else {
-    html += `<div style="font-size:13px;color:var(--muted);padding:4px 0">No MT radios added</div>`;
-  }
-  html += `<div style="display:flex;gap:8px;margin-top:10px">
-    <input id="mt-add-port" class="form-input" placeholder="/dev/ttyUSB0 or TCP:host:port" style="flex:1">
-    <button class="btn btn-accent btn-sm" onclick="addRadio('mt')">Add</button>
-  </div></div>`;
-
-  // MC Radios
+  // MC Radios (primary — listed first)
   html += `<div class="set-section"><div class="set-h">MC Radios (MeshCore)</div>`;
   if (S.mcRadios.length) {
     S.mcRadios.forEach(r => {
@@ -2378,6 +2407,25 @@ function renderSettings() {
   html += `<div style="display:flex;gap:8px;margin-top:10px">
     <input id="mc-add-port" class="form-input" placeholder="/dev/ttyUSB0 or TCP:host:port" style="flex:1">
     <button class="btn btn-accent btn-sm" onclick="addRadio('mc')">Add</button>
+  </div></div>`;
+
+  // MT Radios
+  html += `<div class="set-section"><div class="set-h">MT Radios (Meshtastic)</div>`;
+  if (S.mtRadios.length) {
+    S.mtRadios.forEach(r => {
+      html += `<div class="radio-row">
+        <span class="radio-name">${esc(r.name || r.port || r.id)}</span>
+        <span class="radio-status ${r.connected ? 'on' : ''}">${r.connected ? 'Online' : 'Offline'}</span>
+        <button class="btn btn-sm" onclick="toggleRadio('mt','${esc(r.id)}',${r.enabled !== false})">${r.enabled !== false ? 'Disable' : 'Enable'}</button>
+        <button class="btn btn-danger btn-sm" onclick="removeRadio('mt','${esc(r.id)}')">Remove</button>
+      </div>`;
+    });
+  } else {
+    html += `<div style="font-size:13px;color:var(--muted);padding:4px 0">No MT radios added</div>`;
+  }
+  html += `<div style="display:flex;gap:8px;margin-top:10px">
+    <input id="mt-add-port" class="form-input" placeholder="/dev/ttyUSB0 or TCP:host:port" style="flex:1">
+    <button class="btn btn-accent btn-sm" onclick="addRadio('mt')">Add</button>
   </div></div>`;
 
   // RPTR Manage (simplified)

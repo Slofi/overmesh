@@ -20,6 +20,7 @@
       --red:        #f85149;
       --blue:       #58a6ff;
       --nav-h:      48px;
+      --header-h:   42px;
       --tap:        44px;
       --map-panel-w: clamp(130px, 30vw, 220px);
     }
@@ -29,8 +30,51 @@
       background: var(--bg); color: var(--text);
       font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px;
     }
+
+    /* ── Topo background ── */
+    #app-topo-bg {
+      position: fixed; inset: 0; pointer-events: none; z-index: -1;
+      background-image: url('/static/background-topo.png');
+      background-size: cover; background-position: center;
+      opacity: 0.22;
+    }
+
+    /* ── App header ── */
+    #app-header {
+      position: fixed; top: 0; left: 0; right: 0; height: var(--header-h);
+      background: rgba(22,27,34,0.93); backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; padding: 0 12px; gap: 10px;
+      z-index: 600; flex-shrink: 0;
+    }
+    #hdr-title {
+      font-size: 12px; font-weight: 700; color: var(--accent);
+      letter-spacing: 2px; text-transform: uppercase; flex-shrink: 0;
+    }
+    .hdr-sep { width: 1px; height: 16px; background: var(--border); flex-shrink: 0; }
+    #hdr-gps {
+      display: flex; align-items: center; gap: 5px;
+      font-size: 10px; color: var(--muted); flex: 1; min-width: 0;
+    }
+    #hdr-gps-dot {
+      width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+      background: var(--border); transition: background 0.5s, box-shadow 0.5s;
+    }
+    #hdr-gps-dot.fix {
+      background: #4ade80;
+      box-shadow: 0 0 5px rgba(74,222,128,0.75);
+    }
+    #hdr-gps-text { font-size: 10px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #hdr-clock { flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; }
+    #hdr-time { font-size: 14px; font-weight: 600; color: var(--accent); letter-spacing: 1px; font-variant-numeric: tabular-nums; line-height: 1.15; }
+    #hdr-date { font-size: 9px; color: var(--muted); letter-spacing: 0.3px; line-height: 1.15; }
+    #hdr-radio { display: flex; align-items: center; gap: 5px; flex-shrink: 0; min-width: 0; max-width: 90px; }
+    #hdr-radio-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border); flex-shrink: 0; transition: background 0.4s; }
+    #hdr-radio-dot.on { background: #4ade80; }
+    #hdr-radio-name { font-size: 10px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
     .tab-panel {
-      position: fixed; top: 0; left: 0; right: 0; bottom: var(--nav-h);
+      position: fixed; top: var(--header-h); left: 0; right: 0; bottom: var(--nav-h);
       overflow: hidden; display: flex; flex-direction: column;
     }
     .tab-panel[hidden] { display: none !important; }
@@ -44,12 +88,16 @@
     .nav-btn {
       flex: 1; background: none; border: none; color: var(--muted);
       font-size: 10px; cursor: pointer; position: relative;
-      display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 2px;
-      min-height: var(--tap);
+      display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 3px;
+      min-height: var(--tap); transition: color 0.15s;
     }
-    .nav-btn .nav-icon { font-size: 18px; line-height: 1; }
-    .nav-btn span:last-child { font-size: 9px; line-height: 1; }
-    .nav-btn.active { color: var(--accent); }
+    .nav-btn .nav-icon { font-size: 17px; line-height: 1; font-style: normal; }
+    .nav-btn span:last-child { font-size: 9px; line-height: 1; letter-spacing: 0.5px; text-transform: uppercase; }
+    .nav-btn.active { color: var(--accent); background: rgba(232,176,79,0.07); }
+    .nav-btn.active::after {
+      content: ''; position: absolute; top: 0; left: 20%; right: 20%;
+      height: 2px; background: var(--accent); border-radius: 0 0 3px 3px;
+    }
     .nav-badge {
       position: absolute; top: 6px; right: calc(50% - 16px);
       background: var(--red); color: #fff; border-radius: 10px;
@@ -114,7 +162,7 @@
     .mact-badge.mc { background:#065f46; color:#4ade80; }
     .mact-body { flex:1; min-width:0; }
     .mact-from { font-size:12px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .mact-text { font-size:11px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:2px; }
+    .mact-text { font-size:11px; color:var(--muted); word-break:break-word; white-space:normal; margin-top:3px; line-height:1.4; }
     .mact-meta { font-size:10px; color:var(--muted); margin-top:3px; opacity:0.7; }
 
     /* ── Nodes tab ── */
@@ -155,11 +203,12 @@
 
     /* ── Chat tab ── */
     #chat-header-bar {
-      display: flex; align-items: center; gap: 8px;
+      display: flex; align-items: center; gap: 6px;
       background: var(--bg2); border-bottom: 1px solid var(--border);
-      padding: 0 8px; min-height: 42px; flex-shrink: 0; cursor: pointer;
+      padding: 0 8px; min-height: 42px; flex-shrink: 0;
     }
-    #chat-header-bar:active { background: var(--bg3); }
+    #chat-ch-pills { flex: 1; overflow-x: auto; -webkit-overflow-scrolling: touch; display: flex; gap: 4px; align-items: center; min-width: 0; padding: 2px 0; scrollbar-width: none; }
+    #chat-ch-pills::-webkit-scrollbar { display: none; }
     #chat-net-pills { display: flex; gap: 4px; }
     .cpill { background: var(--bg3); border: 1px solid var(--border); color: var(--muted); font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 99px; cursor: pointer; line-height: 1.6; white-space: nowrap; }
     .cpill.active { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -171,6 +220,7 @@
     #chat-current-name { flex: 1; font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     #chat-messages { flex: 1; overflow-y: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 5px; }
     #chat-empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 13px; }
+    #chat-empty[hidden] { display: none; }
     #chat-input-bar {
       border-top: 1px solid var(--border); background: var(--bg2);
       padding: 5px 8px; display: flex; gap: 6px; align-items: flex-end; flex-shrink: 0;
@@ -374,9 +424,61 @@
     ::-webkit-scrollbar { width: 4px; height: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+    /* ── Service splash ── */
+    @keyframes ss-fadein{from{opacity:0}to{opacity:1}}
+    @keyframes ss-dot-pulse{0%,100%{transform:scale(.5);opacity:.2}50%{transform:scale(1);opacity:1}}
+    @keyframes ss-mesh-glow{0%,100%{stroke-opacity:0.15}50%{stroke-opacity:1;filter:drop-shadow(0 0 3px var(--accent))}}
+    .service-splash{position:fixed;inset:0;z-index:10000;background:var(--bg);background-image:repeating-linear-gradient(0deg,transparent 0,transparent 3px,rgba(0,0,0,.05) 3px,rgba(0,0,0,.05) 4px);display:grid;place-items:center;animation:ss-fadein .35s ease}
+    .service-splash[hidden]{display:none!important}
+    .ss-panel{display:flex;flex-direction:column;align-items:center;text-align:center;padding:0 24px}
+    .ss-wordmark{font-size:1.5rem;font-weight:700;letter-spacing:.12em;color:var(--accent);line-height:1;margin-bottom:6px}
+    .ss-tagline{font-size:.7rem;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;margin-bottom:28px}
+    .ss-status-wrap{margin-bottom:18px}
+    .ss-status{font-size:.68rem;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+    .ss-anim{margin-bottom:20px}
+    .ss-dots{display:flex;gap:8px}
+    .ss-dot{width:6px;height:6px;border-radius:50%;animation:ss-dot-pulse 1.2s ease-in-out infinite}
+    .ss-dot:nth-child(2){animation-delay:.22s}.ss-dot:nth-child(3){animation-delay:.44s}.ss-dot:nth-child(4){animation-delay:.66s}
+    .service-splash[data-mode="shutdown"] .ss-dot{background:var(--red)}
+    .service-splash[data-mode="restart"]  .ss-dot{background:var(--accent)}
+    .service-splash[data-mode="shutdown"] .ss-txt-restart{display:none}
+    .service-splash[data-mode="restart"]  .ss-txt-shutdown{display:none}
+    .service-splash[data-mode="restart"] .ss-hint{visibility:hidden}
+    .ss-hint{text-align:center}
+    .ss-hint-label{font-size:.65rem;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px}
+    .ss-hint-cmd{display:inline-block;font-size:.72rem;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);padding:5px 12px;border-radius:6px;cursor:pointer;user-select:all;color:var(--accent);font-family:monospace;letter-spacing:.03em}
+    /* OM: mesh triangle */
+    .ss-mesh{width:60px;height:52px;margin-bottom:22px}
+    .ss-mesh svg{width:100%;height:100%;overflow:visible}
+    .ss-mesh-edge{stroke:var(--accent);stroke-width:1.5;stroke-opacity:0.25;fill:none}
+    .ss-mesh-node{fill:none;stroke:var(--accent);stroke-width:1.5;animation:ss-mesh-glow 3s ease-in-out infinite}
+    .ss-mesh-node:nth-child(1){animation-delay:0s}.ss-mesh-node:nth-child(2){animation-delay:1s}.ss-mesh-node:nth-child(3){animation-delay:2s}
+    .service-splash[data-mode="shutdown"] .ss-anim{display:none}
+    @media(prefers-reduced-motion:reduce){.ss-dot,.ss-mesh-node{animation:none}}
   </style>
 </head>
 <body>
+<div id="app-topo-bg"></div>
+
+<!-- ── APP HEADER ── -->
+<div id="app-header">
+  <span id="hdr-title">OM&nbsp;Lite</span>
+  <div class="hdr-sep"></div>
+  <div id="hdr-gps">
+    <span id="hdr-gps-dot"></span>
+    <span id="hdr-gps-text">No GPS</span>
+  </div>
+  <div class="hdr-sep"></div>
+  <div id="hdr-radio">
+    <span id="hdr-radio-dot"></span>
+    <span id="hdr-radio-name">—</span>
+  </div>
+  <div class="hdr-sep"></div>
+  <div id="hdr-clock">
+    <span id="hdr-time">--:--:--</span>
+    <span id="hdr-date">--.--.--</span>
+  </div>
+</div>
 
 <!-- ── MAP TAB ── -->
 <div id="tab-map" class="tab-panel">
@@ -407,26 +509,31 @@
   <div id="nodes-filter-bar">
     <input id="nodes-search" class="form-input" type="search" placeholder="Search nodes…" oninput="renderNodes()" style="flex:1">
     <button class="fpill active" onclick="setNFilter('all',this)">All</button>
+    <button class="fpill" onclick="setNFilter('fav',this)">★ Fav</button>
     <button class="fpill" onclick="setNFilter('fresh',this)">Fresh</button>
     <button class="fpill" onclick="setNFilter('pos',this)">GPS</button>
     <button class="fpill" onclick="setNFilter('mt',this)">MT</button>
     <button class="fpill" onclick="setNFilter('mc',this)">MC</button>
     <div id="nodes-summary"></div>
   </div>
+  <div id="active-dms-bar" hidden style="background:var(--bg2);border-bottom:1px solid var(--border);padding:5px 8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+    <span style="font-size:10px;color:var(--muted);flex-shrink:0;text-transform:uppercase;letter-spacing:0.5px">DMs</span>
+    <div id="active-dms-list" style="display:flex;gap:4px;flex-wrap:wrap"></div>
+  </div>
   <div id="nodes-list"></div>
 </div>
 
 <!-- ── CHAT TAB ── -->
 <div id="tab-chat" class="tab-panel" hidden>
-  <div id="chat-header-bar" onclick="openSheet('chat-select-sheet')">
-    <button id="btn-chat-select" title="Select channel" style="pointer-events:none">☰</button>
-    <span id="chat-current-name" style="color:var(--muted)">Select a channel…</span>
-    <div id="chat-net-pills" onclick="event.stopPropagation()">
+  <div id="chat-header-bar">
+    <div id="chat-ch-pills"></div>
+    <span id="chat-current-name" style="display:none"></span>
+    <div id="chat-net-pills" style="display:flex;gap:4px;align-items:center;flex-shrink:0">
       <button class="adv-btn" id="adv-btn-local" onclick="sendAdvert(false)" hidden>Local</button>
       <button class="adv-btn" id="adv-btn-flood" onclick="sendAdvert(true)" hidden>Flood</button>
       <span id="adv-sep" style="color:var(--border);padding:0 2px" hidden>|</span>
-      <button class="cpill" id="cpill-mt" onclick="setChatFilter('mt');openSheet('chat-select-sheet')">MT</button>
-      <button class="cpill" id="cpill-mc" onclick="setChatFilter('mc');openSheet('chat-select-sheet')">MC</button>
+      <button class="cpill" id="cpill-mt" onclick="setChatFilter('mt')">MT</button>
+      <button class="cpill" id="cpill-mc" onclick="setChatFilter('mc')">MC</button>
     </div>
   </div>
   <div id="chat-messages"></div>
@@ -474,20 +581,20 @@
 <!-- ── BOTTOM NAV ── -->
 <nav id="bottom-nav">
   <button class="nav-btn active" data-tab="map" onclick="switchTab('map')">
-    <span class="nav-icon">🗺</span><span>Map</span>
+    <span class="nav-icon">◎</span><span>Map</span>
   </button>
   <button class="nav-btn" data-tab="nodes" onclick="switchTab('nodes')">
-    <span class="nav-icon">📡</span><span>Nodes</span>
+    <span class="nav-icon">⬡</span><span>Nodes</span>
   </button>
   <button class="nav-btn" data-tab="chat" onclick="switchTab('chat')">
-    <span class="nav-icon">💬</span><span>Chat</span>
+    <span class="nav-icon">◇</span><span>Chat</span>
     <span id="chat-badge" class="nav-badge" hidden>0</span>
   </button>
   <button class="nav-btn" data-tab="log" onclick="switchTab('log')">
-    <span class="nav-icon">📋</span><span>Log</span>
+    <span class="nav-icon">≡</span><span>Log</span>
   </button>
   <button class="nav-btn" data-tab="settings" onclick="switchTab('settings')">
-    <span class="nav-icon">⚙</span><span>Settings</span>
+    <span class="nav-icon">⊞</span><span>Config</span>
   </button>
 </nav>
 
@@ -508,6 +615,7 @@
       <button class="btn btn-sm" id="ns-ping"  onclick="nodeAction('ping')">Ping</button>
       <button class="btn btn-sm" id="ns-trace" onclick="nodeAction('trace')">Traceroute</button>
       <button class="btn btn-sm" id="ns-map"   onclick="nodeAction('map')">Show on map</button>
+      <button class="btn btn-sm" id="ns-fav"   onclick="nodeAction('fav')">☆ Fav</button>
     </div>
     <div id="ns-result" style="margin-top:10px;font-size:12px;color:var(--muted);font-family:monospace;white-space:pre-wrap"></div>
   </div>
@@ -608,6 +716,35 @@
 
 <!-- ── TOAST ── -->
 <div id="toast"></div>
+
+<div id="service-splash" class="service-splash" hidden data-mode="restart">
+  <div class="ss-panel">
+    <div class="ss-mesh">
+      <svg viewBox="0 0 60 52">
+        <line class="ss-mesh-edge" x1="30" y1="4" x2="4" y2="48"/>
+        <line class="ss-mesh-edge" x1="30" y1="4" x2="56" y2="48"/>
+        <line class="ss-mesh-edge" x1="4" y1="48" x2="56" y2="48"/>
+        <circle class="ss-mesh-node" cx="30" cy="4" r="4"/>
+        <circle class="ss-mesh-node" cx="4" cy="48" r="4"/>
+        <circle class="ss-mesh-node" cx="56" cy="48" r="4"/>
+      </svg>
+    </div>
+    <div class="ss-wordmark">OVERMESH</div>
+    <div class="ss-tagline">Field Mesh Dashboard</div>
+    <div class="ss-status-wrap"><div class="ss-status">
+      <span class="ss-txt-shutdown">OFFLINE</span>
+      <span class="ss-txt-restart">RESTARTING</span>
+    </div></div>
+    <div class="ss-anim"><div class="ss-dots">
+      <div class="ss-dot"></div><div class="ss-dot"></div>
+      <div class="ss-dot"></div><div class="ss-dot"></div>
+    </div></div>
+    <div class="ss-hint">
+      <div class="ss-hint-label">To restart</div>
+      <code class="ss-hint-cmd" onclick="navigator.clipboard.writeText(this.textContent)" title="Click to copy">systemctl --user restart overmesh</code>
+    </div>
+  </div>
+</div>
 
 <script src="/static/leaflet/leaflet.js"></script>
 <script src="/static/js/lite.js?v={{ version }}"></script>

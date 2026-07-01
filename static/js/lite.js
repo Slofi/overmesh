@@ -28,6 +28,7 @@ const S = {
   senseOn:    false, traceOn: false,
   sseSource:  null,
   layerOpen:  false,
+  activeDms:  new Set(), // 'type:radioId:nodeId' keys for active DM threads
   gpsMarker:  null,
   markers:    {},   // node_id/contact_id → L.circleMarker
   markerTypes: {}, // node_id → 'mt'|'mc'
@@ -40,6 +41,7 @@ const S = {
   accent:     localStorage.getItem('om_accent') || '#e8b04f',
   updateInfo: null,
   updateRunning: false,
+  favNodes:   new Set(JSON.parse(localStorage.getItem('om_favs') || '[]')),
 };
 
 // ── Map ──────────────────────────────────────────────────────────────────────
@@ -421,7 +423,12 @@ function handleSSE(d) {
       onSenseResp(d); break;
     case 'gps_update':
     case 'gps_position':
-      if (d.lat && d.lon && d.fix !== false) updateGpsMarker(d.lat, d.lon);
+      if (d.lat && d.lon && d.fix !== false) {
+        updateGpsMarker(d.lat, d.lon);
+        updateHdrGps(true, d.lat, d.lon);
+      } else {
+        updateHdrGps(false);
+      }
       break;
     case 'sense_done':
       break;
@@ -605,7 +612,7 @@ function switchTab(tab) {
   S.activeTab = tab;
   if (tab === 'map') setTimeout(() => { refreshMapLayout(); _applyMapMode(S.senseOn ? 'sense' : 'map'); }, 60);
   if (tab === 'nodes') renderNodes();
-  if (tab === 'chat') renderChatSidebar();
+  if (tab === 'chat') { renderChatSidebar(); S.mcRadios.forEach(r => loadMcMessages(r.id)); }
   if (tab === 'log') renderLog();
   if (tab === 'settings') renderSettings();
   if (tab === 'chat') clearUnread();
@@ -622,9 +629,11 @@ function setNFilter(f, el) {
 function renderNodes() {
   const q = (document.getElementById('nodes-search')?.value || '').toLowerCase();
   const el = document.getElementById('nodes-list');
-  const rows = [];
   const now = Date.now() / 1000;
+  const items = [];
+
   const includeNode = n => {
+    if (S.nFilter === 'fav') return S.favNodes.has(n.id || n.contact_id);
     if (S.nFilter === 'fresh') return Number(n.last_heard || n.last_seen_ts || 0) > now - 3600;
     if (S.nFilter === 'pos') return !!(n.lat && n.lon);
     return true;
@@ -634,23 +643,29 @@ function renderNodes() {
     Object.values(S.nodes).forEach(n => {
       if (q && !n.name?.toLowerCase().includes(q)) return;
       if (!includeNode(n)) return;
-      rows.push(nodeRow(n.id, 'mt', n.name || n.id, n));
+      items.push({ id: n.id, type: 'mt', name: n.name || n.id, n, radioId: null, isFav: S.favNodes.has(n.id) });
     });
   }
   if (S.nFilter !== 'mt') {
     Object.values(S.mcNodes).forEach(byRadio => {
       Object.values(byRadio).forEach(c => {
         if (q && !c.name?.toLowerCase().includes(q)) return;
-        if (!includeNode(c)) return;
         const cid = c.contact_id || c.id;
-        rows.push(nodeRow(cid, 'mc', c.name || c.long_name || cid, c, c.radio_id));
+        if (!includeNode({ ...c, id: cid })) return;
+        items.push({ id: cid, type: 'mc', name: c.name || c.long_name || cid, n: c, radioId: c.radio_id, isFav: S.favNodes.has(cid) });
       });
     });
   }
 
+  items.sort((a, b) => {
+    if (a.isFav !== b.isFav) return a.isFav ? -1 : 1;
+    return Number(b.n.last_heard || b.n.last_seen_ts || 0) - Number(a.n.last_heard || a.n.last_seen_ts || 0);
+  });
+
   renderNodesSummary();
-  el.innerHTML = rows.length ? rows.join('') :
-    `<div style="padding:24px;text-align:center;color:var(--muted);font-size:13px">No nodes</div>`;
+  el.innerHTML = items.length
+    ? items.map(it => nodeRow(it.id, it.type, it.name, it.n, it.radioId, it.isFav)).join('')
+    : `<div style="padding:24px;text-align:center;color:var(--muted);font-size:13px">No nodes</div>`;
 }
 
 function renderNodesSummary() {
@@ -665,15 +680,17 @@ function renderNodesSummary() {
   el.innerHTML = `<span class="mini-chip">MT ${mt}</span><span class="mini-chip">MC ${mc}</span><span class="mini-chip">GPS ${pos}</span>`;
 }
 
-function nodeRow(id, type, name, n, radioId) {
+function nodeRow(id, type, name, n, radioId, isFav) {
   const lastheard = n.last_heard ? relTime(n.last_heard) : '—';
   const meta = type === 'mt'
     ? `${lastheard}${n.hops != null ? ' · ' + n.hops + ' hops' : ''}`
     : `${lastheard}${n.snr != null ? ' · SNR ' + n.snr : ''}`;
+  const star = isFav ? `<span style="color:var(--accent);font-size:12px;flex-shrink:0;margin-left:auto;padding-left:6px">★</span>` : '';
   return `<div class="node-row" onclick="openNodeDetail('${esc(id)}','${type}','${esc(radioId||'')}')">
     <span class="ntype ${type}"></span>
     <span class="node-name">${esc(name)}</span>
     <div class="node-meta">${meta}</div>
+    ${star}
   </div>`;
 }
 
@@ -700,17 +717,31 @@ function openNodeDetail(id, type, radioId) {
   document.getElementById('ns-meta').innerHTML = parts.join('<br>');
   document.getElementById('ns-result').textContent = '';
   document.getElementById('ns-dm').hidden = false;
+  const _nsId = id;
+  const favBtn = document.getElementById('ns-fav');
+  if (favBtn) favBtn.textContent = S.favNodes.has(_nsId) ? '★ Fav' : '☆ Fav';
   openSheet('node-sheet');
 }
 
 function nodeAction(action) {
   const { id, type, radioId } = S.selectedNode || {};
   if (!id) return;
-  if (action === 'dm') {
-    S.chatCtx = type === 'mc'
-      ? { type: 'mc_dm', radioId, key: id }
-      : { type: 'mt_dm', key: id };
+  if (action === 'fav') {
+    if (S.favNodes.has(id)) S.favNodes.delete(id);
+    else S.favNodes.add(id);
+    localStorage.setItem('om_favs', JSON.stringify([...S.favNodes]));
+    const favBtn = document.getElementById('ns-fav');
+    if (favBtn) favBtn.textContent = S.favNodes.has(id) ? '★ Fav' : '☆ Fav';
+    renderNodes();
+    return;
+  } else if (action === 'dm') {
+    const dmType = type === 'mc' ? 'mc_dm' : 'mt_dm';
+    const dmRadioId = type === 'mc' ? radioId : null;
+    S.chatCtx = { type: dmType, radioId: dmRadioId, key: id };
+    const dmKey = `${dmType}:${dmRadioId || ''}:${id}`;
+    S.activeDms.add(dmKey);
     closeAllSheets(); switchTab('chat'); renderChatSidebar(); renderMessages();
+    renderActiveDms();
   } else if (action === 'ping') {
     document.getElementById('ns-result').textContent = 'Pinging…';
     if (type === 'mt') {
@@ -758,54 +789,70 @@ function renderChatSidebar() { renderChatSelector(); } // public alias — keep 
 
 function renderChatSelector() {
   const body = document.getElementById('chat-select-body');
-  let html = '';
+  const pillsEl = document.getElementById('chat-ch-pills');
+  let pillsHtml = '';
+  let sheetHtml = '';
 
-  // MT section
   const f = S.chatFilter;
   ['mt','mc'].forEach(n => { const el = document.getElementById('cpill-' + n); if (el) el.classList.toggle('active', f === n); });
-  if ((f === 'all' || f === 'mt') && (S.mtChannels.length || Object.keys(S.mtDmMsgs).length)) {
-    html += `<div class="cg-header">📻 Meshtastic</div>`;
+
+  // MT channels → pills
+  if (f === 'all' || f === 'mt') {
     S.mtChannels.forEach(ch => {
       const active = isActiveChat('mt_chan', null, ch.index);
-      html += `<div class="ch-item${active?' active':''}" onclick="selectChat('mt_chan',null,${ch.index})">
-        <span style="color:var(--blue)">#</span> ${esc(ch.name || 'ch' + ch.index)}
-        <span style="margin-left:auto;font-size:10px;color:var(--muted)">MT</span>
-      </div>`;
-    });
-    Object.keys(S.mtDmMsgs).forEach(nid => {
-      const active = isActiveChat('mt_dm', null, nid);
-      html += `<div class="ch-item${active?' active':''}" onclick="selectChat('mt_dm',null,'${esc(nid)}')">
-        <span style="color:var(--blue)">@</span> ${esc(S.nodes[nid]?.name || nid)}
-        <span style="margin-left:auto;font-size:10px;color:var(--muted)">MT DM</span>
-      </div>`;
+      pillsHtml += `<button class="cpill${active?' active':''}" onclick="selectChat('mt_chan',null,${ch.index})">#${esc(ch.name || 'ch' + ch.index)}</button>`;
     });
   }
 
-  // MC section
+  // MC channels → pills (skip unnamed slots unless they have live messages)
   if (f === 'all' || f === 'mc') S.mcRadios.forEach(r => {
-    const channels = S.mcChannels[r.id] || [];
-    const contacts = S.mcNodes[r.id] ? Object.values(S.mcNodes[r.id]) : [];
-    if (!channels.length && !contacts.length) return;
-    html += `<div class="cg-header">🔗 MeshCore — ${esc(r.name || r.port)}</div>`;
-    channels.forEach(ch => {
+    (S.mcChannels[r.id] || []).forEach(ch => {
+      if (!ch.name && !(S.mcMsgs[r.id]?.chan[ch.index]?.length)) return;
       const active = isActiveChat('mc_chan', r.id, ch.index);
-      html += `<div class="ch-item${active?' active':''}" onclick="selectChat('mc_chan','${esc(r.id)}',${ch.index})">
-        <span style="color:var(--accent)">#</span> ${esc(ch.name || 'ch' + ch.index)}
-        <span style="margin-left:auto;font-size:10px;color:var(--muted)">MC</span>
-      </div>`;
-    });
-    contacts.forEach(c => {
-      const cid = c.contact_id || c.id;
-      const active = isActiveChat('mc_dm', r.id, cid);
-      html += `<div class="ch-item${active?' active':''}" onclick="selectChat('mc_dm','${esc(r.id)}','${esc(cid)}')">
-        <span style="color:var(--accent)">@</span> ${esc(c.name || c.long_name || cid)}
-        <span style="margin-left:auto;font-size:10px;color:var(--muted)">MC DM</span>
-      </div>`;
+      pillsHtml += `<button class="cpill${active?' active':''}" onclick="selectChat('mc_chan','${esc(r.id)}',${ch.index})">#${esc(ch.name || 'ch' + ch.index)}</button>`;
     });
   });
 
-  if (!html) html = `<div style="padding:16px 14px;font-size:13px;color:var(--muted)">No radios connected yet.</div>`;
-  body.innerHTML = html;
+  // Active DMs → pills with X (shown regardless of filter)
+  S.activeDms.forEach(key => {
+    const [type, radioId, nodeId] = key.split(':');
+    let name = nodeId;
+    if (type === 'mt_dm') name = S.nodes[nodeId]?.name || nodeId;
+    else if (type === 'mc_dm') name = S.mcNodes[radioId]?.[nodeId]?.name || nodeId;
+    const active = S.chatCtx?.type === type && S.chatCtx?.key == nodeId && S.chatCtx?.radioId == (radioId || null);
+    pillsHtml += `<button class="cpill${active?' active':''}" style="display:inline-flex;align-items:center;gap:4px" onclick="selectChat('${type}','${radioId}','${nodeId}')">@${esc(name)}<span onclick="event.stopPropagation();removeDm('${key}')" style="opacity:0.6;font-size:9px;margin-left:1px">✕</span></button>`;
+  });
+
+  if (!pillsHtml) pillsHtml = `<span style="font-size:11px;color:var(--muted);padding:0 4px">No channels</span>`;
+  if (pillsEl) pillsEl.innerHTML = pillsHtml;
+
+  // Sheet content: DMs selectable from Nodes tab appear here too
+  if (sheetHtml || S.activeDms.size) {
+    if (body) body.innerHTML = sheetHtml || `<div style="padding:16px 14px;font-size:13px;color:var(--muted)">Start a DM from the Nodes tab.</div>`;
+  } else if (body) {
+    body.innerHTML = `<div style="padding:16px 14px;font-size:13px;color:var(--muted)">Start a DM from the Nodes tab.</div>`;
+  }
+}
+
+function renderActiveDms() {
+  const bar = document.getElementById('active-dms-bar');
+  const list = document.getElementById('active-dms-list');
+  if (!bar || !list) return;
+  if (!S.activeDms.size) { bar.hidden = true; return; }
+  bar.hidden = false;
+  list.innerHTML = [...S.activeDms].map(key => {
+    const [type, radioId, nodeId] = key.split(':');
+    let name = nodeId;
+    if (type === 'mt_dm') name = S.nodes[nodeId]?.name || nodeId;
+    else if (type === 'mc_dm') name = S.mcNodes[radioId]?.[nodeId]?.name || nodeId;
+    return `<button style="display:inline-flex;align-items:center;gap:4px;background:var(--bg3);border:1px solid var(--border);border-radius:99px;padding:3px 8px;font-size:11px;color:var(--text);cursor:pointer;min-height:28px" onclick="selectChat('${type}','${radioId}','${nodeId}');switchTab('chat')">@${esc(name)}<span onclick="event.stopPropagation();removeDm('${key}')" style="color:var(--muted);font-size:11px;margin-left:2px;line-height:1">✕</span></button>`;
+  }).join('');
+}
+
+function removeDm(key) {
+  S.activeDms.delete(key);
+  renderActiveDms();
+  renderChatSelector();
 }
 
 function sendAdvert(flood) {
@@ -832,9 +879,9 @@ function renderMapActivity() {
     return `<div class="mact-item" onclick="tapMsgFeed(${i})">
       <span class="mact-badge ${isMc?'mc':'mt'}">${isMc?'MC':'MT'}</span>
       <div class="mact-body">
-        <div class="mact-from">${esc(m.from)}</div>
+        <div class="mact-from">${esc(m.from)} <span style="font-size:9px;color:var(--muted);font-weight:400">${esc(m.label)}</span></div>
         <div class="mact-text">${esc(m.text)}</div>
-        <div class="mact-meta">${esc(m.label)} · ${relTime(m.ts)}${m.pathLen != null ? '<br>' + _hopLabel(m.pathLen) + (m.pathHashSize ? ' · ' + m.pathHashSize + 'B' : '') + (m.routeType ? ' · ' + esc(m.routeType) : '') + (m.rssi != null ? ' · ' + m.rssi + 'dBm' : '') : ''}</div>
+        <div class="mact-meta">${relTime(m.ts)}${m.pathLen != null ? ' · ' + _hopLabel(m.pathLen) + (m.rssi != null ? ' · ' + m.rssi + 'dBm' : '') : ''}</div>
       </div>
     </div>`;
   }).join('');
@@ -843,6 +890,7 @@ function renderMapActivity() {
 function tapMsgFeed(i) {
   const m = S.mapMsgFeed[i];
   if (!m) return;
+  // Pan map to sender's location
   if (m.type.startsWith('mt')) {
     const node = Object.values(S.nodes).find(n => n.name === m.from || n.id === m.from);
     if (node?.lat) { drawMsgPath(node.lat, node.lon, '#facc15'); map.panTo([node.lat, node.lon]); }
@@ -850,6 +898,19 @@ function tapMsgFeed(i) {
     const allC = m.radioId ? (S.mcNodes[m.radioId] || {}) : {};
     const c = Object.values(allC).find(c => c.name === m.from || c.id === m.from || c.contact_id === m.from);
     if (c?.lat) { drawMsgPath(c.lat, c.lon, '#22d3ee'); map.panTo([c.lat, c.lon]); }
+  }
+  // Jump to Chat tab and select the message's channel
+  if (m.type && m.key != null) {
+    switchTab('chat');
+    selectChat(m.type, m.radioId || null, m.key);
+    // Scroll to the message by timestamp after render
+    setTimeout(() => {
+      const msgs = document.getElementById('chat-messages');
+      if (!msgs) return;
+      const target = msgs.querySelector(`[data-ts="${m.ts}"]`);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      else msgs.scrollTop = msgs.scrollHeight;
+    }, 80);
   }
 }
 
@@ -907,31 +968,27 @@ function isActiveChat(type, radioId, key) {
 }
 
 function selectChat(type, radioId, key) {
-  S.chatCtx = { type, radioId, key };
+  S.chatCtx = { type, radioId: radioId || null, key };
   closeSheet('chat-select-sheet');
+  if (type.startsWith('mc') && radioId) loadMcMessages(radioId);
   renderMessages();
 
-  let name = '';
-  if (type === 'mt_chan') {
-    const ch = S.mtChannels.find(c => c.index === key);
-    name = '# ' + (ch?.name || 'ch' + key);
-  } else if (type === 'mt_dm') {
-    name = '@ ' + (S.nodes[key]?.name || key);
-  } else if (type === 'mc_chan') {
-    const ch = (S.mcChannels[radioId] || []).find(c => c.index === key);
-    name = '# ' + (ch?.name || 'ch' + key);
-  } else if (type === 'mc_dm') {
-    const c = S.mcNodes[radioId]?.[key];
-    name = '@ ' + (c?.name || c?.long_name || key);
+  // Track active DMs
+  if (type === 'mt_dm' || type === 'mc_dm') {
+    const dmKey = `${type}:${radioId || ''}:${key}`;
+    S.activeDms.add(dmKey);
+    renderActiveDms();
   }
+
   const nameEl = document.getElementById('chat-current-name');
-  nameEl.textContent = name; nameEl.style.color = '';
+  if (nameEl) { nameEl.textContent = ''; }
   document.getElementById('chat-input-bar').hidden = false;
   document.getElementById('chat-empty').hidden = true;
   const _isMc = type.startsWith('mc');
   ['adv-btn-local','adv-btn-flood','adv-sep'].forEach(id => {
     const el = document.getElementById(id); if (el) el.hidden = !_isMc;
   });
+  renderChatSelector(); // refresh pill active states
 }
 
 function renderMessages() {
@@ -945,7 +1002,7 @@ function renderMessages() {
   else if (ctx.type === 'mc_dm') msgs = S.mcMsgs[ctx.radioId]?.dm[ctx.key] || [];
 
   el.innerHTML = msgs.map(m => {
-    const out = m.from_me || m.is_mine;
+    const out = m.from_me || m.is_mine || m.sent;
     const isMc = ctx.type.startsWith('mc');
     const sender = out ? 'Me' : esc(
       isMc ? _mcNameFor(ctx.radioId, m.from_id) || m.from_name || '?'
@@ -957,7 +1014,7 @@ function renderMessages() {
       ? [_hopLabel(m.path_len)].concat(m.path_hash_size ? [m.path_hash_size + 'B'] : []).concat(m.rx_rssi != null ? [m.rx_rssi + 'dBm'] : [])
       : [];
     const pathInfo = pathParts.join(' · ');
-    return `<div class="msg-row ${out ? 'out' : 'in'}">
+    return `<div class="msg-row ${out ? 'out' : 'in'}" data-ts="${rawTs || ''}">
       <div class="msg-bubble">${esc(m.text || m.message || '')}</div>
       <div class="msg-meta">${out ? '' : sender + ' · '}${ts}${pathInfo ? ' · ' + esc(pathInfo) : ''}</div>
     </div>`;
@@ -1450,10 +1507,17 @@ function askConfirm(title, body, okLabel, onOk, danger=true) {
   openSheet('confirm-sheet');
 }
 
+function showServiceSplash(mode) {
+  const el = document.getElementById('service-splash');
+  if (!el) return;
+  el.dataset.mode = mode || 'restart';
+  el.removeAttribute('hidden');
+}
+
 function restartApp() {
   askConfirm('Restart OM Lite?', 'The service will restart and this page will reconnect after a few seconds.', 'Restart', () => {
+    showServiceSplash('restart');
     fetch('/api/restart', { method: 'POST' }).finally(() => {
-      toast('Restarting…', 4000);
       setTimeout(() => location.reload(), 6500);
     });
   });
@@ -1461,7 +1525,8 @@ function restartApp() {
 
 function shutdownApp() {
   askConfirm('Shutdown OM Lite?', 'This stops the OM Lite service. Use the launcher or SSH to start it again.', 'Shutdown', () => {
-    fetch('/api/shutdown', { method: 'POST' }).finally(() => toast('Shutdown requested', 4000));
+    showServiceSplash('shutdown');
+    fetch('/api/shutdown', { method: 'POST' }).catch(() => {});
   });
 }
 
@@ -1654,13 +1719,33 @@ function closeAllSheets() {
 }
 
 // ── Data loading ──────────────────────────────────────────────────────────────
+function _updateHdrRadio() {
+  const dot = document.getElementById('hdr-radio-dot');
+  const name = document.getElementById('hdr-radio-name');
+  if (!dot || !name) return;
+  const allRadios = [...S.mtRadios, ...S.mcRadios];
+  const connected = allRadios.filter(r => r.connected);
+  if (connected.length > 0) {
+    dot.classList.add('on');
+    name.textContent = connected[0].name || connected[0].port || connected[0].id || '?';
+    name.title = connected.map(r => r.name || r.port || r.id).join(', ');
+  } else if (allRadios.length > 0) {
+    dot.classList.remove('on');
+    name.textContent = allRadios[0].name || allRadios[0].port || allRadios[0].id || 'Offline';
+  } else {
+    dot.classList.remove('on');
+    name.textContent = '—';
+    name.title = '';
+  }
+}
+
 function loadRadios() {
   fetch('/api/settings/nodes').then(r => r.json()).then(d => {
     S.mtRadios = (d.nodes || d || []).map(r => ({
       ...r,
       connected: r.connected ?? r.status === 'connected',
     }));
-    updateMapStatus(); renderChatSidebar();
+    _updateHdrRadio(); updateMapStatus(); renderChatSidebar();
     if (S.activeTab === 'settings') renderSettings();
   }).catch(() => {});
 
@@ -1669,8 +1754,17 @@ function loadRadios() {
       ...r,
       connected: r.connected ?? r.status === 'connected',
     }));
-    updateMapStatus(); renderChatSidebar();
+    _updateHdrRadio(); updateMapStatus(); renderChatSidebar();
     if (S.activeTab === 'settings') renderSettings();
+    // Load channels for any radio that doesn't have them yet
+    S.mcRadios.forEach(r => {
+      if (S.mcChannels[r.id]) return;
+      fetch(`/api/mc/${encodeURIComponent(r.id)}/channels`).then(res => res.json()).then(d => {
+        S.mcChannels[r.id] = (d.channels || d || []).map((c, i) =>
+          ({ ...c, index: c.index ?? c.idx ?? i }));
+        renderChatSidebar();
+      }).catch(() => {});
+    });
   }).catch(() => {});
 }
 
@@ -1685,7 +1779,7 @@ function loadChannels() {
     fetch(`/api/mc/${encodeURIComponent(r.id)}/channels`).then(res => res.json()).then(d => {
       S.mcChannels[r.id] = (d.channels || d || []).map((c, i) =>
         ({ ...c, index: c.index ?? c.idx ?? i }));
-      if (S.activeTab === 'chat') renderChatSidebar();
+      renderChatSidebar();
     }).catch(() => {});
   });
 }
@@ -1738,9 +1832,34 @@ function loadNodes() {
 }
 
 function loadMessages() {
-  S.mtChannels.forEach(ch => {
-    // Messages come via SSE stream; preload would need a separate history endpoint
-  });
+  // MT messages arrive via SSE only; no history endpoint available
+}
+
+function loadMcMessages(radioId) {
+  fetch(`/api/mc/${encodeURIComponent(radioId)}/messages`)
+    .then(r => r.json())
+    .then(d => {
+      const msgs = d.messages || d || [];
+      const chan = {}, dm = {};
+      msgs.forEach(m => {
+        const dmId = m.contact_id || (m.subtype === 'dm' ? (m.sent ? m.to_id : m.from_id) : '');
+        if (dmId) {
+          if (!dm[dmId]) dm[dmId] = [];
+          dm[dmId].push(m);
+        } else {
+          const idx = m.channel ?? m.channel_index ?? 0;
+          if (!chan[idx]) chan[idx] = [];
+          chan[idx].push(m);
+        }
+      });
+      [chan, dm].forEach(store =>
+        Object.values(store).forEach(arr =>
+          arr.sort((a, b) => (a.ts || a.timestamp || 0) - (b.ts || b.timestamp || 0))
+        )
+      );
+      S.mcMsgs[radioId] = { chan, dm };
+      if (S.chatCtx?.radioId === radioId) renderMessages();
+    }).catch(() => {});
 }
 
 // ── Utils ─────────────────────────────────────────────────────────────────────
@@ -1775,10 +1894,49 @@ function toast(msg, dur=2500) {
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
+// ── Header clock ────────────────────────────────────────────────────────────
+function _tickClock() {
+  const timeEl = document.getElementById('hdr-time');
+  const dateEl = document.getElementById('hdr-date');
+  if (!timeEl) return;
+  const now = new Date();
+  const h = String(now.getHours()).padStart(2, '0');
+  const m = String(now.getMinutes()).padStart(2, '0');
+  const s = String(now.getSeconds()).padStart(2, '0');
+  timeEl.textContent = `${h}:${m}:${s}`;
+  if (dateEl) {
+    const d = String(now.getDate()).padStart(2, '0');
+    const mo = String(now.getMonth() + 1).padStart(2, '0');
+    const y = String(now.getFullYear()).slice(-2);
+    dateEl.textContent = `${d}.${mo}.${y}`;
+  }
+}
+function startClock() {
+  _tickClock();
+  setInterval(_tickClock, 1000);
+}
+
+// ── Header GPS status ────────────────────────────────────────────────────────
+function updateHdrGps(hasFix, lat, lon) {
+  const dot  = document.getElementById('hdr-gps-dot');
+  const text = document.getElementById('hdr-gps-text');
+  if (!dot || !text) return;
+  if (hasFix && lat && lon) {
+    dot.className = 'fix';
+    const latStr = (lat >= 0 ? lat.toFixed(4) + '°N' : Math.abs(lat).toFixed(4) + '°S');
+    const lonStr = (lon >= 0 ? lon.toFixed(4) + '°E' : Math.abs(lon).toFixed(4) + '°W');
+    text.textContent = `${latStr}  ${lonStr}`;
+  } else {
+    dot.className = '';
+    text.textContent = 'No GPS';
+  }
+}
+
 function init() {
   applyAccent(S.accent);
   loadAppSettings();
   initMap();
+  startClock();
   document.getElementById('btn-follow')?.classList.toggle('active', S.followGps);
   loadRadios();
   setTimeout(() => {
@@ -1786,10 +1944,12 @@ function init() {
     loadChannels();
     loadLog();
     startSSE();
+    S.mcRadios.forEach(r => loadMcMessages(r.id));
   }, 500);
   // Refresh nodes/status periodically
   setInterval(loadNodes, 30000);
   setInterval(loadRadios, 15000);
+  setInterval(() => S.mcRadios.forEach(r => loadMcMessages(r.id)), 12000);
 }
 
 document.addEventListener('DOMContentLoaded', init);

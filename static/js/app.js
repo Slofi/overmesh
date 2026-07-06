@@ -4697,11 +4697,62 @@ if (targetEl) {
     if (sr && !sr.contains(e.target) && e.target.id !== 'passive-collector-search') sr.style.display = 'none';
   });
 
+  function showOverMeshServiceSplash(mode) {
+    const isShutdown = mode === 'shutdown';
+    document.body.innerHTML = `
+      <style>
+        @keyframes om-ss-fadein{from{opacity:0}to{opacity:1}}
+        @keyframes om-ss-dot-pulse{0%,100%{transform:scale(.5);opacity:.2}50%{transform:scale(1);opacity:1}}
+        @keyframes om-ss-mesh-glow{0%,100%{stroke-opacity:.16}50%{stroke-opacity:1;filter:drop-shadow(0 0 4px var(--accent,#f5c542))}}
+        .om-service-splash{position:fixed;inset:0;z-index:100000;display:grid;place-items:center;background:var(--bg,#0b0d10);background-image:repeating-linear-gradient(0deg,transparent 0,transparent 3px,rgba(0,0,0,.08) 3px,rgba(0,0,0,.08) 4px);font-family:system-ui,sans-serif;color:var(--text,#e5e7eb);animation:om-ss-fadein .28s ease}
+        .om-ss-panel{display:flex;flex-direction:column;align-items:center;text-align:center;padding:0 24px}
+        .om-ss-wordmark{font-size:clamp(2rem,6vw,4.8rem);font-weight:800;letter-spacing:.08em;color:var(--accent,#f5c542);line-height:1;margin-bottom:8px}
+        .om-ss-tagline{font-size:.75rem;color:var(--muted,#8b949e);letter-spacing:.16em;text-transform:uppercase;margin-bottom:28px}
+        .om-ss-mesh{width:72px;height:62px;margin-bottom:24px}
+        .om-ss-mesh svg{width:100%;height:100%;overflow:visible}
+        .om-ss-edge{stroke:var(--accent,#f5c542);stroke-width:1.5;stroke-opacity:.25;fill:none}
+        .om-ss-node{fill:none;stroke:var(--accent,#f5c542);stroke-width:1.7;animation:om-ss-mesh-glow 3s ease-in-out infinite}
+        .om-ss-node:nth-child(1){animation-delay:0s}.om-ss-node:nth-child(2){animation-delay:1s}.om-ss-node:nth-child(3){animation-delay:2s}
+        .om-ss-status{font-size:.78rem;letter-spacing:.18em;text-transform:uppercase;color:var(--muted,#8b949e);margin-bottom:18px}
+        .om-ss-dots{display:flex;gap:9px;margin-bottom:18px}
+        .om-ss-dot{width:7px;height:7px;border-radius:50%;background:${isShutdown ? 'var(--red,#ef4444)' : 'var(--accent,#f5c542)'};animation:om-ss-dot-pulse 1.2s ease-in-out infinite}
+        .om-ss-dot:nth-child(2){animation-delay:.22s}.om-ss-dot:nth-child(3){animation-delay:.44s}.om-ss-dot:nth-child(4){animation-delay:.66s}
+        .om-ss-hint{font-size:.82rem;color:var(--muted,#8b949e);line-height:1.55;max-width:460px}
+        .om-ss-cmd{display:inline-block;margin-top:9px;font-size:.78rem;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);padding:6px 12px;border-radius:6px;cursor:pointer;user-select:all;color:var(--accent,#f5c542);font-family:monospace;letter-spacing:.03em}
+        @media(prefers-reduced-motion:reduce){.om-ss-dot,.om-ss-node{animation:none}}
+      </style>
+      <div class="om-service-splash">
+        <div class="om-ss-panel">
+          <div class="om-ss-wordmark">OverMesh</div>
+          <div class="om-ss-tagline">Field network console</div>
+          ${isShutdown ? '' : `<div class="om-ss-mesh" aria-hidden="true"><svg viewBox="0 0 72 62"><path class="om-ss-edge" d="M36 7 8 55h56L36 7Z"/><path class="om-ss-edge" d="M8 55 36 36 64 55"/><circle class="om-ss-node" cx="36" cy="7" r="5"/><circle class="om-ss-node" cx="8" cy="55" r="5"/><circle class="om-ss-node" cx="64" cy="55" r="5"/></svg></div>`}
+          <div class="om-ss-status">${isShutdown ? 'OverMesh stopped' : 'Restarting OverMesh'}</div>
+          <div class="om-ss-dots" aria-hidden="true"><span class="om-ss-dot"></span><span class="om-ss-dot"></span><span class="om-ss-dot"></span><span class="om-ss-dot"></span></div>
+          <div class="om-ss-hint">${isShutdown ? 'Restart OverMesh using the same method you normally use on this machine.<br><span class="om-ss-cmd" onclick="navigator.clipboard.writeText(this.textContent)" title="Click to copy">systemctl --user start overmesh</span><br>Or launch from the Dashboard.' : 'This page will reconnect after the service comes back.'}</div>
+        </div>
+      </div>`;
+  }
+
   async function restartOverMeshNow(btn) {
       btnFeedback(btn, '✓ Restarting…', 3000);
+      showOverMeshServiceSplash('restart');
       try { await fetch(BASE_PATH + '/api/restart', {method: 'POST'}); } catch(_) {}
-      document.body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui,sans-serif"><div style="text-align:center;padding:32px"><div style="font-size:clamp(2.5rem,8vw,5.5rem);font-weight:700;color:var(--accent);letter-spacing:0.04em;line-height:1;margin-bottom:28px">OverMesh</div><div style="font-size:1.5rem;color:var(--muted);margin-bottom:16px">&#x21BA;</div><div style="font-size:0.95rem;color:#666;letter-spacing:0.05em">OverMesh will restart in a few seconds…</div></div></div>`;
-      setTimeout(() => location.reload(), 8000);
+      waitForServiceThenReload();
+  }
+
+  // Poll the server after a restart and reload as soon as it answers again,
+  // so the restart splash dismisses itself (no manual F5). 1.5s grace before
+  // polling, then every 1s, with a 30s failsafe reload.
+  function waitForServiceThenReload() {
+      let done = false;
+      const reload = () => { if (!done) { done = true; location.reload(); } };
+      setTimeout(function poll() {
+          if (done) return;
+          fetch(BASE_PATH + '/', { method: 'GET', cache: 'no-store' })
+              .then(r => { if (r.ok) reload(); else setTimeout(poll, 1000); })
+              .catch(() => setTimeout(poll, 1000));
+      }, 1500);
+      setTimeout(reload, 30000);
   }
 
   function doRestart() {
@@ -4716,8 +4767,8 @@ if (targetEl) {
     document.getElementById('power-menu').classList.remove('open');
     document.getElementById('confirm-ok').textContent = 'Shut down';
     showConfirm('Shut down the OverMesh server?', async () => {
+      showOverMeshServiceSplash('shutdown');
       try { await fetch(BASE_PATH + '/api/shutdown', {method: 'POST'}); } catch(_) {}
-      document.body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui,sans-serif"><div style="text-align:center;padding:32px;max-width:440px"><div style="font-size:clamp(2.5rem,8vw,5.5rem);font-weight:700;color:var(--accent);letter-spacing:0.04em;line-height:1;margin-bottom:28px">OverMesh</div><div style="font-size:2rem;color:var(--muted);margin-bottom:14px">&#x23FB;</div><div style="font-size:1rem;color:#ccc;margin-bottom:10px">OverMesh stopped.</div><div style="font-size:0.85rem;color:#666;line-height:1.5;margin-bottom:18px">Restart OverMesh using the same method you normally use on this machine.</div><div style="font-size:0.78rem;color:#555;margin-bottom:6px">Or run:</div><code onclick="navigator.clipboard.writeText(this.textContent)" title="Click to copy" style="display:inline-block;font-size:0.78rem;background:var(--bg2);border:1px solid var(--border);padding:6px 14px;border-radius:8px;cursor:pointer;user-select:all;color:#aaa">systemctl --user start overmesh</code><div style="font-size:0.78rem;color:#555;margin-top:14px">Or launch from the Dashboard.</div></div></div>`;
     });
   }
 

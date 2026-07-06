@@ -534,8 +534,18 @@ def init_mc_msgs_db(db_path):
             path_hash_size  INTEGER,
             rx_rssi         REAL,
             rx_snr          REAL,
+            rx_copies       TEXT,
+            rx_confidence   TEXT,
             dedupe_key      TEXT UNIQUE
         )''')
+        try:
+            c.execute("ALTER TABLE messages ADD COLUMN rx_copies TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            c.execute("ALTER TABLE messages ADD COLUMN rx_confidence TEXT")
+        except sqlite3.OperationalError:
+            pass
         c.execute("CREATE INDEX IF NOT EXISTS idx_mc_messages_ts ON messages (ts DESC)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_mc_messages_channel ON messages (channel, subtype, ts DESC)")
         conn.commit()
@@ -1032,8 +1042,8 @@ def save_mc_message(msg):
             INSERT OR IGNORE INTO messages
                 (id, radio_id, radio_name, subtype, channel, from_id, from_name, to_id, to_name,
                  text, ts, sent, status, route_type, path, path_len, path_hash_mode, path_hash_size,
-                 rx_rssi, rx_snr, dedupe_key)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 rx_rssi, rx_snr, rx_copies, rx_confidence, dedupe_key)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             msg_id,
             radio_id,
@@ -1055,6 +1065,8 @@ def save_mc_message(msg):
             msg.get("path_hash_size"),
             msg.get("rx_rssi"),
             msg.get("rx_snr"),
+            json.dumps(msg.get("rx_copies") or [], separators=(",", ":")),
+            msg.get("rx_confidence"),
             dedupe_key,
         ))
         conn.execute('''
@@ -1062,6 +1074,38 @@ def save_mc_message(msg):
                 SELECT id FROM messages ORDER BY ts DESC LIMIT 2000
             )
         ''')
+
+
+def update_mc_message_rx(radio_id, msg):
+    msg_id = msg.get("id")
+    if not radio_id or not msg_id:
+        return 0
+    with get_mc_msgs_db(radio_id) as conn:
+        cur = conn.execute('''
+            UPDATE messages
+               SET route_type=?,
+                   path=?,
+                   path_len=?,
+                   path_hash_mode=?,
+                   path_hash_size=?,
+                   rx_rssi=?,
+                   rx_snr=?,
+                   rx_copies=?
+                   ,rx_confidence=?
+             WHERE id=?
+        ''', (
+            msg.get("route_type"),
+            msg.get("path"),
+            msg.get("path_len"),
+            msg.get("path_hash_mode"),
+            msg.get("path_hash_size"),
+            msg.get("rx_rssi"),
+            msg.get("rx_snr"),
+            json.dumps(msg.get("rx_copies") or [], separators=(",", ":")),
+            msg.get("rx_confidence"),
+            msg_id,
+        ))
+        return cur.rowcount
 
 
 def load_mc_messages(radio_id, limit=500):
@@ -1077,6 +1121,13 @@ def load_mc_messages(radio_id, limit=500):
         row["type"] = "mc_message"
         row["network"] = "mc"
         row["sent"] = bool(row.get("sent"))
+        if row.get("rx_copies"):
+            try:
+                row["rx_copies"] = json.loads(row["rx_copies"])
+            except (TypeError, ValueError):
+                row["rx_copies"] = []
+        else:
+            row["rx_copies"] = []
     return rows
 
 

@@ -10542,17 +10542,25 @@ if (targetEl) {
   function _mcMergeMessages(incoming, opts = {}) {
     const before = mcMessages.length;
     const seen = new Set(mcMessages.map(_mcMessageKey));
+    let changed = false;
     (incoming || []).forEach(raw => {
       if (!raw) return;
       const msg = { ...raw, type: raw.type || 'mc_message', network: raw.network || 'mc' };
+      const existingIdx = msg.id ? mcMessages.findIndex(m => m.id === msg.id) : -1;
+      if (existingIdx >= 0) {
+        mcMessages[existingIdx] = { ...mcMessages[existingIdx], ...msg };
+        changed = true;
+        return;
+      }
       const key = _mcMessageKey(msg);
       if (seen.has(key)) return;
       seen.add(key);
       mcMessages.push(msg);
+      changed = true;
     });
     mcMessages.sort((a, b) => (a.ts || 0) - (b.ts || 0));
     if (mcMessages.length > 500) mcMessages.splice(0, mcMessages.length - 500);
-    if (mcMessages.length !== before) {
+    if (changed || mcMessages.length !== before) {
       _mcRebuildMessageTabs();
       _saveMcMessages();
       _omLogShareProcessMessages();
@@ -12382,11 +12390,23 @@ if (targetEl) {
       const routeMeta = _mcChatRouteMeta(m);
       if (routeMeta) _mcChatRouteByKey[routeKey] = m;
       const routeBtn = routeMeta
-        ? `<button class="mc-route-badge" title="${escHtml(routeMeta.detail)}" onclick="event.stopPropagation();showMcChatMessageRoute('${jsSafe(routeKey)}')">${escHtml(routeMeta.label)}</button>`
+        ? `<button class="mc-route-badge${Number(m.path_len) === 0 ? ' direct' : ''}" title="${escHtml(routeMeta.detail)}" onclick="event.stopPropagation();showMcChatMessageRoute('${jsSafe(routeKey)}')">${escHtml(routeMeta.label)}</button>`
+        : '';
+      const byteMeta = _mcMessageHashByteMeta(m);
+      const byteBadge = byteMeta
+        ? `<span class="mc-route-badge mc-route-badge-byte" title="${escHtml(byteMeta.detail)}">${escHtml(byteMeta.label)}</span>`
+        : '';
+      const altMeta = _mcAltPathMeta(m);
+      const altBadge = altMeta
+        ? `<span class="mc-route-badge mc-route-badge-alt" title="${escHtml(altMeta.detail)}">+${altMeta.count} path${altMeta.count !== 1 ? 's' : ''}</span>`
+        : '';
+      const confMeta = _mcRxConfidenceMeta(m);
+      const confBadge = confMeta
+        ? `<span class="mc-rx-confidence ${escHtml(confMeta.cls)}" title="${escHtml(confMeta.detail)}">${escHtml(confMeta.label)}</span>`
         : '';
       const shareHtml = _omLogShareDisplay(bodyText);
       return `<div class="chat-msg received">
-        <div class="msg-meta">${escHtml(m.radio_name || '')} · ${senderHtml}${escHtml(obsSnr)} · ${ts}${routeBtn}${mcReplyBtn}${logBtn}</div>
+        <div class="msg-meta">${escHtml(m.radio_name || '')} · ${senderHtml}${escHtml(obsSnr)} · ${ts}${routeBtn}${byteBadge}${altBadge}${confBadge}${mcReplyBtn}${logBtn}</div>
         <div class="msg-bubble">${shareHtml || _mcFormatMessageBody(bodyText)}</div>
       </div>`;
     }).join('');
@@ -13629,18 +13649,31 @@ if (targetEl) {
         const q = msgMeta.quality;
         const warnText = _mcPathWarningText(path, 'message');
         const hopMeta = _mcMessageHopMeta(e, path);
+        const byteMeta = _mcMessageHashByteMeta(e);
+        const altMeta = _mcAltPathMeta(e);
+        const confMeta = _mcRxConfidenceMeta(e);
         // Show quality badge only when it adds info (live/cached, not inferred)
         const showQ = q && q !== 'inferred';
         const qColor = q === 'live' ? '#22c55e' : '#38bdf8';
         const qBg = q === 'live' ? 'rgba(34,197,94,0.12)' : 'rgba(56,189,248,0.12)';
         const qBorder = q === 'live' ? 'rgba(34,197,94,0.28)' : 'rgba(56,189,248,0.28)';
+        const confHtml = confMeta
+          ? `<span class="mc-rx-confidence ${escHtml(confMeta.cls)}" title="${escHtml(confMeta.detail)}">${escHtml(confMeta.label)}</span>`
+          : '';
+        const altHtml = altMeta
+          ? `<span class="mc-route-badge mc-route-badge-alt" title="${escHtml(altMeta.detail)}">+${altMeta.count} path${altMeta.count !== 1 ? 's' : ''}</span>`
+          : '';
+        const byteHtml = byteMeta
+          ? `<span class="mc-route-badge mc-route-badge-byte" title="${escHtml(byteMeta.detail)}">${escHtml(byteMeta.label)}</span>`
+          : '';
         return `<div class="${isPinned ? 'mc-route-selected' : ''}" style="padding:2px 0;border-bottom:1px solid var(--border);cursor:pointer"
           onclick="_mcLogClick(${e._i})"
           onmouseenter="_mcLogHover(${e._i},true)"
           onmouseleave="_mcLogHover(${e._i},false)">
           <span style="color:var(--muted)">${_mcLogTs(e)}</span>
           <span style="margin-left:4px;font-weight:600">${escHtml(e.name)}</span>
-          ${hopMeta ? `<span style="margin-left:4px;font-size:10px;color:${hopMeta.color}">${escHtml(hopMeta.label)}</span>` : ''}
+          ${hopMeta ? `<span class="mc-route-badge${Number(e.hopLen) === 0 ? ' direct' : ''}" title="${escHtml(hopMeta.detail)}">${escHtml(_mcMessageRouteLabel(hopMeta.label, e))}</span>` : ''}
+          ${byteHtml}${altHtml}${confHtml}
           ${showQ ? `<span title="Route source" style="margin-left:4px;font-size:9px;color:${qColor};background:${qBg};border:1px solid ${qBorder};border-radius:3px;padding:0 3px">${q}</span>` : ''}
           ${warnText ? `<span title="${escHtml(warnText)}" style="color:#f59e0b;margin-left:4px;font-size:10px">!</span>` : ''}
           <span style="color:var(--muted);margin-left:4px;font-size:10px">${escHtml(e.text)}</span>
@@ -13805,6 +13838,54 @@ if (targetEl) {
     }) || null;
   }
 
+  function _mcMessageRouteLabel(label, msg) {
+    if (Number(msg?.path_len) === 0) return 'DIRECT';
+    return label;
+  }
+
+  function _mcMessageHashByteMeta(msg) {
+    const raw = msg?.path_hash_size ?? (msg?.path_hash_mode != null ? Number(msg.path_hash_mode) + 1 : null);
+    const size = Number(raw);
+    if (!Number.isFinite(size) || size <= 0) return null;
+    return { label: `${size}B`, detail: `Primary received copy uses ${size}-byte path hashes.` };
+  }
+
+  function _mcAltPathMeta(msg) {
+    const copies = Array.isArray(msg?.rx_copies) ? msg.rx_copies : [];
+    if (copies.length <= 1) return null;
+    const primaryKey = [
+      String(msg.path || ''),
+      String(msg.path_len),
+      String(msg.path_hash_size),
+      String(msg.rx_rssi),
+      String(msg.rx_snr),
+    ].join('|');
+    const alternates = copies.filter(c => [
+      String(c.path || ''),
+      String(c.path_len),
+      String(c.path_hash_size),
+      String(c.rx_rssi),
+      String(c.rx_snr),
+    ].join('|') !== primaryKey);
+    if (!alternates.length) return null;
+    const detail = alternates.map(c => {
+      const hops = c.path_len != null ? mcPathHopLabel(Number(c.path_len), true) : 'unknown';
+      const rssi = c.rx_rssi != null ? `RSSI ${c.rx_rssi}` : 'RSSI ?';
+      const snr = c.rx_snr != null ? `SNR ${c.rx_snr}` : 'SNR ?';
+      const bytes = c.path_hash_size != null ? `${c.path_hash_size}B` : '?B';
+      return `${hops}, ${rssi}, ${snr}, ${bytes}`;
+    }).join('\n');
+    return { count: alternates.length, detail };
+  }
+
+  function _mcRxConfidenceMeta(msg) {
+    const value = String(msg?.rx_confidence || '').toLowerCase();
+    if (!value) return null;
+    if (value === 'high') return { label: 'High confidence', cls: 'high', detail: 'RX copy matched by sender, text, or timestamp where available.' };
+    if (value === 'medium') return { label: 'Medium confidence', cls: 'medium', detail: 'RX copy matched by a tight timing window; channel RX logs may not include full message identity.' };
+    return { label: 'Low confidence', cls: 'low', detail: 'Best-effort path; RX metadata did not strongly identify this exact message.' };
+  }
+
   function _mcChatRouteMeta(msg) {
     if (!msg || msg.sent || msg.from_id === 'bot' || msg.subtype === 'system') return null;
     const entry = _mcFindMessageLogEntry(msg) || _mcBuildSenseMessageEntry(msg);
@@ -13814,7 +13895,7 @@ if (targetEl) {
     if (!hopMeta) return null;
     const source = resolved.quality && resolved.quality !== 'inferred' ? ` · ${resolved.quality}` : '';
     return {
-      label: hopMeta.label,
+      label: _mcMessageRouteLabel(hopMeta.label, msg),
       detail: `Show MC message path: ${hopMeta.detail}${source}`,
       entry,
     };
@@ -14176,8 +14257,12 @@ if (targetEl) {
       const hopLabel = _mcMessageHopMeta(entry, msgMeta.path)?.detail || 'Unknown';
       const msgHashBytes = entry.pathHashSize ?? (entry.pathHashMode != null ? Number(entry.pathHashMode) + 1 : null) ?? (() => { const c = (mcContacts[entry.radioId] || {})[entry.fromId]; return c?.out_path_hash_size ?? (c?.out_path_hash_mode != null ? c.out_path_hash_mode + 1 : null); })();
       const msgHashSuffix = msgHashBytes != null ? ` · ${msgHashBytes}B/hop` : '';
+      const altMeta = _mcAltPathMeta(entry);
+      const confMeta = _mcRxConfidenceMeta(entry);
       let rows = td('Via', escHtml(chanLabel));
       rows += td('Path', hopLabel + escHtml(msgHashSuffix));
+      if (altMeta) rows += td('Other copies', escHtml(`${altMeta.count} alternate path${altMeta.count !== 1 ? 's' : ''}`));
+      if (confMeta) rows += td('Confidence', escHtml(confMeta.label));
       rows += td('Route source', escHtml(msgMeta.quality || 'unknown') + (msgMeta.refreshed ? ' · refreshed' : ''));
       if (entry.text) rows += td('Message', escHtml(entry.text.length > 100 ? entry.text.slice(0, 100) + '…' : entry.text));
       body.innerHTML = `<table style="border-collapse:collapse;width:100%">${rows}</table>
@@ -14240,13 +14325,52 @@ if (targetEl) {
     if (pathResult && !pathResult.flood) pathResult = { ...pathResult, kind: 'message', snr: msgSnr };
     // Reverse: message is incoming (sender → relays → our radio), but decodeMcPath builds radio→contact
     if (pathResult?.points) pathResult = _mcReversePathResult(pathResult);
-    return { kind: 'message', name, text, rawText: full, ts, ts_epoch, msgTs: data.ts, msgId: data.id || null, radioId: data.radio_id, channel: data.channel ?? 0, fromId: data.from_id, lat, lon, hopLen, pathResult, routeQuality, pathHashSize: data.path_hash_size ?? pathResult?.inferredPathHashSize ?? null, pathHashMode: data.path_hash_mode ?? null, routeType: data.route_type ?? null, rawPath: data.path ?? null, snr: msgSnr };
+    return {
+      kind: 'message',
+      name,
+      text,
+      rawText: full,
+      ts,
+      ts_epoch,
+      msgTs: data.ts,
+      msgId: data.id || null,
+      radioId: data.radio_id,
+      channel: data.channel ?? 0,
+      fromId: data.from_id,
+      lat,
+      lon,
+      hopLen,
+      pathResult,
+      routeQuality,
+      pathHashSize: data.path_hash_size ?? pathResult?.inferredPathHashSize ?? null,
+      pathHashMode: data.path_hash_mode ?? null,
+      routeType: data.route_type ?? null,
+      rawPath: data.path ?? null,
+      rx_rssi: data.rx_rssi ?? null,
+      rx_snr: data.rx_snr ?? null,
+      rx_copies: Array.isArray(data.rx_copies) ? data.rx_copies : [],
+      rx_confidence: data.rx_confidence || null,
+      path: data.path ?? null,
+      path_len: data.path_len ?? hopLen,
+      path_hash_size: data.path_hash_size ?? null,
+      snr: msgSnr,
+    };
   }
 
   function addMcSenseMessageEntry(data) {
-    if (data.ts && data.from_id && _mcSenseLogEntries.some(e => e.kind === 'message' && e.msgTs === data.ts && e.fromId === data.from_id)) return;
     const entry = _mcBuildSenseMessageEntry(data);
     if (!entry) return;
+    const existingIdx = _mcSenseLogEntries.findIndex(e => {
+      if (e.kind !== 'message') return false;
+      if (data.id && e.msgId && e.msgId === data.id) return true;
+      return data.ts && data.from_id && e.msgTs === data.ts && e.fromId === data.from_id;
+    });
+    if (existingIdx >= 0) {
+      _mcSenseLogEntries[existingIdx] = { ..._mcSenseLogEntries[existingIdx], ...entry };
+      try { localStorage.setItem('mcSenseLog', JSON.stringify(_mcSenseLogEntries.slice(0, 100))); } catch(e) {}
+      renderMcSenseLog();
+      return;
+    }
     if (_mcLogPinnedIdx !== null) _mcLogPinnedIdx++;
     _mcSenseLogEntries.unshift(entry);
     if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();

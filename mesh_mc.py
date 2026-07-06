@@ -31,7 +31,7 @@ from meshcore.tcp_cx import TCPConnection
 from config import CONFIG, CONFIG_LOCK, DATA_DIR, save_config
 from cross import maybe_forward_mc_message
 from bridge import publish_inbound_message
-from db import log_position, save_mc_message, save_passive_obs, mc_msgs_db_path, register_mc_msgs_db, init_mc_msgs_db, mc_passive_db_path, register_mc_passive_db
+from db import log_position, save_mc_message, update_mc_message_rx, save_passive_obs, mc_msgs_db_path, register_mc_msgs_db, init_mc_msgs_db, mc_passive_db_path, register_mc_passive_db
 from helpers import push_to_sse
 from state import mc_connections, mc_connections_lock
 
@@ -655,6 +655,7 @@ _mc_loop_ready = threading.Event()
 # ---------------------------------------------------------------------------
 _mc_debug_flags: set = set()   # radio config_ids with debug logging enabled
 _mc_recent_rx_logs: dict[str, list[dict]] = {}  # radio id -> recent RX_LOG_DATA payloads
+_mc_recent_messages: dict[str, list[dict]] = {}  # radio id -> recent inbound mc_message dicts
 _mc_drain_active: set[str] = set()
 _mc_drain_pending: set[str] = set()   # fired MESSAGES_WAITING while drain was active — re-drain on finish
 _mc_path_refresh_active: set[str] = set()  # rate-limit concurrent get_contacts() from PATH_UPDATE
@@ -1140,6 +1141,199 @@ def _mc_message_path_fields(msg, rx=None):
         "path_hash_mode": msg.get("path_hash_mode"),
         "path_hash_size": _mc_path_hash_size_from_msg(msg, rx),
     }
+
+
+def _rx_copy_from_entry(msg, rx):
+    if not rx:
+        return None
+    fields = _mc_message_path_fields(msg or {}, rx)
+    return {
+        "path": fields.get("path"),
+        "path_len": fields.get("path_len"),
+        "path_hash_mode": fields.get("path_hash_mode"),
+        "path_hash_size": fields.get("path_hash_size"),
+        "route_type": rx.get("route_typename"),
+        "rx_rssi": rx.get("rssi"),
+        "rx_snr": rx.get("snr"),
+        "payload_type": rx.get("payload_typename"),
+        "first_seen": rx.get("stored_at", time.time()),
+    }
+
+
+def _rx_correlation_confidence(msg, rx, late=False):
+    msg = msg or {}
+    rx = rx or {}
+    subtype = msg.get("subtype") or ""
+    msg_sender = str(msg.get("pubkey_pre") or msg.get("pubkey_prefix") or msg.get("from_id") or "")
+    if subtype == "dm" and msg_sender and msg_sender != "?":
+        if late:
+            return "medium"
+        return "high"
+    if subtype == "channel" and _payload_matches_subtype(rx.get("payload_typename"), "channel"):
+        try:
+            rx_path_len = int(rx.get("path_len"))
+        except (TypeError, ValueError):
+            rx_path_len = None
+        if rx_path_len == 0:
+            return "medium"
+    score = 0
+    reasons = []
+    rx_sender = _rx_sender_prefix(rx)
+    if rx_sender and msg_sender and msg_sender != "?" and rx_sender.startswith(msg_sender[:12]):
+        score += 3
+        reasons.append("sender")
+    msg_ts = msg.get("sender_timestamp") or msg.get("time") or msg.get("ts")
+    if msg_ts is not None and rx.get("sender_timestamp") == msg_ts:
+        score += 3
+        reasons.append("timestamp")
+    msg_text = str(msg.get("text") or "")
+    if msg_text and rx.get("message") and str(rx.get("message")) == msg_text:
+        score += 3
+        reasons.append("text")
+    if _payload_matches_subtype(rx.get("payload_typename"), msg.get("subtype") or ""):
+        score += 1
+        reasons.append("payload")
+    if late:
+        score = min(score, 2)
+        reasons.append("late")
+    if score >= 5:
+        return "high"
+    if score >= 2:
+        return "medium"
+    return "medium" if late else "low"
+
+
+def _rx_copy_key(copy):
+    return (
+        str(copy.get("path") or ""),
+        str(copy.get("path_len")),
+        str(copy.get("path_hash_size")),
+        str(copy.get("route_type") or ""),
+        str(copy.get("rx_rssi")),
+        str(copy.get("rx_snr")),
+    )
+
+
+def _dedup_rx_copies(copies):
+    out = []
+    seen = set()
+    for copy in copies or []:
+        if not copy:
+            continue
+        key = _rx_copy_key(copy)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(copy)
+    return out
+
+
+def _copy_path_len_rank(copy):
+    value = copy.get("path_len")
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return 9999
+    if value < 0 or value == 255:
+        return 9999
+    return value
+
+
+def _copy_rssi_rank(copy):
+    value = copy.get("rx_rssi")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return -9999.0
+
+
+def _best_rx_copy(copies):
+    copies = list(copies or [])
+    if not copies:
+        return None
+    return sorted(copies, key=lambda c: (_copy_path_len_rank(c), -_copy_rssi_rank(c), float(c.get("first_seen") or 0)))[0]
+
+
+def _apply_rx_copies_to_message(msg, copies):
+    copies = _dedup_rx_copies(copies)
+    msg["rx_copies"] = sorted(copies, key=lambda c: (float(c.get("first_seen") or 0), _copy_path_len_rank(c)))
+    primary = _best_rx_copy(copies)
+    if not primary:
+        return msg
+    msg["route_type"] = primary.get("route_type") or msg.get("route_type")
+    msg["path"] = primary.get("path")
+    msg["path_len"] = primary.get("path_len")
+    msg["path_hash_mode"] = primary.get("path_hash_mode")
+    msg["path_hash_size"] = primary.get("path_hash_size")
+    msg["rx_rssi"] = primary.get("rx_rssi")
+    msg["rx_snr"] = primary.get("rx_snr")
+    confidences = [c.get("confidence") for c in copies if c.get("confidence")]
+    if "low" in confidences:
+        msg["rx_confidence"] = "low"
+    elif "medium" in confidences:
+        msg["rx_confidence"] = "medium"
+    elif "high" in confidences:
+        msg["rx_confidence"] = "high"
+    return msg
+
+
+def _remember_recent_message(config_id, msg):
+    entries = _mc_recent_messages.setdefault(config_id, [])
+    entries.append({"stored_at": time.time(), "message": msg})
+    cutoff = time.time() - 45.0
+    entries[:] = [e for e in entries if e.get("stored_at", 0) >= cutoff][-30:]
+
+
+def _enrich_recent_message_from_rx(config_id, rx, name):
+    """Attach late duplicate RX logs to one already-delivered message when unambiguous.
+
+    MeshCore channel RX_LOG_DATA often lacks sender/text. To avoid false path
+    aggregation on busy channels, only attach anonymous late copies when exactly
+    one recent delivered message of the same subtype is close enough in time.
+    """
+    payload = rx.get("payload_typename")
+    if payload in ("ADVERT", "REQ") or not payload:
+        return
+    subtype = "dm" if _payload_matches_subtype(payload, "dm") else "channel" if _payload_matches_subtype(payload, "channel") else None
+    if not subtype:
+        return
+    now_ts = time.time()
+    candidates = []
+    for entry in _mc_recent_messages.get(config_id, []):
+        msg = entry.get("message") or {}
+        age = now_ts - float(entry.get("stored_at", now_ts) or now_ts)
+        if age < 0 or age > 3.0:
+            continue
+        if msg.get("sent") or msg.get("subtype") != subtype:
+            continue
+        rx_sender = _rx_sender_prefix(rx)
+        if rx_sender and msg.get("from_id") not in (None, "?") and not rx_sender.startswith(str(msg.get("from_id"))[:12]):
+            continue
+        candidates.append(msg)
+    if len(candidates) != 1:
+        return
+    msg = candidates[0]
+    copy = _rx_copy_from_entry(msg, rx)
+    if not copy:
+        return
+    copy["confidence"] = _rx_correlation_confidence(msg, rx, late=True)
+    old_key = (
+        msg.get("path"), msg.get("path_len"), msg.get("path_hash_size"),
+        msg.get("rx_rssi"), msg.get("rx_snr"), msg.get("rx_confidence"), len(msg.get("rx_copies") or []),
+    )
+    _apply_rx_copies_to_message(msg, list(msg.get("rx_copies") or []) + [copy])
+    new_key = (
+        msg.get("path"), msg.get("path_len"), msg.get("path_hash_size"),
+        msg.get("rx_rssi"), msg.get("rx_snr"), msg.get("rx_confidence"), len(msg.get("rx_copies") or []),
+    )
+    if new_key == old_key:
+        return
+    update_mc_message_rx(config_id, msg)
+    push_to_sse(msg)
+    log.info(
+        "[MC:%s] Enriched message %s with %d RX copies; primary path_len=%s rssi=%s",
+        name, msg.get("id"), len(msg.get("rx_copies") or []), msg.get("path_len"), msg.get("rx_rssi")
+    )
 
 
 def _merge_mc_contact_records(old_contact, new_contact):
@@ -1910,6 +2104,9 @@ def _subscribe_mc_events(mc, config_id, name):
                 config_id, "channel", time.time(), sender_prefix=msg.get("pubkey_pre"), msg=msg
             )
             path_fields = _mc_message_path_fields(msg, rx)
+            rx_copies = _dedup_rx_copies([_rx_copy_from_entry(msg, rx)] if rx else [])
+            for copy in rx_copies:
+                copy["confidence"] = _rx_correlation_confidence({**msg, "subtype": "channel"}, rx)
             sse_msg = {
                 "type":       "mc_message",
                 "radio_id":   config_id,
@@ -1928,9 +2125,13 @@ def _subscribe_mc_events(mc, config_id, name):
                 "path_hash_size": path_fields["path_hash_size"],
                 "rx_rssi":    msg.get("rssi", (rx or {}).get("rssi")),
                 "rx_snr":     msg.get("snr", (rx or {}).get("snr")),
+                "rx_copies":   rx_copies,
             }
+            if rx_copies:
+                _apply_rx_copies_to_message(sse_msg, rx_copies)
             sse_msg["id"] = _mc_message_id(sse_msg)
             save_mc_message(sse_msg)
+            _remember_recent_message(config_id, sse_msg)
             push_to_sse(sse_msg)
             publish_inbound_message(sse_msg)
             log.info(f"[MC:{name}] Channel msg from {msg.get('pubkey_pre','?')}: {msg.get('text','')[:60]}")
@@ -1966,6 +2167,9 @@ def _subscribe_mc_events(mc, config_id, name):
                 config_id, "dm", time.time(), sender_prefix=msg.get("pubkey_prefix"), msg=msg
             )
             path_fields = _mc_message_path_fields(msg, rx)
+            rx_copies = _dedup_rx_copies([_rx_copy_from_entry(msg, rx)] if rx else [])
+            for copy in rx_copies:
+                copy["confidence"] = _rx_correlation_confidence({**msg, "subtype": "dm"}, rx)
             sse_msg = {
                 "type":       "mc_message",
                 "radio_id":   config_id,
@@ -1983,9 +2187,13 @@ def _subscribe_mc_events(mc, config_id, name):
                 "path_hash_size": path_fields["path_hash_size"],
                 "rx_rssi":    msg.get("rssi", (rx or {}).get("rssi")),
                 "rx_snr":     msg.get("snr", (rx or {}).get("snr")),
+                "rx_copies":   rx_copies,
             }
+            if rx_copies:
+                _apply_rx_copies_to_message(sse_msg, rx_copies)
             sse_msg["id"] = _mc_message_id(sse_msg)
             save_mc_message(sse_msg)
+            _remember_recent_message(config_id, sse_msg)
             push_to_sse(sse_msg)
             publish_inbound_message(sse_msg)
             log.info(f"[MC:{name}] DM from {msg.get('pubkey_prefix','?')}: {msg.get('text','')[:60]}"
@@ -2232,6 +2440,7 @@ def _subscribe_mc_events(mc, config_id, name):
                     route_type=p.get("route_typename"),
                     lat=lat, lon=lon,
                 )
+            _enrich_recent_message_from_rx(config_id, p, name)
         except Exception as e:
             log.warning(f"[MC:{name}] on_rx_log_data error: {e}")
 

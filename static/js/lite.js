@@ -2399,6 +2399,12 @@ function renderSettings() {
         <button class="btn btn-sm" onclick="toggleMcLocPolicy('${esc(r.id)}',${r.adv_loc_policy ? 1 : 0})">Advertise: ${r.adv_loc_policy == null ? '…' : (r.adv_loc_policy ? 'ON' : 'OFF')}</button>
         <button class="btn btn-sm" onclick="startMcPositionPick('${esc(r.id)}')">📍 Pick on map</button>
         <button class="btn btn-sm" onclick="useGpsForMcPosition('${esc(r.id)}')">Use GPS position</button>
+      </div>
+      <div class="radio-row" style="padding-top:0">
+        <span class="radio-name" style="font-size:11px;color:var(--muted)">MC path hash</span>
+        <select class="form-select" style="max-width:120px" onchange="setMcPathHashMode('${esc(r.id)}', this.value)">
+          ${[0,1,2].map(mode => `<option value="${mode}" ${Number(r.path_hash_mode ?? 2) === mode ? 'selected' : ''}>${mode + 1} byte${mode === 0 ? '' : 's'}</option>`).join('')}
+        </select>
       </div>`;
     });
   } else {
@@ -2506,6 +2512,26 @@ function toggleRadio(type, id, currentlyEnabled) {
   fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ enabled: !currentlyEnabled }) })
     .then(r => r.json()).then(() => loadRadios()).catch(() => toast('Error'));
+}
+
+function setMcPathHashMode(radioId, value) {
+  const mode = Number(value);
+  if (![0, 1, 2].includes(mode)) return;
+  fetch(`/api/settings/mc_nodes/${encodeURIComponent(radioId)}/path_hash_mode`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ path_hash_mode: mode })
+  }).then(r => r.json()).then(d => {
+    if (!d.ok) { toast('Hash size failed: ' + (d.error || '?')); loadRadios(); return; }
+    const radio = S.mcRadios.find(r => r.id === radioId);
+    if (radio) radio.path_hash_mode = Number(d.requested ?? mode);
+    renderSettings();
+    toast(d.warning || `MC path hash: ${mode + 1}B`);
+    loadRadios();
+  }).catch(() => {
+    toast('Hash size error');
+    loadRadios();
+  });
 }
 
 function rptr(action) {

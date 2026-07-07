@@ -1155,11 +1155,37 @@ function onMtMessage(d) {
   addMsgToFeed('mt_chan', null, idx, d.from_name || d.from_id || '?', d.text || d.message || '', d.ts || Math.floor(Date.now()/1000), 'MT #' + _mtChName, { fromId: d.from_id });
 }
 
+// One event per unique MC message: the RX path aggregation backend re-emits
+// the same message id over SSE for each late path copy (enrichment). Those
+// must update the stored row in place — never append/toast/bump again.
+const _seenMcMsgKeys = new Set();
+function _rememberMcMsgKey(k) {
+  _seenMcMsgKeys.add(k);
+  if (_seenMcMsgKeys.size > 600) {
+    let drop = _seenMcMsgKeys.size - 400;
+    for (const k2 of _seenMcMsgKeys) { _seenMcMsgKeys.delete(k2); if (--drop <= 0) break; }
+  }
+}
+
 function onMcMessage(d) {
   const rid = d.radio_id;
   if (!S.mcMsgs[rid]) S.mcMsgs[rid] = { chan: {}, dm: {} };
   const dmId = d.contact_id || (d.subtype === 'dm' ? (d.sent ? d.to_id : d.from_id) : '');
   const idx = d.channel ?? d.channel_index ?? 0;
+  const _list = dmId ? (S.mcMsgs[rid].dm[dmId] || []) : (S.mcMsgs[rid].chan[idx] || []);
+  const _dupIdx = d.id ? _list.findIndex(m => m.id === d.id) : -1;
+  const _msgKey = d.id || [rid, d.subtype || '', dmId || idx, d.from_id || '', d.text || d.message || '', d.ts || ''].join('|');
+  if (_seenMcMsgKeys.has(_msgKey) || _dupIdx >= 0) {
+    if (_dupIdx >= 0) {
+      _list[_dupIdx] = { ..._list[_dupIdx], ...d };
+      const _activeCtx = S.activeTab === 'chat' && S.chatCtx?.radioId === rid &&
+        (dmId ? (S.chatCtx?.type === 'mc_dm' && String(S.chatCtx?.key) === String(dmId))
+              : (S.chatCtx?.type === 'mc_chan' && Number(S.chatCtx?.key) === Number(idx)));
+      if (_activeCtx) renderMessages();
+    }
+    return;
+  }
+  _rememberMcMsgKey(_msgKey);
   if (dmId) {
     if (!S.mcMsgs[rid].dm[dmId]) S.mcMsgs[rid].dm[dmId] = [];
     S.mcMsgs[rid].dm[dmId].push(d);

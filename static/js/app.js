@@ -10590,6 +10590,17 @@ if (targetEl) {
       m?.ts || '',
     ].join('|');
   }
+  // One notification per unique MC message: RX path aggregation re-emits the
+  // same message id over SSE for each late path copy (enrichment). Those
+  // events must update the UI in place but never ping/toast/count again.
+  const _mcNotifiedMsgKeys = new Set();
+  function _mcMarkNotified(key) {
+    _mcNotifiedMsgKeys.add(key);
+    if (_mcNotifiedMsgKeys.size > 600) {
+      let drop = _mcNotifiedMsgKeys.size - 400;
+      for (const k of _mcNotifiedMsgKeys) { _mcNotifiedMsgKeys.delete(k); if (--drop <= 0) break; }
+    }
+  }
   function _mcMergeMessages(incoming, opts = {}) {
     const before = mcMessages.length;
     const seen = new Set(mcMessages.map(_mcMessageKey));
@@ -11349,7 +11360,10 @@ if (targetEl) {
         }
         msgTab = `dm:${fk}`;
       }
-      if (!data.sent && !isArchiveReplay) {
+      const _notifKey = data.id || _mcMessageKey(data);
+      const _alreadyNotified = _mcNotifiedMsgKeys.has(_notifKey);
+      if (!data.sent && !isArchiveReplay && !_alreadyNotified) {
+        _mcMarkNotified(_notifKey);
         // Mark unread if not on this tab or not in chat/MC view
         if (msgTab && (currentTab !== 'chat' || chatNetwork !== 'mc' || mcChatTab !== msgTab)) {
           mcUnreadTabs.add(msgTab);

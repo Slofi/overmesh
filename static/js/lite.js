@@ -2339,15 +2339,40 @@ function checkUpdate() {
 
 function runUpdate() {
   if (S.updateRunning) return;
-  askConfirm('Run update?', 'The app will pull the latest OM Lite files. Restart OM Lite after the update finishes.', 'Run update', () => {
+  askConfirm('Run update?', 'The app will pull the latest OM Lite files and offer a restart when done.', 'Run update', () => {
     S.updateRunning = true;
     const log = document.getElementById('update-log');
     if (log) log.textContent = 'Running update…';
+    // /update/run only STARTS a background job — poll status until it ends,
+    // then prompt for the restart the new code needs.
+    const poll = () => {
+      fetch('/api/settings/update/status').then(r => r.json()).then(d => {
+        S.updateInfo = d;
+        const st = d.state || {};
+        if (log && Array.isArray(st.log) && st.log.length) log.textContent = st.log.join('\n');
+        if (st.running) { setTimeout(poll, 2000); return; }
+        S.updateRunning = false;
+        if (S.activeTab === 'settings') renderSettings();
+        if (st.ok === false) { toast('Update failed'); return; }
+        if (/already up to date/i.test(st.message || '')) { toast('Already up to date'); return; }
+        toast('Update finished');
+        askConfirm('Update complete', 'Restart OM Lite now to load the new version?', 'Restart', () => {
+          showServiceSplash('restart');
+          fetch('/api/restart', { method: 'POST' }).finally(() => {
+            setTimeout(() => location.reload(), 6500);
+          });
+        }, false);
+      }).catch(() => { setTimeout(poll, 3000); });
+    };
     fetch('/api/settings/update/run', { method: 'POST' }).then(r => r.json()).then(d => {
-      S.updateInfo = d;
-      toast(d.ok === false || d.error ? 'Update failed' : 'Update finished');
-      if (S.activeTab === 'settings') renderSettings();
-    }).catch(() => toast('Update failed')).finally(() => { S.updateRunning = false; });
+      if (d.error && !(d.state || {}).running) {
+        S.updateRunning = false;
+        if (log) log.textContent = d.error;
+        toast('Update failed');
+        return;
+      }
+      setTimeout(poll, 1500);
+    }).catch(() => { S.updateRunning = false; toast('Update failed'); });
   });
 }
 

@@ -2327,7 +2327,9 @@ function updateLogHTML() {
 function checkUpdate() {
   const summary = document.getElementById('update-summary');
   if (summary) summary.innerHTML = 'Checking…';
-  fetch('/api/settings/update/status').then(r => r.json()).then(d => {
+  // ?fetch=1 makes the backend actually contact the remote — without it the
+  // check compares against a stale cached ref and always says "Up to date"
+  fetch('/api/settings/update/status?fetch=1').then(r => r.json()).then(d => {
     S.updateInfo = d;
     if (S.activeTab === 'settings') renderSettings();
   }).catch(() => {

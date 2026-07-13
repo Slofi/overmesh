@@ -16170,7 +16170,7 @@ if (targetEl) {
       const pathHashSizeLabel = _mcPathHashSizeLabel(data.observed_path_hash_size ?? pingPath?.inferredPathHashSize ?? pingEntry?.pathHashSize, data.observed_path_hash_mode ?? mcLastStatus[data.radio_id]?.path_hash_mode);
       body.innerHTML = `<table style="border-collapse:collapse;width:100%">
         ${th('Result')}
-        ${td('Status', '<span style="color:var(--accent)">Reachable</span>')}
+        ${td('Status', '<span style="color:#f59e0b">No response</span>')}
         ${td('Mode', 'Fallback reachability')}
         ${td('Note', '<span style="color:var(--muted);font-size:11px">No STATUS_RESPONSE — local RX only.</span>')}
         ${pathWarn ? td('Path note', `<span style="color:#f59e0b;font-size:11px">${escHtml(pathWarn)}</span>`) : ''}
@@ -16183,14 +16183,11 @@ if (targetEl) {
         ${td('Payload type', data.observed_payload_type ? escHtml(data.observed_payload_type) : '—')}
         ${td('Route type', data.observed_route_type ? escHtml(data.observed_route_type) : '—')}
       </table>${_mcLogHopListHtml(pingEntry, pingPath, pingEntryIdx)}${(!pendingReq?.withTrace && !pingPath) ? _mcTraceProbeButton(data.pubkey_pre || '', data.radio_id || '', pingContact?.long_name || pingContact?.name || data.pubkey_pre || '') : ''}`;
-      // Update contact's last_seen in local cache so map popup reflects the ping
-      _mcUpdateContactLastSeen(data.radio_id, data.pubkey_pre || data.target_pubkey_pre, {
-        out_path_len: data.observed_path_len,
-        out_path: data.observed_path,
-        out_path_hash_size: data.observed_path_hash_size,
-        snr: data.observed_snr,
-        rssi: data.observed_rssi,
-      });
+      // Fallback reachability = NO STATUS_RESPONSE (the observed RF may be from an
+      // unrelated node), so do NOT stamp the contact's last_seen / path / signal — the
+      // map popup and nodes tab must keep showing the real last-heard value, not a
+      // "just now" fabricated from ambient RF. If the target actually transmitted, the
+      // normal RX path updates last_seen legitimately.
       if (pathResult) {
         switchTab('map'); toggleSensePanel(true); switchSenseNet('mc');
         showMcHoverPath({ ...pathResult, kind: 'ping', snr: data.observed_snr ?? data.last_snr ?? null }, true);

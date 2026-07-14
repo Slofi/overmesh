@@ -8,7 +8,7 @@ from flask import Blueprint, jsonify, request
 from pubsub import pub
 from meshtastic.protobuf import mesh_pb2, portnums_pb2
 from config import CONFIG, _valid_node_id
-from db import get_db_nodes, get_position_history, get_prefs_db, get_traceroute_history, save_message, save_traceroute, delete_channel_messages, delete_mt_all_messages, get_mc_contact_notes, set_mc_contact_notes, get_node_note, set_node_note, get_mc_note, set_mc_note, get_all_mc_notes
+from db import get_db_nodes, get_position_history, get_prefs_db, get_traceroute_history, save_message, save_traceroute, delete_channel_messages, delete_mt_all_messages, get_mc_contact_notes, set_mc_contact_notes, get_node_note, set_node_note, get_mc_note, set_mc_note, get_all_mc_notes, get_favorites
 from helpers import (
     _format_last_heard, _next_msg_id, _node_ts, _radio_id_for_iface,
     get_node_data, get_node_name, push_to_sse,
@@ -372,6 +372,138 @@ def api_db_radio_nodes_reset(radio_id):
                 nodes_by_num.pop(num, None)
 
     return jsonify({"ok": True, "removed_db": removed_db, "removed_live": removed_live})
+
+
+def _collect_stale_nodes(cutoff):
+    """List nodes across all connected radios not heard from since <cutoff>
+    (epoch seconds). Never includes the local node or favorites, and skips nodes
+    whose last-heard time is unknown. Returns descriptor dicts (oldest first)."""
+    favorites = get_favorites()
+    now = int(time.time())
+    stale = []
+    with connections_lock:
+        items = list(connections.items())
+    for radio_id, state in items:
+        iface = state.get("iface")
+        if not iface:
+            continue
+        radio_name = state.get("config", {}).get("name", radio_id)
+        local_info = getattr(iface, "myInfo", None)
+        local_node_num = getattr(local_info, "my_node_num", None) if local_info else None
+        for node_key, node in list((getattr(iface, "nodes", None) or {}).items()):
+            if not node:
+                continue
+            node_num = node.get("num")
+            if local_node_num is not None and node_num == local_node_num:
+                continue  # never the local node
+            user = node.get("user") or {}
+            node_id_str = user.get("id") or node_key
+            if (node_id_str, radio_id) in favorites or (node_id_str, "") in favorites:
+                continue  # never favorites
+            # Effective last-heard, mirroring get_node_data(): prefer an observed
+            # live-packet timestamp, else the nodeDB lastHeard.
+            last_heard = _node_ts(node.get("lastHeard"))
+            with mt_last_heard_lock:
+                observed = mt_last_heard.get((radio_id, node_id_str)) or 0
+            if observed:
+                last_heard = observed
+            if not last_heard:
+                continue  # unknown last-heard -> leave it, don't delete blindly
+            if last_heard < cutoff:
+                stale.append({
+                    "id": node_id_str,
+                    "radio_id": radio_id,
+                    "radio_name": radio_name,
+                    "long_name": user.get("longName") or "Unknown",
+                    "short_name": user.get("shortName") or "?",
+                    "last_heard_ts": last_heard,
+                    "last_heard": _format_last_heard(last_heard, now),
+                    "network": "mt",
+                })
+    stale.sort(key=lambda n: n["last_heard_ts"])  # oldest first
+    return stale
+
+
+def _parse_cleanup_days(data):
+    """Returns (cutoff_epoch, days, None) or (None, None, error_response)."""
+    try:
+        days = float(data.get("days"))
+    except (TypeError, ValueError):
+        return None, None, (jsonify({"error": "Enter a number of days"}), 400)
+    if days <= 0:
+        return None, None, (jsonify({"error": "Days must be greater than 0"}), 400)
+    cutoff = int(time.time()) - int(days * 86400)
+    return cutoff, days, None
+
+
+@bp.route("/api/db/nodes/cleanup/preview", methods=["POST"])
+def api_db_nodes_cleanup_preview():
+    """List the nodes a cleanup would remove for the given <days>, WITHOUT
+    deleting anything. Powers the selectable confirm modal."""
+    data = request.get_json(silent=True) or {}
+    cutoff, days, err = _parse_cleanup_days(data)
+    if err:
+        return err
+    return jsonify({"ok": True, "days": days, "nodes": _collect_stale_nodes(cutoff)})
+
+
+@bp.route("/api/db/nodes/cleanup", methods=["POST"])
+def api_db_nodes_cleanup():
+    """Delete the explicit list of nodes chosen in the cleanup modal. Each entry
+    is {id, radio_id}. The local node and favorites are refused even if listed.
+    Each node is evicted from the live nodeDB, purged from the radio's flash
+    nodeDB, and its OverMesh DB cache row removed — mirroring the single-node
+    delete so it actually leaves the list."""
+    data = request.get_json(silent=True) or {}
+    requested = data.get("nodes")
+    if not isinstance(requested, list) or not requested:
+        return jsonify({"error": "No nodes selected"}), 400
+
+    favorites = get_favorites()
+    # Group requested ids by radio so we look up each iface once.
+    by_radio = {}
+    for item in requested:
+        if not isinstance(item, dict):
+            continue
+        nid = item.get("id")
+        rid = item.get("radio_id")
+        if nid and rid:
+            by_radio.setdefault(rid, set()).add(nid)
+
+    removed = 0
+    for radio_id, ids in by_radio.items():
+        with connections_lock:
+            state = connections.get(radio_id)
+        iface = state.get("iface") if state else None
+        local_info = getattr(iface, "myInfo", None) if iface else None
+        local_node_num = getattr(local_info, "my_node_num", None) if local_info else None
+        for node_id_str in ids:
+            if (node_id_str, radio_id) in favorites or (node_id_str, "") in favorites:
+                continue  # refuse favorites even if the client asked
+            if iface:
+                node = (getattr(iface, "nodes", None) or {}).get(node_id_str)
+                node_num = node.get("num") if node else None
+                if local_node_num is not None and node_num == local_node_num:
+                    continue  # refuse the local node
+                # Evict from library in-memory dicts (under lock so the helpers.py snapshot loop doesn't race)
+                with connections_lock:
+                    if getattr(iface, "nodes", None):
+                        iface.nodes.pop(node_id_str, None)
+                    if node_num is not None and getattr(iface, "nodesByNum", None):
+                        iface.nodesByNum.pop(node_num, None)
+                # Purge from radio flash nodeDB so stale PKI keys don't persist across restarts
+                try:
+                    iface.localNode.removeNode(node_id_str)
+                except Exception as e:
+                    log.warning(f"cleanup: removeNode {node_id_str} failed: {e}")
+            try:
+                with get_prefs_db() as conn:
+                    conn.execute("DELETE FROM nodes WHERE id=? AND radio_id=?", (node_id_str, radio_id))
+            except Exception as e:
+                log.warning(f"cleanup: db delete {node_id_str} failed: {e}")
+            removed += 1
+
+    return jsonify({"ok": True, "removed": removed})
 
 
 @bp.route("/api/db/node/<node_id>", methods=["PATCH"])

@@ -30,6 +30,28 @@
   </div>
 </div>
 
+<!-- Stale node cleanup modal -->
+<div id="node-cleanup-modal" class="modal-overlay" onclick="if(event.target===this)closeNodeCleanupModal()">
+  <div class="modal-box" style="width:460px;max-width:94vw">
+    <div class="modal-header">
+      <span class="modal-title">Clean up stale nodes</span>
+      <button class="modal-close" onclick="closeNodeCleanupModal()">&#10005;</button>
+    </div>
+    <div class="modal-body">
+      <p id="node-cleanup-summary" style="margin:0 0 10px;font-size:13px;color:var(--muted)"></p>
+      <div id="node-cleanup-list" style="max-height:46vh;overflow:auto;border:1px solid var(--border);border-radius:6px"></div>
+      <div style="display:flex;gap:8px;justify-content:space-between;align-items:center;margin-top:14px;flex-wrap:wrap">
+        <span id="node-cleanup-count" style="font-size:12px;color:var(--muted)"></span>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+          <button class="btn-secondary" onclick="closeNodeCleanupModal()">Cancel</button>
+          <button id="node-cleanup-del-all" class="btn-secondary node-cleanup-del" style="border-color:var(--red);color:var(--red)" onclick="commitNodeCleanup('all')">Delete all</button>
+          <button id="node-cleanup-del-selected" class="btn-secondary node-cleanup-del" style="border-color:var(--red);color:var(--red)" onclick="commitNodeCleanup('selected')">Delete selected</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Silent Running warning modal -->
 <div id="sr-confirm-modal" class="modal-overlay" onclick="if(event.target===this)srConfirmCancel()">
   <div class="modal-box" style="width:340px;border-top:2px solid var(--red)">
@@ -1685,6 +1707,20 @@
           <button class="btn" id="settings-update-check-btn" onclick="settingsLoadUpdateStatus(true, this)" title="Check GitHub for a newer OverMesh commit">Check</button>
           <button class="btn" id="settings-update-run-btn" onclick="runOverMeshUpdate()" disabled title="Pull the latest OverMesh code">Update</button>
           <button class="btn" id="settings-update-restart-btn" onclick="restartOverMeshNow(this)" style="display:none" title="Restart OverMesh after an update">Restart</button>
+        </div>
+      </div>
+      <div style="border-top:1px solid var(--border);margin:14px 0 10px 0"></div>
+      <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:start">
+        <div>
+          <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px">Clean up stale nodes</div>
+          <div style="font-size:12px;color:var(--muted);line-height:1.45">Remove MeshCore contacts and Meshtastic nodes not heard from within the entered number of days, across every connected radio. You pick what actually gets deleted; your own node and favourited nodes are always kept.</div>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;align-items:center">
+          <input type="number" id="settings-node-cleanup-days" min="1" step="1" value="30"
+                 style="width:70px;padding:4px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:13px"
+                 title="Nodes not heard from in this many days will be removed">
+          <span style="font-size:12px;color:var(--muted)">days</span>
+          <button class="btn" id="settings-node-cleanup-btn" onclick="runStaleNodeCleanup(this)" title="Remove nodes not heard from within the entered number of days">Clean up</button>
         </div>
       </div>
       <div style="border-top:1px solid var(--border);margin:14px 0 10px 0"></div>

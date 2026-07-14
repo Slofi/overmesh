@@ -10016,6 +10016,123 @@ if (targetEl) {
     });
   }
 
+  // ── Stale node cleanup (MeshCore + Meshtastic) ──────────────────────────────
+  async function runStaleNodeCleanup(btn) {
+    const input = document.getElementById('settings-node-cleanup-days');
+    const days = parseInt(input?.value, 10);
+    if (!Number.isFinite(days) || days < 1) {
+      showAlert('Enter a number of days (1 or more).');
+      return;
+    }
+    if (btn) btn.disabled = true;
+    try {
+      const opts = {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({days})};
+      // MeshCore first (primary system), then Meshtastic. Either may be absent.
+      const [mc, mt] = await Promise.all([
+        fetch(BASE_PATH + '/api/mc/contacts/cleanup/preview', opts).then(r => r.json()).catch(() => ({})),
+        fetch(BASE_PATH + '/api/db/nodes/cleanup/preview', opts).then(r => r.json()).catch(() => ({})),
+      ]);
+      const nodes = [...(mc.nodes || []), ...(mt.nodes || [])];
+      openNodeCleanupModal(nodes, days);
+    } catch(e) {
+      showAlert(String(e.message || e));
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function _nodeCleanupBadge(network) {
+    const isMc = network === 'mc';
+    const col = isMc ? 'var(--mc-color)' : 'var(--accent)';
+    return `<span style="font-size:9px;font-weight:700;letter-spacing:.04em;color:${col};border:1px solid ${col};border-radius:3px;padding:0 4px;flex-shrink:0">${isMc ? 'MC' : 'MT'}</span>`;
+  }
+
+  function openNodeCleanupModal(nodes, days) {
+    const summary = document.getElementById('node-cleanup-summary');
+    const list = document.getElementById('node-cleanup-list');
+    const empty = !nodes.length;
+    summary.textContent = empty
+      ? `Nothing has been silent for more than ${days} day${days === 1 ? '' : 's'}.`
+      : `${nodes.length} node${nodes.length === 1 ? '' : 's'} not heard from in over ${days} day${days === 1 ? '' : 's'}. All are selected — deselect any you want to keep. Your own node and favourites are never listed.`;
+    list.innerHTML = empty
+      ? `<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">Nothing to remove.</div>`
+      : nodes.map(n => `
+        <label style="display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border-bottom:1px solid var(--border);cursor:pointer">
+          <input type="checkbox" class="node-cleanup-cb" checked style="margin-top:3px"
+                 data-id="${escHtml(n.id)}" data-radio="${escHtml(n.radio_id)}" data-network="${escHtml(n.network || 'mt')}"
+                 onchange="_updateNodeCleanupCount()">
+          <span style="flex:1;min-width:0">
+            <span style="display:flex;align-items:center;gap:6px">
+              ${_nodeCleanupBadge(n.network)}
+              <span style="font-size:13px;color:var(--text)">${escHtml(n.long_name)} <span style="color:var(--muted)">(${escHtml(n.short_name)})</span></span>
+            </span>
+            <span style="font-size:11px;color:var(--muted)">${escHtml(n.id)} · ${escHtml(n.radio_name)} · last heard ${escHtml(n.last_heard)}</span>
+          </span>
+        </label>`).join('');
+    // Disable the delete buttons when there is nothing to act on.
+    document.querySelectorAll('#node-cleanup-modal .node-cleanup-del').forEach(b => b.disabled = empty);
+    document.getElementById('node-cleanup-modal').classList.add('open');
+    _updateNodeCleanupCount();
+  }
+
+  function _updateNodeCleanupCount() {
+    const total = document.querySelectorAll('.node-cleanup-cb').length;
+    const sel = document.querySelectorAll('.node-cleanup-cb:checked').length;
+    const el = document.getElementById('node-cleanup-count');
+    if (el) el.textContent = total ? `${sel} of ${total} selected` : '';
+    const selBtn = document.getElementById('node-cleanup-del-selected');
+    if (selBtn) selBtn.disabled = sel === 0;
+  }
+
+  function closeNodeCleanupModal() {
+    document.getElementById('node-cleanup-modal').classList.remove('open');
+  }
+
+  async function _postNodeCleanup(url, body) {
+    const r = await fetch(BASE_PATH + url, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    return data.removed || 0;
+  }
+
+  async function commitNodeCleanup(mode) {
+    const cbs = [...document.querySelectorAll('.node-cleanup-cb')];
+    const chosen = (mode === 'all' ? cbs : cbs.filter(cb => cb.checked))
+      .map(cb => ({id: cb.dataset.id, radio_id: cb.dataset.radio, network: cb.dataset.network}));
+    if (!chosen.length) {
+      showAlert(mode === 'all' ? 'There is nothing to delete.' : 'Nothing is selected.');
+      return;
+    }
+    const mt = chosen.filter(c => c.network === 'mt').map(c => ({id: c.id, radio_id: c.radio_id}));
+    const mc = chosen.filter(c => c.network === 'mc').map(c => ({id: c.id, radio_id: c.radio_id}));
+    try {
+      let removed = 0;
+      if (mt.length) removed += await _postNodeCleanup('/api/db/nodes/cleanup', {nodes: mt});
+      if (mc.length) removed += await _postNodeCleanup('/api/mc/contacts/cleanup', {contacts: mc});
+      // Prune deleted MC contacts from the local cache so the list updates at once.
+      mc.forEach(c => {
+        if (mcContacts[c.radio_id]) {
+          delete mcContacts[c.radio_id][c.id];
+          Object.entries(mcContacts[c.radio_id]).forEach(([k, v]) => {
+            if (v?.id === c.id || v?.full_key === c.id) delete mcContacts[c.radio_id][k];
+          });
+        }
+        mcIgnored.delete(c.id);
+      });
+      showToast('Node cleanup', removed ? `Removed ${removed} node${removed === 1 ? '' : 's'}.` : 'Nothing was removed.', 'node');
+      closeNodeCleanupModal();
+      loadLive();
+      renderLive();
+      if (typeof renderMcMapMarkers === 'function') renderMcMapMarkers();
+    } catch(e) {
+      showAlert(String(e.message || e));
+    }
+  }
+
   function omManualPosStatus(text, ok = null) {
     const el = document.getElementById('om-pos-status');
     if (!el) return;

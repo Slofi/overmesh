@@ -493,6 +493,89 @@ def api_mc_delete_all_contacts(radio_id):
         return jsonify({"error": str(e)}), 500
 
 
+def _collect_stale_mc_contacts(cutoff):
+    """MC contacts across all connected MC radios not seen since <cutoff> (epoch
+    seconds). Skips contacts whose last-seen time is unknown. Returns descriptor
+    dicts (oldest first) in the same shape the MT cleanup collector uses, so the
+    frontend can render both in one modal."""
+    now = int(time.time())
+    stale = []
+    with mc_connections_lock:
+        radio_ids = list(mc_connections.keys())
+    for radio_id in radio_ids:
+        with mc_connections_lock:
+            state = mc_connections.get(radio_id)
+            contacts_raw = dict(state.get("contacts", {}) or {}) if state else {}
+            live_contacts = dict(state.get("live_contacts", {}) or {}) if state else {}
+            radio_name = ((state.get("config") or {}).get("name") if state else None) or radio_id
+        archive_contacts = get_mc_contact_archive(radio_id)
+        if not contacts_raw:
+            contacts_raw = dict(live_contacts or archive_contacts or {})
+        for pubkey, c in contacts_raw.items():
+            last_seen_ts = _mc_contact_last_seen_ts(c, now=now)
+            if not last_seen_ts:
+                continue  # unknown last-seen -> leave it, don't delete blindly
+            if last_seen_ts < cutoff:
+                ser = _serialize_mc_contact(
+                    pubkey, c, now=now,
+                    source_state=_mc_contact_source_state(pubkey, live_contacts, archive_contacts),
+                )
+                stale.append({
+                    "id": ser["id"],
+                    "radio_id": radio_id,
+                    "radio_name": radio_name,
+                    "long_name": ser["long_name"],
+                    "short_name": ser["short_name"],
+                    "last_heard_ts": last_seen_ts,
+                    "last_heard": ser["last_seen"],
+                    "network": "mc",
+                })
+    stale.sort(key=lambda n: n["last_heard_ts"])  # oldest first
+    return stale
+
+
+@bp.route("/api/mc/contacts/cleanup/preview", methods=["POST"])
+def api_mc_contacts_cleanup_preview():
+    """List the MC contacts a cleanup would remove for the given <days>, WITHOUT
+    deleting anything. Powers the shared cleanup modal (MC side)."""
+    data = request.get_json(silent=True) or {}
+    try:
+        days = float(data.get("days"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Enter a number of days"}), 400
+    if days <= 0:
+        return jsonify({"error": "Days must be greater than 0"}), 400
+    cutoff = int(time.time()) - int(days * 86400)
+    return jsonify({"ok": True, "days": days, "nodes": _collect_stale_mc_contacts(cutoff)})
+
+
+@bp.route("/api/mc/contacts/cleanup", methods=["POST"])
+def api_mc_contacts_cleanup():
+    """Delete the explicit list of MC contacts chosen in the cleanup modal. Each
+    entry is {id, radio_id} where id is the pubkey prefix. Reuses the same
+    per-contact removal path as the single delete (device NVS + archive)."""
+    data = request.get_json(silent=True) or {}
+    requested = data.get("contacts")
+    if not isinstance(requested, list) or not requested:
+        return jsonify({"error": "No contacts selected"}), 400
+    removed = 0
+    errors = 0
+    for item in requested:
+        if not isinstance(item, dict):
+            continue
+        cid = item.get("id")
+        radio_id = item.get("radio_id")
+        if not cid or not radio_id:
+            continue
+        try:
+            remove_mc_contact(radio_id, cid)
+            removed += 1
+        except Exception as e:
+            errors += 1
+            log.warning(f"[MC] cleanup remove {cid}: {e}")
+    return jsonify({"ok": True, "removed": removed, "errors": errors})
+
+
 @bp.route("/api/mc/<radio_id>/send_chan", methods=["POST"])
 def api_mc_send_chan(radio_id):
     """Send a channel message."""

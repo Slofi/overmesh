@@ -979,6 +979,12 @@
     @keyframes node-cleanup-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
     #node-cleanup-count.busy { animation: node-cleanup-pulse 1s ease-in-out infinite; color: var(--red); }
     #node-cleanup-progress-bar { height: 100%; width: 0%; background: var(--red); transition: width 0.25s ease; }
+    .node-cleanup-del { transition: background-color 0.15s ease, box-shadow 0.15s ease; }
+    .node-cleanup-del:hover:not(:disabled) {
+      background: rgba(248, 81, 73, 0.10);
+      box-shadow: 0 0 0 1px var(--red);
+    }
+    .node-cleanup-del:active:not(:disabled) { background: rgba(248, 81, 73, 0.18); }
     .modal-node { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
     .tr-chain { display: flex; flex-direction: column; align-items: flex-start; margin-bottom: 6px; }
     .tr-node { font-size: 12px; padding: 3px 8px; background: var(--bg2); border-radius: 4px; white-space: nowrap; }

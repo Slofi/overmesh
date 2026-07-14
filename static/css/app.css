@@ -958,6 +958,27 @@
       flex-shrink: 0;
     }
     #action-modal .modal-body { overflow-y: auto; min-height: 0; }
+    /* Cleanup modal: cap height (zoom-aware) and scroll the list, so the footer
+       buttons stay on-screen and clickable regardless of body zoom or list length. */
+    #node-cleanup-modal .modal-box {
+      max-height: calc(100vh / var(--body-zoom) - 32px);
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    #node-cleanup-modal .modal-header { flex-shrink: 0; }
+    #node-cleanup-modal .modal-body {
+      display: flex; flex-direction: column; overflow: hidden; min-height: 0;
+    }
+    #node-cleanup-list { flex: 1 1 auto; min-height: 60px; }
+    @keyframes node-cleanup-spin { to { transform: rotate(360deg); } }
+    .node-cleanup-spinner {
+      display: inline-block; width: 11px; height: 11px; margin-right: 6px;
+      border: 2px solid currentColor; border-top-color: transparent;
+      border-radius: 50%; vertical-align: -1px;
+      animation: node-cleanup-spin 0.7s linear infinite;
+    }
+    @keyframes node-cleanup-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
+    #node-cleanup-count.busy { animation: node-cleanup-pulse 1s ease-in-out infinite; color: var(--red); }
+    #node-cleanup-progress-bar { height: 100%; width: 0%; background: var(--red); transition: width 0.25s ease; }
     .modal-node { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
     .tr-chain { display: flex; flex-direction: column; align-items: flex-start; margin-bottom: 6px; }
     .tr-node { font-size: 12px; padding: 3px 8px; background: var(--bg2); border-radius: 4px; white-space: nowrap; }

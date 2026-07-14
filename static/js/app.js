@@ -10084,7 +10084,9 @@ if (targetEl) {
     if (selBtn) selBtn.disabled = sel === 0;
   }
 
+  let _nodeCleanupBusy = false;
   function closeNodeCleanupModal() {
+    if (_nodeCleanupBusy) return;  // don't let Cancel / click-outside hide the modal mid-delete
     document.getElementById('node-cleanup-modal').classList.remove('open');
   }
 
@@ -10109,10 +10111,56 @@ if (targetEl) {
     }
     const mt = chosen.filter(c => c.network === 'mt').map(c => ({id: c.id, radio_id: c.radio_id}));
     const mc = chosen.filter(c => c.network === 'mc').map(c => ({id: c.id, radio_id: c.radio_id}));
+    const total = chosen.length;
+
+    // Enter busy state: lock the buttons, spin the one clicked, and show a real
+    // progress bar. Deleting MC contacts hits the radio NVS one-by-one, so a big
+    // batch takes a while — without feedback it looks frozen.
+    const cancelBtn = document.getElementById('node-cleanup-cancel');
+    const delAll = document.getElementById('node-cleanup-del-all');
+    const delSel = document.getElementById('node-cleanup-del-selected');
+    const activeBtn = mode === 'all' ? delAll : delSel;
+    const countEl = document.getElementById('node-cleanup-count');
+    const progWrap = document.getElementById('node-cleanup-progress');
+    const progBar = document.getElementById('node-cleanup-progress-bar');
+    const prevCount = countEl ? countEl.textContent : '';
+    const prevLabel = activeBtn ? activeBtn.innerHTML : '';
+
+    let done = 0;
+    const setProgress = () => {
+      if (countEl) countEl.textContent = `Deleting ${done} / ${total}…`;
+      if (progBar) progBar.style.width = `${total ? Math.round((done / total) * 100) : 0}%`;
+    };
+    const restoreButtons = () => {
+      [cancelBtn, delAll, delSel].forEach(b => { if (b) b.disabled = false; });
+      if (activeBtn) activeBtn.innerHTML = prevLabel;
+      if (progWrap) progWrap.style.display = 'none';
+      if (progBar) progBar.style.width = '0%';
+      if (countEl) countEl.classList.remove('busy');
+    };
+
+    _nodeCleanupBusy = true;
+    [cancelBtn, delAll, delSel].forEach(b => { if (b) b.disabled = true; });
+    if (activeBtn) activeBtn.innerHTML = '<span class="node-cleanup-spinner"></span>Deleting…';
+    if (progWrap) progWrap.style.display = 'block';
+    if (countEl) countEl.classList.add('busy');
+    setProgress();
+
     try {
       let removed = 0;
-      if (mt.length) removed += await _postNodeCleanup('/api/db/nodes/cleanup', {nodes: mt});
-      if (mc.length) removed += await _postNodeCleanup('/api/mc/contacts/cleanup', {contacts: mc});
+      // MeshCore first (primary, and the slow one) — deleted in small chunks so
+      // the bar advances roughly in step with the radio working through them.
+      for (let i = 0; i < mc.length; i += 6) {
+        const chunk = mc.slice(i, i + 6);
+        removed += await _postNodeCleanup('/api/mc/contacts/cleanup', {contacts: chunk});
+        done += chunk.length;
+        setProgress();
+      }
+      if (mt.length) {
+        removed += await _postNodeCleanup('/api/db/nodes/cleanup', {nodes: mt});
+        done += mt.length;
+        setProgress();
+      }
       // Prune deleted MC contacts from the local cache so the list updates at once.
       mc.forEach(c => {
         if (mcContacts[c.radio_id]) {
@@ -10123,13 +10171,22 @@ if (targetEl) {
         }
         mcIgnored.delete(c.id);
       });
+      _nodeCleanupBusy = false;
+      restoreButtons();
       showToast('Node cleanup', removed ? `Removed ${removed} node${removed === 1 ? '' : 's'}.` : 'Nothing was removed.', 'node');
       closeNodeCleanupModal();
       loadLive();
       renderLive();
       if (typeof renderMcMapMarkers === 'function') renderMcMapMarkers();
     } catch(e) {
-      showAlert(String(e.message || e));
+      // Some may already be gone — refresh so the UI reflects the partial result.
+      _nodeCleanupBusy = false;
+      restoreButtons();
+      if (countEl) countEl.textContent = prevCount;
+      _updateNodeCleanupCount();
+      loadLive();
+      renderLive();
+      showAlert(`${String(e.message || e)} — ${done} of ${total} removed before the error.`);
     }
   }
 

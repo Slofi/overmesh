@@ -4,6 +4,7 @@ MeshCore API routes.
 import io
 import hashlib
 import os
+import re
 import threading
 import time
 import logging
@@ -446,6 +447,26 @@ def _mc_sent_message_id(msg):
     return "mc-" + hashlib.sha1("|".join(str(p) for p in parts).encode("utf-8")).hexdigest()[:20]
 
 
+_CLIENT_MSG_ID_RE = re.compile(r"^mc-[A-Za-z0-9-]{1,60}$")
+
+
+def _resolve_sent_msg_id(msg, data):
+    """Message id for an outgoing MC send.
+
+    A sending client (OM's own UI) creates an optimistic local echo with a
+    client-generated id and passes it back as ``client_msg_id``. Reusing it as
+    the stored/broadcast id means the SSE echo (push_to_sse) carries the *same*
+    id as that local echo, so the frontend merges it in place instead of showing
+    a duplicate — regardless of whether the SSE beats the HTTP response. Callers
+    that omit it (OPS-TOC comms proxy, other API clients) fall back to a
+    server-computed id, unchanged.
+    """
+    cid = (data.get("client_msg_id") or "").strip()
+    if cid and _CLIENT_MSG_ID_RE.match(cid):
+        return cid
+    return _mc_sent_message_id(msg)
+
+
 @bp.route("/api/mc/<radio_id>/messages")
 def api_mc_messages(radio_id):
     try:
@@ -622,7 +643,7 @@ def api_mc_send_chan(radio_id):
         # Unlike DMs, this is not a TX confirmation.
         "status": "queued",
     }
-    msg["id"] = _mc_sent_message_id(msg)
+    msg["id"] = _resolve_sent_msg_id(msg, data)
     save_mc_message(msg)
     push_to_sse(msg)  # broadcast to OM's own UI so a send from any client (incl. OPS-TOC) shows live
     threading.Thread(target=maybe_forward_mc_message, args=(dict(msg),), daemon=True).start()
@@ -672,7 +693,7 @@ def api_mc_send_dm(radio_id):
         "sent": True,
         "status": "delivered",
     }
-    msg["id"] = _mc_sent_message_id(msg)
+    msg["id"] = _resolve_sent_msg_id(msg, data)
     save_mc_message(msg)
     push_to_sse(msg)  # broadcast to OM's own UI so a send from any client (incl. OPS-TOC) shows live
     return jsonify({"ok": True, "tx_event": result_type, "message": msg})

@@ -10972,8 +10972,8 @@ if (targetEl) {
           ? `/api/mc/${encodeURIComponent(radioId)}/send_dm`
           : `/api/mc/${encodeURIComponent(radioId)}/send_chan`;
         const body = target.kind === 'dm'
-          ? { target: target.target, text: chunk }
-          : { text: chunk, channel: target.channel };
+          ? { target: target.target, text: chunk, client_msg_id: msgId }
+          : { text: chunk, channel: target.channel, client_msg_id: msgId };
         const r = await fetch(endpoint, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
@@ -15086,8 +15086,8 @@ if (targetEl) {
       ? `/api/mc/${encodeURIComponent(activeMcRadioId)}/send_dm`
       : `/api/mc/${encodeURIComponent(activeMcRadioId)}/send_chan`;
     const body = kind === 'dm'
-      ? { target: opts.target, text: chunk }
-      : { text: chunk, channel: opts.channel };
+      ? { target: opts.target, text: chunk, client_msg_id: msgId }
+      : { text: chunk, channel: opts.channel, client_msg_id: msgId };
     try {
       const r = await fetch(endpoint, {
         method: 'POST',

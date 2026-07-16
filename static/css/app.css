@@ -396,6 +396,17 @@
     }
     .btn:hover { background: var(--border); }
     .btn .btn-icon { display:inline-block; transform-origin:50% 50%; }
+    /* Make header + map-tab button/tab text unselectable (chat tab intentionally left selectable) */
+    #header .tab,
+    #header .btn,
+    #header button,
+    #panel-map .btn,
+    #panel-map button {
+      -webkit-user-select: none;
+      -moz-user-select: none;
+      -ms-user-select: none;
+      user-select: none;
+    }
     .btn.refreshing {
       background: var(--accent-dim);
       border-color: var(--accent);

@@ -2444,6 +2444,47 @@ def _subscribe_mc_events(mc, config_id, name):
         except Exception as e:
             log.warning(f"[MC:{name}] on_rx_log_data error: {e}")
 
+    def on_discover_response(event):
+        # A repeater's reply to our DISCOVER_REQ (0x8e). Unlike a channel message
+        # (MeshCore has no channel-msg ACK), this is a definitive active reply — the
+        # repeater heard us HERE and answered. The library decodes it fully, so we
+        # read named fields, not raw bytes: RSSI/SNR = how WE heard the reply,
+        # SNR_in = how the REPEATER heard US ("heard you"). We reuse the mc_node
+        # path so responders land on the map / node list / scan counter exactly like
+        # adverts do; via="discover" tags it as an active ping reply for the UI.
+        try:
+            p = event.payload or {}
+            pubkey = p.get("pubkey", "") or ""
+            existing = _touch_contact_seen(pubkey) if pubkey else None
+            if existing is None:
+                existing = {"public_key": pubkey}
+            disp_name = existing.get("adv_name") or (pubkey[:8] if pubkey else "?")
+            rssi, snr, snr_in = p.get("RSSI"), p.get("SNR"), p.get("SNR_in")
+            log.info(f"[MC:{name}] DISCOVER_RESPONSE {disp_name} ({pubkey[:12]}) "
+                     f"rssi={rssi} snr={snr} snr_in={snr_in} "
+                     f"node_type={p.get('node_type')} tag={p.get('tag')} — heard us")
+            _push_mc_node({
+                "type":          "mc_node",
+                "radio_id":      config_id,
+                "radio_name":    name,
+                "id":            pubkey[:12],
+                "full_key":      pubkey,
+                "long_name":     existing.get("adv_name", disp_name),
+                "short_name":    (existing.get("adv_name") or disp_name or "?")[:4].upper(),
+                "latitude":      existing.get("adv_lat") or None,
+                "longitude":     existing.get("adv_lon") or None,
+                "last_heard_ts": int(time.time()),
+                "contact_type":  existing.get("type", 0),
+                "network":       "mc",
+                "via":           "discover",
+                "rssi":          rssi,
+                "snr":           snr,
+                "snr_in":        snr_in,
+                "node_type":     p.get("node_type"),
+            })
+        except Exception as e:
+            log.warning(f"[MC:{name}] on_discover_response error: {e}")
+
     mc.subscribe(EventType.ADVERTISEMENT,     on_advert)
     mc.subscribe(EventType.CHANNEL_MSG_RECV,  on_chan_msg)
     mc.subscribe(EventType.CONTACT_MSG_RECV,  on_dm)
@@ -2454,6 +2495,7 @@ def _subscribe_mc_events(mc, config_id, name):
     mc.subscribe(EventType.MESSAGES_WAITING,  on_messages_waiting)
     mc.subscribe(EventType.TRACE_DATA,        on_trace_data)
     mc.subscribe(EventType.RX_LOG_DATA,       on_rx_log_data)
+    mc.subscribe(EventType.DISCOVER_RESPONSE, on_discover_response)
 
     def on_binary_response(event):
         try:
@@ -3084,6 +3126,34 @@ async def _send_trace_async(config_id, tag=None):
 def send_trace_broadcast(config_id, tag=None, timeout=10):
     _ensure_mc_tx_allowed("MC trace")
     return run_mc(_send_trace_async(config_id, tag=tag), timeout=timeout)
+
+
+async def _send_discover_async(config_id, tag=None):
+    """Broadcast a MeshCore DISCOVER_REQ — the ACTIVE coverage probe.
+
+    Frame (built by the lib): CMD_SEND_CONTROL_DATA 0x37 / NODE_DISCOVER_REQ 0x80,
+    filter=REPEATER 0x04, 4-byte LE tag. prefix_only MUST be False (True sends 0x81).
+    Repeaters answer asynchronously with a DISCOVER_RESPONSE push (0x8e) → handled by
+    on_discover_response → mc_node(via=discover) SSE. This is the mapme.sh mechanism:
+    MeshCore channel messages have no ACK, so a passive scan hears nothing unless
+    traffic happens to flow; DISCOVER makes repeaters reply on demand. The send waits
+    only for the local firmware OK; the replies arrive later via the subscription
+    (same fire-and-forget shape as send_trace/TRACE_DATA). Returns the tag used."""
+    mc, _ = _get_mc(config_id)
+    result = await mc.commands.send_node_discover_req(filter=0x04, prefix_only=False, tag=tag)
+    if result is None:
+        raise RuntimeError("discover send failed: no response")
+    if result.type == EventType.OK:
+        sent_tag = result.payload.get("tag", tag) if isinstance(result.payload, dict) else tag
+        log.info(f"[MC:{config_id}] DISCOVER_REQ sent (filter=REPEATER, tag={sent_tag}), "
+                 f"awaiting DISCOVER_RESPONSE pushes")
+        return sent_tag
+    raise RuntimeError(f"discover send failed: {getattr(result.type, 'name', result.type)}")
+
+
+def send_discover_req(config_id, tag=None, timeout=10):
+    _ensure_mc_tx_allowed("MC discover")
+    return run_mc(_send_discover_async(config_id, tag=tag), timeout=timeout)
 
 
 def refresh_contacts(config_id, timeout=10):

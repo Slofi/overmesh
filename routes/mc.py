@@ -24,7 +24,7 @@ from mesh_mc import (send_chan_msg, send_dm, send_advert, refresh_contacts,
                      set_device_name, set_device_coords, set_advert_loc_policy,
                      reboot_device, reboot_device_dtr, get_channels, set_channel,
                      req_node_status, get_stats, remove_mc_contact,
-                     send_trace_broadcast, import_mc_contact, enable_mc_debug,
+                     send_trace_broadcast, send_discover_req, import_mc_contact, enable_mc_debug,
                      get_mc_contact_archive,
                      set_contact_path, reset_all_paths, remote_repeater_read,
                      remote_repeater_command, clear_mc_all_contacts,
@@ -1224,9 +1224,18 @@ def api_mc_scan(radio_id):
         except Exception as e:
             log.warning(f"[MC] scan advert failed: {e}")
             return jsonify({"error": str(e)}), 500
+        # Active repeater probe: DISCOVER_REQ makes MC repeaters reply (0x8e) — the
+        # only way a scan surfaces coverage without live traffic (channel msgs have
+        # no ACK). Non-fatal: if it fails, the flood-advert scan still proceeds.
+        discover_tag = None
+        try:
+            discover_tag = send_discover_req(radio_id)
+        except Exception as e:
+            log.warning(f"[MC] scan discover_req failed (advert still sent): {e}")
         # Push scan_started SSE
         push_to_sse(json.dumps({"type": "mc_scan_started", "radio_id": radio_id,
-                                "window": MC_SCAN_WINDOW}))
+                                "window": MC_SCAN_WINDOW,
+                                "discover": discover_tag is not None}))
         # Schedule scan_done after window
         def _scan_done():
             time.sleep(MC_SCAN_WINDOW)

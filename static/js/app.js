@@ -11422,7 +11422,7 @@ if (targetEl) {
         const ts_epoch = Math.floor(Date.now() / 1000);
         const ts = _formatAppTime(ts_epoch, {seconds: true});
         const radioName = mcLastStatus[data.radio_id]?.name || data.radio_id;
-        const entry = { kind: 'scan', ts, ts_epoch, radioId: data.radio_id, radioName };
+        const entry = { kind: 'scan', ts, ts_epoch, radioId: data.radio_id, radioName, discover: !!data.discover };
         _mcSenseLogEntries.unshift(entry);
         if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
         renderMcSenseLog();
@@ -13735,7 +13735,9 @@ if (targetEl) {
     }
     // Reverse: advert is incoming (contact → relays → our radio), but decodeMcPath builds radio→contact
     if (pathResult?.points) pathResult = _mcReversePathResult(pathResult);
-    const entry = { kind: 'advert', name, ts, ts_epoch, hopStr, hopLen, typeIdx, pathResult, lat, lon, id: data.id, radioId: data.radio_id };
+    const isDiscover = data.via === 'discover';
+    const entry = { kind: isDiscover ? 'discover' : 'advert', name, ts, ts_epoch, hopStr, hopLen, typeIdx, pathResult, lat, lon, id: data.id, radioId: data.radio_id,
+                    snrIn: data.snr_in ?? null, rssi: data.rssi ?? null };
     if (_mcLogPinnedIdx !== null) _mcLogPinnedIdx++;
     _mcSenseLogEntries.unshift(entry);
     if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
@@ -13834,9 +13836,22 @@ if (targetEl) {
         </div>`;
       }
       if (e.kind === 'scan') {
+        const probe = e.discover ? ' + repeater probe' : '';
         return `<div style="padding:2px 0;border-bottom:1px solid var(--border)">
           <span style="color:var(--muted)">${_mcLogTs(e)}</span>
-          <span style="margin-left:4px;color:#94a3b8;font-size:10px;font-style:italic">Scan started · ${escHtml(e.radioName)}</span>
+          <span style="margin-left:4px;color:#94a3b8;font-size:10px;font-style:italic">Scan started${probe} · ${escHtml(e.radioName)}</span>
+        </div>`;
+      }
+      if (e.kind === 'discover') {
+        // Active DISCOVER_REQ reply from a repeater — it heard us (SNR_in) and
+        // answered, the real MC "ping got through" proof.
+        const heard = e.snrIn != null ? ` · heard you ${Number(e.snrIn).toFixed(1)}dB` : '';
+        const rssiL = e.rssi != null ? ` · ${e.rssi}dBm` : '';
+        return `<div style="padding:2px 0;border-bottom:1px solid var(--border)">
+          <span style="color:var(--muted)">${_mcLogTs(e)}</span>
+          <span style="color:#22c55e;font-size:9px;font-weight:600;background:rgba(34,197,94,0.15);border:1px solid rgba(34,197,94,0.3);border-radius:3px;padding:0 3px;margin-left:4px" title="repeater answered our DISCOVER probe">RPTR ✓</span>
+          <span style="margin-left:4px;font-weight:600">${escHtml(e.name)}</span>
+          <span style="color:var(--muted);margin-left:4px;font-size:10px">${e.hopStr}${rssiL}${heard}</span>
         </div>`;
       }
       if (e.kind === 'ping') {

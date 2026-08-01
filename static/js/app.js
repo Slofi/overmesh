@@ -6,6 +6,20 @@
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
+  // Badge marking a node whose most recent packet arrived via an MQTT gateway
+  // (rather than directly over RF). Rendered next to the node name.
+  function mqttTag(viaMqtt) {
+    return viaMqtt ? ' <span class="mqtt-tag" title="Last heard via an MQTT gateway, not direct RF">MQTT</span>' : '';
+  }
+
+  // Set of MT node ids currently ignored (derived from the live node list).
+  // Used to block ignored nodes' messages from the chat view.
+  function mtIgnoredIdSet() {
+    const s = new Set();
+    for (const n of allNodes) { if (n && n.is_ignored && n.id) s.add(n.id); }
+    return s;
+  }
+
   // Position a position:fixed popup panel so it stays within the visible viewport.
   // vx/vy are in viewport CSS pixels (e.g. from event.clientX/Y or getBoundingClientRect).
   // Accounts for body CSS zoom so the panel doesn't clip off-screen at high zoom levels.
@@ -970,8 +984,12 @@
   loadUnreadState();
 
   function getActiveChatMsgs() {
-    if (!selectedRadioIds.size) return chatMsgs;
-    return chatMsgs.filter(m => !m.radio_id || selectedRadioIds.has(m.radio_id));
+    let msgs = chatMsgs;
+    // Block messages from ignored MT nodes (keep our own sent + bot messages).
+    const ignored = mtIgnoredIdSet();
+    if (ignored.size) msgs = msgs.filter(m => m.sent || m.from_id === 'bot' || !ignored.has(m.from_id));
+    if (!selectedRadioIds.size) return msgs;
+    return msgs.filter(m => !m.radio_id || selectedRadioIds.has(m.radio_id));
   }
 
   function saveSelectedRadioIds() {
@@ -1425,14 +1443,17 @@
         if (!chatMsgs.find(m => m.id === data.id)) {
           chatMsgs.push(data);
           if (chatMsgs.length > 500) chatMsgs.splice(0, chatMsgs.length - 500);
+          // Ignored senders: keep the message stored (so un-ignore restores it) but
+          // suppress unread/sound/notification and the live append — messages blocked.
+          const senderIgnored = !data.sent && data.from_id && mtIgnoredIdSet().has(data.from_id);
           // Reopen closed DM tab when a new message arrives from that contact (not history)
-          if (data.is_dm && !data.is_history) {
+          if (data.is_dm && !data.is_history && !senderIgnored) {
             const contactId = dmContactId(data);
             if (contactId) { closedDmTabs.delete(contactId); saveClosedDmTabs(); }
           }
           // Track unread for received messages not in the currently active channel
           // Skip for history replay (messages sent before this SSE connection)
-          if (!data.sent && !data.is_history) {
+          if (!data.sent && !data.is_history && !senderIgnored) {
             const msgCh = data.is_dm ? ('dm:' + dmContactId(data)) : data.channel;
             // If message is from an inactive radio, track unread on radio btn + per-channel
             if (data.radio_id && data.radio_id !== activeRadioId) {
@@ -1466,7 +1487,7 @@
           const isCurrentCh = isDmTab
             ? msgCh === chatChannel
             : data.channel === chatChannel && !data.is_dm;
-          if (isCurrentCh && (!data.radio_id || data.radio_id === activeRadioId)) appendMessage(data);
+          if (isCurrentCh && !senderIgnored && (!data.radio_id || data.radio_id === activeRadioId)) appendMessage(data);
           if (!data.sent && !data.is_history && (!data.radio_id || data.radio_id === activeRadioId)) addMtMessageSenseEntry(data);
           // Also update map DM window if it's open and this message is for that contact
           if (mapDmContactId && data.is_dm) {
@@ -2864,11 +2885,11 @@ if (targetEl) {
     });
     real.forEach(n => { n._dist = _mtDistanceKm(n); });
     tbody.innerHTML = real.length ? sortedLive(real).map(n => `
-      <tr data-id="${n.id}" class="${n.is_favorite ? 'is-favorite' : ''}">
+      <tr data-id="${n.id}" class="${n.is_favorite ? 'is-favorite' : ''}${n.is_ignored ? ' is-ignored' : ''}">
         <td><span class="star ${n.is_favorite ? 'starred' : ''}" onclick="toggleFav('${jsSafe(n.id)}', ${n.is_favorite}, '${jsSafe(n.radio_id || '')}')" title="${n.is_favorite ? 'Remove from favourites' : 'Add to favourites'}">&#9733;</span></td>
         <td>
           <div class="name-cell-main">
-            <span class="name-cell-title">${escHtml(n.long_name)}</span>
+            <span class="name-cell-title">${escHtml(n.long_name)}</span>${mqttTag(n.via_mqtt)}
           </div>
           <div class="name-cell-meta">${escHtml([n.hw_model, n.id].filter(Boolean).join(' · '))}</div>
         </td>
@@ -2893,7 +2914,9 @@ if (targetEl) {
         </td>
         <td>${escHtml(n.radio_name)}</td>
         <td style="display:flex;gap:8px;align-items:center">
-          <span class="ignore-btn" onclick="ignoreNode('${jsSafe(n.id)}', false, '${jsSafe(n.radio_id || '')}')" title="Ignore node">&#128683;</span>
+          ${n.is_ignored
+            ? `<span class="unignore-btn" onclick="ignoreNode('${jsSafe(n.id)}', true, '${jsSafe(n.radio_id || '')}')" title="Un-ignore node">&#128683;</span>`
+            : `<span class="ignore-btn" onclick="ignoreNode('${jsSafe(n.id)}', false, '${jsSafe(n.radio_id || '')}')" title="Ignore node">&#128683;</span>`}
           <span class="delete-btn" onclick="deleteNode('${jsSafe(n.id)}', '${jsSafe(n.long_name)}', '${jsSafe(n.radio_id || '')}')" title="Delete from OverMesh">&#10005;</span>
         </td>
       </tr>`).join('') : '';
@@ -3095,7 +3118,7 @@ if (targetEl) {
       <tr class="${n.is_favorite ? 'is-favorite' : ''} ${n.is_ignored ? 'is-ignored' : ''}">
         <td><span class="star ${n.is_favorite ? 'starred' : ''}" onclick="toggleFav('${jsSafe(n.id)}', ${!!n.is_favorite}, '${jsSafe(n.radio_id || '')}')" title="${n.is_favorite ? 'Remove from favourites' : 'Add to favourites'}">&#9733;</span></td>
         <td>
-          <div class="name-cell-main"><span class="name-cell-title">${escHtml(n.long_name)}</span></div>
+          <div class="name-cell-main"><span class="name-cell-title">${escHtml(n.long_name)}</span>${mqttTag(n.via_mqtt)}</div>
           ${meta ? `<div class="name-cell-meta">${escHtml(meta)}</div>` : ''}
         </td>
         <td><span class="short-name">${escHtml(n.short_name)}</span></td>
@@ -3350,7 +3373,7 @@ if (targetEl) {
       return;
     }
     setHeaderNodeCountDivider(false);
-    const real   = nodes.filter(n => n.id);
+    const real   = nodes.filter(n => n.id && !n.is_ignored);   // ignored nodes are blocked from counts
     const now    = Date.now() / 1000;
     const onlineIds = new Set(real.filter(n => n.last_heard_ts && (now - n.last_heard_ts) < 900).map(n => n.id));
     // Merge sense responses that are within the same 900s window (avoid inflating count with stale sense data)
@@ -7625,7 +7648,7 @@ if (targetEl) {
           <div id="map-legend-mt">
             <div class="map-legend-title">Meshtastic</div>
             <div class="map-legend-row"><span class="map-legend-dot" style="background:#86efac"></span>Fresh &lt;30m</div>
-            <div class="map-legend-row"><span class="map-legend-dot" style="background:#e07b30"></span>Recent &lt;2h</div>
+            <div class="map-legend-row"><span class="map-legend-dot" style="background:#facc15"></span>Recent &lt;2h</div>
             <div class="map-legend-row"><span class="map-legend-dot" style="background:#f85149"></span>Old &gt;2h</div>
             <div class="map-legend-row"><span class="map-legend-dot" style="background:#6e7681"></span>Unknown</div>
             <div class="map-legend-row" style="margin-top:4px"><span class="map-legend-dot" style="background:#3b82f6;outline:2px solid #3b82f6;outline-offset:2px"></span>You</div>
@@ -8966,7 +8989,7 @@ if (targetEl) {
     if (!node.last_heard_ts) return '#6e7681';
     const age = Date.now() / 1000 - node.last_heard_ts;
     if (age < 1800)  return '#86efac';     // <30m — fresh green
-    if (age < 7200)  return '#e07b30';     // <2h  orange
+    if (age < 7200)  return '#facc15';     // <2h  gold  (clearly distinct from old red)
     return '#f85149';                       // old  red
   }
 
@@ -9015,7 +9038,7 @@ if (targetEl) {
   function nodePopupHtml(n) {
     const distanceText = _mtNodeDistanceLabel(n);
     return `
-      <div class="map-popup-name">${escHtml(n.long_name)}${n.is_local ? '<span class="map-popup-local">YOU</span>' : ''}</div>
+      <div class="map-popup-name">${escHtml(n.long_name)}${n.is_local ? '<span class="map-popup-local">YOU</span>' : ''}${mqttTag(n.via_mqtt)}</div>
       <div><b>Short:</b> ${escHtml(n.short_name)}${n.hw_model ? ` &nbsp;<span style="color:var(--muted);font-size:10px">${escHtml(n.hw_model)}</span>` : ''}</div>
       <div><b>SNR:</b> ${snrStr(n.snr)} &nbsp; <b>Battery:</b> ${battStr(n.battery)}</div>
       <div><b>Hops:</b> ${n.hops_away ?? '—'} &nbsp; <b>Distance:</b> ${escHtml(distanceText)}</div>
@@ -9046,6 +9069,8 @@ if (targetEl) {
     }
     // MT is visible — restore any sense markers that were removed
     Object.values(senseMarkers).forEach(m => { try { if (!leafletMap.hasLayer(m)) leafletMap.addLayer(m); } catch(e){} });
+    // Ignored nodes are blocked from the map (kept red-listed in the Nodes tab only).
+    nodes = nodes.filter(n => !n.is_ignored);
     const seen = new Set();
     const withGps = nodes.filter(n => n.latitude != null && n.longitude != null);
 

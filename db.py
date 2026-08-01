@@ -276,6 +276,7 @@ def init_prefs_db():
             is_local    INTEGER DEFAULT 0,
             is_favorite INTEGER DEFAULT 0,
             is_ignored  INTEGER DEFAULT 0,
+            via_mqtt    INTEGER DEFAULT 0,
             notes       TEXT DEFAULT '',
             PRIMARY KEY (id, radio_id)
         )''')
@@ -321,6 +322,12 @@ def init_prefs_db():
                     FROM nodes_legacy
                 ''')
                 c.execute("DROP TABLE nodes_legacy")
+        except sqlite3.OperationalError:
+            pass
+        # Added after the legacy rebuild so the column exists regardless of which
+        # path created the table (fresh CREATE already has it; older DBs / rebuild get it here).
+        try:
+            c.execute("ALTER TABLE nodes ADD COLUMN via_mqtt INTEGER DEFAULT 0")
         except sqlite3.OperationalError:
             pass
         c.execute('''CREATE TABLE IF NOT EXISTS waypoints (
@@ -610,8 +617,8 @@ def upsert_node(n):
             INSERT INTO nodes
                 (id, long_name, short_name, first_seen, last_seen,
                  last_snr, last_rssi, last_battery,
-                 last_lat, last_lon, hops_away, radio_id, is_local)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 last_lat, last_lon, hops_away, radio_id, is_local, via_mqtt)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id, radio_id) DO UPDATE SET
                 long_name    = excluded.long_name,
                 short_name   = excluded.short_name,
@@ -622,13 +629,15 @@ def upsert_node(n):
                 last_lat     = COALESCE(excluded.last_lat,  last_lat),
                 last_lon     = COALESCE(excluded.last_lon,  last_lon),
                 hops_away    = excluded.hops_away,
-                is_local     = excluded.is_local
+                is_local     = excluded.is_local,
+                via_mqtt     = excluded.via_mqtt
         ''', (
             n["id"], n["long_name"], n["short_name"],
             ts, ts,
             n["snr"], n["rssi"], n["battery"],
             n["latitude"], n["longitude"],
             n["hops_away"], radio_id, 1 if n["is_local"] else 0,
+            1 if n.get("via_mqtt") else 0,
         ))
     log_position(n["id"], radio_id, n.get("latitude"), n.get("longitude"), ts)
 
@@ -867,7 +876,9 @@ def get_db_nodes(sort_by="last_seen", sort_dir="desc", fav_first=True, show_igno
         sort_by = "last_seen"
     direction = "DESC" if sort_dir == "desc" else "ASC"
     order     = f"is_favorite DESC, {sort_by} {direction}" if fav_first else f"{sort_by} {direction}"
-    where     = "WHERE is_ignored=1" if show_ignored else "WHERE is_ignored=0"
+    # Default view now includes ignored nodes (rendered red inline); the
+    # show_ignored toggle narrows to ignored-only.
+    where     = "WHERE is_ignored=1" if show_ignored else ""
 
     with get_prefs_db() as conn:
         conn.row_factory = sqlite3.Row

@@ -794,6 +794,20 @@ def api_node_info(node_id):
     if not iface:
         return jsonify({"error": "No radio connected"}), 503
 
+    # Pick which telemetry to refresh: if this node is known to carry an
+    # environment sensor (we already have cached environmentMetrics for it),
+    # ask for a fresh environment reading so Node Details shows live
+    # temperature/humidity/pressure; otherwise refresh universal device metrics.
+    tele_type = "device_metrics"
+    try:
+        for _n in (iface.nodes or {}).values():
+            if (_n.get("user") or {}).get("id") == node_id and _n.get("environmentMetrics"):
+                tele_type = "environment_metrics"
+                break
+    except Exception:
+        pass
+    want_env = tele_type == "environment_metrics"
+
     # Request fresh telemetry from the node and wait for the response
     done = threading.Event()
 
@@ -804,7 +818,11 @@ def api_node_info(node_id):
             if packet.get("fromId") == node_id:
                 decoded = packet.get("decoded", {})
                 if decoded.get("portnum") == "TELEMETRY_APP":
-                    done.set()
+                    tel = decoded.get("telemetry", {}) or {}
+                    # When refreshing environment data, settle only on a packet
+                    # that carries it — ignore unrelated device broadcasts.
+                    if not want_env or "environmentMetrics" in tel:
+                        done.set()
         except Exception:
             pass
 
@@ -813,7 +831,7 @@ def api_node_info(node_id):
             return jsonify({"error": "Silent Running active — transmissions are blocked"}), 409
         pub.subscribe(on_receive, "meshtastic.receive")
         iface.sendTelemetry(destinationId=node_id, wantResponse=True,
-                            telemetryType="device_metrics")
+                            telemetryType=tele_type)
         done.wait(timeout=15)
     except Exception as e:
         log.warning(f"Info request error: {e}")

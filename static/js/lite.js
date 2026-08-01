@@ -311,7 +311,7 @@ function mtMarkerColor(node) {
   if (!ts) return '#6e7681';
   const age = Date.now() / 1000 - ts;
   if (age < 1800) return '#86efac';
-  if (age < 7200) return '#e07b30';
+  if (age < 7200) return '#facc15';
   return '#f85149';
 }
 

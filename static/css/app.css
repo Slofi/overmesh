@@ -310,6 +310,20 @@
     .name-cell-main { display:flex; align-items:center; gap:6px; min-width:0; }
     .name-cell-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .name-cell-meta { font-size:10px; color:var(--muted); margin-top:1px; }
+    .mqtt-tag {
+      display:inline-block;
+      font-size:9px;
+      font-weight:700;
+      letter-spacing:0.03em;
+      border-radius:3px;
+      padding:0 4px;
+      line-height:1.5;
+      vertical-align:middle;
+      flex-shrink:0;
+      color:#c4b5fd;
+      background:rgba(167,139,250,0.16);
+      border:1px solid rgba(167,139,250,0.4);
+    }
     .name-badge {
       display:inline-block;
       font-size:10px;
@@ -805,8 +819,10 @@
     .ignore-btn:hover   { color: var(--red); }
     .unignore-btn:hover { color: var(--green); }
 
-    tr.is-ignored td { opacity: 0.45; }
-    tr.is-ignored td:last-child { opacity: 1; }
+    tr.is-ignored td { background: rgba(248,81,73,0.16); color: var(--muted); }
+    tr.is-ignored td:first-child { box-shadow: inset 3px 0 0 var(--red); }
+    tr.is-ignored:hover td { background: rgba(248,81,73,0.24); }
+    tr.is-ignored .name-cell-title { text-decoration: line-through; text-decoration-color: rgba(248,81,73,0.7); }
 
     /* Action buttons */
     .act-btn {

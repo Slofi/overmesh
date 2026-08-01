@@ -9,7 +9,7 @@ from hw_models import hw_model_name
 from config import CONFIG, CONFIG_LOCK, save_config
 from state import (
     connections, connections_lock,
-    mt_last_heard, mt_last_heard_lock,
+    mt_last_heard, mt_last_heard_lock, mt_via_mqtt,
     sse_clients, sse_lock, _sse_queue_last_ok,
 )
 
@@ -289,6 +289,8 @@ def get_node_data():
 
                 fav_key = (node_id_str, node_id)
                 legacy_key = (node_id_str, "")
+                with mt_last_heard_lock:
+                    via_mqtt = bool(mt_via_mqtt.get((node_id, node_id_str), False))
                 node_entry = {
                     "radio_id":     node_id,    "radio_name":   node_name,
                     "radio_status": status,
@@ -305,6 +307,7 @@ def get_node_data():
                     "is_local":     is_local,
                     "is_favorite":  fav_key in favorites or legacy_key in favorites,
                     "is_ignored":   fav_key in ignored or legacy_key in ignored,
+                    "via_mqtt":     via_mqtt,
                     "air_util":     metrics.get("airUtilTx"),
                     "ch_util":      metrics.get("channelUtilization"),
                     "notes":        node_notes.get(node_id_str, '{}'),
@@ -313,9 +316,10 @@ def get_node_data():
                 if node_id_str:
                     upsert_node(node_entry)
 
-                if fav_key in ignored or legacy_key in ignored:
-                    continue
-
+                # Ignored nodes stay in the list (is_ignored travels on the entry)
+                # so they can be shown red + un-ignored. Blocking from map / messages
+                # / counts is done client-side; dropping them here would hide them
+                # from the Nodes tab entirely.
                 result.append(node_entry)
 
         except Exception as e:

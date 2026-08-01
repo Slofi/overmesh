@@ -18,6 +18,11 @@ connections_lock = threading.Lock()
 mt_last_heard      = {}
 mt_last_heard_lock = threading.Lock()
 
+# How each MT node was last heard: (radio_id, node_id) -> True if the most
+# recent packet arrived via an MQTT uplink, False if heard directly over RF.
+# Guarded by mt_last_heard_lock (written in the same critical section).
+mt_via_mqtt        = {}
+
 # ---------------------------------------------------------------------------
 # MeshCore connections
 # mc_connections[config_id] = {

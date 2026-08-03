@@ -21,9 +21,27 @@ log = logging.getLogger(__name__)
 # DB connection helpers
 # ---------------------------------------------------------------------------
 
+def _connect(db_path):
+    """Open a SQLite connection tuned for OM's multi-threaded access.
+
+    OM's Flask dev server runs threaded and background threads (node receive,
+    SSE, pollers) all hit the same DB files. In the default rollback-journal
+    mode a single writer blocks ALL readers, so under load readers time out
+    with "database is locked" (the flood reported in GH #19). WAL lets readers
+    and the single writer run concurrently; busy_timeout waits on the rare
+    writer-vs-writer contention instead of erroring immediately; synchronous=
+    NORMAL is the documented-safe, lower-fsync pairing with WAL.
+    """
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    return conn
+
+
 @contextmanager
 def get_prefs_db():
-    conn = sqlite3.connect(PREFS_DB_PATH)
+    conn = _connect(PREFS_DB_PATH)
     try:
         yield conn
         conn.commit()
@@ -40,7 +58,7 @@ def get_msgs_db(radio_id):
         db_path = connections.get(radio_id, {}).get("msgs_db")
     if not db_path:
         raise RuntimeError(f"get_msgs_db: msgs_db not yet initialized for radio_id={radio_id!r}")
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     try:
         yield conn
         conn.commit()
@@ -99,7 +117,7 @@ def _resolved_mc_passive_db_path(radio_id: str) -> str:
 def get_mc_passive_db(radio_id):
     db_path = _resolved_mc_passive_db_path(radio_id)
     _init_mc_passive_db(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     try:
         yield conn
         conn.commit()
@@ -111,7 +129,7 @@ def get_mc_passive_db(radio_id):
 
 
 def _init_mc_passive_db(db_path):
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     try:
         c = conn.cursor()
         c.execute('''CREATE TABLE IF NOT EXISTS passive_obs (
@@ -242,7 +260,7 @@ def cleanup_passive_obs(radio_id, ttl_days=30):
 def get_mc_msgs_db(radio_id):
     db_path = _resolved_mc_msgs_db_path(radio_id)
     init_mc_msgs_db(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     try:
         yield conn
         conn.commit()
@@ -468,7 +486,7 @@ def init_prefs_db():
 
 
 def init_msgs_db(db_path):
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     try:
         c = conn.cursor()
         c.execute('''CREATE TABLE IF NOT EXISTS messages (
@@ -517,7 +535,7 @@ def init_msgs_db(db_path):
 
 
 def init_mc_msgs_db(db_path):
-    conn = sqlite3.connect(db_path)
+    conn = _connect(db_path)
     try:
         c = conn.cursor()
         c.execute('''CREATE TABLE IF NOT EXISTS messages (

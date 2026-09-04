@@ -418,9 +418,32 @@ MC_MAX_DM_MSG_BYTES = 160
 MC_CHANNEL_NAME_OVERHEAD_BYTES = 2
 MC_CHANNEL_SCOPE_HEADROOM_BYTES = 10
 
+# MeshCore firmware exposes up to 16 channel slots (Meshtastic has 8 — do not
+# reuse the MT 0-7 limit on MC paths, see GH #20).
+MC_MAX_CHANNELS = 16
+# Never validate NARROWER than the old hardcoded ceiling — see _mc_max_channels.
+MC_MIN_CHANNELS = 8
+
 
 def _mc_text_bytes(text):
     return len((text or "").encode("utf-8"))
+
+
+def _mc_max_channels(radio_id):
+    """Channel-slot COUNT for this MC radio (valid indices are 0 .. count-1).
+
+    max_channels comes from DEVICE_INFO (send_device_query); default 8 when the
+    node has not reported it yet. Same expression the channel-management routes
+    already use.
+    """
+    with mc_connections_lock:
+        state = mc_connections.get(radio_id, {}) or {}
+        info = state.get("node_info", {}) or {}
+    # Floored at 8, the pre-GH#20 hardcoded ceiling: a node that under-reports
+    # max_channels (or reports it wrongly) must never LOSE channels that worked
+    # before — this limit may only ever widen, never narrow. Also makes a
+    # malformed/negative value harmless.
+    return max(MC_MIN_CHANNELS, min(int(info.get("max_channels") or 0), MC_MAX_CHANNELS))
 
 
 def _mc_channel_msg_limit(radio_id):
@@ -610,8 +633,9 @@ def api_mc_send_chan(radio_id):
         return jsonify({"error": "channel must be a number"}), 400
     if not text:
         return jsonify({"error": "text is required"}), 400
-    if not (0 <= chan <= 7):
-        return jsonify({"error": "channel must be 0–7"}), 400
+    max_ch = _mc_max_channels(radio_id)
+    if not (0 <= chan < max_ch):
+        return jsonify({"error": f"channel must be 0–{max_ch - 1}"}), 400
     byte_len = _mc_text_bytes(text)
     max_bytes = _mc_channel_msg_limit(radio_id)
     if byte_len > max_bytes:

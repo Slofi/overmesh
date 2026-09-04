@@ -14,6 +14,11 @@ log = logging.getLogger(__name__)
 
 CROSS_SYSTEM_ENABLED = False
 
+# Highest valid channel index per network: Meshtastic has 8 slots, MeshCore 16.
+# Clamping MC to 7 silently MISROUTED ch 8-15 to 7 rather than erroring (GH #20).
+MT_MAX_CHANNEL_IDX = 7
+MC_MAX_CHANNEL_IDX = 15
+
 _RELAY_TAG_RE = re.compile(r'^\[(MT|MC)->(MT|MC)\b', re.IGNORECASE)
 _RECENT_RELAY_WINDOW = 45
 _recent_relays = {}
@@ -42,18 +47,23 @@ def _normalize_rule(raw):
     rule = dict(RULE_DEFAULTS)
     rule.update(raw or {})
     rule["id"] = str(rule.get("id") or f"cross_{uuid.uuid4().hex[:10]}")
+    # Normalise the network FIRST — the per-network channel ceilings below
+    # depend on it. A rule always bridges one network to the other, so
+    # target_channel belongs to the opposite network (see _rule_target).
+    rule["source_network"] = "mc" if rule.get("source_network") == "mc" else "mt"
+    src_max = MC_MAX_CHANNEL_IDX if rule["source_network"] == "mc" else MT_MAX_CHANNEL_IDX
+    tgt_max = MT_MAX_CHANNEL_IDX if rule["source_network"] == "mc" else MC_MAX_CHANNEL_IDX
     try:
-        rule["source_channel"] = max(0, min(7, int(rule.get("source_channel", 0))))
+        rule["source_channel"] = max(0, min(src_max, int(rule.get("source_channel", 0))))
     except (TypeError, ValueError):
         rule["source_channel"] = 0
     try:
-        rule["target_channel"] = max(0, min(7, int(rule.get("target_channel", 0))))
+        rule["target_channel"] = max(0, min(tgt_max, int(rule.get("target_channel", 0))))
     except (TypeError, ValueError):
         rule["target_channel"] = 0
     rule["mode"] = "bridge" if rule.get("mode") == "bridge" else "mirror"
     rule["enabled"] = bool(rule.get("enabled", True))
     rule["bidirectional"] = (rule["mode"] == "bridge")
-    rule["source_network"] = "mc" if rule.get("source_network") == "mc" else "mt"
     if rule.get("sender_filter_mode") not in ("any", "allow", "block"):
         rule["sender_filter_mode"] = "any"
     rule["source_radio_id"] = str(rule.get("source_radio_id") or "")

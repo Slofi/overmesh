@@ -13,6 +13,11 @@ log = logging.getLogger(__name__)
 
 bp = Blueprint("bridge", __name__)
 
+# Highest valid channel index per network: Meshtastic has 8 slots, MeshCore 16.
+# Do not collapse these into one value (GH #20).
+MT_MAX_CHANNEL_IDX = 7
+MC_MAX_CHANNEL_IDX = 15
+
 
 def _bridge_cfg():
     with CONFIG_LOCK:
@@ -124,13 +129,19 @@ def _authorized(cfg):
     return request.headers.get("X-OverMesh-Token") == token
 
 
-def _channel_from_payload(data):
+def _channel_from_payload(data, max_channel=MT_MAX_CHANNEL_IDX):
+    """Validate an inbound channel index.
+
+    max_channel differs per network: Meshtastic has 8 slots (0-7), MeshCore up
+    to 16 (0-15). The device-accurate MC ceiling is enforced downstream by
+    routes.mc.api_mc_send_chan; this is the early, clear rejection. See GH #20.
+    """
     try:
         channel = int(data.get("channel", 0))
     except (TypeError, ValueError):
         raise ValueError("channel must be a number")
-    if not (0 <= channel <= 7):
-        raise ValueError("channel must be 0-7")
+    if not (0 <= channel <= max_channel):
+        raise ValueError(f"channel must be 0-{max_channel}")
     return channel
 
 
@@ -202,5 +213,5 @@ def _send_mc(data, text, radio_id):
     target = (data.get("target") or data.get("to_id") or "").strip()
     if target:
         return api_mc_send_dm(radio_id)
-    _channel_from_payload(data)
+    _channel_from_payload(data, MC_MAX_CHANNEL_IDX)
     return api_mc_send_chan(radio_id)

@@ -84,6 +84,10 @@
   let allNodes      = [];
   let mapShowMt     = localStorage.getItem('mapShowMt') !== '0';
   let mapShowMc     = localStorage.getItem('mapShowMc') !== '0';
+  // MQTT node filter (MT only — via_mqtt is a Meshtastic concept). GH #19.
+  // 'all' = no filtering · 'only' = MQTT-heard nodes only · 'hide' = direct RF only.
+  let mtMqttFilter  = ['all', 'only', 'hide'].includes(localStorage.getItem('mtMqttFilter'))
+                        ? localStorage.getItem('mtMqttFilter') : 'all';
   let mcFavs        = (() => { try { return JSON.parse(localStorage.getItem('mcFavs') || '{}'); } catch(_) { return {}; } })();
   let mcIgnored     = new Set();
   let mcShowIgnored = false;
@@ -2647,6 +2651,11 @@ if (targetEl) {
     }).then(() => {
       if (!currentlyIgnored) mcIgnored.add(id); else mcIgnored.delete(id);
       renderLive();
+      // renderLive() only redraws the list — the maps need their own refresh or
+      // an ignored contact lingers on them until the next poll. MT gets this
+      // free via loadLive(); the MC path did not.
+      renderMcMapMarkers();
+      if (pipOpen) updatePipMarkers(allNodes);
       if (currentView === 'history') loadHistory();
     }).catch(e => console.error('ignoreMcContact failed:', e));
   }
@@ -2831,9 +2840,41 @@ if (targetEl) {
     renderLive();
   }
 
+  // ── MQTT filter (GH #19) ───────────────────────────────────────────────────
+  // Single predicate shared by the Nodes list and the map so the two can't drift.
+  const MQTT_FILTER_LABEL = { all: 'MQTT: all', only: 'MQTT only', hide: 'MQTT hidden' };
+
+  function mqttFilterPass(n) {
+    if (mtMqttFilter === 'all') return true;
+    // Your own node was never "heard" over either path — never filter it out.
+    if (!n || n.is_local) return true;
+    return mtMqttFilter === 'only' ? !!n.via_mqtt : !n.via_mqtt;
+  }
+
+  function toggleMqttFilter() {
+    const order = ['all', 'only', 'hide'];
+    mtMqttFilter = order[(order.indexOf(mtMqttFilter) + 1) % order.length];
+    localStorage.setItem('mtMqttFilter', mtMqttFilter);
+    initMqttFilterPill();
+    updateMapMarkers(allNodes);
+    _scheduleSignalHeatmapRefresh(0);
+    if (pipOpen) updatePipMarkers(allNodes);
+    renderLive();
+  }
+
+  function initMqttFilterPill() {
+    const pill = document.getElementById('nodes-mqtt-pill');
+    if (!pill) return;
+    pill.textContent = MQTT_FILTER_LABEL[mtMqttFilter];
+    pill.classList.toggle('active', mtMqttFilter !== 'all');
+    pill.title = 'Filter Meshtastic nodes by how they were last heard — click to cycle: '
+               + 'all nodes → MQTT-heard only → hide MQTT (direct RF only)';
+  }
+
   function initNodesFilterPills() {
     document.getElementById('nodes-mt-pill')?.classList.toggle('active', mapShowMt);
     document.getElementById('nodes-mc-pill')?.classList.toggle('active', mapShowMc);
+    initMqttFilterPill();
   }
 
   function initMapFilterPills() {
@@ -2878,6 +2919,7 @@ if (targetEl) {
     const query  = (document.getElementById('node-search')?.value || '').toLowerCase().trim();
     const real   = !mapShowMt ? [] : allNodes.filter(n => {
       if (!n.id) return false;
+      if (!mqttFilterPass(n)) return false;
       if (!query) return true;
       return (n.long_name || '').toLowerCase().includes(query) ||
              (n.short_name || '').toLowerCase().includes(query) ||
@@ -7038,6 +7080,10 @@ if (targetEl) {
     const points = [];
     for (const n of allNodes || []) {
       if (!n || n.latitude == null || n.longitude == null) continue;
+      // Heat must follow what the map actually shows: ignored nodes were still
+      // contributing heat while hidden (pre-existing), and the MQTT filter
+      // (GH #19) has to apply here too or its refresh is a no-op.
+      if (n.is_ignored || !mqttFilterPass(n)) continue;
       if (!Number.isFinite(Number(n.latitude)) || !Number.isFinite(Number(n.longitude))) continue;
       const intensity = _signalHeatmapIntensity(n.rssi, n.snr);
       if (intensity == null) continue;
@@ -9071,6 +9117,8 @@ if (targetEl) {
     Object.values(senseMarkers).forEach(m => { try { if (!leafletMap.hasLayer(m)) leafletMap.addLayer(m); } catch(e){} });
     // Ignored nodes are blocked from the map (kept red-listed in the Nodes tab only).
     nodes = nodes.filter(n => !n.is_ignored);
+    // MQTT filter (GH #19) — same predicate the Nodes list uses.
+    nodes = nodes.filter(mqttFilterPass);
     const seen = new Set();
     const withGps = nodes.filter(n => n.latitude != null && n.longitude != null);
 
@@ -9539,7 +9587,10 @@ if (targetEl) {
     const seen = new Set();
     // MT markers — only when MT pill is active
     if (mapShowMt) {
-      nodes.filter(n => n.latitude != null && n.longitude != null).forEach(n => {
+      // Ignored nodes are blocked from the PiP map too — it used to show them
+      // while the main map hid them (pre-existing leak, fixed alongside GH #19).
+      nodes.filter(n => n.latitude != null && n.longitude != null
+                        && !n.is_ignored && mqttFilterPass(n)).forEach(n => {
         seen.add(n.id);
         const color = markerColor(n);
         const r  = n.is_local ? 7 : 5;
@@ -9562,6 +9613,7 @@ if (targetEl) {
       Object.entries(mcContacts || {}).forEach(([rid, radioContacts]) => {
         if (mcLastStatus[rid]?.status !== 'connected') return;
         Object.values(radioContacts).forEach(c => {
+          if (mcIgnored.has(c.id)) return;   // same guard the main MC map uses
           const lat = c.latitude ?? c.lat;
           const lon = c.longitude ?? c.lon;
           if (lat == null || lon == null) return;
@@ -10924,7 +10976,7 @@ if (targetEl) {
     if (!token) return { error: 'Missing MC target.' };
     if (token.startsWith('#')) {
       const ch = parseInt(token.slice(1), 10);
-      if (!Number.isInteger(ch) || ch < 0 || ch > 7) return { error: 'MC channel must be 0-7.' };
+      if (!Number.isInteger(ch) || ch < 0 || ch > 15) return { error: 'MC channel must be 0-15.' };
       return { kind: 'channel', channel: ch };
     }
     if (!token.startsWith('@')) return { error: 'MC target must start with @ or #.' };

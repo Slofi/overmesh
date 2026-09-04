@@ -14,10 +14,12 @@ log = logging.getLogger(__name__)
 
 CROSS_SYSTEM_ENABLED = False
 
-# Highest valid channel index per network: Meshtastic has 8 slots, MeshCore 16.
-# Clamping MC to 7 silently MISROUTED ch 8-15 to 7 rather than erroring (GH #20).
+# Highest valid channel index per network. Meshtastic has 8 slots; MeshCore
+# addresses channels with a single byte, so its ceiling is 255 (ERA-3 reports
+# max_channels=40). Clamping MC to 7 silently MISROUTED higher channels to 7
+# rather than erroring (GH #20).
 MT_MAX_CHANNEL_IDX = 7
-MC_MAX_CHANNEL_IDX = 15
+MC_MAX_CHANNEL_IDX = 255
 
 _RELAY_TAG_RE = re.compile(r'^\[(MT|MC)->(MT|MC)\b', re.IGNORECASE)
 _RECENT_RELAY_WINDOW = 45

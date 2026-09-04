@@ -10976,7 +10976,9 @@ if (targetEl) {
     if (!token) return { error: 'Missing MC target.' };
     if (token.startsWith('#')) {
       const ch = parseInt(token.slice(1), 10);
-      if (!Number.isInteger(ch) || ch < 0 || ch > 15) return { error: 'MC channel must be 0-15.' };
+      // MC channel_idx is a single byte → 0-255. The device's real max_channels
+      // is enforced by the backend; this is just a cheap sanity bound.
+      if (!Number.isInteger(ch) || ch < 0 || ch > 255) return { error: 'MC channel must be 0-255.' };
       return { kind: 'channel', channel: ch };
     }
     if (!token.startsWith('@')) return { error: 'MC target must start with @ or #.' };
@@ -17715,7 +17717,9 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     if (!radioId) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">No MC radio selected.</span>'; return; }
     const link = (document.getElementById('mc-import-channel-link').value || '').trim();
     const slot = parseInt(document.getElementById('mc-import-ch-slot').value);
-    if (isNaN(slot) || slot < 0 || slot > 15) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Slot must be 0–15.</span>'; return; }
+    // MC channel slots are a single byte; the device's real max_channels is
+    // enforced by the backend (ERA-3 has 40, not 16). GH #20.
+    if (isNaN(slot) || slot < 0 || slot > 255) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">Slot must be 0–255.</span>'; return; }
     let name, secret;
     try {
       const url = new URL(link.replace(/^meshcore:\/\//, 'https://meshcore/'));

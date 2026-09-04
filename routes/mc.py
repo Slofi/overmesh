@@ -418,9 +418,14 @@ MC_MAX_DM_MSG_BYTES = 160
 MC_CHANNEL_NAME_OVERHEAD_BYTES = 2
 MC_CHANNEL_SCOPE_HEADROOM_BYTES = 10
 
-# MeshCore firmware exposes up to 16 channel slots (Meshtastic has 8 — do not
-# reuse the MT 0-7 limit on MC paths, see GH #20).
-MC_MAX_CHANNELS = 16
+# MeshCore addresses a channel with a SINGLE BYTE — see the meshcore lib's
+# get_channel/set_channel (`channel_idx.to_bytes(1, "little")`) and DEVICE_INFO's
+# max_channels, itself read as one byte (reader.py). So the protocol ceiling is
+# 255, NOT 16. Real hardware is well above 16: ERA-3 reports max_channels=40.
+# (Meshtastic has 8 — do not reuse the MT 0-7 limit on MC paths, see GH #20.)
+# Since the device's own max_channels is a byte, this cap can never actually
+# bind — the device value always wins. That is deliberate: no artificial ceiling.
+MC_MAX_CHANNELS = 255
 # Never validate NARROWER than the old hardcoded ceiling — see _mc_max_channels.
 MC_MIN_CHANNELS = 8
 
@@ -502,8 +507,9 @@ def api_mc_messages(radio_id):
 
 @bp.route("/api/mc/<radio_id>/messages/channel/<int:idx>", methods=["DELETE"])
 def api_mc_delete_message_channel(radio_id, idx):
-    if not (0 <= idx <= 15):
-        return jsonify({"error": "channel index must be 0–15"}), 400
+    _max_ch = _mc_max_channels(radio_id)
+    if not (0 <= idx < _max_ch):
+        return jsonify({"error": f"channel index must be 0–{_max_ch - 1}"}), 400
     return jsonify({"ok": True, "removed_db": delete_mc_channel_messages(radio_id, idx)})
 
 
@@ -1046,7 +1052,7 @@ def api_mc_channels(radio_id):
     if state.get("status") != "connected":
         return jsonify({"error": "MC radio not connected"}), 503
     # max_channels comes from DEVICE_INFO (send_device_query); default 8
-    max_ch = min(int(state.get("node_info", {}).get("max_channels") or 8), 16)
+    max_ch = _mc_max_channels(radio_id)
     try:
         channels = get_channels(radio_id, max_ch, timeout=max(30, max_ch * 7))
     except RuntimeError as e:
@@ -1093,13 +1099,14 @@ def _mc_channel_share_uri(details):
 @bp.route("/api/mc/<radio_id>/channels/<int:idx>/share")
 def api_mc_channel_share(radio_id, idx):
     """Export one MC channel as an OM QR payload with its 16-byte secret."""
-    if not (0 <= idx <= 15):
-        return jsonify({"error": "channel index must be 0–15"}), 400
+    _max_ch = _mc_max_channels(radio_id)
+    if not (0 <= idx < _max_ch):
+        return jsonify({"error": f"channel index must be 0–{_max_ch - 1}"}), 400
     with mc_connections_lock:
         state = mc_connections.get(radio_id, {})
     if state.get("status") != "connected":
         return jsonify({"error": "MC radio not connected"}), 503
-    max_ch = min(int(state.get("node_info", {}).get("max_channels") or 8), 16)
+    max_ch = _mc_max_channels(radio_id)
     try:
         channels = get_channels(radio_id, max_ch, timeout=max(30, max_ch * 7))
     except RuntimeError as e:
@@ -1142,8 +1149,9 @@ def api_mc_set_channel(radio_id, idx):
     """Set a channel by slot index.
     key_type: 'auto' (derive from name), 'keep' (reuse current), 'random', 'custom' (provide key hex).
     """
-    if not (0 <= idx <= 15):
-        return jsonify({"error": "channel index must be 0–15"}), 400
+    _max_ch = _mc_max_channels(radio_id)
+    if not (0 <= idx < _max_ch):
+        return jsonify({"error": f"channel index must be 0–{_max_ch - 1}"}), 400
     data = request.get_json(silent=True) or {}
     name     = (data.get("name")     or "").strip()
     key_type = (data.get("key_type") or "auto").strip().lower()
@@ -1163,7 +1171,7 @@ def api_mc_set_channel(radio_id, idx):
     elif key_type == "keep":
         with mc_connections_lock:
             state = mc_connections.get(radio_id, {})
-        max_ch = min(int(state.get("node_info", {}).get("max_channels") or 8), 16)
+        max_ch = _mc_max_channels(radio_id)
         try:
             channels = get_channels(radio_id, max_ch, timeout=max(30, max_ch * 7))
         except Exception as e:
@@ -1186,8 +1194,9 @@ def api_mc_set_channel(radio_id, idx):
 @bp.route("/api/mc/<radio_id>/channels/<int:idx>", methods=["DELETE"])
 def api_mc_delete_channel(radio_id, idx):
     """Clear a channel slot by overwriting it with an empty name, and delete its chat history."""
-    if not (0 <= idx <= 15):
-        return jsonify({"error": "channel index must be 0–15"}), 400
+    _max_ch = _mc_max_channels(radio_id)
+    if not (0 <= idx < _max_ch):
+        return jsonify({"error": f"channel index must be 0–{_max_ch - 1}"}), 400
     try:
         set_channel(radio_id, idx, "")
     except RuntimeError as e:

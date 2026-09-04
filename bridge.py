@@ -13,10 +13,13 @@ log = logging.getLogger(__name__)
 
 bp = Blueprint("bridge", __name__)
 
-# Highest valid channel index per network: Meshtastic has 8 slots, MeshCore 16.
+# Highest valid channel index per network. Meshtastic has 8 slots. MeshCore
+# addresses channels with a single byte, so its ceiling is 255 (ERA-3 reports
+# max_channels=40) — the device-accurate limit is enforced downstream by
+# routes.mc.api_mc_send_chan; this is only a cheap sanity bound.
 # Do not collapse these into one value (GH #20).
 MT_MAX_CHANNEL_IDX = 7
-MC_MAX_CHANNEL_IDX = 15
+MC_MAX_CHANNEL_IDX = 255
 
 
 def _bridge_cfg():
@@ -132,8 +135,9 @@ def _authorized(cfg):
 def _channel_from_payload(data, max_channel=MT_MAX_CHANNEL_IDX):
     """Validate an inbound channel index.
 
-    max_channel differs per network: Meshtastic has 8 slots (0-7), MeshCore up
-    to 16 (0-15). The device-accurate MC ceiling is enforced downstream by
+    max_channel differs per network: Meshtastic has 8 slots (0-7); MeshCore
+    addresses channels with a single byte, so its bound is 255. The
+    device-accurate MC ceiling is enforced downstream by
     routes.mc.api_mc_send_chan; this is the early, clear rejection. See GH #20.
     """
     try:

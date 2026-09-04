@@ -44,6 +44,9 @@ class MtDbMultiRadioPersistenceTests(unittest.TestCase):
         db.init_prefs_db()
         with db.get_prefs_db() as conn:
             conn.execute("DELETE FROM nodes")
+            # node_notes is a separate radio-agnostic table — clear it too or
+            # notes leak between tests (and into other modules sharing the DB).
+            conn.execute("DELETE FROM node_notes")
         self.app = Flask(__name__)
         self.app.register_blueprint(nodes_routes.bp)
         self.client = self.app.test_client()
@@ -61,16 +64,24 @@ class MtDbMultiRadioPersistenceTests(unittest.TestCase):
         )
 
         self.assertEqual(resp.status_code, 200)
+        # is_favorite / is_ignored are per-radio (nodes.radio_id row).
         with db.get_prefs_db() as conn:
-            rows = {
-                row[0]: {"is_favorite": row[1], "notes": row[2]}
+            favs = {
+                row[0]: row[1]
                 for row in conn.execute(
-                    "SELECT radio_id, is_favorite, notes FROM nodes WHERE id=?",
+                    "SELECT radio_id, is_favorite FROM nodes WHERE id=?",
                     ("!abcdef01",),
                 ).fetchall()
             }
-        self.assertEqual(rows["mt_a"], {"is_favorite": 0, "notes": ""})
-        self.assertEqual(rows["mt_b"], {"is_favorite": 1, "notes": "heard on B"})
+        self.assertEqual(favs["mt_a"], 0)
+        self.assertEqual(favs["mt_b"], 1)
+        # Notes are deliberately RADIO-AGNOSTIC since 1032c0c (2026-05-13):
+        # they live in node_notes keyed by node_id alone, not on nodes.notes.
+        with db.get_prefs_db() as conn:
+            note_rows = conn.execute(
+                "SELECT notes_json FROM node_notes WHERE node_id=?", ("!abcdef01",)
+            ).fetchall()
+        self.assertEqual([r[0] for r in note_rows], ["heard on B"])
 
     def test_node_delete_with_radio_id_deletes_only_that_radio_row(self):
         self._seed_same_node_on_two_radios()
@@ -96,10 +107,13 @@ class MtDbMultiRadioPersistenceTests(unittest.TestCase):
 
         by_radio = {row["radio_id"]: row for row in rows if row["id"] == "!abcdef01"}
         self.assertEqual(set(by_radio), {"mt_a", "mt_b"})
-        self.assertEqual(by_radio["mt_a"]["notes"], "")
+        # Favourites stay per-radio…
         self.assertEqual(by_radio["mt_a"]["is_favorite"], 0)
-        self.assertEqual(by_radio["mt_b"]["notes"], "heard on B")
         self.assertEqual(by_radio["mt_b"]["is_favorite"], 1)
+        # …while the note is shared across every radio row for that node, by
+        # design (node_notes is keyed by node_id — see 1032c0c).
+        self.assertEqual(by_radio["mt_a"]["notes"], "heard on B")
+        self.assertEqual(by_radio["mt_b"]["notes"], "heard on B")
 
 
 if __name__ == "__main__":

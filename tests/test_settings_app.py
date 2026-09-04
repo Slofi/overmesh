@@ -20,6 +20,13 @@ os.environ.setdefault("OVERMESH_DATA_DIR", str(_DATA_DIR))
 sys.path.insert(0, "/home/slofi/overmesh")
 
 import routes.settings as settings_routes  # noqa: E402
+from config import DATA_DIR as _APP_DATA_DIR  # noqa: E402
+
+# The env vars above use setdefault, so if another test module imported `config`
+# first, ITS temp dir is the app's DATA_DIR and `_DATA_DIR` here is never used.
+# Any test that puts a file where the app will look for it must use this path,
+# not `_DATA_DIR` (that mismatch made this module fail only in a full-suite run).
+_APP_DATA_PATH = Path(_APP_DATA_DIR)
 
 
 class UpdateStatusDirtyFilterTests(unittest.TestCase):
@@ -228,7 +235,9 @@ class AppSettingsOmPositionTests(unittest.TestCase):
         push_mock.assert_called_once()
 
     def test_can_delete_only_mt_radio_and_history(self):
-        db_path = _DATA_DIR / "overmesh_msgs_abc123.db"
+        # Must live in the app's DATA_DIR — the route basenames the stored path
+        # and rejoins it against DATA_DIR before deleting.
+        db_path = _APP_DATA_PATH / "overmesh_msgs_abc123.db"
         db_path.write_text("test", encoding="utf-8")
         settings_routes.CONFIG["nodes"] = [
             {

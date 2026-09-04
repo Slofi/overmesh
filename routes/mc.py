@@ -507,9 +507,15 @@ def api_mc_messages(radio_id):
 
 @bp.route("/api/mc/<radio_id>/messages/channel/<int:idx>", methods=["DELETE"])
 def api_mc_delete_message_channel(radio_id, idx):
-    _max_ch = _mc_max_channels(radio_id)
-    if not (0 <= idx < _max_ch):
-        return jsonify({"error": f"channel index must be 0–{_max_ch - 1}"}), 400
+    # Protocol bound, NOT the live device value. Validation here must never
+    # reject a slot the user legitimately has just because DEVICE_INFO is
+    # missing (radio offline, or not yet queried) — the DB-only routes have to
+    # work offline at all, and for the routes that do reach the radio the device
+    # itself is authoritative and returns the accurate error. Only the SEND path
+    # uses _mc_max_channels(), where a connection is required anyway and the
+    # exact "0-N" message is the point of GH #20.
+    if not (0 <= idx < MC_MAX_CHANNELS):
+        return jsonify({"error": f"channel index must be 0–{MC_MAX_CHANNELS - 1}"}), 400
     return jsonify({"ok": True, "removed_db": delete_mc_channel_messages(radio_id, idx)})
 
 
@@ -1099,9 +1105,15 @@ def _mc_channel_share_uri(details):
 @bp.route("/api/mc/<radio_id>/channels/<int:idx>/share")
 def api_mc_channel_share(radio_id, idx):
     """Export one MC channel as an OM QR payload with its 16-byte secret."""
-    _max_ch = _mc_max_channels(radio_id)
-    if not (0 <= idx < _max_ch):
-        return jsonify({"error": f"channel index must be 0–{_max_ch - 1}"}), 400
+    # Protocol bound, NOT the live device value. Validation here must never
+    # reject a slot the user legitimately has just because DEVICE_INFO is
+    # missing (radio offline, or not yet queried) — the DB-only routes have to
+    # work offline at all, and for the routes that do reach the radio the device
+    # itself is authoritative and returns the accurate error. Only the SEND path
+    # uses _mc_max_channels(), where a connection is required anyway and the
+    # exact "0-N" message is the point of GH #20.
+    if not (0 <= idx < MC_MAX_CHANNELS):
+        return jsonify({"error": f"channel index must be 0–{MC_MAX_CHANNELS - 1}"}), 400
     with mc_connections_lock:
         state = mc_connections.get(radio_id, {})
     if state.get("status") != "connected":
@@ -1149,9 +1161,15 @@ def api_mc_set_channel(radio_id, idx):
     """Set a channel by slot index.
     key_type: 'auto' (derive from name), 'keep' (reuse current), 'random', 'custom' (provide key hex).
     """
-    _max_ch = _mc_max_channels(radio_id)
-    if not (0 <= idx < _max_ch):
-        return jsonify({"error": f"channel index must be 0–{_max_ch - 1}"}), 400
+    # Protocol bound, NOT the live device value. Validation here must never
+    # reject a slot the user legitimately has just because DEVICE_INFO is
+    # missing (radio offline, or not yet queried) — the DB-only routes have to
+    # work offline at all, and for the routes that do reach the radio the device
+    # itself is authoritative and returns the accurate error. Only the SEND path
+    # uses _mc_max_channels(), where a connection is required anyway and the
+    # exact "0-N" message is the point of GH #20.
+    if not (0 <= idx < MC_MAX_CHANNELS):
+        return jsonify({"error": f"channel index must be 0–{MC_MAX_CHANNELS - 1}"}), 400
     data = request.get_json(silent=True) or {}
     name     = (data.get("name")     or "").strip()
     key_type = (data.get("key_type") or "auto").strip().lower()
@@ -1169,8 +1187,6 @@ def api_mc_set_channel(radio_id, idx):
         if len(key_hex) != 32 or not all(c in "0123456789abcdef" for c in key_hex):
             return jsonify({"error": "key must be exactly 32 hex characters (16 bytes)"}), 400
     elif key_type == "keep":
-        with mc_connections_lock:
-            state = mc_connections.get(radio_id, {})
         max_ch = _mc_max_channels(radio_id)
         try:
             channels = get_channels(radio_id, max_ch, timeout=max(30, max_ch * 7))
@@ -1194,9 +1210,15 @@ def api_mc_set_channel(radio_id, idx):
 @bp.route("/api/mc/<radio_id>/channels/<int:idx>", methods=["DELETE"])
 def api_mc_delete_channel(radio_id, idx):
     """Clear a channel slot by overwriting it with an empty name, and delete its chat history."""
-    _max_ch = _mc_max_channels(radio_id)
-    if not (0 <= idx < _max_ch):
-        return jsonify({"error": f"channel index must be 0–{_max_ch - 1}"}), 400
+    # Protocol bound, NOT the live device value. Validation here must never
+    # reject a slot the user legitimately has just because DEVICE_INFO is
+    # missing (radio offline, or not yet queried) — the DB-only routes have to
+    # work offline at all, and for the routes that do reach the radio the device
+    # itself is authoritative and returns the accurate error. Only the SEND path
+    # uses _mc_max_channels(), where a connection is required anyway and the
+    # exact "0-N" message is the point of GH #20.
+    if not (0 <= idx < MC_MAX_CHANNELS):
+        return jsonify({"error": f"channel index must be 0–{MC_MAX_CHANNELS - 1}"}), 400
     try:
         set_channel(radio_id, idx, "")
     except RuntimeError as e:

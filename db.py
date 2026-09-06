@@ -313,11 +313,31 @@ def load_passive_obs(radio_id, pubkey_pre=None, limit=100,
         return [dict(zip(cols, row)) for row in c.fetchall()]
 
 
-def load_passive_obs_summary(radio_id, pubkey_prefixes):
-    """Return best obs (latest RSSI/SNR, obs count) keyed by pubkey_pre."""
+def load_passive_obs_summary(radio_id, pubkey_prefixes, exclude_obs_types=("rx",)):
+    """Return best obs (latest RSSI/SNR, obs count) keyed by the REQUESTED prefix.
+
+    Observations are not stored under the caller's key length, which is why the
+    old exact ``pubkey_pre IN (...)`` match could never hit anything: callers ask
+    with 12-char contact prefixes, while rows are keyed by 2-4 char path hop
+    hashes (trace, rx) or by 64-char full pubkeys (rc_adv). Matching is therefore
+    by prefix relationship in either direction.
+
+    A stored key is only credited when it relates to EXACTLY ONE requested
+    prefix. A 1-byte hop hash has 256 values and would otherwise be attributed to
+    every contact that happens to share those two characters, inflating one
+    contact's count with another node's observations.
+
+    The packet timeline ('rx') is excluded by default: it is high-volume traffic
+    keyed by whichever hop relayed it, so counting it here would swamp the
+    per-contact signal history this summary exists to show.
+    """
     if not pubkey_prefixes:
         return {}
-    placeholders = ','.join('?' * len(pubkey_prefixes))
+    where, params = [], []
+    if exclude_obs_types:
+        where.append(f"obs_type NOT IN ({','.join('?' * len(exclude_obs_types))})")
+        params.extend(exclude_obs_types)
+    clause = f" WHERE {' AND '.join(where)}" if where else ""
     with get_mc_passive_db(radio_id) as conn:
         c = conn.cursor()
         c.execute(
@@ -327,13 +347,50 @@ def load_passive_obs_summary(radio_id, pubkey_prefixes):
                        MAX(rssi) as best_rssi,
                        MAX(snr) as best_snr,
                        MIN(path_len) as min_path_len
-                FROM passive_obs
-                WHERE pubkey_pre IN ({placeholders})
+                FROM passive_obs{clause}
                 GROUP BY pubkey_pre''',
-            pubkey_prefixes
+            params
         )
-        cols = [d[0] for d in c.description]
-        return {row[0]: dict(zip(cols, row)) for row in c.fetchall()}
+        grouped = c.fetchall()
+
+    wanted = [str(p or "").lower() for p in pubkey_prefixes if p]
+    out = {}
+    for key, obs_count, last_ts, best_rssi, best_snr, min_path_len in grouped:
+        k = str(key or "").lower()
+        if not k:
+            continue
+        matches = [p for p in wanted if k.startswith(p) or p.startswith(k)]
+        if len(matches) != 1:
+            continue                      # ambiguous hash — do not guess a contact
+        cur = out.get(matches[0])
+        if cur is None:
+            out[matches[0]] = {
+                "pubkey_pre": matches[0], "obs_count": obs_count, "last_ts": last_ts,
+                "best_rssi": best_rssi, "best_snr": best_snr, "min_path_len": min_path_len,
+            }
+            continue
+        cur["obs_count"] += obs_count
+        cur["last_ts"] = _max_or(cur["last_ts"], last_ts)
+        cur["best_rssi"] = _max_or(cur["best_rssi"], best_rssi)
+        cur["best_snr"] = _max_or(cur["best_snr"], best_snr)
+        cur["min_path_len"] = _min_or(cur["min_path_len"], min_path_len)
+    return out
+
+
+def _max_or(a, b):
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return max(a, b)
+
+
+def _min_or(a, b):
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return min(a, b)
 
 
 def delete_passive_obs(radio_id, pubkey_pre=None):

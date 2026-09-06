@@ -1246,6 +1246,66 @@ class PacketTypeFilterTests(unittest.TestCase):
         self.assertEqual(len(rows), 3)
 
 
+class PassiveObsSummaryTests(unittest.TestCase):
+    """The badge never worked: rows are keyed 2-4 chars (hops) or 64 (rc_adv),
+    callers ask with 12-char contact prefixes, and the match was exact."""
+
+    CONTACT = "9da4bb112233"          # 12-char prefix, as app.js sends
+    OTHER = "86a8eeaabbcc"
+
+    def setUp(self):
+        self.radio = "summary_radio"
+        db.delete_passive_obs(self.radio)
+
+    def tearDown(self):
+        db.delete_passive_obs(self.radio)
+
+    def test_short_hop_key_is_credited_to_its_contact(self):
+        db.save_passive_obs(self.radio, "9da4", "trace", snr=5.0, rssi=-70, observed_ts=100)
+        s = db.load_passive_obs_summary(self.radio, [self.CONTACT, self.OTHER])
+        self.assertEqual(s[self.CONTACT]["obs_count"], 1)
+        self.assertNotIn(self.OTHER, s)
+
+    def test_full_pubkey_key_is_credited_to_its_contact(self):
+        db.save_passive_obs(self.radio, self.CONTACT + "f" * 52, "rc_adv",
+                            snr=3.0, observed_ts=200)
+        s = db.load_passive_obs_summary(self.radio, [self.CONTACT])
+        self.assertEqual(s[self.CONTACT]["obs_count"], 1)
+
+    def test_ambiguous_hop_hash_is_credited_to_nobody(self):
+        # "9d" is a 1-byte hash; both requested contacts could own it.
+        db.save_passive_obs(self.radio, "9d", "trace", snr=5.0, observed_ts=300)
+        s = db.load_passive_obs_summary(self.radio, [self.CONTACT, "9d001122aabb"])
+        self.assertEqual(s, {})
+
+    def test_counts_from_several_key_shapes_merge(self):
+        db.save_passive_obs(self.radio, "9da4", "trace", snr=5.0, rssi=-70, observed_ts=100)
+        db.save_passive_obs(self.radio, "9da4", "trace", snr=9.0, rssi=-60, observed_ts=150)
+        db.save_passive_obs(self.radio, self.CONTACT + "f" * 52, "rc_adv",
+                            snr=1.0, rssi=-90, observed_ts=400)
+        s = db.load_passive_obs_summary(self.radio, [self.CONTACT])
+        self.assertEqual(s[self.CONTACT]["obs_count"], 3)
+        self.assertEqual(s[self.CONTACT]["best_snr"], 9.0)
+        self.assertEqual(s[self.CONTACT]["best_rssi"], -60)
+        self.assertEqual(s[self.CONTACT]["last_ts"], 400)
+
+    def test_packet_timeline_does_not_inflate_the_badge(self):
+        db.save_passive_obs(self.radio, "9da4", "trace", snr=5.0, observed_ts=100)
+        db.save_passive_obs_bulk(self.radio, [
+            {"pubkey_pre": "9da4", "obs_type": "rx", "ts": int(time.time()) + i}
+            for i in range(25)
+        ], max_age_s=86400)
+        s = db.load_passive_obs_summary(self.radio, [self.CONTACT])
+        self.assertEqual(s[self.CONTACT]["obs_count"], 1)
+        # ...unless a caller explicitly asks for it
+        s2 = db.load_passive_obs_summary(self.radio, [self.CONTACT], exclude_obs_types=())
+        self.assertEqual(s2[self.CONTACT]["obs_count"], 26)
+
+    def test_unrelated_key_is_not_credited(self):
+        db.save_passive_obs(self.radio, "ffff", "trace", snr=5.0, observed_ts=100)
+        self.assertEqual(db.load_passive_obs_summary(self.radio, [self.CONTACT]), {})
+
+
 class PassiveDbInitTests(unittest.TestCase):
     """The DDL used to run on every single passive-DB access."""
 

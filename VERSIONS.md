@@ -10,6 +10,10 @@ OverMesh uses date-based release versions:
 
 The version in `VERSION` must be updated every time an OverMesh update is pushed to GitHub. The Settings updater also shows the Git commit hash for exact build identification.
 
+## 2026.09.06.2
+
+- Fixed the per-contact passive-intel badge, which had never displayed anything on any host: `load_passive_obs_summary` matched the caller's 12-char contact prefixes exactly, but observations are stored under 2-4 char path hop hashes (trace, rx) or 64-char full pubkeys (rc_adv). Matching is now by prefix relationship in either direction, crediting a stored key only when it relates to exactly one requested contact so an ambiguous 1-byte hop hash is never attributed to the wrong node. The packet timeline is excluded by default so it cannot swamp the per-contact signal history.
+
 ## 2026.09.06.1
 
 - MeshCore overheard traffic is now actually captured. `on_rx_log_data` gated storage on a sender pubkey that the RX log never carries (an overheard packet's sender sits inside the encrypted payload; only the header and path hashes are in the clear), so every overheard packet was parsed and then discarded. Confirmed on live data: zero `rx` rows across every passive DB on two hosts.

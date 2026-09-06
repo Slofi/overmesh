@@ -10,6 +10,17 @@ OverMesh uses date-based release versions:
 
 The version in `VERSION` must be updated every time an OverMesh update is pushed to GitHub. The Settings updater also shows the Git commit hash for exact build identification.
 
+## 2026.09.06.1
+
+- MeshCore overheard traffic is now actually captured. `on_rx_log_data` gated storage on a sender pubkey that the RX log never carries (an overheard packet's sender sits inside the encrypted payload; only the header and path hashes are in the clear), so every overheard packet was parsed and then discarded. Confirmed on live data: zero `rx` rows across every passive DB on two hosts.
+  - observations are filed under the **last path hop** — the node we actually heard the packet from, which is what the rssi/snr measured — falling back to a sentinel for packets that arrive with an empty path
+  - writes are **buffered and flushed by a background thread** (`save_passive_obs_bulk`): event handlers run inline on the asyncio loop, and a stalled loop can overflow the serial buffer and drop packets
+  - contact-archive lookups moved off the loop thread too, and are built **once per flush batch** instead of once per row
+  - timeline retention (24 h / 20 000 rows, scoped to the `rx` type) replaces the per-contact cap, which would let a chatty repeater evict its own recent history
+- `passive_obs` API gained `obs_types`, `payload_types` and `route_types` filters. **`rx` is excluded unless requested by name**, so the Passive Intel list and the signal heatmap keep exactly the result set they had before.
+- New `GET /api/mc/packet_types` serves the MeshCore packet-type vocabulary from the installed meshcore library. The library and the protocol docs disagree (`TEXT_MSG` vs `TXT_MSG`, `TC_FLOOD` vs `TRANSPORT_FLOOD`) and it is the library's strings that are stored, so a hand-copied list would filter nothing.
+- Fixes found while sweeping: hop-prefix coordinate resolution now requires a **unique** match (1-byte hashes have 256 values, so first-match-wins was attaching a different node's coordinates to plotted observations); passive-DB DDL is no longer re-run on every access; a failed flush is retried up to three times instead of discarding the batch; buffer caps are per radio; a stale device `recv_time` no longer makes a row vanish on insert.
+
 ## 2026.05.25.1
 
 - Added local Map App marking exchange endpoints for the CD workflow:

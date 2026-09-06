@@ -113,10 +113,31 @@ def _resolved_mc_passive_db_path(radio_id: str) -> str:
         return _mc_passive_db_registry.get(radio_id) or mc_passive_db_path(radio_id)
 
 
+_mc_passive_db_initialized = set()
+_mc_passive_db_init_lock = threading.Lock()
+
+
+def _ensure_mc_passive_db(db_path):
+    """Run the passive-DB DDL once per file instead of once per access.
+
+    _init_mc_passive_db opens its own connection, re-runs CREATE TABLE, three
+    CREATE INDEX statements and three ALTER TABLEs that throw-and-are-caught
+    every time. That ran on EVERY get_mc_passive_db() call. The existence check
+    is a stat, so a file deleted underneath us is still re-initialised.
+    """
+    with _mc_passive_db_init_lock:
+        if db_path in _mc_passive_db_initialized and os.path.exists(db_path):
+            return
+        _mc_passive_db_initialized.discard(db_path)
+    _init_mc_passive_db(db_path)
+    with _mc_passive_db_init_lock:
+        _mc_passive_db_initialized.add(db_path)
+
+
 @contextmanager
 def get_mc_passive_db(radio_id):
     db_path = _resolved_mc_passive_db_path(radio_id)
-    _init_mc_passive_db(db_path)
+    _ensure_mc_passive_db(db_path)
     conn = _connect(db_path)
     try:
         yield conn
@@ -152,6 +173,9 @@ def _init_mc_passive_db(db_path):
         )''')
         c.execute('CREATE INDEX IF NOT EXISTS idx_passive_pubkey ON passive_obs (pubkey_pre, ts DESC)')
         c.execute('CREATE INDEX IF NOT EXISTS idx_passive_ts ON passive_obs (ts DESC)')
+        # Type-scoped retention (the packet timeline) filters and orders on
+        # (obs_type, ts) on every insert — without this it degrades to a scan.
+        c.execute('CREATE INDEX IF NOT EXISTS idx_passive_type_ts ON passive_obs (obs_type, ts DESC)')
         for col, defn in [('collector_id', 'TEXT'), ('collector_lat', 'REAL'), ('collector_lon', 'REAL')]:
             try:
                 c.execute(f'ALTER TABLE passive_obs ADD COLUMN {col} {defn}')
@@ -167,6 +191,14 @@ def save_passive_obs(radio_id, pubkey_pre, obs_type, rssi=None, snr=None,
                      payload_type=None, route_type=None, lat=None, lon=None,
                      collector_id=None, collector_lat=None, collector_lon=None,
                      max_per_contact=50, observed_ts=None):
+    """Store one passive observation, keeping the most recent ``max_per_contact``
+    rows for this pubkey.
+
+    That per-contact cap is right for "signal history ABOUT a node" — the heatmap
+    and per-contact summaries, which is what every caller of this function wants.
+    The packet TIMELINE needs the opposite (a time window across all keys) and
+    arrives in batches, so it uses ``save_passive_obs_bulk`` instead.
+    """
     ts = int(observed_ts) if observed_ts is not None else int(time.time())
     with get_mc_passive_db(radio_id) as conn:
         c = conn.cursor()
@@ -189,19 +221,94 @@ def save_passive_obs(radio_id, pubkey_pre, obs_type, rssi=None, snr=None,
         )
 
 
-def load_passive_obs(radio_id, pubkey_pre=None, limit=100):
+def save_passive_obs_bulk(radio_id, rows, max_age_s=None, max_rows_for_type=None):
+    """Insert many observations of ONE obs_type in a single transaction.
+
+    The per-row path opens a connection and re-runs three PRAGMAs every call,
+    which is fine at message rates and wasteful at packet rates. This collapses a
+    batch into one connection and one retention pass, so the high-volume packet
+    timeline costs the DB roughly what a single message write used to.
+    """
+    rows = list(rows or [])
+    if not rows:
+        return 0
+    obs_type = rows[0].get("obs_type")
+    now = int(time.time())
     with get_mc_passive_db(radio_id) as conn:
         c = conn.cursor()
-        if pubkey_pre:
+        c.executemany(
+            '''INSERT INTO passive_obs
+               (pubkey_pre, obs_type, ts, rssi, snr, path_len, path,
+                path_hash_size, payload_type, route_type, lat, lon,
+                collector_id, collector_lat, collector_lon)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            [(r.get("pubkey_pre"), r.get("obs_type"),
+              int(r.get("ts") or now), r.get("rssi"), r.get("snr"),
+              r.get("path_len"), r.get("path"), r.get("path_hash_size"),
+              r.get("payload_type"), r.get("route_type"), r.get("lat"), r.get("lon"),
+              r.get("collector_id"), r.get("collector_lat"), r.get("collector_lon"))
+             for r in rows]
+        )
+        if max_age_s is not None:
             c.execute(
-                'SELECT * FROM passive_obs WHERE pubkey_pre=? ORDER BY ts DESC LIMIT ?',
-                (pubkey_pre, limit)
+                'DELETE FROM passive_obs WHERE obs_type=? AND ts < ?',
+                (obs_type, now - int(max_age_s))
             )
-        else:
-            c.execute(
-                'SELECT * FROM passive_obs ORDER BY ts DESC LIMIT ?',
-                (limit,)
-            )
+        if max_rows_for_type is not None:
+            cap = int(max_rows_for_type)
+            n = c.execute(
+                'SELECT COUNT(*) FROM passive_obs WHERE obs_type=?', (obs_type,)
+            ).fetchone()[0]
+            if n > cap:
+                c.execute(
+                    '''DELETE FROM passive_obs WHERE obs_type=? AND id NOT IN (
+                       SELECT id FROM passive_obs WHERE obs_type=?
+                       ORDER BY ts DESC, id DESC LIMIT ?)''',
+                    (obs_type, obs_type, cap)
+                )
+    return len(rows)
+
+
+def load_passive_obs(radio_id, pubkey_pre=None, limit=100,
+                     obs_types=None, exclude_obs_types=None,
+                     payload_types=None, route_types=None):
+    """Load observations, newest first.
+
+    ``obs_types`` / ``exclude_obs_types`` scope the query by kind. Callers that
+    want per-node signal history (heatmap, Passive Intel) must exclude the
+    high-volume packet-timeline types, or the newest ``limit`` rows are all
+    timeline traffic and the per-node data they actually want is crowded out.
+
+    ``payload_types`` / ``route_types`` filter the packet timeline by MeshCore
+    type. Filtering in SQL rather than in the client matters because ``limit``
+    is applied to the newest rows: asking for 500 rows and then discarding all
+    but the ADVERTs client-side returns whatever adverts happen to be in the
+    newest 500, not the newest 500 adverts.
+    """
+    where, params = [], []
+    if pubkey_pre:
+        where.append('pubkey_pre=?')
+        params.append(pubkey_pre)
+    if obs_types:
+        where.append(f"obs_type IN ({','.join('?' * len(obs_types))})")
+        params.extend(obs_types)
+    if exclude_obs_types:
+        where.append(f"obs_type NOT IN ({','.join('?' * len(exclude_obs_types))})")
+        params.extend(exclude_obs_types)
+    if payload_types:
+        where.append(f"payload_type IN ({','.join('?' * len(payload_types))})")
+        params.extend(payload_types)
+    if route_types:
+        where.append(f"route_type IN ({','.join('?' * len(route_types))})")
+        params.extend(route_types)
+    clause = f" WHERE {' AND '.join(where)}" if where else ""
+    params.append(limit)
+    with get_mc_passive_db(radio_id) as conn:
+        c = conn.cursor()
+        c.execute(
+            f'SELECT * FROM passive_obs{clause} ORDER BY ts DESC LIMIT ?',
+            params
+        )
         cols = [d[0] for d in c.description]
         return [dict(zip(cols, row)) for row in c.fetchall()]
 
@@ -239,11 +346,17 @@ def delete_passive_obs(radio_id, pubkey_pre=None):
 
 
 def count_passive_obs_by_collector(radio_id):
-    """Return {collector_id: count} for all collectors."""
+    """Return {collector_id: count} for all collectors.
+
+    Excludes the local packet timeline ('rx'): those rows are heard by this radio
+    directly and carry no collector_id, so counting them would pile the whole
+    timeline into the "unknown" bucket and bury the real per-collector numbers.
+    """
     with get_mc_passive_db(radio_id) as conn:
         c = conn.cursor()
         c.execute(
-            'SELECT collector_id, COUNT(*) FROM passive_obs GROUP BY collector_id'
+            "SELECT collector_id, COUNT(*) FROM passive_obs "
+            "WHERE obs_type != 'rx' GROUP BY collector_id"
         )
         return {str(row[0] or "unknown"): row[1] for row in c.fetchall()}
 

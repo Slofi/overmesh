@@ -1,7 +1,9 @@
 import json
 import os
+import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 import asyncio
 from types import SimpleNamespace
@@ -22,6 +24,7 @@ os.environ.setdefault("OVERMESH_DATA_DIR", str(_DATA_DIR))
 sys.path.insert(0, "/home/slofi/overmesh")
 
 import mesh_mc  # noqa: E402
+import db  # noqa: E402
 from routes import mc as mc_routes  # noqa: E402
 from config import CONFIG  # noqa: E402
 from state import mc_connections, mc_connections_lock  # noqa: E402
@@ -883,6 +886,480 @@ class MeshMcPathHelperTests(unittest.TestCase):
         self.assertEqual(contact["out_path_len"], -1)
         self.assertNotIn("adv_lat", contact)
         self.assertNotIn("adv_lon", contact)
+
+
+class RxObsIdentityTests(unittest.TestCase):
+    """Overheard RX-log packets carry no sender pubkey — see _rx_obs_identity."""
+
+    def test_sender_prefix_wins_when_present(self):
+        entry = {"pubkey_pre": "aabbcc", "path": "1122", "path_hash_size": 1}
+        self.assertEqual(mesh_mc._rx_obs_identity(entry), "aabbcc")
+
+    def test_falls_back_to_last_hop_when_no_sender(self):
+        # flood path [11, 22, 33]: 33 appended last, so 33 is who we heard it from
+        entry = {"path": "112233", "path_hash_size": 1, "path_len": 3}
+        self.assertEqual(mesh_mc._rx_obs_identity(entry), "33")
+
+    def test_last_hop_respects_multibyte_hash_size(self):
+        entry = {"path": "11112222", "path_hash_size": 2, "path_len": 2}
+        self.assertEqual(mesh_mc._rx_obs_identity(entry), "2222")
+
+    def test_list_form_path_is_supported(self):
+        entry = {"path": [{"hash": "AA"}, {"hash": "BB"}]}
+        self.assertEqual(mesh_mc._rx_obs_identity(entry), "bb")
+
+    def test_hop_count_wins_when_declared_hash_size_disagrees(self):
+        # The wire format holds exactly path_len * hash_size bytes, so a declared
+        # size that contradicts the buffer is the wrong one. Mis-slicing here
+        # would file the observation under a node that never saw the packet.
+        self.assertEqual(mesh_mc._rx_obs_hops({"path": "aaaabbbb", "path_len": 2}),
+                         ["aaaa", "bbbb"])
+        self.assertEqual(
+            mesh_mc._rx_obs_hops({"path": "aaaabbbb", "path_len": 2, "path_hash_size": 1}),
+            ["aaaa", "bbbb"])
+        self.assertEqual(mesh_mc._rx_obs_identity({"path": "aaaabbbb", "path_len": 2}), "bbbb")
+
+    def test_hops_fall_back_to_declared_size_when_hop_count_missing(self):
+        self.assertEqual(mesh_mc._rx_obs_hops({"path": "aaaabbbb", "path_hash_size": 2}),
+                         ["aaaa", "bbbb"])
+
+    def test_empty_path_uses_sentinel_rather_than_being_dropped(self):
+        entry = {"path": "", "path_len": 0, "snr": 4.25, "rssi": -99}
+        self.assertEqual(mesh_mc._rx_obs_identity(entry), mesh_mc.RX_OBS_SENTINEL)
+
+    def test_identity_never_empty_for_a_bare_payload(self):
+        # The old gate required a sender prefix and therefore stored nothing at all.
+        self.assertTrue(mesh_mc._rx_obs_identity({}))
+        self.assertEqual(mesh_mc._rx_sender_prefix({}), "")
+
+
+class LatLonForPrefixTests(unittest.TestCase):
+    """1-byte hop hashes collide; a wrong coordinate gets plotted, so refuse to guess.
+
+    Exercised through the batch index, which is the path both the rx flusher and
+    the trace handler actually take.
+    """
+
+    def _archive(self, contacts):
+        return mock.patch.object(mesh_mc, "get_mc_contact_archive", return_value=contacts)
+
+    def _resolve(self, key):
+        index = mesh_mc._build_prefix_latlon_index("r", {len(key)})
+        return mesh_mc._latlon_from_index(index, key)
+
+    def test_unique_prefix_resolves(self):
+        with self._archive({"33aabb": {"adv_lat": 46.0, "adv_lon": 14.5}}):
+            self.assertEqual(self._resolve("33"), (46.0, 14.5))
+
+    def test_ambiguous_prefix_returns_nothing_rather_than_the_first_match(self):
+        with self._archive({
+            "33aabb": {"adv_lat": 46.0, "adv_lon": 14.5},
+            "33ccdd": {"adv_lat": 47.0, "adv_lon": 15.5},
+        }):
+            self.assertEqual(self._resolve("33"), (None, None))
+
+    def test_contacts_without_coords_do_not_count_as_collisions(self):
+        with self._archive({
+            "33aabb": {"adv_lat": 46.0, "adv_lon": 14.5},
+            "33ccdd": {"adv_name": "no coords"},
+        }):
+            self.assertEqual(self._resolve("33"), (46.0, 14.5))
+
+    def test_no_match_returns_nothing(self):
+        with self._archive({"99aabb": {"adv_lat": 46.0, "adv_lon": 14.5}}):
+            self.assertEqual(self._resolve("33"), (None, None))
+
+
+class RxObsBufferingTests(unittest.TestCase):
+    """on_rx_log_data runs inline on the asyncio loop — it must never write there."""
+
+    def setUp(self):
+        from meshcore import EventType
+        self.EventType = EventType
+        self.radio = "buffer_radio"
+        db.delete_passive_obs(self.radio)
+        with mesh_mc._rx_obs_buffer_lock:
+            mesh_mc._rx_obs_buffer.clear()
+            mesh_mc._rx_obs_dropped = 0
+        # Never start the real flusher thread in tests — flush explicitly instead.
+        patcher = mock.patch.object(mesh_mc, "_ensure_rx_obs_flusher")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def tearDown(self):
+        with mesh_mc._rx_obs_buffer_lock:
+            mesh_mc._rx_obs_buffer.clear()
+        db.delete_passive_obs(self.radio)
+
+    def _fire(self, radio, payload):
+        handlers = {}
+
+        class FakeMC:
+            def subscribe(self, evt, fn):
+                handlers[evt] = fn
+
+        mesh_mc._subscribe_mc_events(FakeMC(), radio, "BUF")
+        handlers[self.EventType.RX_LOG_DATA](SimpleNamespace(payload=payload))
+
+    def _packet(self, path="112233", hops=3):
+        return {"snr": 4.25, "rssi": -99, "route_typename": "FLOOD",
+                "payload_typename": "TXT_MSG", "path_len": hops,
+                "path_hash_size": 1, "path": path, "recv_time": int(time.time())}
+
+    def test_handler_buffers_and_does_not_write(self):
+        self._fire(self.radio, self._packet())
+        self.assertEqual(len(mesh_mc._rx_obs_buffer[self.radio]), 1)
+        self.assertEqual(db.load_passive_obs(self.radio, limit=10, obs_types=["rx"]), [])
+
+    def test_flush_writes_buffered_rows(self):
+        self._fire(self.radio, self._packet())
+        self.assertEqual(mesh_mc.flush_rx_obs(), 1)
+        rows = db.load_passive_obs(self.radio, limit=10, obs_types=["rx"])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["pubkey_pre"], "33")
+        self.assertEqual(rows[0]["payload_type"], "TXT_MSG")
+        self.assertEqual(rows[0]["route_type"], "FLOOD")
+        self.assertAlmostEqual(rows[0]["ts"], int(time.time()), delta=5)
+
+    def test_flush_on_empty_buffer_is_a_noop(self):
+        self.assertEqual(mesh_mc.flush_rx_obs(), 0)
+
+    def test_flush_groups_rows_by_radio(self):
+        other = "buffer_radio_2"
+        db.delete_passive_obs(other)
+        self.addCleanup(db.delete_passive_obs, other)
+        self._fire(self.radio, self._packet())
+        self._fire(other, self._packet(path="4455", hops=2))
+        self.assertEqual(mesh_mc.flush_rx_obs(), 2)
+        self.assertEqual(len(db.load_passive_obs(self.radio, limit=10, obs_types=["rx"])), 1)
+        rows2 = db.load_passive_obs(other, limit=10, obs_types=["rx"])
+        self.assertEqual([r["pubkey_pre"] for r in rows2], ["55"])
+
+    def test_buffer_overflow_drops_oldest_and_keeps_newest(self):
+        with mock.patch.object(mesh_mc, "RX_OBS_BUFFER_MAX", 3):
+            for i in range(5):
+                mesh_mc._queue_rx_obs(self.radio, {"pubkey_pre": f"k{i}",
+                                                   "obs_type": "rx",
+                                                   "ts": int(time.time()) + i})
+            self.assertEqual(len(mesh_mc._rx_obs_buffer[self.radio]), 3)
+            self.assertEqual(mesh_mc._rx_obs_dropped, 2)
+        mesh_mc.flush_rx_obs()
+        keys = [r["pubkey_pre"] for r in db.load_passive_obs(self.radio, limit=10, obs_types=["rx"])]
+        self.assertEqual(sorted(keys), ["k2", "k3", "k4"])
+
+    def test_one_radio_failure_does_not_discard_another_radios_batch(self):
+        other = "buffer_radio_3"
+        db.delete_passive_obs(other)
+        self.addCleanup(db.delete_passive_obs, other)
+        self._fire(self.radio, self._packet())
+        self._fire(other, self._packet(path="4455", hops=2))
+
+        real = mesh_mc.save_passive_obs_bulk
+
+        def flaky(radio_id, rows, **kw):
+            if radio_id == self.radio:
+                raise sqlite3.OperationalError("boom")
+            return real(radio_id, rows, **kw)
+
+        with mock.patch.object(mesh_mc, "save_passive_obs_bulk", side_effect=flaky):
+            mesh_mc.flush_rx_obs()
+        self.assertEqual(len(db.load_passive_obs(other, limit=10, obs_types=["rx"])), 1)
+
+    def test_coords_are_resolved_on_the_flusher_not_the_loop(self):
+        archive = {"33" + "a" * 62: {"adv_lat": 46.5, "adv_lon": 14.5}}
+        with mock.patch.object(mesh_mc, "get_mc_contact_archive", return_value=archive) as arch:
+            self._fire(self.radio, self._packet())
+            self.assertEqual(arch.call_count, 0)   # nothing touched the archive on the loop
+            mesh_mc.flush_rx_obs()
+            self.assertEqual(arch.call_count, 1)   # exactly once for the whole batch
+        row = db.load_passive_obs(self.radio, limit=5, obs_types=["rx"])[0]
+        self.assertEqual((row["lat"], row["lon"]), (46.5, 14.5))
+
+    def test_archive_is_read_once_per_batch_not_once_per_row(self):
+        archive = {"33" + "a" * 62: {"adv_lat": 46.5, "adv_lon": 14.5}}
+        with mock.patch.object(mesh_mc, "get_mc_contact_archive", return_value=archive) as arch:
+            for _ in range(25):
+                self._fire(self.radio, self._packet())
+            mesh_mc.flush_rx_obs()
+            self.assertEqual(arch.call_count, 1)
+
+    def test_ambiguous_prefix_still_resolves_to_no_coords(self):
+        archive = {
+            "33" + "a" * 62: {"adv_lat": 46.5, "adv_lon": 14.5},
+            "33" + "b" * 62: {"adv_lat": 47.5, "adv_lon": 15.5},
+        }
+        with mock.patch.object(mesh_mc, "get_mc_contact_archive", return_value=archive):
+            self._fire(self.radio, self._packet())
+            mesh_mc.flush_rx_obs()
+        row = db.load_passive_obs(self.radio, limit=5, obs_types=["rx"])[0]
+        self.assertEqual((row["lat"], row["lon"]), (None, None))
+
+    def test_sentinel_key_resolves_to_no_coords(self):
+        archive = {"33" + "a" * 62: {"adv_lat": 46.5, "adv_lon": 14.5}}
+        with mock.patch.object(mesh_mc, "get_mc_contact_archive", return_value=archive):
+            self._fire(self.radio, self._packet(path="", hops=0))
+            mesh_mc.flush_rx_obs()
+        row = db.load_passive_obs(self.radio, limit=5, obs_types=["rx"])[0]
+        self.assertEqual(row["pubkey_pre"], mesh_mc.RX_OBS_SENTINEL)
+        self.assertEqual((row["lat"], row["lon"]), (None, None))
+
+    def test_stale_device_timestamp_falls_back_to_now(self):
+        now = int(time.time())
+        # A ts older than the retention window would be pruned on insert, so the
+        # observation would vanish with no trace.
+        self.assertEqual(mesh_mc._rx_obs_timestamp({"recv_time": 5000}, now=now), now)
+        self.assertEqual(mesh_mc._rx_obs_timestamp({"recv_time": 0}, now=now), now)
+        self.assertEqual(mesh_mc._rx_obs_timestamp({"recv_time": "junk"}, now=now), now)
+        self.assertEqual(mesh_mc._rx_obs_timestamp({}, now=now), now)
+        # A plausible device time is kept.
+        self.assertEqual(mesh_mc._rx_obs_timestamp({"recv_time": now - 30}, now=now), now - 30)
+
+    def test_stale_timestamp_row_survives_the_round_trip(self):
+        self._fire(self.radio, dict(self._packet(), recv_time=5000))
+        mesh_mc.flush_rx_obs()
+        rows = db.load_passive_obs(self.radio, limit=5, obs_types=["rx"])
+        self.assertEqual(len(rows), 1)
+        self.assertAlmostEqual(rows[0]["ts"], int(time.time()), delta=5)
+
+    def test_failed_batch_is_requeued_then_dropped_after_max_attempts(self):
+        self._fire(self.radio, self._packet())
+
+        def boom(*a, **kw):
+            raise sqlite3.OperationalError("database is locked")
+
+        with mock.patch.object(mesh_mc, "save_passive_obs_bulk", side_effect=boom):
+            for expected in range(1, mesh_mc.RX_OBS_MAX_FLUSH_ATTEMPTS + 1):
+                mesh_mc.flush_rx_obs()
+                self.assertEqual(len(mesh_mc._rx_obs_buffer[self.radio]), 1)
+                self.assertEqual(mesh_mc._rx_obs_buffer[self.radio][0]["_attempts"], expected)
+            # One attempt past the cap and the row is finally discarded.
+            mesh_mc.flush_rx_obs()
+            self.assertEqual(sum(len(q) for q in mesh_mc._rx_obs_buffer.values()), 0)
+
+    def test_requeued_batch_is_written_when_the_db_recovers(self):
+        self._fire(self.radio, self._packet())
+        with mock.patch.object(mesh_mc, "save_passive_obs_bulk",
+                               side_effect=sqlite3.OperationalError("locked")):
+            mesh_mc.flush_rx_obs()
+        self.assertEqual(len(mesh_mc._rx_obs_buffer[self.radio]), 1)
+        mesh_mc.flush_rx_obs()          # DB healthy again
+        self.assertEqual(len(db.load_passive_obs(self.radio, limit=5, obs_types=["rx"])), 1)
+
+    def test_chatty_radio_does_not_evict_a_quiet_radios_buffered_rows(self):
+        with mock.patch.object(mesh_mc, "RX_OBS_BUFFER_MAX", 3):
+            mesh_mc._queue_rx_obs("quiet_radio", {"pubkey_pre": "q", "obs_type": "rx"})
+            for i in range(10):
+                mesh_mc._queue_rx_obs("chatty_radio", {"pubkey_pre": f"c{i}", "obs_type": "rx"})
+            buffered = {cid: len(q) for cid, q in mesh_mc._rx_obs_buffer.items()}
+        self.assertEqual(buffered.get("quiet_radio"), 1)   # never evicted
+        self.assertEqual(buffered.get("chatty_radio"), 3)  # capped per radio
+
+    def test_atexit_flush_writes_and_returns(self):
+        self._fire(self.radio, self._packet())
+        mesh_mc._atexit_flush_rx_obs()
+        self.assertEqual(len(db.load_passive_obs(self.radio, limit=5, obs_types=["rx"])), 1)
+
+    def test_bulk_write_applies_retention_once(self):
+        rows = [{"pubkey_pre": f"h{i}", "obs_type": "rx", "ts": int(time.time()) + i} for i in range(6)]
+        db.save_passive_obs_bulk(self.radio, rows, max_rows_for_type=2)
+        kept = db.load_passive_obs(self.radio, limit=10, obs_types=["rx"])
+        self.assertEqual(sorted(r["pubkey_pre"] for r in kept), ["h4", "h5"])
+
+    def test_bulk_write_prunes_by_age_within_its_type_only(self):
+        db.save_passive_obs(self.radio, "nodeD", "trace", snr=1.0, observed_ts=1)
+        db.save_passive_obs_bulk(
+            self.radio,
+            [{"pubkey_pre": "old", "obs_type": "rx", "ts": 1},
+             {"pubkey_pre": "new", "obs_type": "rx", "ts": int(time.time())}],
+            max_age_s=3600,
+        )
+        rows = db.load_passive_obs(self.radio, limit=10)
+        self.assertEqual(sorted(r["obs_type"] for r in rows), ["rx", "trace"])
+        self.assertEqual([r["pubkey_pre"] for r in rows if r["obs_type"] == "rx"], ["new"])
+
+
+class PacketTypeFilterTests(unittest.TestCase):
+    """Filter in SQL, and take the type strings from the library, not the docs."""
+
+    def setUp(self):
+        self.radio = "filter_radio"
+        db.delete_passive_obs(self.radio)
+        now = int(time.time())
+        rows = []
+        for i, (payload, route) in enumerate([
+            ("TEXT_MSG", "FLOOD"), ("ADVERT", "FLOOD"), ("ACK", "DIRECT"),
+            ("TEXT_MSG", "TC_FLOOD"), ("UNK", "FLOOD"),
+        ] * 3):
+            rows.append({"pubkey_pre": f"h{i}", "obs_type": "rx", "ts": now + i,
+                         "payload_type": payload, "route_type": route})
+        db.save_passive_obs_bulk(self.radio, rows, max_age_s=86400)
+        self.app = Flask(__name__)
+        self.app.register_blueprint(mc_routes.bp)
+        self.client = self.app.test_client()
+
+    def tearDown(self):
+        db.delete_passive_obs(self.radio)
+
+    def test_library_is_the_source_of_the_type_names(self):
+        names = self.client.get("/api/mc/packet_types").get_json()
+        # The strings that are actually stored — not the protocol doc's names.
+        self.assertIn("TEXT_MSG", names["payload_types"])
+        self.assertNotIn("TXT_MSG", names["payload_types"])
+        self.assertIn("TC_FLOOD", names["route_types"])
+        self.assertNotIn("TRANSPORT_FLOOD", names["route_types"])
+        # "UNK" is a real stored value for types outside the library's table.
+        self.assertIn("UNK", names["payload_types"])
+
+    def test_payload_type_filter(self):
+        rows = self.client.get(
+            f"/api/mc/{self.radio}/passive_obs?obs_types=rx&payload_types=ADVERT&limit=500"
+        ).get_json()
+        self.assertEqual(len(rows), 3)
+        self.assertTrue(all(r["payload_type"] == "ADVERT" for r in rows))
+
+    def test_multiple_payload_types(self):
+        rows = self.client.get(
+            f"/api/mc/{self.radio}/passive_obs?obs_types=rx&payload_types=ADVERT,ACK&limit=500"
+        ).get_json()
+        self.assertEqual(sorted({r["payload_type"] for r in rows}), ["ACK", "ADVERT"])
+
+    def test_route_type_filter(self):
+        rows = self.client.get(
+            f"/api/mc/{self.radio}/passive_obs?obs_types=rx&route_types=DIRECT&limit=500"
+        ).get_json()
+        self.assertEqual(len(rows), 3)
+        self.assertTrue(all(r["route_type"] == "DIRECT" for r in rows))
+
+    def test_filter_applies_before_limit_not_after(self):
+        # The point of filtering in SQL: limit=2 must return the 2 newest ADVERTs,
+        # not "the adverts that happen to be inside the newest 2 rows" (zero).
+        rows = self.client.get(
+            f"/api/mc/{self.radio}/passive_obs?obs_types=rx&payload_types=ADVERT&limit=2"
+        ).get_json()
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(all(r["payload_type"] == "ADVERT" for r in rows))
+
+    def test_unknown_type_is_selectable(self):
+        rows = self.client.get(
+            f"/api/mc/{self.radio}/passive_obs?obs_types=rx&payload_types=UNK&limit=500"
+        ).get_json()
+        self.assertEqual(len(rows), 3)
+
+
+class PassiveDbInitTests(unittest.TestCase):
+    """The DDL used to run on every single passive-DB access."""
+
+    def setUp(self):
+        self.radio = "init_memo_radio"
+        db.delete_passive_obs(self.radio)
+        db._mc_passive_db_initialized.clear()
+
+    def tearDown(self):
+        db.delete_passive_obs(self.radio)
+
+    def test_ddl_runs_once_across_many_accesses(self):
+        real = db._init_mc_passive_db
+        with mock.patch.object(db, "_init_mc_passive_db", side_effect=real) as init:
+            for i in range(10):
+                db.save_passive_obs(self.radio, f"n{i}", "trace", snr=1.0)
+            db.load_passive_obs(self.radio, limit=5)
+            self.assertEqual(init.call_count, 1)
+
+    def test_deleted_db_file_is_reinitialised(self):
+        db.save_passive_obs(self.radio, "n1", "trace", snr=1.0)
+        path = db._resolved_mc_passive_db_path(self.radio)
+        os.remove(path)
+        real = db._init_mc_passive_db
+        with mock.patch.object(db, "_init_mc_passive_db", side_effect=real) as init:
+            db.save_passive_obs(self.radio, "n2", "trace", snr=2.0)
+            self.assertEqual(init.call_count, 1)
+        rows = db.load_passive_obs(self.radio, limit=5)
+        self.assertEqual([r["pubkey_pre"] for r in rows], ["n2"])
+
+
+class PassiveObsRetentionTests(unittest.TestCase):
+    def setUp(self):
+        self.radio = "test_retention_radio"
+        db.delete_passive_obs(self.radio)
+
+    def tearDown(self):
+        db.delete_passive_obs(self.radio)
+
+    def test_per_contact_cap_still_applies_by_default(self):
+        for i in range(5):
+            db.save_passive_obs(self.radio, "nodeA", "trace", snr=float(i),
+                                max_per_contact=3, observed_ts=1000 + i)
+        rows = db.load_passive_obs(self.radio, pubkey_pre="nodeA", limit=50)
+        self.assertEqual(len(rows), 3)
+
+    def test_age_retention_is_scoped_to_its_obs_type(self):
+        now = int(time.time())
+        # An old row of a DIFFERENT type must survive rx pruning.
+        db.save_passive_obs(self.radio, "nodeB", "trace", snr=1.0, observed_ts=now - 99999)
+        db.save_passive_obs_bulk(
+            self.radio,
+            [{"pubkey_pre": "hop1", "obs_type": "rx", "snr": 2.0, "ts": now - 99999},
+             {"pubkey_pre": "hop2", "obs_type": "rx", "snr": 3.0, "ts": now}],
+            max_age_s=3600,
+        )
+
+        rows = db.load_passive_obs(self.radio, limit=50)
+        kinds = sorted(r["obs_type"] for r in rows)
+        self.assertEqual(kinds, ["rx", "trace"])
+        rx_keys = [r["pubkey_pre"] for r in rows if r["obs_type"] == "rx"]
+        self.assertEqual(rx_keys, ["hop2"])
+
+    def test_row_cap_is_scoped_to_its_obs_type(self):
+        now = int(time.time())
+        db.save_passive_obs(self.radio, "nodeE", "trace", snr=9.0, observed_ts=now)
+        db.save_passive_obs_bulk(
+            self.radio,
+            [{"pubkey_pre": f"hop{i}", "obs_type": "rx", "snr": float(i), "ts": now + i}
+             for i in range(6)],
+            max_rows_for_type=2,
+        )
+        rows = db.load_passive_obs(self.radio, limit=50)
+        # The cap trims rx only — the trace row is untouched.
+        self.assertEqual(sorted(r["pubkey_pre"] for r in rows if r["obs_type"] == "rx"),
+                         ["hop4", "hop5"])
+        self.assertEqual(len([r for r in rows if r["obs_type"] == "trace"]), 1)
+
+    def test_obs_type_scoping_keeps_timeline_out_of_per_node_queries(self):
+        now = int(time.time())
+        db.save_passive_obs(self.radio, "nodeC", "trace", snr=1.0, observed_ts=now)
+        db.save_passive_obs_bulk(
+            self.radio,
+            [{"pubkey_pre": f"hop{i}", "obs_type": "rx", "snr": 2.0, "ts": now + 1 + i}
+             for i in range(5)],
+            max_age_s=86400,
+        )
+
+        # Default endpoint behaviour: newest rows, rx excluded — the trace row
+        # must still be visible even though rx traffic is newer and more numerous.
+        kept = db.load_passive_obs(self.radio, limit=3, exclude_obs_types=["rx"])
+        self.assertEqual([r["obs_type"] for r in kept], ["trace"])
+
+        # The flow view asks for rx explicitly.
+        timeline = db.load_passive_obs(self.radio, limit=10, obs_types=["rx"])
+        self.assertEqual(len(timeline), 5)
+        self.assertTrue(all(r["obs_type"] == "rx" for r in timeline))
+
+        # Unscoped still returns everything, for callers that want it.
+        self.assertEqual(len(db.load_passive_obs(self.radio, limit=10)), 6)
+
+    def test_chatty_key_does_not_evict_a_quiet_one_in_timeline_mode(self):
+        # The exact failure the per-contact cap would cause on a packet timeline.
+        now = int(time.time())
+        db.save_passive_obs_bulk(
+            self.radio,
+            [{"pubkey_pre": "quiet", "obs_type": "rx", "snr": 1.0, "ts": now}]
+            + [{"pubkey_pre": "chatty", "obs_type": "rx", "snr": float(i), "ts": now + 1 + i}
+               for i in range(10)],
+            max_age_s=86400,
+        )
+        rows = db.load_passive_obs(self.radio, limit=50)
+        self.assertIn("quiet", [r["pubkey_pre"] for r in rows])
+        self.assertEqual(len([r for r in rows if r["pubkey_pre"] == "chatty"]), 10)
 
 
 if __name__ == "__main__":

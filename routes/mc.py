@@ -19,7 +19,8 @@ from flask import Blueprint, jsonify, request
 from config import CONFIG, CONFIG_LOCK, save_config
 from cross import maybe_forward_mc_message
 from helpers import push_to_sse
-from mesh_mc import (send_chan_msg, send_dm, send_advert, refresh_contacts,
+from mesh_mc import (MC_PAYLOAD_TYPE_NAMES, MC_ROUTE_TYPE_NAMES,
+                     send_chan_msg, send_dm, send_advert, refresh_contacts,
                      get_device_info, set_radio_params, set_tx_power,
                      set_device_name, set_device_coords, set_advert_loc_policy,
                      reboot_device, reboot_device_dtr, get_channels, set_channel,
@@ -1409,8 +1410,27 @@ def api_mc_passive_obs(radio_id):
     """Return stored passive observations, optionally filtered by pubkey_pre."""
     pubkey_pre = request.args.get("pubkey_pre")
     limit = min(int(request.args.get("limit", 200)), 500)
+    # 'rx' is the packet timeline: high volume, keyed by path hop hash rather than
+    # by contact. It is EXCLUDED unless asked for by name, so the existing
+    # per-node consumers (Passive Intel list, signal heatmap) keep the exact
+    # result set they had before overheard capture was switched on.
+    def _csv(name, cap=50):
+        # Capped: each value becomes a bound parameter, and sqlite's variable
+        # limit would turn an over-long list into an opaque empty result rather
+        # than an error the caller can see.
+        return [t.strip() for t in request.args.get(name, "").split(",") if t.strip()][:cap]
+
+    obs_types = _csv("obs_types")
+    payload_types = _csv("payload_types")
+    route_types = _csv("route_types")
     try:
-        obs = load_passive_obs(radio_id, pubkey_pre=pubkey_pre, limit=limit)
+        obs = load_passive_obs(
+            radio_id, pubkey_pre=pubkey_pre, limit=limit,
+            obs_types=obs_types or None,
+            exclude_obs_types=None if obs_types else ["rx"],
+            payload_types=payload_types or None,
+            route_types=route_types or None,
+        )
         return jsonify(obs)
     except Exception as e:
         log.warning(f"[MC] passive_obs load error: {e}")
@@ -1426,6 +1446,22 @@ def api_mc_rc_collect_events(radio_id):
     except Exception as e:
         log.warning(f"[MC] rc_collect_events error: {e}")
         return jsonify([]), 500
+
+
+@bp.route("/api/mc/packet_types")
+def api_mc_packet_types():
+    """MeshCore packet-type vocabulary for the flow-view filter and legend.
+
+    Served from the installed meshcore library, not from a copy in the frontend:
+    the protocol docs and the library disagree on these strings (docs say
+    TXT_MSG / TRANSPORT_FLOOD, the library emits TEXT_MSG / TC_FLOOD) and it is
+    the library's that are stored on each row, so a hand-copied list filters
+    nothing.
+    """
+    return jsonify({
+        "payload_types": MC_PAYLOAD_TYPE_NAMES,
+        "route_types": MC_ROUTE_TYPE_NAMES,
+    })
 
 
 @bp.route("/api/mc/<radio_id>/passive_obs/collector_stats")

@@ -14,7 +14,9 @@ import hashlib
 import json
 import logging
 import os
+import re
 import tempfile
+from collections import deque
 try:
     import termios
 except ImportError:
@@ -31,7 +33,7 @@ from meshcore.tcp_cx import TCPConnection
 from config import CONFIG, CONFIG_LOCK, DATA_DIR, save_config
 from cross import maybe_forward_mc_message
 from bridge import publish_inbound_message
-from db import log_position, save_mc_message, update_mc_message_rx, save_passive_obs, mc_msgs_db_path, register_mc_msgs_db, init_mc_msgs_db, mc_passive_db_path, register_mc_passive_db
+from db import log_position, save_mc_message, update_mc_message_rx, save_passive_obs, save_passive_obs_bulk, mc_msgs_db_path, register_mc_msgs_db, init_mc_msgs_db, mc_passive_db_path, register_mc_passive_db
 from helpers import push_to_sse
 from state import mc_connections, mc_connections_lock
 
@@ -1048,21 +1050,301 @@ def _rx_sender_prefix(entry):
     return ""
 
 
-def _latlon_for_prefix(config_id, pubkey_pre):
-    """Return (lat, lon) from the contact archive for a pubkey prefix, or (None, None)."""
-    if not pubkey_pre:
-        return None, None
-    try:
-        archive = get_mc_contact_archive(config_id)
-        for pubkey, c in archive.items():
-            if str(pubkey).startswith(str(pubkey_pre)):
-                lat = c.get("adv_lat") or c.get("latitude")
-                lon = c.get("adv_lon") or c.get("longitude")
-                if lat is not None and lon is not None:
-                    return float(lat), float(lon)
-    except Exception:
-        pass
+# Packet-type vocabulary, taken FROM THE LIBRARY rather than from the protocol
+# docs. The two disagree — the docs say TXT_MSG and TRANSPORT_FLOOD, the library
+# emits TEXT_MSG and TC_FLOOD — and it is the library's strings that get stored
+# in passive_obs.payload_type / route_type. A filter built from the doc names
+# matches nothing. Sourcing them here means the UI can never drift from what is
+# actually in the rows.
+try:
+    from meshcore.meshcore_parser import (
+        PAYLOAD_TYPENAMES as _MC_PAYLOAD_TYPENAMES,
+        ROUTE_TYPENAMES as _MC_ROUTE_TYPENAMES,
+    )
+except ImportError:  # pragma: no cover - depends on the installed meshcore build
+    log.warning("[MC] meshcore typename tables unavailable; using a local copy that may drift")
+    _MC_PAYLOAD_TYPENAMES = ["REQ", "RESPONSE", "TEXT_MSG", "ACK", "ADVERT", "GRP_TXT",
+                             "GRP_DATA", "ANON_REQ", "PATH", "TRACE", "MULTIPART", "CONTROL"]
+    _MC_ROUTE_TYPENAMES = ["TC_FLOOD", "FLOOD", "DIRECT", "TC_DIRECT"]
+
+# "UNK" is what the parser stores for a type outside its table (e.g. 0x0F), so it
+# is a real value in the data and must be selectable.
+MC_PAYLOAD_TYPE_NAMES = list(_MC_PAYLOAD_TYPENAMES) + ["UNK"]
+MC_ROUTE_TYPE_NAMES = list(_MC_ROUTE_TYPENAMES) + ["UNK"]
+
+RX_OBS_SENTINEL = "rx:unknown"   # overheard packet that arrived with an empty path
+RX_OBS_MAX_AGE_S = 24 * 3600     # keep one day of overheard traffic for the flow view
+RX_OBS_MAX_ROWS = 20000          # hard ceiling so a busy mesh cannot grow the DB unbounded
+RX_OBS_FLUSH_INTERVAL_S = 5      # worst-case age of a buffered observation
+RX_OBS_FLUSH_THRESHOLD = 100     # wake the flusher early once this many are queued
+RX_OBS_BUFFER_MAX = 5000         # drop oldest beyond this rather than grow without bound
+RX_OBS_MAX_FLUSH_ATTEMPTS = 3    # retries for a batch before its rows are discarded
+RX_OBS_EXIT_FLUSH_TIMEOUT_S = 3  # never let the exit flush block a restart on a DB lock
+
+# Overheard observations are buffered and written by a background thread.
+#
+# WHY: event handlers are invoked INLINE on the asyncio loop (meshcore
+# events.py calls sync subscribers directly inside _process_events), so any
+# blocking work in on_rx_log_data stalls the event queue — and a stalled loop
+# can overflow the OS serial buffer and drop incoming packets, the same hazard
+# _touch_contact_seen documents. A per-message sync write is tolerable; one per
+# overheard PACKET is not, because sqlite's busy_timeout can park a writer for
+# up to 30 s behind a Flask-initiated write to the same file.
+#
+# TRADE-OFF: up to RX_OBS_FLUSH_INTERVAL_S of buffered observations are lost if
+# the process dies uncleanly. Accepted deliberately — this is passive telemetry
+# with 24 h retention, not message data. A clean exit flushes via atexit.
+_rx_obs_buffer = {}          # config_id -> deque of pending rows, capped PER RADIO
+_rx_obs_buffer_lock = threading.Lock()
+_rx_obs_wake = threading.Event()
+_rx_obs_flusher = None
+_rx_obs_dropped = 0
+
+
+def _build_prefix_latlon_index(config_id, key_lengths):
+    """Prefix -> [coords] for one radio, built ONCE per flush batch.
+
+    get_mc_contact_archive() deep-copies every contact under a lock, so calling
+    it per packet costs O(contacts) on the hot path — measured at 1.4 ms/packet
+    with a 200-contact archive, i.e. worse than the DB write this buffering was
+    introduced to move off the loop thread. Resolution therefore happens here,
+    on the flusher thread, once per batch instead of once per row.
+    """
+    index = {}
+    lengths = {int(n) for n in key_lengths if n}
+    if not lengths:
+        return index
+    for pubkey, contact in (get_mc_contact_archive(config_id) or {}).items():
+        lat = contact.get("adv_lat") or contact.get("latitude")
+        lon = contact.get("adv_lon") or contact.get("longitude")
+        if lat is None or lon is None:
+            continue
+        try:
+            point = (float(lat), float(lon))
+        except (TypeError, ValueError):
+            continue
+        pk = str(pubkey).lower()
+        for length in lengths:
+            index.setdefault(pk[:length], []).append(point)
+    return index
+
+
+def _latlon_from_index(index, key):
+    """Unique-match lookup — an ambiguous prefix resolves to nothing, never a guess."""
+    hits = index.get(str(key or "").lower())
+    if hits and len(hits) == 1:
+        return hits[0]
     return None, None
+
+
+def _rx_obs_pending_locked():
+    """Total buffered rows across radios. Caller holds _rx_obs_buffer_lock."""
+    return sum(len(q) for q in _rx_obs_buffer.values())
+
+
+def _queue_rx_obs(config_id, row):
+    """Append one observation to the write buffer. Must stay O(1) and lock-brief.
+
+    The cap is PER RADIO: on a shared budget a chatty repeater would evict a
+    quiet radio's queued observations before they were ever written, silently
+    emptying that radio's timeline. deque(maxlen=) makes the eviction O(1) and
+    drops the oldest, which is the right end for a timeline.
+    """
+    global _rx_obs_dropped
+    with _rx_obs_buffer_lock:
+        queue = _rx_obs_buffer.get(config_id)
+        if queue is None:
+            queue = _rx_obs_buffer[config_id] = deque(maxlen=RX_OBS_BUFFER_MAX)
+        was_full = len(queue) == queue.maxlen
+        queue.append(row)
+        if was_full:
+            _rx_obs_dropped += 1
+        should_wake = _rx_obs_pending_locked() >= RX_OBS_FLUSH_THRESHOLD
+    if should_wake:
+        _rx_obs_wake.set()
+
+
+def _requeue_rx_obs(config_id, rows):
+    """Put a failed batch back at the FRONT of the buffer, bounded by attempts.
+
+    Without this a single transient sqlite error discards the batch, since the
+    swap in flush_rx_obs has already removed it. Bounded so a persistently
+    broken DB cannot recycle the same rows forever.
+    """
+    global _rx_obs_dropped
+    keep = []
+    for row in rows:
+        attempts = int(row.get("_attempts") or 0) + 1
+        if attempts <= RX_OBS_MAX_FLUSH_ATTEMPTS:
+            row["_attempts"] = attempts
+            keep.append(row)
+    if not keep:
+        return 0
+    with _rx_obs_buffer_lock:
+        queue = _rx_obs_buffer.get(config_id)
+        if queue is None:
+            queue = _rx_obs_buffer[config_id] = deque(maxlen=RX_OBS_BUFFER_MAX)
+        # Put the retried rows back at the FRONT (they are the oldest), but only
+        # while there is room. If the queue has filled with fresh traffic, the
+        # rows already failing are the ones to give up on — never the new ones.
+        room = queue.maxlen - len(queue)
+        placed = keep[-room:] if room > 0 else []
+        queue.extendleft(reversed(placed))
+        _rx_obs_dropped += len(keep) - len(placed)
+    return len(placed)
+
+
+def flush_rx_obs():
+    """Write every buffered observation. Called by the flusher thread and atexit."""
+    global _rx_obs_dropped
+    with _rx_obs_buffer_lock:
+        by_radio = {cid: list(queue) for cid, queue in _rx_obs_buffer.items() if queue}
+        if not by_radio:
+            return 0
+        _rx_obs_buffer.clear()
+        dropped, _rx_obs_dropped = _rx_obs_dropped, 0
+
+    if dropped:
+        log.warning(f"[MC] rx obs buffer overflow — dropped {dropped} observation(s)")
+
+    written = 0
+    for config_id, rows in by_radio.items():
+        try:
+            # Coordinates are resolved here, not on the loop thread.
+            index = _build_prefix_latlon_index(
+                config_id, {len(str(r.get("pubkey_pre") or "")) for r in rows}
+            )
+            for r in rows:
+                r["lat"], r["lon"] = _latlon_from_index(index, r.get("pubkey_pre"))
+            written += save_passive_obs_bulk(
+                config_id, rows,
+                max_age_s=RX_OBS_MAX_AGE_S,
+                max_rows_for_type=RX_OBS_MAX_ROWS,
+            )
+        except Exception as e:
+            # Never let one radio's DB failure discard another's batch, and give
+            # a transient error (a lock held by a Flask-initiated write) a few
+            # chances before the rows are thrown away.
+            retried = _requeue_rx_obs(config_id, rows)
+            log.warning(
+                f"[MC:{config_id}] rx obs flush failed for {len(rows)} row(s): {e} "
+                f"— {retried} requeued, {len(rows) - retried} dropped"
+            )
+    return written
+
+
+def _rx_obs_flush_loop():
+    while True:
+        _rx_obs_wake.wait(timeout=RX_OBS_FLUSH_INTERVAL_S)
+        _rx_obs_wake.clear()
+        try:
+            flush_rx_obs()
+        except Exception as e:
+            log.warning(f"[MC] rx obs flusher error: {e}")
+
+
+def _atexit_flush_rx_obs():
+    """Flush on the way out, but never hold the process hostage.
+
+    sqlite is opened with busy_timeout=30000, so an exit flush that collides
+    with another writer could stall a restart for 30 s and look like a hang.
+    Bound it: try in a daemon thread, give up after RX_OBS_EXIT_FLUSH_TIMEOUT_S
+    and let the (already expendable) buffered rows go.
+    """
+    worker = threading.Thread(target=flush_rx_obs, name="mc-rx-obs-exit", daemon=True)
+    worker.start()
+    worker.join(timeout=RX_OBS_EXIT_FLUSH_TIMEOUT_S)
+    if worker.is_alive():
+        log.warning("[MC] rx obs exit flush timed out; dropping buffered observations")
+
+
+def _ensure_rx_obs_flusher():
+    global _rx_obs_flusher
+    if _rx_obs_flusher is not None and _rx_obs_flusher.is_alive():
+        return
+    with _rx_obs_buffer_lock:
+        if _rx_obs_flusher is not None and _rx_obs_flusher.is_alive():
+            return
+        _rx_obs_flusher = threading.Thread(
+            target=_rx_obs_flush_loop, name="mc-rx-obs-flush", daemon=True
+        )
+        _rx_obs_flusher.start()
+    atexit.register(_atexit_flush_rx_obs)
+
+
+def _rx_obs_hops(entry):
+    """Split an RX-log path field into per-hop hashes (hex string or list form)."""
+    path = entry.get("path")
+    if isinstance(path, list):
+        hops = []
+        for hop in path:
+            hop_hash = hop.get("hash") if isinstance(hop, dict) else hop
+            if hop_hash:
+                hops.append(str(hop_hash).lower())
+        return hops
+    path_hex = re.sub(r"[^0-9a-fA-F]", "", str(path or "")).lower()
+    if not path_hex:
+        return []
+    try:
+        size = int(entry.get("path_hash_size") or 0)
+    except (TypeError, ValueError):
+        size = 0
+    # The hop count is the more trustworthy of the two: the wire format stores
+    # exactly path_len * hash_size bytes, so if a declared size disagrees with
+    # what the buffer actually holds it is the declared size that is wrong.
+    # Slicing on a wrong size mis-splits the path and files the observation
+    # under a node that never touched the packet.
+    try:
+        hop_len = int(entry.get("path_len"))
+    except (TypeError, ValueError):
+        hop_len = 0
+    if hop_len > 0 and len(path_hex) % (hop_len * 2) == 0:
+        derived = len(path_hex) // (hop_len * 2)
+        if 1 <= derived <= 3:
+            size = derived
+    size = max(1, min(3, size or 1))
+    chars = size * 2
+    return [path_hex[i:i + chars] for i in range(0, len(path_hex) - chars + 1, chars)]
+
+
+def _rx_obs_timestamp(entry, now=None):
+    """Observation time, falling back to now when the device's value is unusable.
+
+    The row's ts drives 24 h retention, so a stale or bogus recv_time makes the
+    observation vanish on insert with no trace. Anything outside a sane window
+    around now is treated as unusable rather than trusted.
+    """
+    now = int(now if now is not None else time.time())
+    try:
+        ts = int(entry.get("recv_time"))
+    except (TypeError, ValueError):
+        return now
+    if ts <= 0 or abs(now - ts) > RX_OBS_MAX_AGE_S:
+        return now
+    return ts
+
+
+def _rx_obs_identity(entry):
+    """Identity to file an overheard RX-log observation under.
+
+    RX_LOG_DATA carries no sender pubkey and structurally cannot: an overheard
+    packet's sender sits inside the ENCRYPTED payload, while only the header and
+    the path hashes travel in the clear. Requiring a sender prefix here is what
+    silently discarded every overheard packet until 2026-09-06.
+
+    Under flood routing each repeater appends its own hash before retransmitting,
+    so the LAST hop is the node we actually heard the packet from — which is what
+    our rssi/snr measured. File the observation under that. The full path is
+    stored alongside regardless, so if that assumption is ever disproved only the
+    filing key is wrong, not the data.
+    """
+    sender = _rx_sender_prefix(entry)
+    if sender:
+        return sender
+    hops = _rx_obs_hops(entry)
+    if hops:
+        return hops[-1]
+    return RX_OBS_SENTINEL
 
 
 def _payload_matches_subtype(payload_typename, subtype):
@@ -2405,18 +2687,24 @@ def _subscribe_mc_events(mc, config_id, name):
             })
             if _mc_passive_collection_enabled(config_id):
                 # Passive intel: store per-hop observations (quality filter: must have a hash)
-                for hop in path:
-                    hop_hash = hop.get("hash")
-                    hop_snr  = hop.get("snr")
-                    if hop_hash and hop_snr is not None:
-                        lat, lon = _latlon_for_prefix(config_id, str(hop_hash))
-                        save_passive_obs(
-                            config_id, str(hop_hash), "trace",
-                            snr=hop_snr,
-                            path_len=p.get("path_len"),
-                            path_hash_size=path_hash_size,
-                            lat=lat, lon=lon,
-                        )
+                hops = [(str(h.get("hash")), h.get("snr")) for h in path
+                        if h.get("hash") and h.get("snr") is not None]
+                # One archive snapshot for the whole trace, not one per hop:
+                # get_mc_contact_archive() deep-copies every contact per call, so
+                # the old per-hop lookup multiplied that by up to 63 hops, inline
+                # on the asyncio loop. Same fix as the rx path.
+                hop_index = _build_prefix_latlon_index(
+                    config_id, {len(h) for h, _ in hops}
+                )
+                for hop_hash, hop_snr in hops:
+                    lat, lon = _latlon_from_index(hop_index, hop_hash)
+                    save_passive_obs(
+                        config_id, hop_hash, "trace",
+                        snr=hop_snr,
+                        path_len=p.get("path_len"),
+                        path_hash_size=path_hash_size,
+                        lat=lat, lon=lon,
+                    )
         except Exception as e:
             log.warning(f"[MC:{name}] on_trace_data error: {e}")
 
@@ -2424,22 +2712,33 @@ def _subscribe_mc_events(mc, config_id, name):
         try:
             p = event.payload or {}
             _remember_rx_log(config_id, p)
-            pubkey_pre = _rx_sender_prefix(p)
+            pubkey_pre = _rx_obs_identity(p)
             rssi = p.get("rssi")
             snr  = p.get("snr")
-            # Quality filter: only store if we have a sender ID and signal data
-            if _mc_passive_collection_enabled(config_id) and pubkey_pre and (rssi is not None or snr is not None):
-                lat, lon = _latlon_for_prefix(config_id, pubkey_pre)
-                save_passive_obs(
-                    config_id, pubkey_pre, "rx",
-                    rssi=rssi, snr=snr,
-                    path_len=p.get("path_len"),
-                    path=p.get("path"),
-                    path_hash_size=p.get("path_hash_size"),
-                    payload_type=p.get("payload_typename"),
-                    route_type=p.get("route_typename"),
-                    lat=lat, lon=lon,
-                )
+            # Quality filter: keep anything that carries signal OR path data.
+            # Deliberately NOT gated on a sender pubkey — the RX log never carries
+            # one (sender identity is inside the encrypted payload), and packets
+            # whose sender cannot be named are exactly the overheard traffic a
+            # coverage/flow view exists to show.
+            has_signal = rssi is not None or snr is not None
+            has_path = p.get("path_len") is not None
+            if _mc_passive_collection_enabled(config_id) and (has_signal or has_path):
+                # Buffer only — this runs inline on the asyncio loop. Both the DB
+                # write AND the contact-archive lookup happen on the flusher
+                # thread; neither belongs on the hot path. See _queue_rx_obs.
+                _queue_rx_obs(config_id, {
+                    "pubkey_pre": pubkey_pre,
+                    "obs_type": "rx",
+                    "ts": _rx_obs_timestamp(p),
+                    "rssi": rssi,
+                    "snr": snr,
+                    "path_len": p.get("path_len"),
+                    "path": p.get("path"),
+                    "path_hash_size": p.get("path_hash_size"),
+                    "payload_type": p.get("payload_typename"),
+                    "route_type": p.get("route_typename"),
+                })
+                _ensure_rx_obs_flusher()
             _enrich_recent_message_from_rx(config_id, p, name)
         except Exception as e:
             log.warning(f"[MC:{name}] on_rx_log_data error: {e}")

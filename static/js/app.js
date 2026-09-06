@@ -16774,9 +16774,20 @@ if (targetEl) {
     // same way _mcTracePathData omits an unknown radio position rather than
     // aborting.
     if (radioLat != null && radioLon != null) points.push([radioLat, radioLon]);
-    if (points.length < 2) return null;
+    // A packet heard with no relay hops arrived DIRECTLY. There is no route to
+    // draw — the sender is inside the encrypted payload — but "heard here,
+    // direct" is real information, so it is rendered as a pulse at our own
+    // radio rather than silently dropped. This is what Filip hit sending from a
+    // nearby node: 0 hops, empty path, nothing on the map.
+    if (points.length < 2) {
+      if (radioLat == null || radioLon == null) return null;
+      return {
+        points: [[radioLat, radioLon]], hopMeta, row, direct: true,
+        resolvedHops: hopMeta.length, totalHops: hops.length, anchored: true,
+      };
+    }
     return {
-      points, hopMeta, row,
+      points, hopMeta, row, direct: false,
       resolvedHops: hopMeta.length, totalHops: hops.length,
       anchored: radioLat != null,
     };
@@ -16789,6 +16800,8 @@ if (targetEl) {
   const MC_RX_HOP_MS = 420;        // travel time per hop
   const MC_RX_FADE_MS = 900;       // tail fade once the packet arrives
   const MC_RX_TAIL_LEN = 0.35;     // tail length as a fraction of the whole path
+  const MC_RX_DIRECT_MS = 1400;    // expanding ring for a packet heard with no hops
+  const MC_RX_DIRECT_RADIUS = 26;  // how far that ring grows, in pixels
   const MC_RX_MAX_ANIM = 40;       // concurrent packets in flight
   const MC_RX_SEED_COUNT = 12;     // how many recent packets to replay on enable
   const MC_RX_SEED_STAGGER_MS = 260;
@@ -16838,9 +16851,10 @@ if (targetEl) {
 
   function _mcRxLaunch(res) {
     if (!leafletMap || _mcRxAnims.length >= MC_RX_MAX_ANIM) return;
+    const color = _mcRxColor(res.row.payload_type);
+    if (res.direct) return _mcRxLaunchDirect(res, color);
     const geom = _mcRxGeometry(res.points);
     if (!geom.segs.length) return;
-    const color = _mcRxColor(res.row.payload_type);
     const tail = L.polyline([], {
       color, weight: 3, opacity: 0.9, lineCap: 'round', lineJoin: 'round', interactive: false,
     }).addTo(leafletMap);
@@ -16866,11 +16880,37 @@ if (targetEl) {
     _mcRxStartLoop();
   }
 
+  // Direct arrival: an expanding, fading ring on our own radio.
+  function _mcRxLaunchDirect(res, color) {
+    const ring = L.circleMarker(res.points[0], {
+      radius: 3, color, weight: 2.5, opacity: 1, fill: false, interactive: true,
+    }).addTo(leafletMap);
+    const when = res.row.ts ? new Date(res.row.ts * 1000).toLocaleTimeString() : '';
+    ring.bindTooltip(
+      `<b>${escHtml(res.row.payload_type || 'UNK')}</b> · ${escHtml(res.row.route_type || '')}<br>`
+      + `heard <b>direct</b> — no relay hops<br>`
+      + `${res.row.rssi != null ? res.row.rssi + ' dBm' : ''} ${res.row.snr != null ? '/ ' + res.row.snr + ' SNR' : ''}<br>`
+      + `${escHtml(when)}`, {sticky: true});
+    _mcRxAnims.push({
+      direct: true, ring, color,
+      duration: MC_RX_DIRECT_MS, startedAt: null, done: false,
+    });
+    _mcRxUpdateCount();
+    _mcRxStartLoop();
+  }
+
   function _mcRxStep(ts) {
     _mcRxRaf = null;
     for (const a of _mcRxAnims) {
       if (a.startedAt === null) a.startedAt = ts;
       const elapsed = ts - a.startedAt;
+      if (a.direct) {
+        const t = elapsed / a.duration;
+        if (t >= 1) { a.done = true; continue; }
+        a.ring.setRadius(3 + t * MC_RX_DIRECT_RADIUS);
+        a.ring.setStyle({opacity: 1 - t});
+        continue;
+      }
       if (elapsed <= a.duration) {
         const head = elapsed / a.duration;
         const from = Math.max(0, head - MC_RX_TAIL_LEN);
@@ -16888,9 +16928,7 @@ if (targetEl) {
       }
     }
     const finished = _mcRxAnims.filter(a => a.done);
-    finished.forEach(a => {
-      if (leafletMap) { leafletMap.removeLayer(a.tail); leafletMap.removeLayer(a.dot); }
-    });
+    finished.forEach(a => _mcRxRemoveAnim(a));
     if (finished.length) {
       _mcRxAnims = _mcRxAnims.filter(a => !a.done);
       _mcRxUpdateCount();
@@ -16907,11 +16945,14 @@ if (targetEl) {
     if (_mcRxRaf === null && _mcRxAnims.length) _mcRxRaf = requestAnimationFrame(_mcRxStep);
   }
 
+  function _mcRxRemoveAnim(a) {
+    if (!leafletMap) return;
+    [a.tail, a.dot, a.ring].forEach(l => l && leafletMap.removeLayer(l));
+  }
+
   function _clearMcRxLines() {
     if (_mcRxRaf !== null) { cancelAnimationFrame(_mcRxRaf); _mcRxRaf = null; }
-    _mcRxAnims.forEach(a => {
-      if (leafletMap) { leafletMap.removeLayer(a.tail); leafletMap.removeLayer(a.dot); }
-    });
+    _mcRxAnims.forEach(a => _mcRxRemoveAnim(a));
     _mcRxAnims = [];
   }
 

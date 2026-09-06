@@ -10,6 +10,10 @@ OverMesh uses date-based release versions:
 
 The version in `VERSION` must be updated every time an OverMesh update is pushed to GitHub. The Settings updater also shows the Git commit hash for exact build identification.
 
+## 2026.09.06.5
+
+- Packets heard with **no relay hops** now show as an expanding, fading ring on our own radio instead of nothing at all. A directly-heard packet has no route to draw (the sender is inside the encrypted payload), so the previous release silently dropped it — which is what happened when a message was sent from a nearby node and nothing appeared on the map.
+
 ## 2026.09.06.4
 
 - Corrected the overheard-packet view: it is now an **animated live view**, not static lines. Each packet is a colour-coded **dot with a fading tail that travels hop to hop** along the route it actually took, then fades out. The previous release drew every path as a persistent polyline, which read as a spiderweb rather than as traffic moving across the map.

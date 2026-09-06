@@ -29,7 +29,7 @@ from mesh_mc import (MC_PAYLOAD_TYPE_NAMES, MC_ROUTE_TYPE_NAMES,
                      get_mc_contact_archive,
                      set_contact_path, reset_all_paths, remote_repeater_read,
                      remote_repeater_command, clear_mc_all_contacts,
-                     get_rc_collect_events, get_local_neighbors)
+                     get_rc_collect_events, get_local_neighbors, get_mc_scope_state)
 from db import (
     delete_mc_channel_messages,
     delete_mc_all_messages,
@@ -229,6 +229,11 @@ def api_mc_status():
             "path_hash_mode": cfg.get("path_hash_mode", info.get("path_hash_mode")),
             "force_flood": bool(cfg.get("force_flood", False)),
             "passive_collection": cfg.get("passive_collection", True) is not False,
+            "regions": cfg.get("regions", []),
+            "default_scope": cfg.get("default_scope") or "",
+            "channel_scopes": cfg.get("channel_scopes") or {},
+            "flood_scope_supported": get_mc_scope_state(cid)[0],
+            "flood_scope_active": get_mc_scope_state(cid)[1],
         })
     return jsonify({"mc_nodes": result})
 

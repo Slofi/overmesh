@@ -1422,5 +1422,161 @@ class PassiveObsRetentionTests(unittest.TestCase):
         self.assertEqual(len([r for r in rows if r["pubkey_pre"] == "chatty"]), 10)
 
 
+class McFloodScopeTests(unittest.TestCase):
+    """Region/flood-scope logic — mesh_mc flood-scope helpers (cmd 54 model).
+
+    The companion has ONE device-global scope slot; per-channel scopes are
+    OM-owned config applied by asserting the slot before each send (set-and-
+    leave, serialized per radio)."""
+
+    def setUp(self):
+        mesh_mc._mc_scope_cache.clear()
+        mesh_mc._mc_scope_unsupported.clear()
+        mesh_mc._mc_scope_locks.clear()
+        self._orig_mc_nodes = list(CONFIG.get("mc_nodes", []))
+        CONFIG["mc_nodes"] = []
+
+    def tearDown(self):
+        CONFIG["mc_nodes"] = list(self._orig_mc_nodes)
+        mesh_mc._mc_scope_cache.clear()
+        mesh_mc._mc_scope_unsupported.clear()
+
+    # ---- normalization + key derivation ----
+
+    def test_normalize_strips_hash_and_lowercases(self):
+        self.assertEqual(mesh_mc._mc_normalize_region_name("#SI "), "si")
+        self.assertEqual(mesh_mc._mc_normalize_region_name("si-LJU"), "si-lju")
+        self.assertEqual(mesh_mc._mc_normalize_region_name("si"), "si")
+
+    def test_normalize_empty_is_none(self):
+        self.assertIsNone(mesh_mc._mc_normalize_region_name(""))
+        self.assertIsNone(mesh_mc._mc_normalize_region_name("  "))
+        self.assertIsNone(mesh_mc._mc_normalize_region_name("#"))
+        self.assertIsNone(mesh_mc._mc_normalize_region_name(None))
+
+    def test_normalize_rejects_invalid_chars(self):
+        for bad in ("S I", "si_lju", "si!", "si/lju", "si.lju"):
+            with self.assertRaises(ValueError):
+                mesh_mc._mc_normalize_region_name(bad)
+
+    def test_scope_key_is_sha256_hash_of_hashtag_name_first16(self):
+        import hashlib
+
+        for name in ("si", "europe", "si-lju"):
+            expected = hashlib.sha256(("#" + name).encode("utf-8")).digest()[:16].hex()
+            self.assertEqual(mesh_mc._mc_scope_key_for(name), expected)
+
+    # ---- resolution: channel scope -> default -> None ----
+
+    def test_resolve_channel_scope_overrides_default(self):
+        CONFIG["mc_nodes"] = [{"id": "mc1", "default_scope": "si",
+                               "channel_scopes": {"2": "europe"}}]
+        self.assertEqual(mesh_mc.resolve_mc_send_scope("mc1", chan_idx=2), "europe")
+        self.assertEqual(mesh_mc.resolve_mc_send_scope("mc1", chan_idx=0), "si")
+
+    def test_resolve_default_scope_when_no_channel(self):
+        CONFIG["mc_nodes"] = [{"id": "mc1", "default_scope": "si",
+                               "channel_scopes": {"2": "europe"}}]
+        self.assertEqual(mesh_mc.resolve_mc_send_scope("mc1", chan_idx=None), "si")
+
+    def test_resolve_none_when_nothing_configured(self):
+        CONFIG["mc_nodes"] = [{"id": "mc1"}]
+        self.assertIsNone(mesh_mc.resolve_mc_send_scope("mc1", chan_idx=0))
+        self.assertIsNone(mesh_mc.resolve_mc_send_scope("mc1", chan_idx=None))
+
+    def test_resolve_unknown_radio_is_none(self):
+        self.assertIsNone(mesh_mc.resolve_mc_send_scope("nope"))
+
+    # ---- assert / undo semantics (async, mocked device) ----
+
+    def _fake_mc(self, errors=None):
+        """Fake MC whose commands.set_flood_scope records calls.
+        errors: optional list of scope strings that should return ERROR events."""
+        calls = []
+
+        class FakeCommands:
+            async def set_flood_scope(self, scope):
+                calls.append(scope)
+                if errors and scope in errors:
+                    return SimpleNamespace(type=mesh_mc.EventType.ERROR, payload={"code_string": "ERR_CODE_UNSUPPORTED_CMD"})
+                return SimpleNamespace(type=mesh_mc.EventType.OK, payload={})
+
+        return SimpleNamespace(commands=FakeCommands()), calls
+
+    def test_assert_sets_scope_when_configured(self):
+        CONFIG["mc_nodes"] = [{"id": "mc1", "default_scope": "si"}]
+        fake_mc, calls = self._fake_mc()
+
+        with mock.patch.object(mesh_mc, "_get_mc", return_value=(fake_mc, {})):
+            result = asyncio.run(mesh_mc._assert_mc_scope_async("mc1", "si"))
+
+        self.assertEqual(calls, ["si"])
+        self.assertEqual(mesh_mc._mc_scope_cache.get("mc1"), "si")
+        self.assertNotIn("mc1", mesh_mc._mc_scope_unsupported)
+
+    def test_assert_clears_scope_when_none(self):
+        # A clear (undo) is sent when we previously asserted a region.
+        CONFIG["mc_nodes"] = [{"id": "mc1"}]
+        fake_mc, calls = self._fake_mc()
+
+        with mock.patch.object(mesh_mc, "_get_mc", return_value=(fake_mc, {})):
+            mesh_mc._mc_scope_cache["mc1"] = "si"  # previously asserted
+            asyncio.run(mesh_mc._assert_mc_scope_async("mc1", None))
+
+        self.assertEqual(calls, [None])
+        self.assertEqual(mesh_mc._mc_scope_cache.get("mc1"), None)
+
+    def test_assert_marks_unsupported_radio_once(self):
+        CONFIG["mc_nodes"] = [{"id": "mc1", "default_scope": "si"}]
+        fake_mc, _ = self._fake_mc(errors=["si"])
+
+        with mock.patch.object(mesh_mc, "_get_mc", return_value=(fake_mc, {})):
+            asyncio.run(mesh_mc._assert_mc_scope_async("mc1", "si"))
+
+        self.assertIn("mc1", mesh_mc._mc_scope_unsupported)
+        # cache not updated (nothing successfully asserted)
+        self.assertNotIn("mc1", mesh_mc._mc_scope_cache)
+
+    def test_locked_assert_is_noop_when_nothing_configured_and_never_asserted(self):
+        # Inert until configured: no cmd is sent when no scope is configured and
+        # we never asserted anything (preserves a scope the phone app may have set).
+        CONFIG["mc_nodes"] = [{"id": "mc1"}]
+        fake_mc, calls = self._fake_mc()
+
+        with mock.patch.object(mesh_mc, "_get_mc", return_value=(fake_mc, {})):
+            result = mesh_mc._assert_mc_scope_locked("mc1", chan_idx=None)
+
+        self.assertIsNone(result)
+        self.assertEqual(calls, [])
+
+    def test_locked_assert_clears_after_previous_channel_scope(self):
+        # After a channel-scoped send left the device at 'europe', an unscoped
+        # send must undo it (clear) — otherwise the scope leaks into the send.
+        CONFIG["mc_nodes"] = [{"id": "mc1", "channel_scopes": {"2": "europe"}}]
+        fake_mc, calls = self._fake_mc()
+
+        with mock.patch.object(mesh_mc, "_get_mc", return_value=(fake_mc, {})):
+            with mock.patch.object(mesh_mc, "run_mc", side_effect=lambda coro, timeout=10: asyncio.run(coro)):
+                mesh_mc._mc_scope_cache["mc1"] = "europe"  # earlier send asserted this
+                result = mesh_mc._assert_mc_scope_locked("mc1", chan_idx=0)  # unscoped channel
+
+        self.assertIsNone(result)
+        self.assertEqual(calls, [None])  # clear sent to undo our own assertion
+
+    def test_scope_state_accessor_folds_unknown_to_none(self):
+        self.assertEqual(mesh_mc.get_mc_scope_state("mc1"), (True, None))
+        mesh_mc._mc_scope_cache["mc1"] = "si"
+        self.assertEqual(mesh_mc.get_mc_scope_state("mc1"), (True, "si"))
+        mesh_mc._mc_scope_unsupported.add("mc1")
+        self.assertEqual(mesh_mc.get_mc_scope_state("mc1"), (False, "si"))
+
+    def test_reset_scope_cache_forgets_state(self):
+        mesh_mc._mc_scope_cache["mc1"] = "si"
+        mesh_mc._mc_scope_unsupported.add("mc1")
+        mesh_mc.reset_mc_scope_cache("mc1")
+        self.assertNotIn("mc1", mesh_mc._mc_scope_cache)
+        self.assertNotIn("mc1", mesh_mc._mc_scope_unsupported)
+
+
 if __name__ == "__main__":
     unittest.main()

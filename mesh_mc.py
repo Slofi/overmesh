@@ -51,6 +51,184 @@ _rc_collect_summaries: dict = {}
 _remote_admin_locks: dict = {}
 _remote_login_clock_floor: dict = {}
 
+# --- MC flood scope (regions) ---
+# A companion node has ONE device-global flood scope slot (CMD_SET_FLOOD_SCOPE=54).
+# It carries no region list and no per-channel scope — per-channel scopes are
+# OM-owned state (config.json mc_nodes[].channel_scopes), applied by setting the
+# single slot immediately before each send. Serialized per radio so two concurrent
+# sends with different scopes can't interleave and ship under the wrong scope.
+# We track the last-asserted scope per radio and only re-send cmd 54 when it
+# changes (MeshMonitor's shipped model).
+_mc_scope_locks: dict = {}
+_mc_scope_cache: dict = {}  # config_id -> asserted scope (str region name) or None (unscoped)
+_mc_scope_unsupported: set = set()  # radios that errored on cmd 54 (old fw) — warned once
+_MC_SCOPE_UNKNOWN = object()  # sentinel: not yet asserted this connection
+
+
+def _mc_scope_lock(config_id):
+    lock = _mc_scope_locks.get(config_id)
+    if lock is None:
+        lock = _mc_scope_locks[config_id] = threading.Lock()
+    return lock
+
+
+def _mc_configured_scope(config_id):
+    """The node's configured DEFAULT flood scope region (config.json), or None."""
+    with CONFIG_LOCK:
+        for n in CONFIG.get("mc_nodes", []):
+            if n.get("id") == config_id:
+                return (n.get("default_scope") or "").strip() or None
+    return None
+
+
+def _mc_channel_scope(config_id, chan_idx):
+    """OM's configured scope for a channel slot (config.json), or None."""
+    with CONFIG_LOCK:
+        for n in CONFIG.get("mc_nodes", []):
+            if n.get("id") == config_id:
+                v = (n.get("channel_scopes") or {}).get(str(chan_idx))
+                return (v or "").strip() or None
+    return None
+
+
+def _mc_normalize_region_name(name):
+    """Normalize a region name: strip a leading '#', lowercase, alnum+hyphen only.
+    Returns None if empty. Raises ValueError on invalid characters."""
+    raw = (name or "").strip().lstrip("#").strip().lower()
+    if not raw:
+        return None
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", raw):
+        raise ValueError(
+            "Region names must be lowercase letters, numbers and hyphens only "
+            "(no spaces or other characters)"
+        )
+    return raw
+
+
+async def _set_mc_flood_scope_on_mc(mc, region):
+    """Send CMD_SET_FLOOD_SCOPE (54). region None -> clear (unscoped).
+
+    The meshcore lib's set_flood_scope returns an Event (OK or ERROR) — it does
+    NOT raise on a device rejection, so classification happens here from the
+    returned event, never from a raised exception."""
+    try:
+        return await mc.commands.set_flood_scope(region)
+    except AttributeError:
+        raise RuntimeError("Installed meshcore lib has no set_flood_scope support")
+
+
+def _mc_scope_error_is_unsupported(event):
+    """Old companion firmware replies ERROR (ERR_CODE_UNSUPPORTED_CMD) to cmd 54."""
+    payload = getattr(event, "payload", None) or {}
+    text = f"{payload}".lower()
+    return (
+        "unsupported" in text
+        or "err_code_unsupported" in text
+        or "not supported" in text
+        or "unknown" in text
+    )
+
+
+async def _assert_mc_scope_async(config_id, region, mc=None):
+    """Assert the device's single scope slot = region (str) or unscoped (None).
+    Runs under the per-radio scope lock. No-op when the radio already holds it.
+
+    mc may be passed in (connect-time reapply runs before the connection object
+    is published to mc_connections, so _get_mc would fail there); otherwise the
+    live connection is looked up.
+
+    If the radio rejects cmd 54 (firmware < the scope feature), it is marked
+    unsupported once, warned, and scoping is silently skipped for it thereafter —
+    OM keeps working unscoped, never crash-looping the send path."""
+    if config_id in _mc_scope_unsupported:
+        return
+    if _mc_scope_cache.get(config_id, _MC_SCOPE_UNKNOWN) == region:
+        return
+    if mc is None:
+        mc, _ = _get_mc(config_id)
+    result = await _set_mc_flood_scope_on_mc(mc, region)
+    if result.type == EventType.ERROR:
+        if _mc_scope_error_is_unsupported(result):
+            _mc_scope_unsupported.add(config_id)
+            log.warning(
+                f"[MC:{config_id}] Flood scope unsupported by this radio/firmware — "
+                f"region scoping disabled for it: {getattr(result, 'payload', {})}"
+            )
+            return
+        raise RuntimeError(
+            f"Device rejected flood scope command: {getattr(result, 'payload', {})}"
+        )
+    _mc_scope_cache[config_id] = region
+
+
+def _mc_scope_key_for(region):
+    """Transport key for a region name — sha256('#name') first 16 bytes (hex)."""
+    return hashlib.sha256(("#" + region).encode("utf-8")).digest()[:16].hex()
+
+
+def resolve_mc_send_scope(config_id, chan_idx=None):
+    """Resolution order for a send: channel scope -> node default scope -> unscoped."""
+    if chan_idx is not None:
+        chan_scope = _mc_channel_scope(config_id, chan_idx)
+        if chan_scope is not None:
+            return chan_scope
+    return _mc_configured_scope(config_id)
+
+
+def _assert_mc_scope_locked(config_id, chan_idx=None, timeout=10):
+    """Resolve + assert the device's single scope slot. Caller MUST hold the
+    per-radio scope lock (it must cover the whole send, not just the assert).
+
+    Returns the scope name asserted (or None). Semantics under set-and-leave:
+    - resolved region != None → assert it on the device (cmd 54).
+    - resolved None AND we previously asserted a region → clear (undo ours), so
+      a channel-scoped send cannot leak its scope into a later unscoped send.
+    - resolved None AND we never asserted (cache UNKNOWN) → leave the device
+      exactly as-is — a default scope the MeshCore phone app set on the node
+      keeps applying to OM's sends too. OM scoping stays inert until a region
+      is actually configured in OM."""
+    region = resolve_mc_send_scope(config_id, chan_idx=chan_idx)
+    cached = _mc_scope_cache.get(config_id, _MC_SCOPE_UNKNOWN)
+    if region is None:
+        if cached in (_MC_SCOPE_UNKNOWN, None):
+            return None  # nothing of ours to undo — leave the device scope alone
+        # Undo our own earlier assertion so this send is unscoped (or reverts to
+        # whatever default the node itself carries).
+        run_mc(_assert_mc_scope_async(config_id, None), timeout=timeout)
+        return None
+    if cached == region:
+        return region
+    run_mc(_assert_mc_scope_async(config_id, region), timeout=timeout)
+    return region
+
+
+def assert_mc_scope_before_send(config_id, chan_idx=None, timeout=10):
+    """Sync entry for one-shot send paths that are themselves atomic (advert,
+    statusreq): resolve + assert under the per-radio lock."""
+    with _mc_scope_lock(config_id):
+        return _assert_mc_scope_locked(config_id, chan_idx=chan_idx, timeout=timeout)
+
+
+def reset_mc_scope_cache(config_id):
+    """Forget the asserted scope (called on connect) so the first send after a
+    reconnect always re-asserts the configured scope."""
+    _mc_scope_cache.pop(config_id, None)
+    _mc_scope_unsupported.discard(config_id)
+
+
+def get_mc_scope_state(config_id):
+    """Public read of a radio's scope state for API surfaces.
+
+    Returns (supported, active_name): supported is False when the radio/firmware
+    rejected cmd 54 (scoping disabled for it); active_name is the last region OM
+    asserted on the device, or None when unscoped/cleared or never asserted this
+    connection (the UNKNOWN sentinel is folded to None — the API only reports
+    asserted scope, which is what a UI can meaningfully show)."""
+    active = _mc_scope_cache.get(config_id, _MC_SCOPE_UNKNOWN)
+    if active is _MC_SCOPE_UNKNOWN:
+        active = None
+    return (config_id not in _mc_scope_unsupported, active)
+
 
 def _remote_admin_lock(config_id, full_key):
     key = (str(config_id), str(full_key).lower()[:12])
@@ -2071,6 +2249,24 @@ async def _connect_mc_node_async(node_cfg):
 
             _mc_bg_task(_retry_path_hash_mode(), "path_hash_retry")
 
+    # Re-apply the configured default flood scope (regions) after connect. The
+    # companion holds ONE device-global scope slot; asserting it here scopes the
+    # node's own origin floods (startup advert, statusreq pre-adverts) even
+    # before the first user send. Failure is non-fatal — connect proceeds and the
+    # first send re-asserts (or scoping is skipped if the firmware rejects 54).
+    # mc is passed directly: this runs before mc is published to mc_connections,
+    # so _get_mc would raise "Not connected" here.
+    _mc_scope_cache.pop(config_id, None)          # unknown until we assert below
+    _mc_scope_unsupported.discard(config_id)
+    configured_default = _mc_configured_scope(config_id)
+    if configured_default is not None:
+        try:
+            await _assert_mc_scope_async(config_id, configured_default, mc=mc)
+            log.info(f"[MC:{name}] Applied default flood scope '{configured_default}'")
+        except Exception as scope_e:
+            log.warning(f"[MC:{name}] Could not apply default flood scope "
+                        f"'{configured_default}': {scope_e}")
+
     node_id = node_info.get("public_key", "")[:12]  # 6-byte pubkey prefix as ID
 
     # Get contacts — retry up to 3 times with 2s gaps if empty.
@@ -3069,6 +3265,15 @@ async def _send_advert_async(config_id, flood=False):
 
     async def _do_advert():
         try:
+            # Re-assert the default scope right before TX. The advert task runs
+            # detached (fire-and-forget), so a channel send on another thread may
+            # have swapped the device's single scope slot after the sync wrapper
+            # released its lock. On this one event loop, nothing can run between
+            # the assert's completion and the TX below (no await in between), so
+            # assert+TX is atomic here — the advert goes out under the default.
+            configured_default = _mc_configured_scope(config_id)
+            if configured_default is not None and _mc_scope_cache.get(config_id) != configured_default:
+                await _assert_mc_scope_async(config_id, configured_default)
             result = await mc.commands.send_advert(flood=flood)
             if result.type.name == "OK":
                 log.info(f"[MC:{config_id}] advert TX confirmed (flood={flood})")
@@ -3372,10 +3577,14 @@ def send_chan_msg(config_id, chan_idx, text, timeout=10):
     _ensure_mc_tx_allowed("MC channel message")
     chunks = _mc_split_text_by_bytes(text, _mc_channel_msg_limit(config_id))
     result = None
-    for idx, chunk in enumerate(chunks):
-        result = run_mc(_send_chan_msg_async(config_id, chan_idx, chunk), timeout=timeout)
-        if len(chunks) > 1 and idx < len(chunks) - 1:
-            time.sleep(MC_SPLIT_SEND_DELAY_SEC)
+    # Scope lock spans assert + all chunks: the device has ONE scope slot, so a
+    # concurrent send on another channel must not swap it mid-message.
+    with _mc_scope_lock(config_id):
+        _assert_mc_scope_locked(config_id, chan_idx=chan_idx, timeout=timeout)
+        for idx, chunk in enumerate(chunks):
+            result = run_mc(_send_chan_msg_async(config_id, chan_idx, chunk), timeout=timeout)
+            if len(chunks) > 1 and idx < len(chunks) - 1:
+                time.sleep(MC_SPLIT_SEND_DELAY_SEC)
     return result
 
 
@@ -3383,10 +3592,12 @@ def send_dm(config_id, pubkey_prefix, text, timeout=10):
     _ensure_mc_tx_allowed("MC direct message")
     chunks = _mc_split_text_by_bytes(text, MC_MAX_DM_MSG_BYTES)
     result = None
-    for idx, chunk in enumerate(chunks):
-        result = run_mc(_send_dm_async(config_id, pubkey_prefix, chunk), timeout=timeout)
-        if len(chunks) > 1 and idx < len(chunks) - 1:
-            time.sleep(MC_SPLIT_SEND_DELAY_SEC)
+    with _mc_scope_lock(config_id):
+        _assert_mc_scope_locked(config_id, chan_idx=None, timeout=timeout)
+        for idx, chunk in enumerate(chunks):
+            result = run_mc(_send_dm_async(config_id, pubkey_prefix, chunk), timeout=timeout)
+            if len(chunks) > 1 and idx < len(chunks) - 1:
+                time.sleep(MC_SPLIT_SEND_DELAY_SEC)
     return result
 
 
@@ -3404,7 +3615,9 @@ def send_advert(config_id, flood=False, timeout=5):
     if CONFIG.get("silent_mode"):
         log.info(f"[MC:{config_id}] Silent Running active — advert suppressed")
         return {"status": "blocked", "flood": bool(flood)}
-    return run_mc(_send_advert_async(config_id, flood=flood), timeout=timeout)
+    with _mc_scope_lock(config_id):
+        _assert_mc_scope_locked(config_id, chan_idx=None, timeout=timeout)
+        return run_mc(_send_advert_async(config_id, flood=flood), timeout=timeout)
 
 
 async def _send_trace_async(config_id, tag=None):

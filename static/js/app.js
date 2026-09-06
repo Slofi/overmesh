@@ -17391,10 +17391,196 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       if (di) di.textContent = 'Not connected.';
       if (cl) cl.textContent = 'Not connected.';
     }
+    loadMcScopeSettings(radioId);
   }
 
   function switchMcSettingsRadio(radioId) {
     loadMcNodeSettings(radioId);
+  }
+
+  // ---- MC Flood Scope (Regions) UI ----
+  let _mcScope = { regions: [], default_scope: '', channel_scopes: {} };
+
+  function _mcScopeRadioId() {
+    return mcSettingsRadioId || activeMcRadioId;
+  }
+
+  function mcScopeStatus(msg, isErr) {
+    const el = document.getElementById('mc-scope-status');
+    if (el) el.innerHTML = `<span style="color:${isErr ? 'var(--red)' : 'var(--accent)'}">${escHtml(msg)}</span>`;
+  }
+
+  function mcScopeFwNote(supported, connected) {
+    const el = document.getElementById('mc-scope-fw-note');
+    if (!el) return;
+    if (!connected) { el.textContent = '(radio disconnected — config only)'; return; }
+    if (supported === false) {
+      el.innerHTML = '<span style="color:var(--yellow)">⚠ firmware does not support flood-scope commands — scoping disabled for this radio</span>';
+    } else {
+      el.textContent = '(firmware supports scoping)';
+    }
+  }
+
+  function loadMcScopeSettings(radioId) {
+    radioId = radioId || _mcScopeRadioId();
+    if (!radioId) return;
+    // The MC node settings endpoint returns regions/default_scope/channel_scopes
+    // in one call; fetch it and render.
+    fetch(BASE_PATH + `/api/settings/mc_nodes`)
+      .then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || 'HTTP ' + r.status); }))
+      .then(data => {
+        const n = (data.mc_nodes || []).find(x => x.id === radioId);
+        if (!n) throw new Error('MC node not found');
+        _mcScope.radioId = radioId;
+        _mcScope.regions = Array.isArray(n.regions) ? n.regions : [];
+        _mcScope.default_scope = n.default_scope || '';
+        _mcScope.channel_scopes = n.channel_scopes || {};
+        _mcScope.flood_scope_supported = n.flood_scope_supported !== false;
+        _mcScope.connected = n.status === 'connected';
+        renderMcScopePanel();
+      })
+      .catch(e => { console.error('loadMcScopeSettings failed:', e); mcScopeStatus(String(e.message || e), true); });
+  }
+
+  function renderMcScopePanel() {
+    // regions chips
+    const chipsEl = document.getElementById('mc-scope-region-chips');
+    if (chipsEl) {
+      chipsEl.innerHTML = _mcScope.regions.length
+        ? _mcScope.regions.map(r => `<span style="display:inline-flex;align-items:center;gap:6px;background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:2px 6px 2px 10px;font-family:monospace;font-size:11px">${escHtml(r)}
+            <button class="btn" style="padding:0 5px;font-size:11px;line-height:1.4;color:var(--red)" title="Remove ${escHtml(r)} from known regions" onclick="mcScopeRemoveRegion('${jsSafe(r)}')">✕</button></span>`).join('')
+        : '<span style="color:var(--muted);font-size:11px;align-self:center">No known regions yet — add one or use a preset.</span>';
+    }
+    // default scope label + input
+    const labelEl = document.getElementById('mc-scope-default-label');
+    if (labelEl) labelEl.textContent = _mcScope.default_scope ? `#${_mcScope.default_scope}` : '(unscoped)';
+    const inputEl = document.getElementById('mc-scope-default-input');
+    if (inputEl) inputEl.value = _mcScope.default_scope;
+    // firmware support note
+    mcScopeFwNote(_mcScope.flood_scope_supported, _mcScope.connected);
+    // per-channel table
+    if (_mcScope.connected) loadMcScopeChannelTable();
+  }
+
+  function mcScopeAddRegion(name) {
+    const radioId = _mcScope.radioId;
+    if (!radioId) return;
+    const raw = (name != null ? name : (document.getElementById('mc-scope-region-add')?.value || '')).trim();
+    if (!raw) return mcScopeStatus('Enter a region name first.', true);
+    const regions = _mcScope.regions.includes(raw) ? _mcScope.regions : [..._mcScope.regions, raw];
+    fetch(BASE_PATH + `/api/settings/mc_nodes/${encodeURIComponent(radioId)}/regions`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({regions}),
+    }).then(r => r.json().then(d => ({ok: r.ok, d}))).then(({ok, d}) => {
+      if (!ok || d.error) return mcScopeStatus(d.error || 'Failed to save regions.', true);
+      _mcScope.regions = d.regions || [];
+      const addEl = document.getElementById('mc-scope-region-add');
+      if (addEl) addEl.value = '';
+      renderMcScopePanel();
+      mcScopeStatus('Region added.', false);
+    }).catch(e => mcScopeStatus(String(e.message || e), true));
+  }
+
+  function mcScopeRemoveRegion(name) {
+    const radioId = _mcScope.radioId;
+    if (!radioId) return;
+    const regions = _mcScope.regions.filter(r => r !== name);
+    // if the removed region was the default, clear it too
+    fetch(BASE_PATH + `/api/settings/mc_nodes/${encodeURIComponent(radioId)}/regions`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({regions}),
+    }).then(r => r.json()).then(d => {
+      if (d.error) return mcScopeStatus(d.error, true);
+      _mcScope.regions = d.regions || [];
+      if (_mcScope.default_scope === name) {
+        return mcScopeSetDefault('');
+      }
+      renderMcScopePanel();
+      mcScopeStatus('Region removed.', false);
+    }).catch(e => mcScopeStatus(String(e.message || e), true));
+  }
+
+  function mcScopeSetDefaultFromInput() {
+    const v = (document.getElementById('mc-scope-default-input')?.value || '').trim();
+    mcScopeSetDefault(v);
+  }
+
+  function mcScopeSetDefault(scope) {
+    const radioId = _mcScope.radioId;
+    if (!radioId) return;
+    fetch(BASE_PATH + `/api/settings/mc_nodes/${encodeURIComponent(radioId)}/default_scope`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({default_scope: scope || ''}),
+    }).then(r => r.json().then(d => ({ok: r.ok, d}))).then(({ok, d}) => {
+      if (!ok || d.error) return mcScopeStatus(d.error || 'Failed to set default scope.', true);
+      _mcScope.default_scope = d.default_scope || '';
+      // keep it in the catalog if it's a real region
+      if (_mcScope.default_scope && !_mcScope.regions.includes(_mcScope.default_scope)) {
+        _mcScope.regions.push(_mcScope.default_scope);
+      }
+      if (d.warning) {
+        mcScopeStatus(d.warning, true);
+      } else {
+        mcScopeStatus(d.connected === false ? 'Saved (radio offline — applies on connect).' : 'Default scope applied.', false);
+      }
+      renderMcScopePanel();
+    }).catch(e => mcScopeStatus(String(e.message || e), true));
+  }
+
+  function mcScopeReload() {
+    loadMcScopeSettings(_mcScope.radioId);
+    mcScopeStatus('Reloaded.', false);
+  }
+
+  // Per-channel scope table (requires the device channel list; renders config scopes)
+  function loadMcScopeChannelTable() {
+    const radioId = _mcScope.radioId;
+    const el = document.getElementById('mc-scope-per-channel');
+    if (!el || !radioId) return;
+    fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/channels`)
+      .then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || 'HTTP ' + r.status); }))
+      .then(d => {
+        if (d.error) { el.innerHTML = `<span style="color:var(--red)">${escHtml(d.error)}</span>`; return; }
+        const chs = d.channels || [];
+        if (!chs.length) { el.innerHTML = '<span style="color:var(--muted);font-size:11px">No channels to scope.</span>'; return; }
+        el.innerHTML = `<div style="font-size:12px;font-weight:600;margin-bottom:4px">Per-channel scope <span style="font-weight:400;color:var(--muted)">(empty = node default scope)</span></div>
+          <table style="border-collapse:collapse;font-size:12px;width:100%">
+            <tr style="color:var(--muted)">
+              <th style="text-align:left;padding:2px 12px 4px 0;font-weight:normal">Slot</th>
+              <th style="text-align:left;padding:2px 12px 4px 0;font-weight:normal">Channel</th>
+              <th style="text-align:left;padding:2px 0 4px;font-weight:normal">Scope</th>
+            </tr>
+            ${chs.filter(ch => ch.name).map((ch, i) => `<tr style="${i ? 'border-top:1px solid var(--border)' : ''}">
+              <td style="padding:4px 12px 4px 0;font-size:11px;color:var(--muted);width:16px;text-align:right">${escHtml(String(ch.idx))}</td>
+              <td style="padding:4px 12px 4px 0">${escHtml(ch.name)}</td>
+              <td style="padding:4px 0">
+                <div style="display:flex;gap:6px;align-items:center">
+                  <input id="mc-scope-ch-${parseInt(ch.idx) || 0}" class="settings-input" list="mc-scope-region-presets" placeholder="unscoped"
+                         value="${escHtml((_mcScope.channel_scopes || {})[String(ch.idx)] || '')}"
+                         style="width:130px;font-family:monospace;font-size:11px" maxlength="32"
+                         onkeydown="if(event.key==='Enter'){event.preventDefault();mcScopeSetChannel(${parseInt(ch.idx) || 0})}">
+                  <button class="btn" style="padding:1px 8px;font-size:11px" onclick="mcScopeSetChannel(${parseInt(ch.idx) || 0})" title="Save scope for this channel">Save</button>
+                </div>
+              </td>
+            </tr>`).join('')}
+          </table>`;
+      }).catch(e => { if (el) el.innerHTML = `<span style="color:var(--red)">${escHtml(e.message || e)}</span>`; });
+  }
+
+  function mcScopeSetChannel(chanIdx) {
+    const radioId = _mcScope.radioId;
+    if (!radioId) return;
+    const v = (document.getElementById(`mc-scope-ch-${chanIdx}`)?.value || '').trim();
+    fetch(BASE_PATH + `/api/settings/mc_nodes/${encodeURIComponent(radioId)}/channel_scope/${chanIdx}`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({scope: v || ''}),
+    }).then(r => r.json().then(d => ({ok: r.ok, d}))).then(({ok, d}) => {
+      if (!ok || d.error) return mcScopeStatus(d.error || 'Failed to save channel scope.', true);
+      _mcScope.channel_scopes = { ...(_mcScope.channel_scopes || {}), [String(chanIdx)]: d.scope || '' };
+      if (d.scope && !_mcScope.regions.includes(d.scope)) _mcScope.regions.push(d.scope);
+      renderMcScopePanel();
+      mcScopeStatus(`Channel ${chanIdx} scope ${d.scope ? `set to #${d.scope}` : 'cleared'}.`, false);
+    }).catch(e => mcScopeStatus(String(e.message || e), true));
   }
 
   function loadMcDeviceInfo(radioId) {

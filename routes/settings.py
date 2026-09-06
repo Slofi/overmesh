@@ -88,6 +88,17 @@ def _parse_mc_path_hash_mode(value):
     return mode
 
 
+def _mc_scope_supported(node_id):
+    """Whether the radio/firmware accepted the flood-scope command (mesh_mc
+    tracks radios that rejected cmd 54; unknown radios default to supported)."""
+    try:
+        from mesh_mc import get_mc_scope_state
+
+        return get_mc_scope_state(str(node_id))[0]
+    except Exception:
+        return True
+
+
 def _settings_local_request():
     addr = request.remote_addr or ""
     if addr == "localhost":
@@ -752,6 +763,10 @@ def api_settings_mc_nodes():
             "path_hash_mode": n.get("path_hash_mode", 2),
             "force_flood": bool(n.get("force_flood", False)),
             "passive_collection": n.get("passive_collection", True) is not False,
+            "regions": n.get("regions", []),
+            "default_scope": n.get("default_scope") or "",
+            "channel_scopes": n.get("channel_scopes") or {},
+            "flood_scope_supported": _mc_scope_supported(n.get("id")),
         }
         for n in CONFIG.get("mc_nodes", [])
     ]
@@ -772,7 +787,7 @@ def api_settings_mc_nodes_add():
         return jsonify({"error": "Name is required"}), 400
     mc_nodes = CONFIG.setdefault("mc_nodes", [])
     node_id  = f"mc_node_{uuid.uuid4().hex[:12]}"
-    new_node = {"id": node_id, "name": name, "enabled": True, "path_hash_mode": 2, "force_flood": False, "passive_collection": True, "type": node_type}
+    new_node = {"id": node_id, "name": name, "enabled": True, "path_hash_mode": 2, "force_flood": False, "passive_collection": True, "type": node_type, "regions": [], "default_scope": "", "channel_scopes": {}}
     if node_type == "tcp":
         host = (data.get("host") or "").strip()
         try:
@@ -985,6 +1000,149 @@ def api_settings_mc_nodes_passive_collection(node_id):
         if node_id in mc_connections:
             mc_connections[node_id].setdefault("config", {})["passive_collection"] = enabled
     return jsonify({"ok": True, "passive_collection": enabled})
+
+
+def _mc_scope_validate_regions(value):
+    """Validate a list of region names from the user. Returns normalized list
+    (bare names, no '#'), raising ValueError on any invalid entry."""
+    from mesh_mc import _mc_normalize_region_name
+
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("regions must be a list of region names")
+    out = []
+    for item in value:
+        name = _mc_normalize_region_name(str(item))
+        if name is not None:
+            out.append(name)
+    if len(out) != len(set(out)):
+        raise ValueError("regions must not contain duplicates")
+    return out
+
+
+@bp.route("/api/settings/mc_nodes/<node_id>/regions", methods=["GET", "POST"])
+def api_settings_mc_nodes_regions(node_id):
+    """Read or replace a node's configured region catalog (config.json only —
+    companions have no device-side region list; the catalog feeds the UI pickers
+    and validates names)."""
+    with CONFIG_LOCK:
+        mc_nodes = CONFIG.get("mc_nodes", [])
+        node = next((n for n in mc_nodes if n["id"] == node_id), None)
+        if not node:
+            return jsonify({"error": "MC node not found"}), 404
+        if request.method == "GET":
+            return jsonify({"ok": True, "regions": node.get("regions", [])})
+        data = request.get_json(silent=True) or {}
+        try:
+            regions = _mc_scope_validate_regions(data.get("regions"))
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        node["regions"] = regions
+        save_config()
+    return jsonify({"ok": True, "regions": regions})
+
+
+@bp.route("/api/settings/mc_nodes/<node_id>/default_scope", methods=["GET", "POST"])
+def api_settings_mc_nodes_default_scope(node_id):
+    """Read or set the node's default flood scope region. Setting persists in
+    config and, when the radio is connected, asserts the device's single scope
+    slot immediately (so the change takes effect without waiting for a send)."""
+    from mesh_mc import _mc_normalize_region_name, reset_mc_scope_cache
+
+    with CONFIG_LOCK:
+        mc_nodes = CONFIG.get("mc_nodes", [])
+        node = next((n for n in mc_nodes if n["id"] == node_id), None)
+        if not node:
+            return jsonify({"error": "MC node not found"}), 404
+        if request.method == "GET":
+            return jsonify({"ok": True, "default_scope": node.get("default_scope") or ""})
+        data = request.get_json(silent=True) or {}
+        raw = (data.get("default_scope") or "").strip()
+        try:
+            scope = _mc_normalize_region_name(raw) or ""
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        node["default_scope"] = scope
+        save_config()
+
+        node["default_scope"] = scope
+        save_config()
+
+    applied = False
+    warning = None
+    with mc_connections_lock:
+        connected = bool(
+            mc_connections.get(node_id, {}).get("status") == "connected"
+            and mc_connections.get(node_id, {}).get("mc")
+        )
+    if connected and scope:
+        # Setting a default — assert it on the device now (the async helper
+        # updates the cache, so a later send with the same scope is a no-op).
+        from mesh_mc import _MC_SCOPE_UNKNOWN, _mc_scope_cache, assert_mc_scope_before_send
+
+        try:
+            _mc_scope_cache.pop(node_id, None)  # force assert even if same value
+            assert_mc_scope_before_send(node_id, chan_idx=None)
+            applied = True
+        except Exception as e:
+            warning = f"Saved, but the radio did not accept it: {e}"
+    elif connected and not scope:
+        # Cleared default — if OM had asserted a scope on the device, undo it so
+        # the next unscoped send is genuinely unscoped. Read the cache BEFORE any
+        # reset: after a reset we cannot know whether a device clear is owed.
+        from mesh_mc import _MC_SCOPE_UNKNOWN, _mc_scope_cache, assert_mc_scope_before_send
+
+        prior = _mc_scope_cache.get(node_id, _MC_SCOPE_UNKNOWN)
+        if prior is not None and prior is not _MC_SCOPE_UNKNOWN:
+            try:
+                assert_mc_scope_before_send(node_id, chan_idx=None)
+            except Exception as e:
+                warning = f"Saved, but could not clear the device scope: {e}"
+            else:
+                applied = True
+    else:
+        from mesh_mc import reset_mc_scope_cache
+
+        reset_mc_scope_cache(node_id)  # offline — re-assert applies on connect
+
+    return jsonify({
+        "ok": True,
+        "default_scope": scope,
+        "connected": connected,
+        "applied": applied,
+        "warning": warning,
+    })
+
+
+@bp.route("/api/settings/mc_nodes/<node_id>/channel_scope/<int:chan_idx>", methods=["GET", "POST"])
+def api_settings_mc_nodes_channel_scope(node_id, chan_idx):
+    """Read or set the scope applied when sending on one channel slot."""
+    from mesh_mc import _mc_normalize_region_name, reset_mc_scope_cache
+
+    with CONFIG_LOCK:
+        mc_nodes = CONFIG.get("mc_nodes", [])
+        node = next((n for n in mc_nodes if n["id"] == node_id), None)
+        if not node:
+            return jsonify({"error": "MC node not found"}), 404
+        scopes = node.setdefault("channel_scopes", {})
+        if request.method == "GET":
+            return jsonify({"ok": True, "channel": chan_idx,
+                            "scope": scopes.get(str(chan_idx)) or ""})
+        data = request.get_json(silent=True) or {}
+        raw = (data.get("scope") or "").strip()
+        try:
+            scope = _mc_normalize_region_name(raw) or ""
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        if scope:
+            scopes[str(chan_idx)] = scope
+        else:
+            scopes.pop(str(chan_idx), None)
+        save_config()
+
+    reset_mc_scope_cache(node_id)  # next send on any channel re-asserts
+    return jsonify({"ok": True, "channel": chan_idx, "scope": scope})
 
 
 

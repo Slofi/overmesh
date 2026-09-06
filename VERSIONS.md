@@ -10,6 +10,14 @@ OverMesh uses date-based release versions:
 
 The version in `VERSION` must be updated every time an OverMesh update is pushed to GitHub. The Settings updater also shows the Git commit hash for exact build identification.
 
+## 2026.09.06.4
+
+- Corrected the overheard-packet view: it is now an **animated live view**, not static lines. Each packet is a colour-coded **dot with a fading tail that travels hop to hop** along the route it actually took, then fades out. The previous release drew every path as a persistent polyline, which read as a spiderweb rather than as traffic moving across the map.
+  - flight time scales with hop count, so a long path visibly takes longer to cross
+  - packets are animated as they arrive; enabling the view replays the most recent few, staggered, so there is something to watch immediately
+  - hiding a type in the legend also drops those packets already in flight
+  - the counter now reads "N in flight - M heard"
+
 ## 2026.09.06.3
 
 - Repurposed the MC Map/Sense **Trace** button. Its old behaviour broadcast a mesh-wide TRACE probe and waited for responses that never arrived; the button is now a **toggle for the overheard-packet view**, which is entirely passive and transmits nothing.

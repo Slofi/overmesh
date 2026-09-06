@@ -12772,7 +12772,7 @@ if (targetEl) {
         updateMapMarkers(allNodes);
       }
       _updateMapLegend();
-      if (_mcRxTracesOn) { _mcRxStamp = null; _mcRxTracesRefresh(); }
+      if (_mcRxTracesOn) { _mcRxStamp = null; _mcRxTracesRefresh(true); }
       renderMcMapMarkers();   // also calls renderMcPathLines()
       renderMcSensePanel();
     } else {
@@ -16694,16 +16694,12 @@ if (targetEl) {
       return;
     }
     _mcRxStamp = null;   // force a draw on enable
-    _mcRxTracesRefresh();
+    _mcRxSeen = new Set();
+    _mcRxTracesRefresh(true);
     _mcRxTimer = setInterval(_mcRxTracesRefresh, MC_RX_REFRESH_MS);
   }
 
-  function _clearMcRxLines() {
-    _mcRxLines.forEach(l => leafletMap && leafletMap.removeLayer(l));
-    _mcRxLines = [];
-  }
-
-  async function _mcRxTracesRefresh() {
+  async function _mcRxTracesRefresh(seed = false) {
     const rid = activeMcRadioId;
     if (!rid || !_mcRxTracesOn) return;
     // The layer belongs to the MC side of Sense; polling while MT is shown
@@ -16726,7 +16722,7 @@ if (targetEl) {
       return;
     }
     _renderMcTraceLegend();
-    _drawMcRxTraces();
+    _mcRxAnimateNew(seed);
   }
 
   // Split the stored hex path into per-hop hashes. path_hash_size is 1, 2 or 3
@@ -16786,47 +16782,157 @@ if (targetEl) {
     };
   }
 
-  function _drawMcRxTraces() {
-    _clearMcRxLines();
-    if (!leafletMap || !_mcRxTracesOn) return;
+  // Animation: a packet is a moving dot with a fading tail that hops repeater to
+  // repeater along the path it actually travelled. Deliberately NOT persistent
+  // lines — a few hundred overlapping paths is an unreadable spiderweb, and the
+  // point of the view is watching traffic move through the mesh.
+  const MC_RX_HOP_MS = 420;        // travel time per hop
+  const MC_RX_FADE_MS = 900;       // tail fade once the packet arrives
+  const MC_RX_TAIL_LEN = 0.35;     // tail length as a fraction of the whole path
+  const MC_RX_MAX_ANIM = 40;       // concurrent packets in flight
+  const MC_RX_SEED_COUNT = 12;     // how many recent packets to replay on enable
+  const MC_RX_SEED_STAGGER_MS = 260;
+
+  let _mcRxAnims = [];
+  let _mcRxSeen = new Set();
+  let _mcRxRaf = null;
+
+  const _mcRxKey = r => `${r.ts}|${r.path}|${r.payload_type}|${r.rssi}`;
+
+  // Cumulative geometry so the dot moves at constant speed across uneven hops.
+  function _mcRxGeometry(points) {
+    const segs = [];
+    let total = 0;
+    for (let i = 0; i < points.length - 1; i++) {
+      const a = points[i], b = points[i + 1];
+      const d = Math.hypot(b[0] - a[0], (b[1] - a[1]) * Math.cos(a[0] * Math.PI / 180)) || 1e-9;
+      segs.push({a, b, d, start: total});
+      total += d;
+    }
+    return {segs, total};
+  }
+
+  function _mcRxPointAt(geom, frac) {
+    const target = Math.max(0, Math.min(1, frac)) * geom.total;
+    for (const s of geom.segs) {
+      if (target <= s.start + s.d) {
+        const t = s.d ? (target - s.start) / s.d : 0;
+        return [s.a[0] + (s.b[0] - s.a[0]) * t, s.a[1] + (s.b[1] - s.a[1]) * t];
+      }
+    }
+    const last = geom.segs[geom.segs.length - 1];
+    return last ? last.b : null;
+  }
+
+  // Points between two fractions — the visible tail behind the dot.
+  function _mcRxSlice(geom, fromFrac, toFrac) {
+    const out = [_mcRxPointAt(geom, fromFrac)];
+    const from = fromFrac * geom.total, to = toFrac * geom.total;
+    for (const s of geom.segs) {
+      const end = s.start + s.d;
+      if (end > from && end < to) out.push(s.b);
+    }
+    out.push(_mcRxPointAt(geom, toFrac));
+    return out.filter(Boolean);
+  }
+
+  function _mcRxLaunch(res) {
+    if (!leafletMap || _mcRxAnims.length >= MC_RX_MAX_ANIM) return;
+    const geom = _mcRxGeometry(res.points);
+    if (!geom.segs.length) return;
+    const color = _mcRxColor(res.row.payload_type);
+    const tail = L.polyline([], {
+      color, weight: 3, opacity: 0.9, lineCap: 'round', lineJoin: 'round', interactive: false,
+    }).addTo(leafletMap);
+    const dot = L.circleMarker(res.points[0], {
+      radius: 4, color: '#fff', weight: 1.5, fillColor: color, fillOpacity: 1, interactive: true,
+    }).addTo(leafletMap);
+    const hops = res.hopMeta.map(h => h.name).join(' → ');
+    const when = res.row.ts ? new Date(res.row.ts * 1000).toLocaleTimeString() : '';
+    dot.bindTooltip(
+      `<b>${escHtml(res.row.payload_type || 'UNK')}</b> · ${escHtml(res.row.route_type || '')}<br>`
+      + `${res.totalHops} hop(s)`
+      + (res.resolvedHops < res.totalHops ? ` (${res.totalHops - res.resolvedHops} unresolved)` : '') + '<br>'
+      + (hops ? `${escHtml(hops)} → us<br>` : '')
+      + `${res.row.rssi != null ? res.row.rssi + ' dBm' : ''} ${res.row.snr != null ? '/ ' + res.row.snr + ' SNR' : ''}<br>`
+      + `${escHtml(when)}`, {sticky: true});
+    _mcRxAnims.push({
+      geom, tail, dot, color,
+      // Longer paths take longer, so hop count reads as distance travelled.
+      duration: Math.max(MC_RX_HOP_MS, geom.segs.length * MC_RX_HOP_MS),
+      startedAt: null, done: false,
+    });
+    _mcRxUpdateCount();
+    _mcRxStartLoop();
+  }
+
+  function _mcRxStep(ts) {
+    _mcRxRaf = null;
+    for (const a of _mcRxAnims) {
+      if (a.startedAt === null) a.startedAt = ts;
+      const elapsed = ts - a.startedAt;
+      if (elapsed <= a.duration) {
+        const head = elapsed / a.duration;
+        const from = Math.max(0, head - MC_RX_TAIL_LEN);
+        const pt = _mcRxPointAt(a.geom, head);
+        if (pt) a.dot.setLatLng(pt);
+        a.tail.setLatLngs(_mcRxSlice(a.geom, from, head));
+      } else {
+        // Arrived: hold the full path briefly, then fade both out together.
+        const fade = (elapsed - a.duration) / MC_RX_FADE_MS;
+        if (fade >= 1) { a.done = true; continue; }
+        const o = 1 - fade;
+        a.tail.setLatLngs(_mcRxSlice(a.geom, Math.max(0, 1 - MC_RX_TAIL_LEN), 1));
+        a.tail.setStyle({opacity: 0.9 * o});
+        a.dot.setStyle({fillOpacity: o, opacity: o});
+      }
+    }
+    const finished = _mcRxAnims.filter(a => a.done);
+    finished.forEach(a => {
+      if (leafletMap) { leafletMap.removeLayer(a.tail); leafletMap.removeLayer(a.dot); }
+    });
+    if (finished.length) {
+      _mcRxAnims = _mcRxAnims.filter(a => !a.done);
+      _mcRxUpdateCount();
+    }
+    if (_mcRxAnims.length) _mcRxStartLoop();
+  }
+
+  function _mcRxUpdateCount() {
+    const el = document.getElementById('mc-trace-count');
+    if (el) el.textContent = `${_mcRxAnims.length} in flight · ${_mcRxRows.length} heard`;
+  }
+
+  function _mcRxStartLoop() {
+    if (_mcRxRaf === null && _mcRxAnims.length) _mcRxRaf = requestAnimationFrame(_mcRxStep);
+  }
+
+  function _clearMcRxLines() {
+    if (_mcRxRaf !== null) { cancelAnimationFrame(_mcRxRaf); _mcRxRaf = null; }
+    _mcRxAnims.forEach(a => {
+      if (leafletMap) { leafletMap.removeLayer(a.tail); leafletMap.removeLayer(a.dot); }
+    });
+    _mcRxAnims = [];
+  }
+
+  // Animate packets that are NEW since the last poll. On first enable there is
+  // no history to compare against, so replay the most recent few, staggered, to
+  // give the user something to watch immediately.
+  function _mcRxAnimateNew(seed) {
     const rows = _mcRxRows.filter(r => !_mcRxHidden.has(r.payload_type || 'UNK'));
-    const hopCache = new Map();
-    let drawn = 0;
-    for (const row of rows) {
-      const res = _mcRxPathResult(row, hopCache);
-      if (!res) continue;
-      const color = _mcRxColor(row.payload_type);
-      // Direct routes are solid, flooded ones dashed — the same visual language
-      // the existing MC path lines use.
-      const flood = String(row.route_type || '').includes('FLOOD');
-      const halo = L.polyline(res.points, {
-        color: '#111', weight: 5, opacity: 0.35, interactive: false,
-        lineCap: 'round', lineJoin: 'round',
-      }).addTo(leafletMap);
-      _mcRxLines.push(halo);
-      const when = row.ts ? new Date(row.ts * 1000).toLocaleTimeString() : '';
-      const hopNames = res.hopMeta.map(h => h.name).join(' → ');
-      const partial = res.resolvedHops < res.totalHops
-        ? ` (${res.totalHops - res.resolvedHops} hop(s) unresolved)` : '';
-      const line = L.polyline(res.points, {
-        color, weight: 2.5, opacity: 0.9, dashArray: flood ? '6,5' : null,
-        lineCap: 'round', lineJoin: 'round',
-      }).addTo(leafletMap);
-      line.bindTooltip(
-        `<b>${escHtml(row.payload_type || 'UNK')}</b> · ${escHtml(row.route_type || '')}<br>`
-        + `${res.totalHops} hop(s)${escHtml(partial)}<br>`
-        + (hopNames ? `${escHtml(hopNames)} → us<br>` : '')
-        + `${row.rssi != null ? row.rssi + ' dBm' : ''} ${row.snr != null ? '/ ' + row.snr + ' SNR' : ''}<br>`
-        + `${escHtml(when)}`,
-        {sticky: true}
-      );
-      _mcRxLines.push(line);
-      drawn++;
-    }
-    const countEl = document.getElementById('mc-trace-count');
-    if (countEl) {
-      countEl.textContent = `${drawn} path${drawn === 1 ? '' : 's'} drawn of ${_mcRxRows.length} heard`;
-    }
+    const fresh = rows.filter(r => !_mcRxSeen.has(_mcRxKey(r)));
+    rows.forEach(r => _mcRxSeen.add(_mcRxKey(r)));
+    if (_mcRxSeen.size > 2000) _mcRxSeen = new Set([...(_mcRxSeen)].slice(-1000));
+    // rows arrive newest-first; play oldest-first so motion reads chronologically
+    const play = (seed ? fresh.slice(0, MC_RX_SEED_COUNT) : fresh).reverse();
+    const cache = new Map();
+    play.forEach((row, i) => {
+      const res = _mcRxPathResult(row, cache);
+      if (!res) return;
+      if (seed) setTimeout(() => { if (_mcRxTracesOn) _mcRxLaunch(res); }, i * MC_RX_SEED_STAGGER_MS);
+      else _mcRxLaunch(res);
+    });
+    _mcRxUpdateCount();
   }
 
   function _renderMcTraceLegend() {
@@ -16852,7 +16958,7 @@ if (targetEl) {
   function toggleMcTraceType(t) {
     if (_mcRxHidden.has(t)) _mcRxHidden.delete(t); else _mcRxHidden.add(t);
     _renderMcTraceLegend();
-    _drawMcRxTraces();
+    _mcRxAnimateNew(seed);
   }
 
   function _mcHandleTraceData(data) {

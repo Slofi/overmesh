@@ -11222,14 +11222,14 @@ if (targetEl) {
     const btn = document.getElementById('mc-scan-btn');
     const st  = document.getElementById('mc-scan-status');
     const traceBtn = document.getElementById('mc-trace-btn');
-    const traceWarn = document.getElementById('mc-trace-warning');
     const neighborsBtn = document.getElementById('mc-neighbors-btn');
     if (btn) btn.style.display = mcConnected ? '' : 'none';
     if (st && !mcConnected) st.style.display = 'none';
     if (traceBtn) traceBtn.style.display = mcConnected ? '' : 'none';
-    if (traceWarn) traceWarn.style.display = mcConnected ? '' : 'none';
     if (neighborsBtn) neighborsBtn.style.display = mcConnected ? '' : 'none';
-    if (!mcConnected) _mcTraceSetButtonState();
+    // Overheard traces need a connected radio to keep refreshing.
+    if (!mcConnected && _mcRxTracesOn) setMcTraces(false);
+    _mcTraceSetButtonState();
   }
 
   function applyMcVisibility() {
@@ -12772,11 +12772,13 @@ if (targetEl) {
         updateMapMarkers(allNodes);
       }
       _updateMapLegend();
+      if (_mcRxTracesOn) { _mcRxStamp = null; _mcRxTracesRefresh(); }
       renderMcMapMarkers();   // also calls renderMcPathLines()
       renderMcSensePanel();
     } else {
       // MT mode: hide MC markers, show MT only
       clearMcPathLines();
+      _clearMcRxLines();   // overheard MC paths must not linger over the MT view
       _mcHoverLines.forEach(l => leafletMap && leafletMap.removeLayer(l));
       _mcHoverLines = [];
       if (!mapShowMt) {
@@ -16640,107 +16642,223 @@ if (targetEl) {
     _mcTouchContactActivity(radioId, pubkeyPre, extra);
   }
 
+
   // ---------------------------------------------------------------------------
-  // MC Trace — broadcast trace packet, show hop/SNR results, draw on map
+  // MC Overheard Traces — draws the path of every packet this radio HEARD.
+  //
+  // Replaces the old mesh-wide broadcast Trace, which transmitted a probe and
+  // waited for responses that never came. This is entirely PASSIVE: the paths
+  // come from the RX log the radio already produces, so the toggle costs no
+  // airtime. Data source: passive_obs rows with obs_type='rx' (see status.md).
   // ---------------------------------------------------------------------------
 
-  let _mcPendingTraceTag = null;   // tag of last sent trace, for correlation
-  let _mcTraceCooldownUntil = 0;
-  let _mcTraceCooldownTimer = null;
-  const MC_TRACE_COOLDOWN_MS = 30000;
+  const MC_RX_REFRESH_MS = 5000;   // matches the backend flush interval
+  const MC_RX_FETCH_LIMIT = 200;
+  // Keyed by the LIBRARY's payload typenames — the protocol docs disagree
+  // (TEXT_MSG vs TXT_MSG) and it is the library's strings that are stored.
+  const MC_RX_TYPE_COLORS = {
+    TEXT_MSG: '#8b5cf6', GRP_TXT: '#a855f7', ADVERT: '#3b82f6', ACK: '#22c55e',
+    TRACE: '#f97316', REQ: '#eab308', RESPONSE: '#f59e0b', ANON_REQ: '#eab308',
+    PATH: '#14b8a6', GRP_DATA: '#a855f7', MULTIPART: '#64748b', CONTROL: '#64748b',
+    UNK: '#94a3b8',
+  };
+  const _mcRxColor = t => MC_RX_TYPE_COLORS[t] || '#94a3b8';
 
-  function _mcTraceSetButtonState(running = false) {
+  let _mcRxTracesOn = false;
+  let _mcRxLines = [];
+  let _mcRxTimer = null;
+  let _mcRxRows = [];
+  let _mcRxHidden = new Set();     // payload types the user switched off
+  let _mcRxStamp = null;           // cheap change detector, skips identical redraws
+
+  function _mcTraceSetButtonState() {
     const btn = document.getElementById('mc-trace-btn');
-    const status = document.getElementById('sense-mc-status');
     if (!btn) return;
-    const remainingMs = Math.max(0, _mcTraceCooldownUntil - Date.now());
-    if (running) {
-      btn.textContent = 'Tracing...';
-      btn.disabled = true;
-      return;
-    }
-    if (remainingMs > 0) {
-      btn.textContent = `${Math.ceil(remainingMs / 1000)}s`;
-      btn.disabled = true;
-      if (status && _senseNet === 'mc') status.textContent = `Trace cooldown ${Math.ceil(remainingMs / 1000)}s`;
-      if (!_mcTraceCooldownTimer) {
-        _mcTraceCooldownTimer = setInterval(() => {
-          if (Date.now() >= _mcTraceCooldownUntil) {
-            clearInterval(_mcTraceCooldownTimer);
-            _mcTraceCooldownTimer = null;
-            _mcTraceSetButtonState();
-            return;
-          }
-          _mcTraceSetButtonState();
-        }, 1000);
-      }
-      return;
-    }
-    btn.textContent = 'Trace';
-    btn.disabled = false;
-    if (status && _senseNet === 'mc' && /^Trace cooldown /.test(status.textContent || '')) status.textContent = '';
+    btn.textContent = _mcRxTracesOn ? 'Traces ●' : 'Traces';
+    btn.style.background = _mcRxTracesOn ? 'var(--accent, #2563eb)' : '';
+    btn.style.color = _mcRxTracesOn ? '#fff' : '';
   }
 
-  function _mcTraceStartCooldown() {
-    _mcTraceCooldownUntil = Date.now() + MC_TRACE_COOLDOWN_MS;
+  function toggleMcTraces() { setMcTraces(!_mcRxTracesOn); }
+
+  function setMcTraces(on) {
+    _mcRxTracesOn = !!on;
     _mcTraceSetButtonState();
+    const legend = document.getElementById('mc-trace-legend');
+    if (legend) legend.style.display = _mcRxTracesOn ? '' : 'none';
+    if (_mcRxTimer) { clearInterval(_mcRxTimer); _mcRxTimer = null; }
+    if (!_mcRxTracesOn) {
+      _clearMcRxLines();
+      _mcRxRows = [];
+      _mcRxStamp = null;
+      return;
+    }
+    _mcRxStamp = null;   // force a draw on enable
+    _mcRxTracesRefresh();
+    _mcRxTimer = setInterval(_mcRxTracesRefresh, MC_RX_REFRESH_MS);
   }
 
-  async function doMcTrace() {
-    const radioId = activeMcRadioId;
-    if (!radioId || mcLastStatus[radioId]?.status !== 'connected') {
-      showAlert('No connected MC radio selected.');
-      return;
-    }
-    const remainingMs = Math.max(0, _mcTraceCooldownUntil - Date.now());
-    if (remainingMs > 0) {
-      const status = document.getElementById('sense-mc-status');
-      if (status) status.textContent = `Trace cooldown ${Math.ceil(remainingMs / 1000)}s`;
-      _mcTraceSetButtonState();
-      return;
-    }
-    const panel = document.getElementById('mc-statusreq-panel');
-    const title = document.getElementById('mc-statusreq-title');
-    const body  = document.getElementById('mc-statusreq-body');
-    if (!panel) return;
-    _mcTraceSetButtonState(true);
-    panel.dataset.detailKind = 'mc-trace';
-    title.textContent = 'Broadcast Trace';
-    body.innerHTML = '<span style="color:var(--muted)">Sending trace…</span>';
-    panel.style.display = '';
-    _mcPendingTraceTag = null;
+  function _clearMcRxLines() {
+    _mcRxLines.forEach(l => leafletMap && leafletMap.removeLayer(l));
+    _mcRxLines = [];
+  }
+
+  async function _mcRxTracesRefresh() {
+    const rid = activeMcRadioId;
+    if (!rid || !_mcRxTracesOn) return;
+    // The layer belongs to the MC side of Sense; polling while MT is shown
+    // would fetch and redraw onto a map the user is not looking at.
+    if (_senseNet !== 'mc') return;
     try {
-      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/trace`, {method: 'POST'});
-      const d = await r.json();
-      if (!r.ok) {
-        body.innerHTML = `<span style="color:var(--red)">${escHtml(d.error || 'Trace failed.')}</span>`;
-        _mcTraceSetButtonState();
-        return;
-      }
-      _mcTraceStartCooldown();
-      _mcPendingTraceTag = d.tag;
-      body.innerHTML = '<span style="color:var(--muted)">Waiting for trace response…</span>';
-      // Timeout if no TRACE_DATA arrives within 20s
-      setTimeout(() => {
-        if (_mcPendingTraceTag === d.tag) {
-          body.innerHTML = '<span style="color:var(--red)">No trace response. Firmware may not support send_trace.</span>';
-          _mcPendingTraceTag = null;
-        }
-      }, 20000);
-    } catch(e) {
-      body.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
-      _mcTraceSetButtonState();
+      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/passive_obs`
+                            + `?obs_types=rx&limit=${MC_RX_FETCH_LIMIT}`);
+      if (!r.ok) return;
+      const rows = await r.json();
+      // At ~5 packets/min most 5 s polls return exactly what we already drew.
+      // Rebuilding hundreds of Leaflet layers for an unchanged set is pure cost,
+      // and it also makes tooltips flicker while the user is reading one.
+      const stamp = `${rows.length}:${rows[0]?.ts ?? ''}:${rows[0]?.path ?? ''}`;
+      _mcRxRows = rows;
+      if (stamp === _mcRxStamp) return;
+      _mcRxStamp = stamp;
+    } catch (e) {
+      console.warn('MC overheard traces fetch failed:', e);
+      return;
     }
+    _renderMcTraceLegend();
+    _drawMcRxTraces();
+  }
+
+  // Split the stored hex path into per-hop hashes. path_hash_size is 1, 2 or 3
+  // bytes and ALL THREE occur in real traffic, so this must not assume 1.
+  function _mcRxHops(row) {
+    const hex = String(row.path || '').replace(/[^0-9a-fA-F]/g, '').toLowerCase();
+    if (!hex) return [];
+    const size = Math.max(1, Math.min(3, Number(row.path_hash_size) || 1));
+    const chars = size * 2;
+    const out = [];
+    for (let i = 0; i + chars <= hex.length; i += chars) out.push(hex.slice(i, i + chars));
+    return out;
+  }
+
+  // Build the polyline for one overheard packet: relay hops in order, ending at
+  // our own radio (we are the receiver). Hops that cannot be resolved to a known
+  // contact are skipped rather than guessed — 1-byte hashes are ambiguous.
+  function _mcRxPathResult(row, cache) {
+    const rid = row.radio_id || activeMcRadioId;
+    const [radioLat, radioLon] = _mcSenseRadioPos(rid);
+    const hops = _mcRxHops(row);
+    const points = [];
+    const hopMeta = [];
+    hops.forEach((hash, idx) => {
+      // Resolution is memoised per draw pass: only a handful of distinct hop
+      // hashes recur across all rows, and each miss scans the whole contact
+      // list (1105 on gandalf) — without this a refresh is O(rows x hops x
+      // contacts) every 5 s, which is felt on the Hand-Deck, not on a desktop.
+      let hop = cache && cache.get(hash);
+      if (hop === undefined) {
+        const res = _mcPickPathHopResolution(hash, rid, radioLat, radioLon, null, null, idx, hops.length);
+        const c = res?.contact;
+        // Same order the resolver scored on (_mcPickPathHopResolution filters
+        // candidates by latitude/lat) — reading adv_lat first could draw a
+        // different coordinate than the one the hop was chosen for.
+        const lat = c?.latitude ?? c?.lat ?? c?.adv_lat ?? null;
+        const lon = c?.longitude ?? c?.lon ?? c?.adv_lon ?? null;
+        hop = (lat == null || lon == null)
+          ? null
+          : {pt: [Number(lat), Number(lon)], name: c?.adv_name || c?.long_name || c?.name || hash};
+        if (cache) cache.set(hash, hop);
+      }
+      if (!hop) return;
+      points.push(hop.pt);
+      hopMeta.push({hash, name: hop.name});
+    });
+    // Our own radio is the receiver, so it terminates the path — but a radio
+    // without GPS must not blank the whole view: draw hop-to-hop instead, the
+    // same way _mcTracePathData omits an unknown radio position rather than
+    // aborting.
+    if (radioLat != null && radioLon != null) points.push([radioLat, radioLon]);
+    if (points.length < 2) return null;
+    return {
+      points, hopMeta, row,
+      resolvedHops: hopMeta.length, totalHops: hops.length,
+      anchored: radioLat != null,
+    };
+  }
+
+  function _drawMcRxTraces() {
+    _clearMcRxLines();
+    if (!leafletMap || !_mcRxTracesOn) return;
+    const rows = _mcRxRows.filter(r => !_mcRxHidden.has(r.payload_type || 'UNK'));
+    const hopCache = new Map();
+    let drawn = 0;
+    for (const row of rows) {
+      const res = _mcRxPathResult(row, hopCache);
+      if (!res) continue;
+      const color = _mcRxColor(row.payload_type);
+      // Direct routes are solid, flooded ones dashed — the same visual language
+      // the existing MC path lines use.
+      const flood = String(row.route_type || '').includes('FLOOD');
+      const halo = L.polyline(res.points, {
+        color: '#111', weight: 5, opacity: 0.35, interactive: false,
+        lineCap: 'round', lineJoin: 'round',
+      }).addTo(leafletMap);
+      _mcRxLines.push(halo);
+      const when = row.ts ? new Date(row.ts * 1000).toLocaleTimeString() : '';
+      const hopNames = res.hopMeta.map(h => h.name).join(' → ');
+      const partial = res.resolvedHops < res.totalHops
+        ? ` (${res.totalHops - res.resolvedHops} hop(s) unresolved)` : '';
+      const line = L.polyline(res.points, {
+        color, weight: 2.5, opacity: 0.9, dashArray: flood ? '6,5' : null,
+        lineCap: 'round', lineJoin: 'round',
+      }).addTo(leafletMap);
+      line.bindTooltip(
+        `<b>${escHtml(row.payload_type || 'UNK')}</b> · ${escHtml(row.route_type || '')}<br>`
+        + `${res.totalHops} hop(s)${escHtml(partial)}<br>`
+        + (hopNames ? `${escHtml(hopNames)} → us<br>` : '')
+        + `${row.rssi != null ? row.rssi + ' dBm' : ''} ${row.snr != null ? '/ ' + row.snr + ' SNR' : ''}<br>`
+        + `${escHtml(when)}`,
+        {sticky: true}
+      );
+      _mcRxLines.push(line);
+      drawn++;
+    }
+    const countEl = document.getElementById('mc-trace-count');
+    if (countEl) {
+      countEl.textContent = `${drawn} path${drawn === 1 ? '' : 's'} drawn of ${_mcRxRows.length} heard`;
+    }
+  }
+
+  function _renderMcTraceLegend() {
+    const wrap = document.getElementById('mc-trace-chips');
+    if (!wrap) return;
+    const counts = {};
+    for (const r of _mcRxRows) {
+      const t = r.payload_type || 'UNK';
+      counts[t] = (counts[t] || 0) + 1;
+    }
+    const types = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+    wrap.innerHTML = types.map(t => {
+      const off = _mcRxHidden.has(t);
+      return `<span onclick="toggleMcTraceType('${jsSafe(t)}')" title="Click to show/hide ${escHtml(t)}"
+        style="cursor:pointer;user-select:none;padding:1px 6px;border-radius:8px;white-space:nowrap;
+               border:1px solid ${_mcRxColor(t)};opacity:${off ? 0.35 : 1};
+               background:${off ? 'transparent' : _mcRxColor(t) + '22'};color:var(--fg)">
+        <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${_mcRxColor(t)}"></span>
+        ${escHtml(t)} ${counts[t]}</span>`;
+    }).join('');
+  }
+
+  function toggleMcTraceType(t) {
+    if (_mcRxHidden.has(t)) _mcRxHidden.delete(t); else _mcRxHidden.add(t);
+    _renderMcTraceLegend();
+    _drawMcRxTraces();
   }
 
   function _mcHandleTraceData(data) {
-    const isOurs = _mcPendingTraceTag !== null && data.tag === _mcPendingTraceTag;
-    if (isOurs) {
-      _mcPendingTraceTag = null;
-      const status = document.getElementById('sense-mc-status');
-      if (status && _senseNet === 'mc') status.textContent = 'Trace response received.';
-      _mcTraceSetButtonState();
-    }
+    // The mesh-wide broadcast trace was removed (it never drew a response — the
+    // firmware/repeaters do not answer it). TRACE_DATA still arrives for the
+    // per-contact Trace Probe, which shares the same transport.
     const isPingTrace = _mcPingTracePending !== null
       && data.tag === _mcPingTracePending.tag
       && data.radio_id === _mcPingTracePending.radioId;
@@ -16750,7 +16868,7 @@ if (targetEl) {
       _mcPingTracePending = null;
     }
     _drawMcTracePath(data);
-    const traceEntryIdx = _addMcTraceLogEntry(data, isOurs || isPingTrace);
+    const traceEntryIdx = _addMcTraceLogEntry(data, isPingTrace);
     if (isPingTrace) _mcShowPingTraceResult(data, pingTrace, traceEntryIdx);
   }
 
@@ -17806,6 +17924,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       settleMapLayout();
     } else {
       // Clean up MC sense state — restore legend
+      setMcTraces(false);   // stop the overheard-trace poll when leaving Map/Sense
       clearMcPathLines();
       _mcHoverLines.forEach(l => leafletMap && leafletMap.removeLayer(l));
       _mcHoverLines = [];

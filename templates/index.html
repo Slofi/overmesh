@@ -451,12 +451,18 @@
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-shrink:0;flex-wrap:wrap">
             <button id="mc-scan-btn" class="btn" onclick="startMcScan()" title="Send one MC advert and listen for contact responses during the scan window" style="display:none">Scan</button>
             <span id="mc-scan-status" style="display:none;font-size:11px;color:var(--muted);white-space:nowrap"></span>
-            <button id="mc-trace-btn" class="btn" onclick="doMcTrace()" title="Send one mesh-wide MC Trace probe and draw returned hop data" style="display:none">Trace</button>
+            <button id="mc-trace-btn" class="btn" onclick="toggleMcTraces()" title="Show the paths of MeshCore packets this radio overheard — passive, transmits nothing" style="display:none">Traces</button>
             <button id="mc-neighbors-btn" class="btn" onclick="doMcNeighbors()" title="Show contacts by last known MC path: direct, nearby, recent, or all" style="display:none">Last Heard</button>
             <span style="flex:1"></span>
             <span id="sense-mc-status" style="font-size:11px;color:var(--muted);white-space:nowrap"></span>
           </div>
-          <div id="mc-trace-warning" title="Trace is a mesh-wide broadcast. Use deliberately." style="display:none;font-size:11px;color:var(--muted);margin-bottom:8px;flex-shrink:0">⚠️ Trace broadcasts to the <strong>entire mesh</strong>. Use sparingly.</div>
+          <div id="mc-trace-legend" style="display:none;margin-bottom:8px;flex-shrink:0;font-size:10px;color:var(--muted)">
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+              <span id="mc-trace-count" style="white-space:nowrap"></span>
+              <span style="color:var(--border)">·</span>
+              <span id="mc-trace-chips" style="display:flex;gap:4px;flex-wrap:wrap"></span>
+            </div>
+          </div>
           <div id="sense-mc-stats" style="display:flex;gap:8px;margin-bottom:6px;flex-shrink:0;font-size:10px;color:var(--muted)">
             <span id="sense-mc-stat-total">0 contacts</span>
             <span style="color:var(--border)">·</span>

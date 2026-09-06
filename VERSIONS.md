@@ -10,6 +10,16 @@ OverMesh uses date-based release versions:
 
 The version in `VERSION` must be updated every time an OverMesh update is pushed to GitHub. The Settings updater also shows the Git commit hash for exact build identification.
 
+## 2026.09.06.3
+
+- Repurposed the MC Map/Sense **Trace** button. Its old behaviour broadcast a mesh-wide TRACE probe and waited for responses that never arrived; the button is now a **toggle for the overheard-packet view**, which is entirely passive and transmits nothing.
+  - draws the path of every MeshCore packet this radio heard, hop by hop, ending at our own radio
+  - coloured per payload type, dashed for flood routes and solid for direct, with a tooltip giving type, route, hop count, resolved hop names, RSSI/SNR and time
+  - a clickable legend shows per-type counts and switches each type on or off
+  - refreshes every 5 s, redrawing only when the data actually changed; hops that cannot be resolved unambiguously are skipped rather than guessed
+  - hop resolution runs client-side through the existing geographic path scoring, which resolves far more hops than a per-row coordinate can: measured 908 of 915 hops (99.2%) against real captured traffic
+- Removed the broadcast-trace machinery behind the old button (`doMcTrace`, its cooldown, the pending-tag correlation and the mesh-wide warning). The per-contact **Trace Probe** and all TRACE_DATA handling are unchanged — they share the same transport, which is why it was kept.
+
 ## 2026.09.06.2
 
 - Fixed the per-contact passive-intel badge, which had never displayed anything on any host: `load_passive_obs_summary` matched the caller's 12-char contact prefixes exactly, but observations are stored under 2-4 char path hop hashes (trace, rx) or 64-char full pubkeys (rc_adv). Matching is now by prefix relationship in either direction, crediting a stored key only when it relates to exactly one requested contact so an ambiguous 1-byte hop hash is never attributed to the wrong node. The packet timeline is excluded by default so it cannot swamp the per-contact signal history.

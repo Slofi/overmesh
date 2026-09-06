@@ -1,7 +1,7 @@
 import logging
 import os
 import signal
-import subprocess
+import subprocess  # nosec B404 -- required for restart helper; invoked with fixed args, no user input
 import sys
 import threading
 import time
@@ -135,8 +135,20 @@ def lite():
     return render_template("lite.html", version=__version__, auth_enabled=is_auth_enabled())
 
 
+def _is_trusted_admin_origin():
+    import ipaddress
+    try:
+        ip = ipaddress.ip_address(request.remote_addr or "")
+    except ValueError:
+        return False
+    return ip.is_loopback or ip.is_private or ip.is_link_local
+
+
 @app.route("/api/shutdown", methods=["POST"])
 def api_shutdown():
+    if not _is_trusted_admin_origin():
+        return jsonify({"error": "Forbidden"}), 403
+
     def _kill():
         time.sleep(0.4)
         disconnect_all_mc()
@@ -147,6 +159,9 @@ def api_shutdown():
 
 @app.route("/api/restart", methods=["POST"])
 def api_restart():
+    if not _is_trusted_admin_origin():
+        return jsonify({"error": "Forbidden"}), 403
+
     def _restart():
         script     = os.path.abspath(__file__)
         script_dir = os.path.dirname(script)

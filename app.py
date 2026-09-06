@@ -17,6 +17,8 @@ def _load_app_version():
 __version__ = _load_app_version()
 
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from pubsub import pub
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -27,6 +29,8 @@ from config import CONFIG, DATA_DIR, save_config, _valid_node_id
 
 app = Flask(__name__)
 app.secret_key = load_secret_key(DATA_DIR)
+
+limiter = Limiter(get_remote_address, app=app, default_limits=["120 per minute"])
 
 # ---------------------------------------------------------------------------
 # Authentication gate (optional, off by default)

@@ -336,10 +336,11 @@ function toggleTrace() {
 }
 
 // ── MC Traces (overheard RX) ────────────────────────────────────────────────
-// Small-screen adaptation of the full app's animated "Traces" view (same name):
-// polls the passive RX log and draws each newly-heard packet as one fading
-// colored line along its resolved hop path (no moving-dot animation). Type
-// colors match the full app. Stops when off, hidden, or no MC radio is connected.
+// Port of the full app's animated "Traces" view for OM Lite (same name).
+// Polls the passive RX log and animates each newly-heard packet as a moving
+// dot with a fading tail travelling hop to hop along its resolved path.
+// Direct arrivals (0 hops) pulse as an expanding ring at our radio. Type
+// colors match the full app. Stops when off, hidden, or no MC radio.
 const MC_LIVE_COLORS = {
   TEXT_MSG: '#8b5cf6', GRP_TXT: '#a855f7', ADVERT: '#3b82f6', ACK: '#22c55e',
   TRACE: '#f97316', REQ: '#eab308', RESPONSE: '#f59e0b', ANON_REQ: '#eab308',
@@ -348,12 +349,22 @@ const MC_LIVE_COLORS = {
 };
 const MC_LIVE_FETCH_LIMIT = 30;   // recent packets per poll (small screen: enough to see traffic)
 const MC_LIVE_POLL_MS   = 6000;   // matches backend flush cadence
-const MC_LIVE_FADE_MS   = 6500;   // how long a line stays before removal
-const MC_LIVE_MAX_LINES = 40;     // safety cap for slow screens
+const MC_LIVE_HOP_MS    = 420;    // travel time per hop (same as full app)
+const MC_LIVE_FADE_MS   = 900;    // tail fade once the packet arrives (full app)
+const MC_LIVE_TAIL_LEN  = 0.35;   // tail length as a fraction of the whole path
+const MC_LIVE_DIRECT_MS = 1400;   // expanding-ring duration for a direct arrival
+const MC_LIVE_DIRECT_R  = 26;     // ring growth in pixels
+const MC_LIVE_MAX_ANIM  = 40;     // concurrent packets in flight
+const MC_LIVE_SEED_CNT  = 8;      // recent packets replayed on enable (staggered)
+const MC_LIVE_SEED_MS   = 300;    // stagger between replayed packets
 
-let _liveRxTimer = null;
-let _liveRxSeen  = new Set();     // row keys already drawn
-let _liveRxLines = [];            // {layer, fadeTimer}
+let _liveRxTimer  = null;
+let _liveRxSeen   = new Set();    // row keys already animated
+let _liveRxAnims  = [];           // in-flight animations
+let _liveRxRaf    = null;         // requestAnimationFrame handle
+let _liveRxRows   = [];           // latest fetched rows (for count/legend)
+
+const _liveRxKey = r => `${r.ts}|${r.path}|${r.payload_type}|${r.rssi}`;
 
 function toggleLiveRx() {
   S.liveRxOn = !S.liveRxOn;
@@ -361,6 +372,7 @@ function toggleLiveRx() {
   if (!S.liveRxOn) { stopLiveRx(); toast('Traces: OFF'); return; }
   toast('Traces: ON');
   _liveRxSeen = new Set();
+  _liveRxRows = [];
   _liveRxPoll(true);
   if (_liveRxTimer) clearInterval(_liveRxTimer);
   _liveRxTimer = setInterval(() => _liveRxPoll(false), MC_LIVE_POLL_MS);
@@ -368,12 +380,11 @@ function toggleLiveRx() {
 
 function stopLiveRx() {
   if (_liveRxTimer) { clearInterval(_liveRxTimer); _liveRxTimer = null; }
-  _liveRxLines.forEach(e => {
-    if (e.fadeTimer) clearTimeout(e.fadeTimer);
-    try { map.removeLayer(e.layer); } catch (_) {}
-  });
-  _liveRxLines = [];
+  if (_liveRxRaf !== null) { cancelAnimationFrame(_liveRxRaf); _liveRxRaf = null; }
+  _liveRxAnims.forEach(a => _liveRxRemoveAnim(a));
+  _liveRxAnims = [];
   _liveRxSeen = new Set();
+  _liveRxRows = [];
 }
 
 async function _liveRxPoll(seed) {
@@ -402,85 +413,195 @@ async function _liveRxPoll(seed) {
     if (!r.ok) return;
     const rows = await r.json();
     const list = Array.isArray(rows) ? rows : (rows.rows || rows.obs || []);
-    // Draw newest first; skip ones we've already shown. On first enable (seed)
-    // only draw a few so the small screen isn't flooded with stale packets.
-    const toDraw = seed ? list.slice(0, 6) : list;
-    for (const row of toDraw) {
-      const key = `${row.ts}|${row.path}|${row.payload_type}|${row.rssi}`;
-      if (_liveRxSeen.has(key)) continue;
-      _liveRxSeen.add(key);
-      _liveRxDrawRow(row, radio);
-    }
-    // Bound the seen-set so it cannot grow forever.
-    if (_liveRxSeen.size > 3000) {
-      const arr = [..._liveRxSeen].slice(-1000);
-      _liveRxSeen = new Set(arr);
-    }
+    _liveRxRows = list;
+    // Animate packets NEW since the last poll. On first enable (seed) replay
+    // the most recent few, staggered, so there is something to watch now.
+    const fresh = list.filter(row => !_liveRxSeen.has(_liveRxKey(row)));
+    list.forEach(row => _liveRxSeen.add(_liveRxKey(row)));
+    if (_liveRxSeen.size > 3000) _liveRxSeen = new Set([..._liveRxSeen].slice(-1000));
+    // rows arrive newest-first; play oldest-first so motion reads chronologically
+    const play = (seed ? fresh.slice(0, MC_LIVE_SEED_CNT) : fresh).reverse();
+    const cache = new Map();
+    play.forEach((row, i) => {
+      const res = _liveRxResolve(row, radio, cache);
+      if (!res) return;
+      if (seed) setTimeout(() => { if (S.liveRxOn) _liveRxLaunch(res); }, i * MC_LIVE_SEED_MS);
+      else _liveRxLaunch(res);
+    });
   } catch (e) { /* transient — next poll retries */ }
 }
 
 // Resolve one RX row to map points using lite's existing hop resolver.
+// Memoised per draw pass — the same few hop hashes recur across all rows and
+// every miss scans the whole contact list.
 function _liveRxRadioPos(radio) {
   // adv_lat/adv_lon of 0.0 means "not set" in MeshCore, not the equator.
   const lat = radio?.adv_lat, lon = radio?.adv_lon;
   if (lat == null || lon == null) return [null, null];
   return (Math.abs(lat) < 1e-6 && Math.abs(lon) < 1e-6) ? [null, null] : [Number(lat), Number(lon)];
 }
-function _liveRxResolve(row, radio) {
-  const [radioLat, radioLon] = _liveRxRadioPos(radio);
+
+// Split the stored hex path into per-hop hashes. path_hash_size is 1, 2 or 3
+// bytes and all three occur in real traffic, so this must not assume 1.
+function _liveRxHops(row) {
   const hex = String(row.path || '').replace(/[^0-9a-fA-F]/g, '').toLowerCase();
+  if (!hex) return [];
   const size = Math.max(1, Math.min(3, Number(row.path_hash_size) || 1));
   const chars = size * 2;
-  const hashes = [];
-  for (let i = 0; i + chars <= hex.length; i += chars) hashes.push(hex.slice(i, i + chars));
-  const points = [];
-  const names = [];
-  hashes.forEach((hash, idx) => {
-    const res = _mcPickPathHopResolution(hash, radio.id, radioLat, radioLon, null, null, idx, hashes.length);
-    const c = res?.contact;
-    const lat = c?.latitude ?? c?.lat ?? c?.adv_lat ?? null;
-    const lon = c?.longitude ?? c?.lon ?? c?.adv_lon ?? null;
-    if (lat == null || lon == null) return;
-    points.push([Number(lat), Number(lon)]);
-    names.push(c?.adv_name || c?.long_name || c?.name || hash);
-  });
-  if (radioLat != null && radioLon != null) points.push([radioLat, radioLon]);
-  return { points, names, radioLat, radioLon };
+  const out = [];
+  for (let i = 0; i + chars <= hex.length; i += chars) out.push(hex.slice(i, i + chars));
+  return out;
 }
 
-function _liveRxDrawRow(row, radio) {
-  if (!map || !S.liveRxOn) return;
-  const color = MC_LIVE_COLORS[row.payload_type] || MC_LIVE_COLORS.UNK;
-  const res = _liveRxResolve(row, radio);
-  const when = row.ts ? new Date(row.ts * 1000).toLocaleTimeString() : '';
-  const typeTxt = row.payload_type || 'UNK';
-  const routeTxt = row.route_type || '';
-  let layer = null;
+function _liveRxResolve(row, radio, cache) {
+  const [radioLat, radioLon] = _liveRxRadioPos(radio);
+  const hashes = _liveRxHops(row);
+  const points = [];
+  const hopMeta = [];
+  hashes.forEach((hash, idx) => {
+    let hop = cache && cache.get(hash);
+    if (hop === undefined) {
+      const res = _mcPickPathHopResolution(hash, radio.id, radioLat, radioLon, null, null, idx, hashes.length);
+      const c = res?.contact;
+      const lat = c?.latitude ?? c?.lat ?? c?.adv_lat ?? null;
+      const lon = c?.longitude ?? c?.lon ?? c?.adv_lon ?? null;
+      hop = (lat == null || lon == null)
+        ? null
+        : { pt: [Number(lat), Number(lon)], name: c?.adv_name || c?.long_name || c?.name || hash };
+      if (cache) cache.set(hash, hop);
+    }
+    if (!hop) return;
+    points.push(hop.pt);
+    hopMeta.push({ hash, name: hop.name });
+  });
+  // Our radio is the receiver — it terminates the path. A radio without GPS
+  // must not blank the view: draw hop-to-hop instead.
+  if (radioLat != null && radioLon != null) points.push([radioLat, radioLon]);
+  // 0 hops = direct arrival — render as a pulse at our radio, not dropped.
+  if (points.length < 2) {
+    if (radioLat == null || radioLon == null) return null;
+    return { points: [[radioLat, radioLon]], hopMeta, row, direct: true, resolvedHops: hopMeta.length, totalHops: hashes.length };
+  }
+  return { points, hopMeta, row, direct: false, resolvedHops: hopMeta.length, totalHops: hashes.length };
+}
 
-  if (res.points.length >= 2) {
-    // Hop path (sender → relays → us). Unresolved hops are omitted; draw what resolved.
-    layer = L.polyline(res.points, { color, weight: 3, opacity: 0.85, lineCap: 'round', lineJoin: 'round', interactive: true });
-    const hopsTxt = res.names.join(' → ') + (res.names.length ? ' → us' : '');
-    layer.bindTooltip(`<b>${esc(typeTxt)}</b> · ${esc(routeTxt)}<br>${esc(hopsTxt)}<br>${row.rssi != null ? row.rssi + ' dBm' : ''} ${row.snr != null ? '/ ' + row.snr + ' SNR' : ''}<br>${esc(when)}`, { sticky: true });
-  } else if (res.radioLat != null && res.radioLon != null) {
-    // Direct arrival (0 hops) — a small pulse at our radio.
-    layer = L.circleMarker([res.radioLat, res.radioLon], { radius: 6, color, weight: 2.5, fill: false, interactive: true });
-    layer.bindTooltip(`<b>${esc(typeTxt)}</b> · ${esc(routeTxt)}<br>heard <b>direct</b><br>${row.rssi != null ? row.rssi + ' dBm' : ''} ${row.snr != null ? '/ ' + row.snr + ' SNR' : ''}<br>${esc(when)}`, { sticky: true });
+// ── Animation (ported from the full app, same pacing) ───────────────────────
+function _liveRxGeometry(points) {
+  const segs = [];
+  let total = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i], b = points[i + 1];
+    const d = Math.hypot(b[0] - a[0], (b[1] - a[1]) * Math.cos(a[0] * Math.PI / 180)) || 1e-9;
+    segs.push({ a, b, d, start: total });
+    total += d;
   }
-  if (!layer) return;
-  layer.addTo(map);
-  _liveRxLines.push({ layer, fadeTimer: null });
-  if (_liveRxLines.length > MC_LIVE_MAX_LINES) {
-    const oldest = _liveRxLines.shift();
-    if (oldest.fadeTimer) clearTimeout(oldest.fadeTimer);
-    try { map.removeLayer(oldest.layer); } catch (_) {}
+  return { segs, total };
+}
+
+function _liveRxPointAt(geom, frac) {
+  const target = Math.max(0, Math.min(1, frac)) * geom.total;
+  for (const s of geom.segs) {
+    if (target <= s.start + s.d) {
+      const t = s.d ? (target - s.start) / s.d : 0;
+      return [s.a[0] + (s.b[0] - s.a[0]) * t, s.a[1] + (s.b[1] - s.a[1]) * t];
+    }
   }
-  const self = _liveRxLines[_liveRxLines.length - 1];
-  self.fadeTimer = setTimeout(() => {
-    try { map.removeLayer(self.layer); } catch (_) {}
-    const i = _liveRxLines.indexOf(self);
-    if (i >= 0) _liveRxLines.splice(i, 1);
-  }, MC_LIVE_FADE_MS);
+  const last = geom.segs[geom.segs.length - 1];
+  return last ? last.b : null;
+}
+
+// Points between two fractions — the visible tail behind the dot.
+function _liveRxSlice(geom, fromFrac, toFrac) {
+  const out = [_liveRxPointAt(geom, fromFrac)];
+  const from = fromFrac * geom.total, to = toFrac * geom.total;
+  for (const s of geom.segs) {
+    const end = s.start + s.d;
+    if (end > from && end < to) out.push(s.b);
+  }
+  out.push(_liveRxPointAt(geom, toFrac));
+  return out.filter(Boolean);
+}
+
+function _liveRxLaunch(res) {
+  if (!map || !S.liveRxOn || _liveRxAnims.length >= MC_LIVE_MAX_ANIM) return;
+  const color = MC_LIVE_COLORS[res.row.payload_type] || MC_LIVE_COLORS.UNK;
+  if (res.direct) return _liveRxLaunchDirect(res, color);
+  const geom = _liveRxGeometry(res.points);
+  if (!geom.segs.length) return;
+  const tail = L.polyline([], { color, weight: 3, opacity: 0.9, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(map);
+  const dot = L.circleMarker(res.points[0], { radius: 4, color: '#fff', weight: 1.5, fillColor: color, fillOpacity: 1, interactive: true }).addTo(map);
+  const hops = res.hopMeta.map(h => h.name).join(' → ');
+  const when = res.row.ts ? new Date(res.row.ts * 1000).toLocaleTimeString() : '';
+  dot.bindTooltip(
+    `<b>${esc(res.row.payload_type || 'UNK')}</b> · ${esc(res.row.route_type || '')}<br>`
+    + `${res.totalHops} hop(s)`
+    + (res.resolvedHops < res.totalHops ? ` (${res.totalHops - res.resolvedHops} unresolved)` : '') + '<br>'
+    + (hops ? `${esc(hops)} → us<br>` : '')
+    + `${res.row.rssi != null ? res.row.rssi + ' dBm' : ''} ${res.row.snr != null ? '/ ' + res.row.snr + ' SNR' : ''}<br>`
+    + `${esc(when)}`, { sticky: true });
+  _liveRxAnims.push({
+    geom, tail, dot, color,
+    // Longer paths take longer, so hop count reads as distance travelled.
+    duration: Math.max(MC_LIVE_HOP_MS, geom.segs.length * MC_LIVE_HOP_MS),
+    startedAt: null, done: false,
+  });
+  _liveRxStartLoop();
+}
+
+// Direct arrival: an expanding, fading ring on our own radio.
+function _liveRxLaunchDirect(res, color) {
+  const ring = L.circleMarker(res.points[0], { radius: 3, color, weight: 2.5, opacity: 1, fill: false, interactive: true }).addTo(map);
+  const when = res.row.ts ? new Date(res.row.ts * 1000).toLocaleTimeString() : '';
+  ring.bindTooltip(
+    `<b>${esc(res.row.payload_type || 'UNK')}</b> · ${esc(res.row.route_type || '')}<br>`
+    + `heard <b>direct</b> — no relay hops<br>`
+    + `${res.row.rssi != null ? res.row.rssi + ' dBm' : ''} ${res.row.snr != null ? '/ ' + res.row.snr + ' SNR' : ''}<br>`
+    + `${esc(when)}`, { sticky: true });
+  _liveRxAnims.push({ direct: true, ring, color, duration: MC_LIVE_DIRECT_MS, startedAt: null, done: false });
+  _liveRxStartLoop();
+}
+
+function _liveRxStep(ts) {
+  _liveRxRaf = null;
+  for (const a of _liveRxAnims) {
+    if (a.startedAt === null) a.startedAt = ts;
+    const elapsed = ts - a.startedAt;
+    if (a.direct) {
+      const t = elapsed / a.duration;
+      if (t >= 1) { a.done = true; continue; }
+      a.ring.setRadius(3 + t * MC_LIVE_DIRECT_R);
+      a.ring.setStyle({ opacity: 1 - t });
+      continue;
+    }
+    if (elapsed <= a.duration) {
+      const head = elapsed / a.duration;
+      const from = Math.max(0, head - MC_LIVE_TAIL_LEN);
+      const pt = _liveRxPointAt(a.geom, head);
+      if (pt) a.dot.setLatLng(pt);
+      a.tail.setLatLngs(_liveRxSlice(a.geom, from, head));
+    } else {
+      // Arrived: hold the full path briefly, then fade both out together.
+      const fade = (elapsed - a.duration) / MC_LIVE_FADE_MS;
+      if (fade >= 1) { a.done = true; continue; }
+      const o = 1 - fade;
+      a.tail.setLatLngs(_liveRxSlice(a.geom, Math.max(0, 1 - MC_LIVE_TAIL_LEN), 1));
+      a.tail.setStyle({ opacity: 0.9 * o });
+      a.dot.setStyle({ fillOpacity: o, opacity: o });
+    }
+  }
+  const finished = _liveRxAnims.filter(a => a.done);
+  finished.forEach(a => _liveRxRemoveAnim(a));
+  if (finished.length) _liveRxAnims = _liveRxAnims.filter(a => !a.done);
+  if (_liveRxAnims.length) _liveRxStartLoop();
+}
+
+function _liveRxStartLoop() {
+  if (_liveRxRaf === null && _liveRxAnims.length) _liveRxRaf = requestAnimationFrame(_liveRxStep);
+}
+
+function _liveRxRemoveAnim(a) {
+  if (!map) return;
+  [a.tail, a.dot, a.ring].forEach(l => l && map.removeLayer(l));
 }
 
 function mtMarkerColor(node) {

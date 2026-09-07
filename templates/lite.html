@@ -51,6 +51,9 @@
     body.exposed-active #exposed-banner { display: block; }
     body.exposed-active #app-header { top: 30px; }
     body.exposed-active .tab-panel { top: calc(var(--header-h) + 30px); }
+    /* After JS measures the wrapped banner, shift by its real height. */
+    body.exposed-active.exposed-fitted #app-header { top: var(--exposed-h, 30px); }
+    body.exposed-active.exposed-fitted .tab-panel { top: calc(var(--header-h) + var(--exposed-h, 30px)); }
     #app-header {
       position: fixed; top: 0; left: 0; right: 0; height: var(--header-h);
       background: rgba(22,27,34,0.93); backdrop-filter: blur(8px);
@@ -496,7 +499,7 @@
   </style>
 </head>
 <body{% if exposed_no_auth %} class="exposed-active"{% endif %}>
-<div id="exposed-banner">⚠ This OverMesh instance has <b>no login enabled</b> and is reachable beyond this machine (bound to {{ bind_host }}). Enable a password or bind to 127.0.0.1 (see README&nbsp;→&nbsp;Security).
+<div id="exposed-banner" title="This instance is bound to {{ bind_host }} with no login enabled. Anyone who can reach it can send RF and control it. Enable a password or bind to 127.0.0.1 (see README → Security).">⚠ No login enabled — reachable on your network ({{ bind_host }})
   <button onclick="dismissExposedBanner(this)" style="margin-left:12px;background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.35);color:#fecaca;padding:1px 10px;border-radius:4px;cursor:pointer;font-size:11px" title="Hide this warning until the instance is no longer exposed (stays hidden across restarts)">✕ Don't show again</button>
 </div>
 <div id="app-topo-bg"></div>

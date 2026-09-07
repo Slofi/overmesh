@@ -73,6 +73,22 @@ function dismissExposedBanner(btn) {
   document.body.classList.remove('exposed-active');
 }
 
+// The banner can wrap on narrow screens; shift header + tab panels by its real
+// height instead of the fixed 30px (which only fits a single line).
+function _fitExposedBannerLite() {
+  const banner = document.getElementById('exposed-banner');
+  if (!banner || !document.body.classList.contains('exposed-active')) return;
+  const h = banner.getBoundingClientRect().height;
+  if (h > 0) {
+    document.body.style.setProperty('--exposed-h', h + 'px');
+    document.body.classList.add('exposed-fitted');
+  }
+}
+if (document.body.classList.contains('exposed-active')) {
+  requestAnimationFrame(_fitExposedBannerLite);
+  window.setTimeout(_fitExposedBannerLite, 250);
+}
+
 function initMap() {
   const panel = document.getElementById('tab-map');
   map = L.map('map', {

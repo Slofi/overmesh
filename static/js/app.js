@@ -90,6 +90,21 @@
     document.body.classList.remove('exposed-active');
   }
 
+  // The exposure banner can wrap to multiple lines on narrow screens; the body
+  // needs enough top padding to clear its real height (a fixed 32px only fits
+  // one line). Measure after layout and set padding to the banner's height.
+  function _fitExposedBanner() {
+    const banner = document.getElementById('exposed-banner');
+    if (!banner || !document.body.classList.contains('exposed-active')) return;
+    const h = banner.getBoundingClientRect().height;
+    if (h > 0) document.body.style.paddingTop = (h + 4) + 'px';
+  }
+  if (document.body.classList.contains('exposed-active')) {
+    // Run after fonts/layout settle — retry briefly in case of late reflow.
+    requestAnimationFrame(_fitExposedBanner);
+    window.setTimeout(_fitExposedBanner, 250);
+  }
+
   // Load silent mode state on page load
   fetch(BASE_PATH + '/api/silent_mode').then(r => r.json()).then(d => _updateSilentUi(d.silent_mode)).catch(() => {});
 

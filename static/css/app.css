@@ -1463,6 +1463,25 @@
     }
     .map-layer-opt:hover { background: var(--bg3); }
     .map-layer-opt.active { color: var(--accent); font-weight: 600; }
+    .map-layer-sep {
+      border-top: 1px solid var(--border); margin: 4px 10px 2px;
+    }
+    .map-group-section {
+      padding: 6px 12px 8px;
+    }
+    .map-group-labelrow {
+      display: flex; align-items: baseline; justify-content: space-between;
+      font-size: 11px; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.4px;
+      margin-bottom: 6px;
+    }
+    .map-group-labelrow .map-group-val {
+      color: var(--accent); font-weight: 600; text-transform: none; letter-spacing: 0;
+    }
+    .map-group-section input[type=range] { width: 100%; }
+    .map-group-hint {
+      font-size: 10px; color: var(--muted); margin-top: 4px;
+    }
     #map-search-wrap {
       position: absolute; top: 10px; left: 50px; z-index: 1000;
       display: inline-flex; align-items: center;

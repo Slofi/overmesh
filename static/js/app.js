@@ -7709,28 +7709,23 @@ if (targetEl) {
         L.DomEvent.on(custBtn, 'click', (e) => { L.DomEvent.stopPropagation(e); openPolarCustomize(); });
 
         // ── Node grouping distance (GH #23) ──
-        const groupSep = L.DomUtil.create('div', '', panel);
-        groupSep.style.cssText = 'border-top:1px solid var(--border);margin:4px 2px 2px';
-        const groupTitle = L.DomUtil.create('div', '', panel);
+        const groupSep = L.DomUtil.create('div', 'map-layer-sep', panel);
+        const groupSection = L.DomUtil.create('div', 'map-group-section', panel);
+        const groupLabelRow = L.DomUtil.create('div', 'map-group-labelrow', groupSection);
+        const groupTitle = L.DomUtil.create('span', '', groupLabelRow);
         groupTitle.textContent = 'Node grouping';
-        groupTitle.style.cssText = 'padding:6px 12px 2px;font-size:11px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:var(--muted)';
-        const groupRow = L.DomUtil.create('div', '', panel);
-        groupRow.style.cssText = 'padding:2px 12px 8px';
-        const groupLabel = L.DomUtil.create('span', '', groupRow);
+        const groupLabel = L.DomUtil.create('span', 'map-group-val', groupLabelRow);
         groupLabel.id = 'map-group-val';
         groupLabel.textContent = `${groupMeters} m`;
-        groupLabel.style.cssText = 'font-size:11px;color:var(--text);float:right;padding-top:2px';
-        const groupRange = L.DomUtil.create('input', '', groupRow);
+        const groupRange = L.DomUtil.create('input', '', groupSection);
         groupRange.id = 'map-group-range';
         groupRange.type = 'range';
         groupRange.min = '0';
         groupRange.max = '200';
         groupRange.step = '5';
         groupRange.value = String(groupMeters);
-        groupRange.style.cssText = 'width:130px;vertical-align:middle;accent-color:var(--accent)';
-        const groupHint = L.DomUtil.create('div', '', groupRow);
-        groupHint.textContent = 'Merge nodes closer than this distance into one badge (0 = identical positions only).';
-        groupHint.style.cssText = 'font-size:10px;color:var(--muted);margin-top:3px';
+        const groupHint = L.DomUtil.create('div', 'map-group-hint', groupSection);
+        groupHint.textContent = '0 = identical positions only';
         L.DomEvent.disableClickPropagation(groupRange);
         L.DomEvent.disableScrollPropagation(groupRange);
         groupRange.addEventListener('input', () => {

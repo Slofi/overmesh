@@ -14,6 +14,8 @@ from urllib.parse import urlencode
 import qrcode
 import qrcode.image.svg
 
+from collections import defaultdict
+
 from flask import Blueprint, jsonify, request
 
 from config import CONFIG, CONFIG_LOCK, save_config
@@ -53,6 +55,26 @@ MC_SCAN_WINDOW = 60  # seconds
 
 log = logging.getLogger(__name__)
 bp  = Blueprint("mc", __name__)
+
+# Simple in-memory sliding-window rate limit applied to every route on this
+# blueprint, keyed by client IP, to prevent request-flood DoS / resource
+# exhaustion against the MeshCore API.
+_RATE_LIMIT_MAX    = 120   # requests
+_RATE_LIMIT_WINDOW = 60    # seconds
+_rate_limit_lock = threading.Lock()
+_rate_limit_hits = defaultdict(list)
+
+
+@bp.before_request
+def _enforce_rate_limit():
+    ip  = request.remote_addr or "unknown"
+    now = time.time()
+    with _rate_limit_lock:
+        hits = _rate_limit_hits[ip]
+        hits[:] = [t for t in hits if now - t < _RATE_LIMIT_WINDOW]
+        if len(hits) >= _RATE_LIMIT_MAX:
+            return jsonify({"error": "Too many requests"}), 429
+        hits.append(now)
 
 
 
@@ -479,7 +501,7 @@ def _mc_sent_message_id(msg):
         msg.get("ts", 0),
         time.time_ns(),
     ]
-    return "mc-" + hashlib.sha1("|".join(str(p) for p in parts).encode("utf-8")).hexdigest()[:20]
+    return "mc-" + hashlib.sha256("|".join(str(p) for p in parts).encode("utf-8")).hexdigest()[:20]
 
 
 _CLIENT_MSG_ID_RE = re.compile(r"^mc-[A-Za-z0-9-]{1,60}$")
@@ -1447,7 +1469,8 @@ def api_mc_passive_obs(radio_id):
 def api_mc_rc_collect_events(radio_id):
     """Return RC collect summaries newer than ?since=<unix_ts>."""
     try:
-        since = float(request.args.get("since", 0))
+        _since_raw = str(request.args.get("since", 0)).strip().lower()
+        since = 0.0 if _since_raw in ("nan", "-nan", "+nan", "inf", "-inf", "+inf") else float(_since_raw)
         return jsonify(get_rc_collect_events(radio_id, since))
     except Exception as e:
         log.warning(f"[MC] rc_collect_events error: {e}")

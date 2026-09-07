@@ -243,6 +243,13 @@ def startup():
     # per-radio message DBs are initialized in connect_node() as each radio connects
     pub.subscribe(on_text_receive, "meshtastic.receive")
     try:
+        # Position packets are published to their own topic by the lib (not the
+        # generic one). Subscribe so OM sees raw positions (Light B locationSource
+        # capture + accurate last-heard for position-only nodes).
+        pub.subscribe(on_text_receive, "meshtastic.receive.position")
+    except Exception as e:
+        log.warning(f"Could not subscribe to receive.position: {e}")
+    try:
         pub.subscribe(on_connection_lost, "meshtastic.connection.lost")
     except Exception as e:
         log.warning(f"Could not subscribe to connection.lost: {e}")

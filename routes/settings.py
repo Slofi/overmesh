@@ -150,6 +150,35 @@ def _git_status_path(line):
     return path
 
 
+def _clear_skip_worktree_flags():
+    """Clear skip-worktree index flags so `git reset --hard` can't be blocked.
+
+    `git ls-files -v` prints a per-file flag letter: uppercase = index matches
+    working tree, LOWERCASE 's' = skip-worktree is set. A stale skip-worktree
+    entry makes reset fail with "Entry '<file>' not uptodate. Cannot merge."
+    (hit on CD 2026-09-07 on templates/index.html). Cleared flags are logged so
+    the update log explains the recovery. Returns the list of cleared paths."""
+    rc, listing, _ = _git_cmd(["ls-files", "-v"], timeout=15)
+    if rc != 0 or not listing:
+        return []
+    flagged = []
+    for line in listing.splitlines():
+        # Format: "<flag> <path>"; the flag is a single letter (or two for
+        # submodules) followed by a space.
+        if len(line) < 3 or line[0] != "s":
+            continue
+        path = line[2:].strip()
+        if path:
+            flagged.append(path)
+    if not flagged:
+        return []
+    _git_cmd(["update-index", "--no-skip-worktree", "--"] + flagged, timeout=15)
+    _update_append(
+        "Cleared stale skip-worktree flag(s): " + ", ".join(flagged)
+    )
+    return flagged
+
+
 def _filter_update_status_lines(status):
     lines = status.splitlines() if status else []
     return [
@@ -246,6 +275,14 @@ def _run_update_job():
         if info.get("dirty"):
             _update_append("Local changes detected — stashing before update...")
             _git_cmd(["stash", "--include-untracked"], timeout=15)
+
+        # A stale skip-worktree/assume-unchanged index flag makes `git reset
+        # --hard` refuse with "Entry '<file>' not uptodate. Cannot merge." (seen
+        # on CD 2026-09-07: templates/index.html had a skip-worktree flag left
+        # over from a local-edit workaround, bricking the in-app updater). Clear
+        # such flags before resetting — the reset itself brings the file back to
+        # the target revision, so nothing is lost.
+        _clear_skip_worktree_flags()
 
         _update_append("Resetting to origin/main...")
         _git_cmd(["reset", "--hard", "origin/main"], timeout=60, check=True)

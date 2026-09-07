@@ -42,6 +42,38 @@ class UpdateStatusDirtyFilterTests(unittest.TestCase):
 
         self.assertEqual(lines, [])
 
+    def test_clear_skip_worktree_flags_clears_flagged_files(self):
+        # A lowercase 's' flag letter = skip-worktree set (the CD 2026-09-07
+        # case: templates/index.html bricked `git reset --hard`).
+        def fake_git(args, timeout=30, check=False):
+            if args[:2] == ["ls-files", "-v"]:
+                return 0, "H config.json\ns templates/index.html\ns static/js/app.js\n", ""
+            if args[:2] == ["update-index", "--no-skip-worktree"]:
+                return 0, "", ""
+            return 0, "", ""
+
+        with mock.patch.object(settings_routes, "_git_cmd", side_effect=fake_git), \
+             mock.patch.object(settings_routes, "_update_append") as append:
+            cleared = settings_routes._clear_skip_worktree_flags()
+
+        self.assertEqual(cleared, ["templates/index.html", "static/js/app.js"])
+        append.assert_called_once_with(
+            "Cleared stale skip-worktree flag(s): templates/index.html, static/js/app.js"
+        )
+
+    def test_clear_skip_worktree_flags_noop_when_clean(self):
+        def fake_git(args, timeout=30, check=False):
+            if args[:2] == ["ls-files", "-v"]:
+                return 0, "H config.json\nH templates/index.html\nH static/js/app.js\n", ""
+            return 0, "", ""
+
+        with mock.patch.object(settings_routes, "_git_cmd", side_effect=fake_git), \
+             mock.patch.object(settings_routes, "_update_append") as append:
+            cleared = settings_routes._clear_skip_worktree_flags()
+
+        self.assertEqual(cleared, [])
+        append.assert_not_called()
+
 
 class AppSettingsOmPositionTests(unittest.TestCase):
     def setUp(self):

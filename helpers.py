@@ -9,7 +9,7 @@ from hw_models import hw_model_name
 from config import CONFIG, CONFIG_LOCK, save_config
 from state import (
     connections, connections_lock,
-    mt_last_heard, mt_last_heard_lock, mt_via_mqtt,
+    mt_last_heard, mt_last_heard_lock, mt_via_mqtt, mt_node_position,
     sse_clients, sse_lock, _sse_queue_last_ok,
 )
 
@@ -291,6 +291,17 @@ def get_node_data():
                 legacy_key = (node_id_str, "")
                 with mt_last_heard_lock:
                     via_mqtt = bool(mt_via_mqtt.get((node_id, node_id_str), False))
+                    pos_info = mt_node_position.get((node_id, node_id_str)) or {}
+                # Position source/movement from the raw-packet capture (Light B):
+                # pos_source ∈ {"LOC_INTERNAL","LOC_EXTERNAL","LOC_MANUAL",""}
+                # tells whether the shown position is a real fix or a fixed/user-set
+                # one. pos_moved is true when the node's last raw position packet
+                # differed from the previous one (trackers / moving nodes).
+                pos_source = pos_info.get("source") or ""
+                pos_moved = False
+                if pos_info.get("lat") is not None and pos_info.get("prev_lat") is not None:
+                    pos_moved = (abs(pos_info["lat"] - pos_info["prev_lat"]) > 1e-6
+                                 or abs(pos_info["lon"] - pos_info["prev_lon"]) > 1e-6)
                 node_entry = {
                     "radio_id":     node_id,    "radio_name":   node_name,
                     "radio_status": status,
@@ -308,6 +319,8 @@ def get_node_data():
                     "is_favorite":  fav_key in favorites or legacy_key in favorites,
                     "is_ignored":   fav_key in ignored or legacy_key in ignored,
                     "via_mqtt":     via_mqtt,
+                    "pos_source":   pos_source,
+                    "pos_moved":    pos_moved,
                     "air_util":     metrics.get("airUtilTx"),
                     "ch_util":      metrics.get("channelUtilization"),
                     "notes":        node_notes.get(node_id_str, '{}'),

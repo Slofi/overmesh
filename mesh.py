@@ -24,7 +24,7 @@ from sense import _sense_lock, _sense_state
 from state import (
     chat_lock, chat_messages,
     connections, connections_lock,
-    mt_last_heard, mt_last_heard_lock, mt_via_mqtt,
+    mt_last_heard, mt_last_heard_lock, mt_via_mqtt, mt_node_position,
     pending_acks, pending_acks_lock,
     waypoints_cache, waypoints_lock,
     _tr_pending, _tr_pending_lock,
@@ -145,6 +145,33 @@ def on_text_receive(packet, interface):
                     _node["rssi"] = packet.get("rxRssi")
                 _node["user"] = _merge_dict(_node.get("user", {}), decoded.get("user"))
                 _node["position"] = _merge_dict(_node.get("position", {}), decoded.get("position"))
+                # Light position-source capture: the lib's nodeDB drops the proto
+                # locationSource field, so grab it + the coords here while the raw
+                # packet still has them. Used to tell real-GPS positions
+                # (LOC_INTERNAL/EXTERNAL) from fixed/user-set ones (LOC_MANUAL) and
+                # to spot position changes (trackers / moving nodes).
+                _pos = decoded.get("position") or {}
+                # Raw packets carry latitudeI/longitudeI (proto int32 × 1e-7);
+                # some paths already converted to latitude/longitude floats.
+                _plat = _pos.get("latitude")
+                if _plat is None and _pos.get("latitudeI") is not None:
+                    _plat = _pos["latitudeI"] * 1e-7
+                _plon = _pos.get("longitude")
+                if _plon is None and _pos.get("longitudeI") is not None:
+                    _plon = _pos["longitudeI"] * 1e-7
+                if _plat is not None and _plon is not None:
+                    with mt_last_heard_lock:
+                        _prev = mt_node_position.get((_rid, _fid)) or {}
+                        mt_node_position[(_rid, _fid)] = {
+                            "source": _pos.get("locationSource") or _pos.get("location_source") or "",
+                            "lat": _plat,
+                            "lon": _plon,
+                            "ts": _new_ts,
+                            # Prior coords so consumers can detect real movement
+                            # (a tracker's position change vs a fixed manual spot).
+                            "prev_lat": _prev.get("lat"),
+                            "prev_lon": _prev.get("lon"),
+                        }
                 tel = decoded.get("telemetry", {}) or {}
                 _node["deviceMetrics"] = _merge_dict(
                     _node.get("deviceMetrics", {}),

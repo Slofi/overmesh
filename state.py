@@ -23,6 +23,14 @@ mt_last_heard_lock = threading.Lock()
 # Guarded by mt_last_heard_lock (written in the same critical section).
 mt_via_mqtt        = {}
 
+# Last position packet info per node, keyed by (radio_id, node_id):
+# {source, lat, lon, ts}. The meshtastic lib's nodeDB drops the proto
+# locationSource field, so OM captures it here from the raw packet path to
+# tell real-GPS positions (LOC_INTERNAL/EXTERNAL) from fixed/user-set ones
+# (LOC_MANUAL) and to notice when a node's position actually changes
+# (trackers / moving nodes). Guarded by mt_last_heard_lock.
+mt_node_position   = {}
+
 # ---------------------------------------------------------------------------
 # MeshCore connections
 # mc_connections[config_id] = {

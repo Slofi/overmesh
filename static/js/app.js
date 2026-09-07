@@ -7666,47 +7666,6 @@ if (targetEl) {
     });
     new LabelsCtrl({ position: 'topleft' }).addTo(leafletMap);
 
-    // Node-grouping distance control (GH #23): how close two nodes must be to
-    // share a cluster badge. 0 = only exact-same coordinates group.
-    const GroupCtrl = L.Control.extend({
-      onAdd() {
-        const wrap = L.DomUtil.create('div', 'map-locate-btn map-group-wrap');
-        wrap.id = 'map-group-btn';
-        wrap.title = 'Node grouping distance';
-        wrap.innerHTML = '<span id="map-group-label">⛁</span>';
-        wrap.style.fontSize = '13px';
-        wrap.style.cursor = 'pointer';
-        L.DomEvent.on(wrap, 'click', L.DomEvent.stopPropagation);
-        L.DomEvent.on(wrap, 'click', () => {
-          const pop = document.getElementById('map-group-pop');
-          if (pop) pop.style.display = pop.style.display === 'none' ? 'block' : 'none';
-        });
-        const pop = L.DomUtil.create('div', 'map-group-pop');
-        pop.id = 'map-group-pop';
-        pop.style.display = 'none';
-        pop.innerHTML = `
-          <div style="font-size:11px;font-weight:600;margin-bottom:6px;white-space:nowrap">Group nodes closer than <b id="map-group-val">${groupMeters} m</b></div>
-          <input id="map-group-range" type="range" min="0" max="200" step="5" value="${groupMeters}"
-            style="width:140px;vertical-align:middle">
-          <div style="font-size:10px;opacity:0.7;margin-top:4px;white-space:nowrap">0 = only identical positions</div>`;
-        wrap.appendChild(pop);
-        const range = pop.querySelector('#map-group-range');
-        L.DomEvent.on(range, 'input', L.DomEvent.stopPropagation);
-        range.addEventListener('input', () => {
-          groupMeters = parseInt(range.value, 10);
-          localStorage.setItem('mapGroupMeters', String(groupMeters));
-          const val = document.getElementById('map-group-val');
-          if (val) val.textContent = `${groupMeters} m`;
-        });
-        range.addEventListener('change', () => {
-          if (mapShowMt) updateMapMarkers(allNodes);
-          if (mapShowMc) renderMcMapMarkers();
-        });
-        return wrap;
-      }
-    });
-    new GroupCtrl({ position: 'topleft' }).addTo(leafletMap);
-
     // Layer switcher
     const LayerCtrl = L.Control.extend({
       onAdd() {
@@ -7748,6 +7707,41 @@ if (targetEl) {
         custBtn.onmouseenter = () => { custBtn.style.color = 'var(--text)'; };
         custBtn.onmouseleave = () => { custBtn.style.color = 'var(--muted)'; };
         L.DomEvent.on(custBtn, 'click', (e) => { L.DomEvent.stopPropagation(e); openPolarCustomize(); });
+
+        // ── Node grouping distance (GH #23) ──
+        const groupSep = L.DomUtil.create('div', '', panel);
+        groupSep.style.cssText = 'border-top:1px solid var(--border);margin:4px 2px 2px';
+        const groupTitle = L.DomUtil.create('div', '', panel);
+        groupTitle.textContent = 'Node grouping';
+        groupTitle.style.cssText = 'padding:6px 12px 2px;font-size:11px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:var(--muted)';
+        const groupRow = L.DomUtil.create('div', '', panel);
+        groupRow.style.cssText = 'padding:2px 12px 8px';
+        const groupLabel = L.DomUtil.create('span', '', groupRow);
+        groupLabel.id = 'map-group-val';
+        groupLabel.textContent = `${groupMeters} m`;
+        groupLabel.style.cssText = 'font-size:11px;color:var(--text);float:right;padding-top:2px';
+        const groupRange = L.DomUtil.create('input', '', groupRow);
+        groupRange.id = 'map-group-range';
+        groupRange.type = 'range';
+        groupRange.min = '0';
+        groupRange.max = '200';
+        groupRange.step = '5';
+        groupRange.value = String(groupMeters);
+        groupRange.style.cssText = 'width:130px;vertical-align:middle;accent-color:var(--accent)';
+        const groupHint = L.DomUtil.create('div', '', groupRow);
+        groupHint.textContent = 'Merge nodes closer than this distance into one badge (0 = identical positions only).';
+        groupHint.style.cssText = 'font-size:10px;color:var(--muted);margin-top:3px';
+        L.DomEvent.disableClickPropagation(groupRange);
+        L.DomEvent.disableScrollPropagation(groupRange);
+        groupRange.addEventListener('input', () => {
+          groupMeters = parseInt(groupRange.value, 10);
+          localStorage.setItem('mapGroupMeters', String(groupMeters));
+          groupLabel.textContent = `${groupMeters} m`;
+        });
+        groupRange.addEventListener('change', () => {
+          if (mapShowMt) updateMapMarkers(allNodes);
+          if (mapShowMc) renderMcMapMarkers();
+        });
 
         L.DomEvent.on(btn, 'click', L.DomEvent.stopPropagation);
         L.DomEvent.on(btn, 'click', () => {

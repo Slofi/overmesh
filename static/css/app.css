@@ -1437,19 +1437,12 @@
     }
     .map-locate-btn:hover  { background: var(--border); color: var(--text); border-color: var(--text); }
     .map-locate-btn.active { color: var(--accent); border-color: var(--accent); }
-    .map-group-wrap { position: relative; }
-    .map-group-pop {
-      position: absolute; left: 38px; top: 0;
-      background: var(--bg2); border: 1px solid var(--border);
-      border-radius: 8px; padding: 10px 12px; z-index: 1000;
-      box-shadow: 0 4px 16px rgba(0,0,0,0.5); color: var(--text);
-    }
     #map-layer-panel {
       position: absolute; left: 38px; top: 0;
       background: var(--bg2); border: 1px solid var(--border);
       border-radius: 8px; padding: 6px 4px;
       box-shadow: 0 2px 12px rgba(0,0,0,0.6);
-      min-width: 150px; z-index: 5000;
+      min-width: 170px; z-index: 5000;
       display: none; flex-direction: column; gap: 2px;
       max-height: min(420px, calc(100vh - 180px)); overflow-y: auto;
       overscroll-behavior: contain;

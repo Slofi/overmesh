@@ -113,8 +113,9 @@
   let mapShowMt     = localStorage.getItem('mapShowMt') !== '0';
   let mapShowMc     = localStorage.getItem('mapShowMc') !== '0';
   // Node grouping distance for the map (shared MT+MC), in metres. Two nodes
-  // closer than this (lat degrees) share a cluster badge. 0 = only exact-same
-  // coordinates group. Default 10m ≈ the old fixed ~11m grid. GH #23.
+  // share a cluster badge when connected by a chain of distances <= this.
+  // 0 = only exact-same coordinates group. Default 10m ≈ the old ~11m grid.
+  // GH #23.
   let groupMeters   = (() => {
     const v = parseInt(localStorage.getItem('mapGroupMeters') || '10', 10);
     return Number.isFinite(v) && v >= 0 ? Math.min(v, 500) : 10;
@@ -4889,8 +4890,8 @@ if (targetEl) {
   let leafletMap    = null;
   let _mapStaticLoaded = false;  // waypoints/notes/GPS only fetched once per session
   let mapMarkers    = {};
-  let clusterMarkers = {};  // posKey → cluster badge marker
-  let mcClusterMarkers = {};  // posKey → MC cluster badge marker
+  let clusterMarkers = {};  // group key → MT cluster badge marker ('fanned' = fanned pile)
+  let mcClusterMarkers = {};  // group key → MC cluster badge marker
   let waypointMarkers = {};
   let waypointsData   = {};  // wp_id → wp object (for edit modal)
   let notesData       = {};  // note_id → note object
@@ -7852,11 +7853,10 @@ if (targetEl) {
       if (!matches && leafletMap.hasLayer(marker)) leafletMap.removeLayer(marker);
     });
     // Also filter cluster badges: show if any node in the group matches
-    const posKey = n => _clusterKey(n.latitude, n.longitude);
     Object.entries(clusterMarkers).forEach(([k, marker]) => {
       if (marker === 'fanned') return; // fanned piles are individual markers
-      const anyMatch = !mapSearchQuery || allNodes.some(n =>
-        n.latitude != null && posKey(n) === k &&
+      const members = marker?._mtGroupNodes || [];
+      const anyMatch = !mapSearchQuery || members.some(n =>
         ((n.long_name || '').toLowerCase().includes(mapSearchQuery) ||
          (n.short_name || '').toLowerCase().includes(mapSearchQuery))
       );
@@ -9113,20 +9113,44 @@ if (targetEl) {
     }, 80);
   }
 
-  // Shared cluster key for MT + MC map markers (GH #23). Two nodes land in the
-  // same cluster when they are within `groupMeters` of each other (grid step =
-  // groupMeters in lat degrees ≈ metres/111320). 0 m → only exact-same
-  // coordinates group. Independent of zoom — spread nodes keep their positions
-  // at every zoom level; only genuinely-close nodes badge.
-  function _clusterGridDeg() { return groupMeters / 111320; }
-  function _clusterKey(lat, lon) {
-    const g = _clusterGridDeg();
-    if (g <= 0) {
-      return `${Number(lat).toFixed(6)}_${Number(lon).toFixed(6)}`; // exact position
+  // Distance grouping for MT + MC map markers (GH #23): two nodes share a
+  // cluster when the chain of pairwise distances between them stays within
+  // `groupMeters` (single-linkage, union-find). Exact distance semantics — no
+  // grid-boundary artifacts. 0 m → only exact-same coordinates group.
+  // Returns an array of groups, each an array of items.
+  function _distanceGroups(items) {
+    const n = items.length;
+    if (n <= 1) return items.slice();
+    const parent = Array.from({ length: n }, (_, i) => i);
+    const find = x => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
+    const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; };
+    const maxM = groupMeters;
+    if (maxM > 0) {
+      for (let i = 0; i < n; i++) {
+        const a = items[i];
+        for (let j = i + 1; j < n; j++) {
+          const b = items[j];
+          if (_haversineMeters(a.latitude, a.longitude, b.latitude, b.longitude) <= maxM) union(i, j);
+        }
+      }
     }
-    const latG = Math.max(g, 1e-9);
-    const lonG = Math.max(g / Math.max(Math.cos(Number(lat) * Math.PI / 180), 0.2), 1e-9);
-    return `${(Math.round(Number(lat) / latG) * latG).toFixed(6)}_${(Math.round(Number(lon) / lonG) * lonG).toFixed(6)}`;
+    // 0 m → union only exact-same coordinates
+    if (maxM === 0) {
+      for (let i = 0; i < n; i++) {
+        const a = items[i];
+        for (let j = i + 1; j < n; j++) {
+          const b = items[j];
+          if (a.latitude === b.latitude && a.longitude === b.longitude) union(i, j);
+        }
+      }
+    }
+    const roots = new Map();
+    items.forEach((item, i) => {
+      const r = find(i);
+      if (!roots.has(r)) roots.set(r, []);
+      roots.get(r).push(item);
+    });
+    return [...roots.values()];
   }
 
   function markerColor(node) {
@@ -9221,17 +9245,33 @@ if (targetEl) {
     const seen = new Set();
     const withGps = nodes.filter(n => n.latitude != null && n.longitude != null);
 
-    // Group nodes that share the same position (within groupMeters, shared MT+MC)
-    const posKey = n => _clusterKey(n.latitude, n.longitude);
-    const clusters = {};
-    withGps.forEach(n => { const k = posKey(n); (clusters[k] = clusters[k] || []).push(n); });
+    // Group nodes by true distance (within groupMeters). Two nodes share a
+    // cluster iff connected by a chain of pairwise distances <= groupMeters.
+    // Zoom-independent — spread nodes keep their positions at every zoom.
+    const groupList = _distanceGroups(withGps);
+    const nodeGroupKey = {};   // node.id -> group key (anchor's id)
+    const groupNodes = new Map(); // group key -> [nodes]
+    groupList.forEach(g => {
+      // Stable anchor: the member with the lexicographically-smallest id, so a
+      // group's key doesn't churn when the nodes array order changes between
+      // renders (avoids recreating badges every refresh).
+      const anchor = g.reduce((a, b) => {
+        const ai = a.id || `${a.latitude}_${a.longitude}`;
+        const bi = b.id || `${b.latitude}_${b.longitude}`;
+        return bi < ai ? b : a;
+      });
+      const key = `g_${anchor.id || anchor.latitude + '_' + anchor.longitude}`;
+      groupNodes.set(key, g);
+      g.forEach(n => { nodeGroupKey[n.id] = key; });
+    });
 
-    // For clusters >1: use module-level clusterMarkers dict (posKey → marker)
+    // For clusters >1: use module-level clusterMarkers dict (group key → marker)
     const seenClusters = new Set();
 
     withGps.forEach(n => {
       seen.add(n.id);
-      const group = clusters[posKey(n)];
+      const gkey = nodeGroupKey[n.id];
+      const group = groupNodes.get(gkey) || [n];
 
       if (group.length === 1) {
         // Normal single marker — remove any sense marker for this node to avoid overlap
@@ -9257,8 +9297,8 @@ if (targetEl) {
           if (!mapLabels) marker.closeTooltip();
         }
       } else {
-        // Cluster: one shared marker per unique position, remove individual markers
-        const k = posKey(n);
+        // Cluster: one shared marker per distance group, remove individual markers
+        const k = gkey;
         seenClusters.add(k);
         // Exact-same-point pile at high zoom (>=15): fan the members out in a
         // ring of individual markers instead of one badge, so each node is
@@ -9325,6 +9365,7 @@ if (targetEl) {
                 </div>
               </div>`).join('')}`;
           clusterMarkers[k].setIcon(updatedIcon).setPopupContent(updatedPopup);
+          clusterMarkers[k]._mtGroupNodes = group;
           clusterMarkers[k].setTooltipContent(`${group.length} nodes`);
           if (!mapLabels) clusterMarkers[k].closeTooltip();
           return;
@@ -9361,6 +9402,7 @@ if (targetEl) {
         const marker = L.marker([group[0].latitude, group[0].longitude], {icon: clusterIcon})
           .bindPopup(clusterPopup, {maxWidth: 280, maxHeight: 400})
           .bindTooltip(`${group.length} nodes`, { permanent: true, direction: 'right', className: 'map-label', offset: [8, 0] });
+        marker._mtGroupNodes = group;
         clusterMarkers[k] = marker.addTo(leafletMap);
         if (!mapLabels) marker.closeTooltip();
       }
@@ -12303,15 +12345,24 @@ if (targetEl) {
       items.push({...st, id: rid, latitude: st.lat, longitude: st.lon, _rid: rid, _kind: 'radio'});
     });
 
-    const groups = {};
-    items.forEach(item => {
-      const key = _clusterKey(item.latitude, item.longitude);
-      (groups[key] = groups[key] || []).push(item);
+    // True-distance grouping (same model as MT, within groupMeters).
+    const groupList = _distanceGroups(items);
+    const itemGroupKey = new Map(); // item object -> group key
+    const groupItems = new Map();
+    groupList.forEach(g => {
+      const anchor = g.reduce((a, b) => {
+        const ai = a.id || a._rid || `${a.latitude}_${a.longitude}`;
+        const bi = b.id || b._rid || `${b.latitude}_${b.longitude}`;
+        return bi < ai ? b : a;
+      });
+      const key = `mc_${anchor.id || anchor._rid || anchor.latitude + '_' + anchor.longitude}`;
+      groupItems.set(key, g);
+      g.forEach(it => itemGroupKey.set(it, key));
     });
 
     items.forEach(item => {
-      const key = _clusterKey(item.latitude, item.longitude);
-      const group = groups[key] || [item];
+      const key = itemGroupKey.get(item);
+      const group = groupItems.get(key) || [item];
       if (group.length > 1) {
         if (mcClusterMarkers[key]) return;
         const clat = group.reduce((s, x) => s + x.latitude, 0) / group.length;

@@ -17583,6 +17583,75 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     }).catch(e => mcScopeStatus(String(e.message || e), true));
   }
 
+  function mcScopeDiscover() {
+    const radioId = _mcScope.radioId;
+    if (!radioId) return;
+    const btn = document.getElementById('mc-scope-discover-btn');
+    const statusEl = document.getElementById('mc-scope-discover-status');
+    const resultsEl = document.getElementById('mc-scope-discover-results');
+    const chipsEl = document.getElementById('mc-scope-discover-chips');
+    const sourcesEl = document.getElementById('mc-scope-discover-sources');
+    if (!btn || !statusEl || !resultsEl || !chipsEl || !sourcesEl) return;
+    if (btn.disabled) return;
+    btn.disabled = true;
+    resultsEl.style.display = 'none';
+    statusEl.textContent = 'Discovering… (0-hop sweep + region queries, ~10-30s)';
+    const oldText = btn.textContent;
+    btn.textContent = 'Discovering…';
+    fetch(BASE_PATH + `/api/settings/mc_nodes/${encodeURIComponent(radioId)}/regions/discover`, {
+      method: 'POST',
+    }).then(r => r.json().then(d => ({ok: r.ok, d}))).then(({ok, d}) => {
+      if (!ok || d.error) { statusEl.textContent = d.error || 'Discovery failed.'; return; }
+      if (d.noZeroHopRepeaters) {
+        statusEl.textContent = 'No repeaters answered in direct range. Try again or check the radio.';
+        return;
+      }
+      if (!d.regions || !d.regions.length) {
+        statusEl.textContent = 'Repeaters answered, but none reported regions.';
+        return;
+      }
+      statusEl.textContent = `Found ${d.regions.length} region${d.regions.length === 1 ? '' : 's'}:`;
+      chipsEl.innerHTML = '';
+      for (const name of d.regions) {
+        const addable = /^[a-z0-9-]+$/.test(name);
+        const chip = document.createElement('span');
+        chip.style.cssText = 'display:inline-flex;gap:6px;align-items:center;background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:2px 8px;font-family:monospace;font-size:12px';
+        const q = JSON.stringify(name);  // JS-string-safe for the onclick
+        const actions = addable
+          ? `<button class="btn" style="padding:0 6px;font-size:11px" title="Add to known regions"
+                  onclick="mcScopeAddDiscovered(${q})">+ catalog</button>
+             <button class="btn" style="padding:0 6px;font-size:11px" title="Set as default scope"
+                  onclick="mcScopeSetDefault(${q})">default</button>`
+          : `<span style="font-size:10px;color:var(--muted)" title="Name can't be set via OM (contains characters outside a-z0-9-)">read-only</span>`;
+        chip.innerHTML = `<span style="color:var(--accent)">#${escHtml(name)}</span>${actions}`;
+        chipsEl.appendChild(chip);
+      }
+      const srcs = (d.perRepeater || []).filter(p => p.regions && p.regions.length);
+      sourcesEl.innerHTML = srcs.length
+        ? `<div style="margin-top:4px">Heard from ${srcs.length} repeater${srcs.length === 1 ? '' : 's'}: ${srcs.map(p =>
+            `<span title="${escHtml(p.full_key)}">${escHtml(p.name)} (#${escHtml(p.regions.join(', #'))})</span>`).join(' · ')}</div>`
+        : '<div style="margin-top:4px">Regions reported but per-repeater detail unavailable.</div>';
+      resultsEl.style.display = 'block';
+    }).catch(e => { statusEl.textContent = String(e.message || e); })
+      .finally(() => { btn.disabled = false; btn.textContent = oldText; });
+  }
+
+  function mcScopeAddDiscovered(name) {
+    const radioId = _mcScope.radioId;
+    if (!radioId || !name) return;
+    if (_mcScope.regions.includes(name)) { mcScopeStatus(`#${name} is already in the catalog.`, false); return; }
+    const regions = [..._mcScope.regions, name];
+    fetch(BASE_PATH + `/api/settings/mc_nodes/${encodeURIComponent(radioId)}/regions`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({regions}),
+    }).then(r => r.json().then(d => ({ok: r.ok, d}))).then(({ok, d}) => {
+      if (!ok || d.error) return mcScopeStatus(d.error || 'Failed to save region.', true);
+      _mcScope.regions = d.regions || regions;
+      renderMcScopePanel();
+      mcScopeStatus(`#${name} added to known regions.`, false);
+    }).catch(e => mcScopeStatus(String(e.message || e), true));
+  }
+
   function loadMcDeviceInfo(radioId) {
     radioId = radioId || mcSettingsRadioId || activeMcRadioId;
     if (!radioId) return;

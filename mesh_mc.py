@@ -14,6 +14,7 @@ import hashlib
 import json
 import logging
 import os
+import random
 import re
 import tempfile
 from collections import deque
@@ -26,7 +27,7 @@ import time
 
 from meshcore import MeshCore, EventType
 from meshcore.ble_cx import BLEConnection
-from meshcore.packets import BinaryReqType
+from meshcore.packets import AnonReqType, BinaryReqType
 from meshcore.serial_cx import SerialConnection
 from meshcore.tcp_cx import TCPConnection
 
@@ -108,13 +109,33 @@ def _mc_normalize_region_name(name):
 async def _set_mc_flood_scope_on_mc(mc, region):
     """Send CMD_SET_FLOOD_SCOPE (54). region None -> clear (unscoped).
 
-    The meshcore lib's set_flood_scope returns an Event (OK or ERROR) — it does
-    NOT raise on a device rejection, so classification happens here from the
-    returned event, never from a raised exception."""
+    The transport key MUST be the raw first-16-bytes of sha256('#region') — the
+    firmware computes scope keys from the '#'-prefixed name (see firmware
+    TransportKey::calcTransportCode and MeshMonitor's shipped set_flood_scope).
+    The meshcore python lib's string path hashes the BARE name (no '#'), which
+    yields a DIFFERENT key that no repeater/scoped node recognizes — so we never
+    pass a bare string: region names are converted to key bytes here and the lib
+    sends bytes verbatim. None is sent as-is (lib turns it into a 16-zero clear).
+
+    The lib's set_flood_scope returns an Event (OK or ERROR) — it does NOT raise
+    on a device rejection, so classification happens here from the returned
+    event, never from a raised exception."""
     try:
-        return await mc.commands.set_flood_scope(region)
+        if region is None:
+            return await mc.commands.set_flood_scope(None)
+        return await mc.commands.set_flood_scope(_mc_scope_key_bytes(region))
     except AttributeError:
         raise RuntimeError("Installed meshcore lib has no set_flood_scope support")
+
+
+def _mc_scope_key_bytes(region):
+    """Raw 16-byte transport key for a region name — sha256('#name')[:16].
+
+    Authoritative derivation (firmware TransportKey::calcTransportCode; also the
+    key MeshMonitor's shipped set_flood_scope sends): the name is hashed WITH a
+    leading '#'. The meshcore python lib hashes bare names, which is wrong for
+    every named scope — so OM derives the key itself and passes bytes."""
+    return hashlib.sha256(("#" + region).encode("utf-8")).digest()[:16]
 
 
 def _mc_scope_error_is_unsupported(event):
@@ -162,8 +183,12 @@ async def _assert_mc_scope_async(config_id, region, mc=None):
 
 
 def _mc_scope_key_for(region):
-    """Transport key for a region name — sha256('#name') first 16 bytes (hex)."""
-    return hashlib.sha256(("#" + region).encode("utf-8")).digest()[:16].hex()
+    """Hex transport key for a region name — sha256('#name') first 16 bytes.
+
+    Used for display/tests only; the wire command always sends the raw bytes
+    from _mc_scope_key_bytes (never a bare name through the lib's string path,
+    which hashes without the '#' and produces a wrong key)."""
+    return _mc_scope_key_bytes(region).hex()
 
 
 def resolve_mc_send_scope(config_id, chan_idx=None):
@@ -228,6 +253,197 @@ def get_mc_scope_state(config_id):
     if active is _MC_SCOPE_UNKNOWN:
         active = None
     return (config_id not in _mc_scope_unsupported, active)
+
+
+# --- Region discovery (phone-app style) ---
+# Mechanism (verified against MeshMonitor PR #3765 + firmware behavior):
+#   1. 0-hop DISCOVER sweep (~8s) collects repeaters/rooms in DIRECT range, in
+#      arrival order. A repeater only answers a REGIONS anon-request over a
+#      DIRECT route, so only 0-hop responders are worth querying.
+#   2. Per responder: raw ANON_REQ regions frame is sent and the first
+#      BINARY_RESPONSE after the Sent ack is parsed. The anon reply carries
+#      clock(4 LE) + a NUL-terminated, comma-separated ASCII list of region
+#      names ('*' = the wildcard/unscoped region).
+# Firmware quirk handled here: an ANON_REQ's Sent-ack tag does NOT match the
+# BinaryResponse tag (the python lib's req_regions_sync waits on that tag and
+# would time out) — so we subscribe to the generic BINARY_RESPONSE instead and
+# take the first parseable reply after Sent, serialized per radio so a
+# concurrent op cannot steal it.
+_mc_region_discover_locks: dict = {}
+_mc_region_discover_serial_locks: dict = {}
+
+
+def _mc_region_discover_lock(config_id):
+    lock = _mc_region_discover_locks.get(config_id)
+    if lock is None:
+        lock = _mc_region_discover_locks[config_id] = asyncio.Lock()
+    return lock
+
+
+def _mc_region_discover_serial_lock(config_id):
+    """Serializes the raw anon send + reply wait against other anon/radio ops
+    on the same radio (the reply channel is tag-less, so concurrent ops could
+    cross-match). Distinct from the discover lock so two sequential queries
+    within one discover run each hold the serial lock without deadlocking."""
+    lock = _mc_region_discover_serial_locks.get(config_id)
+    if lock is None:
+        lock = _mc_region_discover_serial_locks[config_id] = asyncio.Lock()
+    return lock
+
+
+def _mc_parse_regions_reply(response_data_hex):
+    """Parse a REGIONS BinaryResponse payload: clock(4 LE) is stripped by the
+    reader into 'data'; the remaining body is NUL-terminated comma-separated
+    ASCII region names ('*' = wildcard/unscoped). Returns a list of clean names.
+    Defense-in-depth: only printable-ASCII tokens survive (a stray non-regions
+    binary payload would otherwise render garbage chips)."""
+    if not response_data_hex:
+        return []
+    try:
+        raw = bytes.fromhex(response_data_hex)
+    except (TypeError, ValueError):
+        return []
+    end = raw.find(b"\0")
+    if end < 0:
+        end = len(raw)
+    body = raw[:end].decode("ascii", "ignore")
+    out = []
+    for token in body.split(","):
+        token = token.strip()
+        if token and all(0x20 <= ord(c) <= 0x7E for c in token):
+            out.append(token)
+    return out
+
+
+async def _mc_query_responder_regions(config_id, mc, full_key, timeout=15):
+    """Ask one 0-hop responder for its region list via ANON_REQ REGIONS.
+
+    The python lib's send_anon_req builds the correct frame ([57][pubkey:32]
+    [0x01][path]) and zero-hops flood contacts; its req_regions_sync then waits
+    on a tag that firmware never matches, so we subscribe to generic
+    BINARY_RESPONSE and take the first parseable reply after the Sent ack.
+    Runs under the per-radio serial lock so a concurrent op can't steal the
+    reply. Returns a list of region names (empty = answered with none)."""
+    async with _mc_region_discover_serial_lock(config_id):
+        # Resolve the contact record so send_anon_req has a return path.
+        with mc_connections_lock:
+            contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
+        contact = contacts.get(full_key)
+        if contact is None:
+            contact = {"public_key": full_key, "out_path_len": -1, "out_path": ""}
+
+        reply_holder = {}
+        sub = mc.subscribe(EventType.BINARY_RESPONSE, lambda ev: reply_holder.setdefault("ev", ev))
+
+        async def _send_and_wait():
+            try:
+                sent = await mc.commands.send_anon_req(
+                    contact, AnonReqType.REGIONS, min_timeout=timeout
+                )
+                if sent is None or sent.type == EventType.ERROR:
+                    return []
+            except Exception as e:
+                log.info(f"[MC:{config_id}] regions query to {full_key[:12]} failed to send: {e}")
+                return []
+            # Wait for the first BINARY_RESPONSE after Sent, then give the reply
+            # a short grace window in case it lands just after we check.
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                ev = reply_holder.get("ev")
+                if ev is not None:
+                    return _mc_parse_regions_reply((ev.payload or {}).get("data"))
+                await asyncio.sleep(0.25)
+            return []
+
+        try:
+            return await asyncio.wait_for(_send_and_wait(), timeout=timeout + 2)
+        except asyncio.TimeoutError:
+            return []
+        finally:
+            sub.unsubscribe()
+
+
+async def _mc_collect_responders(config_id, mc, sweep_s=8, retry=True):
+    """0-hop DISCOVER sweep: fire a DISCOVER_REQ and collect answering
+    repeaters/rooms (full pubkey) in arrival order for sweep_s seconds.
+    Retries once if nothing answers (a repeater may have been busy). Returns
+    ([{full_key, name}], no_zero_hop: bool)."""
+    responders = []
+    seen = set()
+
+    def _on_discover(event):
+        p = event.payload or {}
+        pubkey = (p.get("pubkey") or "").strip()
+        if pubkey and pubkey not in seen:
+            seen.add(pubkey)
+            with mc_connections_lock:
+                contacts = mc_connections.get(config_id, {}).get("contacts", {})
+            contact = contacts.get(pubkey, {})
+            name = (contact.get("adv_name") or contact.get("name") or pubkey[:8])
+            responders.append({"full_key": pubkey, "name": name})
+
+    sub = mc.subscribe(EventType.DISCOVER_RESPONSE, _on_discover)
+    try:
+        for attempt in (1, 2) if retry else (1,):
+            responders.clear()
+            seen.clear()
+            try:
+                result = await mc.commands.send_node_discover_req(
+                    filter=0x04, prefix_only=False, tag=random.randint(1, 0xFFFFFFFF)
+                )
+                if result is not None and result.type == EventType.ERROR:
+                    return [], False
+            except Exception as e:
+                log.info(f"[MC:{config_id}] discover sweep failed: {e}")
+                return [], False
+            await asyncio.sleep(sweep_s)
+            if responders:
+                return responders, False
+    finally:
+        sub.unsubscribe()
+    return [], True  # no responders after both attempts
+
+
+async def _mc_discover_regions_async(config_id, sweep_s=8, per_query_timeout=15, max_responders=8):
+    """Phone-app-style region discovery: 0-hop sweep of nearby repeaters/rooms,
+    then query each for its region list. Returns:
+      {regions: [unique names, '*' excluded from 'regions' but reported per
+                 repeater], perRepeater: [{full_key,name,regions}],
+       noZeroHopRepeaters: bool, warning: str|None}
+    """
+    mc, _ = _get_mc(config_id)
+    async with _mc_region_discover_lock(config_id):
+        responders, no_zero_hop = await _mc_collect_responders(config_id, mc, sweep_s=sweep_s)
+        if no_zero_hop or not responders:
+            return {"regions": [], "perRepeater": [], "noZeroHopRepeaters": no_zero_hop,
+                    "warning": None}
+
+        per_repeater = []
+        region_set = {}
+        for responder in responders[:max_responders]:
+            names = await _mc_query_responder_regions(config_id, mc, responder["full_key"],
+                                                      timeout=per_query_timeout)
+            # '*' is the unscoped wildcard region — report it per repeater but
+            # don't offer it as a selectable scope name.
+            clean = [n for n in names if n != "*"]
+            per_repeater.append({"full_key": responder["full_key"],
+                                 "name": responder["name"], "regions": clean})
+            for n in clean:
+                region_set.setdefault(n, True)
+
+        return {"regions": list(region_set.keys()), "perRepeater": per_repeater,
+                "noZeroHopRepeaters": False, "warning": None}
+
+
+def discover_mc_regions(config_id, sweep_s=8, per_query_timeout=15, timeout=90):
+    """Sync entry: run region discovery (transmits a sweep + per-responder
+    queries) and return the result dict."""
+    _ensure_mc_tx_allowed("MC region discovery")
+    return run_mc(
+        _mc_discover_regions_async(config_id, sweep_s=sweep_s,
+                                   per_query_timeout=per_query_timeout),
+        timeout=timeout,
+    )
 
 
 def _remote_admin_lock(config_id, full_key):

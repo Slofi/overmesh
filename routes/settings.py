@@ -1145,6 +1145,26 @@ def api_settings_mc_nodes_channel_scope(node_id, chan_idx):
     return jsonify({"ok": True, "channel": chan_idx, "scope": scope})
 
 
+@bp.route("/api/settings/mc_nodes/<node_id>/regions/discover", methods=["POST"])
+def api_settings_mc_nodes_regions_discover(node_id):
+    """Phone-app-style region discovery: 0-hop sweep of nearby repeaters/rooms,
+    then query each responder for its region list. TRANSMITS on the mesh (a
+    DISCOVER_REQ + one anon query per answering repeater) — the same RF class
+    as the Scan button. Returns {regions, perRepeater, noZeroHopRepeaters} so
+    the UI can distinguish 'no repeaters heard' from 'answered but none
+    reported'. Discovered names are NOT auto-saved — the UI offers them as
+    chips the user can add to the catalog / set as a scope."""
+    from mesh_mc import discover_mc_regions
+
+    if not any(n.get("id") == node_id for n in CONFIG.get("mc_nodes", [])):
+        return jsonify({"error": "MC node not found"}), 404
+    try:
+        result = discover_mc_regions(node_id, sweep_s=8, per_query_timeout=15, timeout=120)
+        return jsonify({"ok": True, **result})
+    except Exception as e:
+        return jsonify({"error": f"Region discovery failed: {e}"}), 500
+
+
 
 @bp.route("/api/settings/auth", methods=["GET"])
 def api_settings_auth_get():

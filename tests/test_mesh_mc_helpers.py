@@ -1491,7 +1491,8 @@ class McFloodScopeTests(unittest.TestCase):
 
     def _fake_mc(self, errors=None):
         """Fake MC whose commands.set_flood_scope records calls.
-        errors: optional list of scope strings that should return ERROR events."""
+        errors: optional list of scope KEY BYTES that should return ERROR events
+        (the wire path now passes raw key bytes, never bare names)."""
         calls = []
 
         class FakeCommands:
@@ -1503,6 +1504,9 @@ class McFloodScopeTests(unittest.TestCase):
 
         return SimpleNamespace(commands=FakeCommands()), calls
 
+    def _key(self, name):
+        return mesh_mc._mc_scope_key_bytes(name)
+
     def test_assert_sets_scope_when_configured(self):
         CONFIG["mc_nodes"] = [{"id": "mc1", "default_scope": "si"}]
         fake_mc, calls = self._fake_mc()
@@ -1510,7 +1514,7 @@ class McFloodScopeTests(unittest.TestCase):
         with mock.patch.object(mesh_mc, "_get_mc", return_value=(fake_mc, {})):
             result = asyncio.run(mesh_mc._assert_mc_scope_async("mc1", "si"))
 
-        self.assertEqual(calls, ["si"])
+        self.assertEqual(calls, [self._key("si")])  # raw sha256('#si')[:16] bytes
         self.assertEqual(mesh_mc._mc_scope_cache.get("mc1"), "si")
         self.assertNotIn("mc1", mesh_mc._mc_scope_unsupported)
 
@@ -1528,7 +1532,7 @@ class McFloodScopeTests(unittest.TestCase):
 
     def test_assert_marks_unsupported_radio_once(self):
         CONFIG["mc_nodes"] = [{"id": "mc1", "default_scope": "si"}]
-        fake_mc, _ = self._fake_mc(errors=["si"])
+        fake_mc, _ = self._fake_mc(errors=[self._key("si")])
 
         with mock.patch.object(mesh_mc, "_get_mc", return_value=(fake_mc, {})):
             asyncio.run(mesh_mc._assert_mc_scope_async("mc1", "si"))
@@ -1570,12 +1574,177 @@ class McFloodScopeTests(unittest.TestCase):
         mesh_mc._mc_scope_unsupported.add("mc1")
         self.assertEqual(mesh_mc.get_mc_scope_state("mc1"), (False, "si"))
 
+    def test_wire_sends_key_bytes_not_bare_name(self):
+        """Regression: the lib hashes BARE names (sha256('si')) but firmware keys
+        are sha256('#si')[:16]. Passing a bare string put a wrong key on the wire
+        and broke scoping against every real node. The wire path must send the
+        #-prefixed key bytes verbatim."""
+        import hashlib
+
+        CONFIG["mc_nodes"] = [{"id": "mc1", "default_scope": "si"}]
+        fake_mc, calls = self._fake_mc()
+
+        with mock.patch.object(mesh_mc, "_get_mc", return_value=(fake_mc, {})):
+            asyncio.run(mesh_mc._assert_mc_scope_async("mc1", "si"))
+
+        # The byte value the firmware expects for 'si'.
+        expected = hashlib.sha256(b"#si").digest()[:16]
+        self.assertEqual(calls, [expected])
+        # And it must NOT be the bare-name key the lib would compute.
+        self.assertNotEqual(calls[0], hashlib.sha256(b"si").digest()[:16])
+
     def test_reset_scope_cache_forgets_state(self):
         mesh_mc._mc_scope_cache["mc1"] = "si"
         mesh_mc._mc_scope_unsupported.add("mc1")
         mesh_mc.reset_mc_scope_cache("mc1")
         self.assertNotIn("mc1", mesh_mc._mc_scope_cache)
         self.assertNotIn("mc1", mesh_mc._mc_scope_unsupported)
+
+
+class McRegionDiscoverTests(unittest.TestCase):
+    """Region discovery: 0-hop sweep + raw ANON_REQ REGIONS per responder.
+
+    The parse is a pure function (tested directly); the query flow is exercised
+    against a fake subscription that fires a BINARY_RESPONSE event. A live
+    sweep transmits on the mesh, so the sweep itself is not fired in tests —
+    _mc_collect_responders is patched to return scripted responders."""
+
+    def setUp(self):
+        mesh_mc._mc_region_discover_locks.clear()
+        mesh_mc._mc_region_discover_serial_locks.clear()
+        mesh_mc.mc_connections.clear()
+
+    def _regions_data(self, *names):
+        """Reply body as the reader dispatches it: 'data' hex = comma-separated
+        ASCII names, NUL-terminated (the 4-byte clock prefix is stripped by the
+        reader before dispatch, so the parser must not expect it)."""
+        return (",".join(names) + "\0").encode("ascii").hex()
+
+    def test_parse_regions_reply(self):
+        parse = mesh_mc._mc_parse_regions_reply
+        # Standard comma list with wildcard + trailing NUL
+        self.assertEqual(parse(self._regions_data("si", "europe", "*")), ["si", "europe", "*"])
+        # Whitespace tolerated around commas
+        self.assertEqual(parse("si, eu ,".encode().hex()), ["si", "eu"])
+        # Empty payload / garbage
+        self.assertEqual(parse(""), [])
+        self.assertEqual(parse("nothex!!"), [])
+        # No trailing NUL (defensive)
+        self.assertEqual(parse("si".encode().hex()), ["si"])
+
+    def test_parse_regions_filters_high_bytes_tokens(self):
+        # A stray non-regions binary payload (no commas) is one non-printable
+        # token and must be dropped entirely — never rendered as a chip.
+        raw = b"\x01\x02si\xff\x03"  # control bytes, no comma delimiters
+        self.assertEqual(mesh_mc._mc_parse_regions_reply(raw.hex()), [])
+        # A comma-delimited list with one clean name and one garbage token
+        # keeps the clean name and drops the garbage.
+        mixed = b"si,\x01\x02junk\xff\x03"
+        self.assertEqual(mesh_mc._mc_parse_regions_reply(mixed.hex()), ["si"])
+
+    def _fake_mc(self):
+        class _FakeCommands:
+            def __init__(self):
+                self.sent = []
+
+            async def send_anon_req(self, contact, req_type, **kw):
+                self.sent.append((contact, req_type))
+                return SimpleNamespace(type=mesh_mc.EventType.MSG_SENT,
+                                       payload={"expected_ack": "deadbeef"})
+
+        class _FakeMc:
+            def __init__(self):
+                self.commands = _FakeCommands()
+                self._subs = {}
+
+            def subscribe(self, evt_type, cb, **kw):
+                self._subs.setdefault(evt_type, []).append(cb)
+                return SimpleNamespace(unsubscribe=lambda: None)
+
+            def fire(self, evt_type, payload):
+                for cb in list(self._subs.get(evt_type, [])):
+                    cb(SimpleNamespace(payload=payload))
+
+        return _FakeMc()
+
+    def test_query_responder_returns_parsed_regions(self):
+        mc = self._fake_mc()
+        with mock.patch.object(mesh_mc, "mc_connections", {"mc1": {"contacts": {}}}), \
+             mock.patch.object(mesh_mc, "mc_connections_lock", mock.MagicMock()):
+            async def runner():
+                task = asyncio.ensure_future(
+                    mesh_mc._mc_query_responder_regions("mc1", mc, "ab" * 32, timeout=3))
+                await asyncio.sleep(0.05)
+                mc.fire(mesh_mc.EventType.BINARY_RESPONSE,
+                        {"data": self._regions_data("si", "europe", "*")})
+                return await task
+
+            names = asyncio.run(runner())
+        self.assertEqual(names, ["si", "europe", "*"])
+        # The anon send carried the REGIONS request type
+        self.assertEqual(mc.commands.sent[0][1], mesh_mc.AnonReqType.REGIONS)
+
+    def test_query_responder_timeout_returns_empty(self):
+        mc = self._fake_mc()
+        with mock.patch.object(mesh_mc, "mc_connections", {"mc1": {"contacts": {}}}), \
+             mock.patch.object(mesh_mc, "mc_connections_lock", mock.MagicMock()):
+            names = asyncio.run(
+                mesh_mc._mc_query_responder_regions("mc1", mc, "ab" * 32, timeout=0.2))
+        self.assertEqual(names, [])
+
+    def test_discover_flow_full(self):
+        """End-to-end (with the sweep patched): responders are queried in
+        order, '*' is excluded from the summary list, per-repeater detail is
+        returned, and noZeroHopRepeaters stays False when responders exist."""
+        mc = self._fake_mc()
+        replies = iter([self._regions_data("si", "*"), self._regions_data("europe")])
+
+        async def fake_collect(config_id, mc, sweep_s=8, retry=True):
+            return [{"full_key": "ab" * 32, "name": "RPTR-1"},
+                    {"full_key": "cd" * 32, "name": "RPTR-2"}], False
+
+        real_subscribe = mc.subscribe  # capture BEFORE patching
+
+        def auto_answer(evt_type, cb, **kw):
+            sub = real_subscribe(evt_type, cb, **kw)
+            if evt_type == mesh_mc.EventType.BINARY_RESPONSE:
+                async def answer():
+                    await asyncio.sleep(0.05)
+                    try:
+                        cb(SimpleNamespace(payload={"data": next(replies)}))
+                    except StopIteration:
+                        pass
+                asyncio.ensure_future(answer())
+            return sub
+
+        with mock.patch.object(mesh_mc, "_mc_collect_responders", side_effect=fake_collect), \
+             mock.patch.object(mesh_mc, "_get_mc", return_value=(mc, {})), \
+             mock.patch.object(mesh_mc, "mc_connections", {"mc1": {"contacts": {}}}), \
+             mock.patch.object(mesh_mc, "mc_connections_lock", mock.MagicMock()), \
+             mock.patch.object(mc, "subscribe", side_effect=auto_answer):
+            result = asyncio.run(mesh_mc._mc_discover_regions_async(
+                "mc1", sweep_s=0.05, per_query_timeout=2))
+
+        self.assertFalse(result["noZeroHopRepeaters"])
+        self.assertEqual(sorted(result["regions"]), ["europe", "si"])  # '*' excluded
+        self.assertEqual(len(result["perRepeater"]), 2)
+        self.assertEqual(result["perRepeater"][0]["regions"], ["si"])
+        self.assertEqual(result["perRepeater"][0]["name"], "RPTR-1")
+        self.assertEqual(result["perRepeater"][1]["regions"], ["europe"])
+
+    def test_discover_flow_no_zero_hop_repeaters(self):
+        mc = self._fake_mc()
+
+        async def fake_collect(config_id, mc, sweep_s=8, retry=True):
+            return [], True  # sweep answered nobody
+
+        with mock.patch.object(mesh_mc, "_mc_collect_responders", side_effect=fake_collect), \
+             mock.patch.object(mesh_mc, "_get_mc", return_value=(mc, {})):
+            result = asyncio.run(mesh_mc._mc_discover_regions_async("mc1", sweep_s=0.05))
+
+        self.assertTrue(result["noZeroHopRepeaters"])
+        self.assertEqual(result["regions"], [])
+        self.assertEqual(result["perRepeater"], [])
 
 
 if __name__ == "__main__":

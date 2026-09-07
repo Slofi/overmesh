@@ -1563,6 +1563,23 @@
         <span id="mc-scope-status" style="font-size:11px;color:var(--muted)"></span>
       </div>
 
+      <div style="margin-bottom:14px;max-width:640px">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px">
+          <span class="settings-label" style="margin-bottom:0">Discover regions</span>
+          <button class="btn" onclick="mcScopeDiscover()" id="mc-scope-discover-btn"
+                  title="Ask nearby repeaters (0-hop) which regions they serve — transmits a sweep like Scan">Discover</button>
+          <span id="mc-scope-discover-status" style="font-size:11px;color:var(--muted)"></span>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:6px;line-height:1.4">
+          Queries repeaters in direct range for the regions they carry. Results are suggestions — click a chip to add it
+          to the known-regions catalog or set it as the default.
+        </div>
+        <div id="mc-scope-discover-results" style="display:none">
+          <div id="mc-scope-discover-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 6px"></div>
+          <div id="mc-scope-discover-sources" style="font-size:11px;color:var(--muted);line-height:1.5"></div>
+        </div>
+      </div>
+
       <div id="mc-scope-per-channel" style="margin-bottom:14px;max-width:640px"></div>
     </div><!-- /mc-node-settings-section -->
 

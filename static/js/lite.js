@@ -26,7 +26,7 @@ const S = {
   selectedLogId: null,
   unread:     0,
   chUnread:   {}, // 'type:radioId:key' → count, per-channel unread badge
-  senseOn:    false, traceOn: false,
+  senseOn:    false, traceOn: false, liveRxOn: false,
   sseSource:  null,
   layerOpen:  false,
   activeDms:  new Set(), // 'type:radioId:nodeId' keys for active DM threads
@@ -306,6 +306,9 @@ function toggleMapMenu() {
       <div class="layer-item${S.traceOn?' active':''}" onclick="toggleTrace()">
         <span style="font-size:15px">〰</span> Trace (MC)
       </div>
+      <div class="layer-item${S.liveRxOn?' active':''}" onclick="toggleLiveRx()">
+        <span style="font-size:15px">◉</span> Live traffic (MC)
+      </div>
       <div class="layer-item" onclick="openActivitySheet();closeMapMenu()">
         <span style="font-size:15px">◷</span> Recent activity
       </div>`;
@@ -330,6 +333,138 @@ function toggleTrace() {
   if (!S.traceOn) { S.traceLines.forEach(l => map.removeLayer(l)); S.traceLines = []; }
   toast(S.traceOn ? 'Trace: ON — trigger from node sheet' : 'Trace: OFF');
   closeMapMenu();
+}
+
+// ── MC live traffic (overheard RX) ──────────────────────────────────────────
+// Small-screen adaptation of the full app's animated trace view: polls the
+// passive RX log and draws each newly-heard packet as one fading colored line
+// along its resolved hop path (no moving-dot animation). Type colors match the
+// full app. Stops when off, hidden, or no MC radio is connected.
+const MC_LIVE_COLORS = {
+  TEXT_MSG: '#8b5cf6', GRP_TXT: '#a855f7', ADVERT: '#3b82f6', ACK: '#22c55e',
+  TRACE: '#f97316', REQ: '#eab308', RESPONSE: '#f59e0b', ANON_REQ: '#eab308',
+  PATH: '#14b8a6', GRP_DATA: '#a855f7', MULTIPART: '#64748b', CONTROL: '#64748b',
+  UNK: '#94a3b8',
+};
+const MC_LIVE_FETCH_LIMIT = 30;   // recent packets per poll (small screen: enough to see traffic)
+const MC_LIVE_POLL_MS   = 6000;   // matches backend flush cadence
+const MC_LIVE_FADE_MS   = 6500;   // how long a line stays before removal
+const MC_LIVE_MAX_LINES = 40;     // safety cap for slow screens
+
+let _liveRxTimer = null;
+let _liveRxSeen  = new Set();     // row keys already drawn
+let _liveRxLines = [];            // {layer, fadeTimer}
+
+function toggleLiveRx() {
+  S.liveRxOn = !S.liveRxOn;
+  closeMapMenu();
+  if (!S.liveRxOn) { stopLiveRx(); toast('Live traffic: OFF'); return; }
+  toast('Live traffic: ON');
+  _liveRxSeen = new Set();
+  _liveRxPoll(true);
+  if (_liveRxTimer) clearInterval(_liveRxTimer);
+  _liveRxTimer = setInterval(() => _liveRxPoll(false), MC_LIVE_POLL_MS);
+}
+
+function stopLiveRx() {
+  if (_liveRxTimer) { clearInterval(_liveRxTimer); _liveRxTimer = null; }
+  _liveRxLines.forEach(e => {
+    if (e.fadeTimer) clearTimeout(e.fadeTimer);
+    try { map.removeLayer(e.layer); } catch (_) {}
+  });
+  _liveRxLines = [];
+  _liveRxSeen = new Set();
+}
+
+async function _liveRxPoll(seed) {
+  if (!S.liveRxOn || S.activeTab !== 'map') return;
+  const radio = (S.mcRadios || []).find(r => r.connected);
+  if (!radio) return;
+  const rid = radio.id;
+  try {
+    const r = await fetch(`/api/mc/${encodeURIComponent(rid)}/passive_obs?obs_types=rx&limit=${MC_LIVE_FETCH_LIMIT}`);
+    if (!r.ok) return;
+    const rows = await r.json();
+    const list = Array.isArray(rows) ? rows : (rows.rows || rows.obs || []);
+    // Draw newest first; skip ones we've already shown. On first enable (seed)
+    // only draw a few so the small screen isn't flooded with stale packets.
+    const toDraw = seed ? list.slice(0, 6) : list;
+    for (const row of toDraw) {
+      const key = `${row.ts}|${row.path}|${row.payload_type}|${row.rssi}`;
+      if (_liveRxSeen.has(key)) continue;
+      _liveRxSeen.add(key);
+      _liveRxDrawRow(row, radio);
+    }
+    // Bound the seen-set so it cannot grow forever.
+    if (_liveRxSeen.size > 3000) {
+      const arr = [..._liveRxSeen].slice(-1000);
+      _liveRxSeen = new Set(arr);
+    }
+  } catch (e) { /* transient — next poll retries */ }
+}
+
+// Resolve one RX row to map points using lite's existing hop resolver.
+function _liveRxRadioPos(radio) {
+  // adv_lat/adv_lon of 0.0 means "not set" in MeshCore, not the equator.
+  const lat = radio?.adv_lat, lon = radio?.adv_lon;
+  if (lat == null || lon == null) return [null, null];
+  return (Math.abs(lat) < 1e-6 && Math.abs(lon) < 1e-6) ? [null, null] : [Number(lat), Number(lon)];
+}
+function _liveRxResolve(row, radio) {
+  const [radioLat, radioLon] = _liveRxRadioPos(radio);
+  const hex = String(row.path || '').replace(/[^0-9a-fA-F]/g, '').toLowerCase();
+  const size = Math.max(1, Math.min(3, Number(row.path_hash_size) || 1));
+  const chars = size * 2;
+  const hashes = [];
+  for (let i = 0; i + chars <= hex.length; i += chars) hashes.push(hex.slice(i, i + chars));
+  const points = [];
+  const names = [];
+  hashes.forEach((hash, idx) => {
+    const res = _mcPickPathHopResolution(hash, radio.id, radioLat, radioLon, null, null, idx, hashes.length);
+    const c = res?.contact;
+    const lat = c?.latitude ?? c?.lat ?? c?.adv_lat ?? null;
+    const lon = c?.longitude ?? c?.lon ?? c?.adv_lon ?? null;
+    if (lat == null || lon == null) return;
+    points.push([Number(lat), Number(lon)]);
+    names.push(c?.adv_name || c?.long_name || c?.name || hash);
+  });
+  if (radioLat != null && radioLon != null) points.push([radioLat, radioLon]);
+  return { points, names, radioLat, radioLon };
+}
+
+function _liveRxDrawRow(row, radio) {
+  if (!map) return;
+  const color = MC_LIVE_COLORS[row.payload_type] || MC_LIVE_COLORS.UNK;
+  const res = _liveRxResolve(row, radio);
+  const when = row.ts ? new Date(row.ts * 1000).toLocaleTimeString() : '';
+  const typeTxt = row.payload_type || 'UNK';
+  const routeTxt = row.route_type || '';
+  let layer = null;
+
+  if (res.points.length >= 2) {
+    // Hop path (sender → relays → us). Unresolved hops are omitted; draw what resolved.
+    layer = L.polyline(res.points, { color, weight: 3, opacity: 0.85, lineCap: 'round', lineJoin: 'round', interactive: true });
+    const hopsTxt = res.names.join(' → ') + (res.names.length ? ' → us' : '');
+    layer.bindTooltip(`<b>${esc(typeTxt)}</b> · ${esc(routeTxt)}<br>${esc(hopsTxt)}<br>${row.rssi != null ? row.rssi + ' dBm' : ''} ${row.snr != null ? '/ ' + row.snr + ' SNR' : ''}<br>${esc(when)}`, { sticky: true });
+  } else if (res.radioLat != null && res.radioLon != null) {
+    // Direct arrival (0 hops) — a small pulse at our radio.
+    layer = L.circleMarker([res.radioLat, res.radioLon], { radius: 6, color, weight: 2.5, fill: false, interactive: true });
+    layer.bindTooltip(`<b>${esc(typeTxt)}</b> · ${esc(routeTxt)}<br>heard <b>direct</b><br>${row.rssi != null ? row.rssi + ' dBm' : ''} ${row.snr != null ? '/ ' + row.snr + ' SNR' : ''}<br>${esc(when)}`, { sticky: true });
+  }
+  if (!layer) return;
+  layer.addTo(map);
+  _liveRxLines.push({ layer, fadeTimer: null });
+  if (_liveRxLines.length > MC_LIVE_MAX_LINES) {
+    const oldest = _liveRxLines.shift();
+    if (oldest.fadeTimer) clearTimeout(oldest.fadeTimer);
+    try { map.removeLayer(oldest.layer); } catch (_) {}
+  }
+  const self = _liveRxLines[_liveRxLines.length - 1];
+  self.fadeTimer = setTimeout(() => {
+    try { map.removeLayer(self.layer); } catch (_) {}
+    const i = _liveRxLines.indexOf(self);
+    if (i >= 0) _liveRxLines.splice(i, 1);
+  }, MC_LIVE_FADE_MS);
 }
 
 function mtMarkerColor(node) {
@@ -1281,6 +1416,8 @@ function switchTab(tab) {
     el.classList.toggle('active', el.dataset.tab === tab));
   document.getElementById('tab-' + tab).hidden = false;
   S.activeTab = tab;
+  if (tab !== 'map' && S.liveRxOn) stopLiveRx();   // live traffic only draws on the map
+  if (tab === 'map' && S.liveRxOn) { _liveRxPoll(true); if (!_liveRxTimer) _liveRxTimer = setInterval(() => _liveRxPoll(false), MC_LIVE_POLL_MS); }
   if (tab === 'map') setTimeout(() => { refreshMapLayout(); _applyMapMode(S.senseOn ? 'sense' : 'map'); }, 60);
   if (tab === 'nodes') renderNodes();
   if (tab === 'chat') { renderChatSidebar(); S.mcRadios.forEach(r => loadMcMessages(r.id)); }

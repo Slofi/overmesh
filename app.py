@@ -25,6 +25,16 @@ log = logging.getLogger(__name__)
 from auth import check_credentials, is_auth_enabled, load_secret_key
 from config import CONFIG, DATA_DIR, save_config, _valid_node_id
 
+# Effective bind host — same precedence as __main__ (env > config > loopback).
+# Used to warn in the UI when the instance is reachable beyond localhost while
+# auth is off.
+_BIND_HOST = os.environ.get("OVERMESH_HOST", CONFIG.get("host", "127.0.0.1"))
+
+
+def _is_loopback_bind():
+    host = str(_BIND_HOST or "").strip().lower()
+    return host in ("127.0.0.1", "::1", "localhost", "")
+
 app = Flask(__name__)
 app.secret_key = load_secret_key(DATA_DIR)
 
@@ -127,12 +137,24 @@ def inject_base_path():
 
 @app.route("/")
 def index():
-    return render_template("index.html", version=__version__, auth_enabled=is_auth_enabled())
+    return render_template(
+        "index.html",
+        version=__version__,
+        auth_enabled=is_auth_enabled(),
+        exposed_no_auth=not _is_loopback_bind() and not is_auth_enabled(),
+        bind_host=_BIND_HOST,
+    )
 
 
 @app.route("/lite")
 def lite():
-    return render_template("lite.html", version=__version__, auth_enabled=is_auth_enabled())
+    return render_template(
+        "lite.html",
+        version=__version__,
+        auth_enabled=is_auth_enabled(),
+        exposed_no_auth=not _is_loopback_bind() and not is_auth_enabled(),
+        bind_host=_BIND_HOST,
+    )
 
 
 @app.route("/api/shutdown", methods=["POST"])
@@ -247,7 +269,11 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, _graceful_shutdown)
 
     startup()
-    _host = os.environ.get("OVERMESH_HOST", CONFIG.get("host", "0.0.0.0"))
+    # Safe-by-default: bind loopback unless the operator explicitly sets host
+    # (config.json `host` or OVERMESH_HOST). 0.0.0.0 exposes the full API
+    # (RF send/control) to the LAN — only do that deliberately, ideally with
+    # auth enabled (see README → Security).
+    _host = os.environ.get("OVERMESH_HOST", CONFIG.get("host", "127.0.0.1"))
     try:
         _port = int(os.environ.get("OVERMESH_PORT", CONFIG.get("port", 8082)))
     except (TypeError, ValueError):

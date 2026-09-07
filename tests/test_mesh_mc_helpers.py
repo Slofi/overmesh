@@ -408,6 +408,37 @@ class MeshMcPathHelperTests(unittest.TestCase):
         self.assertEqual(payload["contacts"][0]["full_key"], pubkey)
         self.assertEqual(payload["contacts"][0]["source_state"], "live")
 
+    def test_api_status_exposes_max_contacts_for_connected_radio(self):
+        # Frontend warns when live contacts approach the firmware NVS cap
+        # (>=85%). The cap comes from node_info captured at connect; the status
+        # payload must carry it through for the UI check.
+        radio_id = "mc_test"
+        pubkey = "deadbeefcafefeed"
+        CONFIG["mc_nodes"] = [{"id": radio_id, "name": "Node", "enabled": True}]
+        with mc_connections_lock:
+            mc_connections[radio_id] = {
+                "status": "connected",
+                "mc": object(),
+                "node_info": {"name": "Node", "max_contacts": 350},
+                "config": CONFIG["mc_nodes"][0],
+                "contacts": {pubkey: {"adv_name": "A", "type": 1}},
+                "live_contacts": {pubkey: {"adv_name": "A", "type": 1}},
+            }
+        try:
+            app = Flask(__name__)
+            app.register_blueprint(mc_routes.bp)
+            client = app.test_client()
+
+            res = client.get("/api/mc/status")
+            self.assertEqual(res.status_code, 200)
+            payload = res.get_json()
+            radio_status = next(n for n in payload["mc_nodes"] if n["id"] == radio_id)
+            self.assertEqual(radio_status["contacts"], 1)
+            self.assertEqual(radio_status["max_contacts"], 350)
+        finally:
+            with mc_connections_lock:
+                mc_connections.pop(radio_id, None)
+
     def test_mark_mc_disconnected_clears_live_contacts_but_keeps_archive(self):
         radio_id = "mc_test"
         pubkey = "deadbeefcafefeed"

@@ -12,6 +12,13 @@
 </head>
 <body>
 
+{% if exposed_no_auth %}
+<div id="exposed-warning" style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#7f1d1d;color:#fecaca;font-size:12px;padding:5px 10px;text-align:center;font-weight:600">
+  ⚠ This OverMesh instance has <b>no login enabled</b> and is reachable beyond this machine (bound to {{ bind_host }}).
+  Anyone on your network can send RF and control it. Enable a password in Settings&nbsp;→&nbsp;Authentication, or bind to 127.0.0.1 (see README&nbsp;→&nbsp;Security).
+</div>
+{% endif %}
+
 <div id="toast-stack"></div>
 
 <!-- Confirm modal -->

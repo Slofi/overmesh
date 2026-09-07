@@ -3436,6 +3436,19 @@ if (targetEl) {
     if (!anyConnected) { el.style.display = 'none'; return; }
     const total = _mcDedupeContacts({ onlyConnected: true }).length;
     el.style.display = '';
+    // Device-NVS fill warning: a connected radio whose contact store is near its
+    // firmware cap can silently lose the ability to (re)add contacts — a deleted
+    // contact then fails to re-store and DMs to it die with ERR_CODE_NOT_FOUND
+    // (ERA-3 350/350 on 2026-09-06). Warn at 85% and link to the cleanup modal.
+    const connected = Object.values(mcLastStatus).filter(s => s.status === 'connected');
+    const nearFull = connected.filter(s => s.max_contacts && s.contacts >= 0.85 * s.max_contacts);
+    if (nearFull.length) {
+      const worst = nearFull.reduce((a, b) => (b.contacts / b.max_contacts) > (a.contacts / a.max_contacts) ? b : a);
+      const pct = Math.round(100 * worst.contacts / worst.max_contacts);
+      const names = nearFull.map(s => s.name || s.node_name || s.id).join(', ');
+      el.innerHTML = `<span style="color:var(--red);cursor:pointer;text-decoration:underline dotted" onclick="runStaleNodeCleanup()" title="${escHtml(names)}: ${worst.contacts}/${worst.max_contacts} device contact slots used (${pct}%) — click to clean stale contacts (a full store silently blocks re-adding deleted contacts)">⚠ ${escHtml(worst.name || worst.node_name || 'Radio')} ${worst.contacts}/${worst.max_contacts} (${pct}%)</span>`;
+      return;
+    }
     el.innerHTML = `Contacts: <span style="color:var(--mc-color)">${total}</span>`;
   }
 
@@ -10255,6 +10268,9 @@ if (targetEl) {
       loadLive();
       renderLive();
       if (typeof renderMcMapMarkers === 'function') renderMcMapMarkers();
+      // Device NVS counts (mcLastStatus[].contacts) went stale after the deletes —
+      // refetch status so the header fill warning reflects the freed slots.
+      initMc();
     } catch(e) {
       // Some may already be gone — refresh so the UI reflects the partial result.
       _nodeCleanupBusy = false;
@@ -10263,6 +10279,7 @@ if (targetEl) {
       _updateNodeCleanupCount();
       loadLive();
       renderLive();
+      initMc();
       showAlert(`${String(e.message || e)} — ${done} of ${total} removed before the error.`);
     }
   }
@@ -11360,6 +11377,7 @@ if (targetEl) {
             if (!d) return;
             (d.mc_nodes || []).forEach(n => { mcLastStatus[n.id] = n; });
             updateMcPills();
+            updateHeaderMcCount();
             loadMcSettingsNodes();
             const activeStab = document.querySelector('.settings-tab.active');
             if (activeStab && activeStab.id === 'stab-mc') loadMcNodeSettings(data.radio_id);
@@ -14764,6 +14782,7 @@ if (targetEl) {
           }
         });
         updateMcPills();
+        updateHeaderMcCount();
         _mcStatusSoundPrimed = true;
       }).catch(() => {});
   }

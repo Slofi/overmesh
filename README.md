@@ -205,7 +205,7 @@ Key values include:
 - `nodes` — list of Meshtastic radios
 - `mc_nodes` — list of MeshCore radios
 - `port` — default `8082`
-- `host` — default `0.0.0.0`
+- `host` — default `127.0.0.1` (localhost only). Set to `0.0.0.0` **only** if you want other devices on your network to reach this instance — see [Security](#security).
 - `app.zoom` — UI zoom level
 - `app.accent_color` — accent color hex
 - `sense_passive` — enable passive Sense logging
@@ -220,6 +220,29 @@ Environment variables override config file values:
 - `OVERMESH_DATA_DIR` — directory for data files (DBs, etc.)
 - `OVERMESH_HOST` — bind host
 - `OVERMESH_PORT` — bind port
+
+---
+
+## Security
+
+OverMesh can **send radio traffic** and **control its host service** (restart/shutdown). By default it binds to `127.0.0.1`, so only local users on the machine itself can reach it — that is the safe baseline.
+
+### If you make it reachable beyond this machine
+
+Set `host` to `0.0.0.0` in `config.json` (or `OVERMESH_HOST`). **Doing so exposes the full API — including RF send and service restart — to anyone who can reach the port.** Before you do:
+
+1. **Enable the login.** Go to Settings → **Authentication**, set a username + password, and switch it on. Without this, *anyone* on your network can send messages over your radios and restart the instance.
+2. **Prefer a private network.** A Tailscale/VPN address is far safer than a raw port-forward on the public internet. If you must expose it publicly, put it behind a reverse proxy with TLS and strong auth.
+3. **Watch for the warning banner.** When the instance is bound beyond localhost **and** has no login, a red banner is shown at the top of every page — it disappears once you enable a password or bind back to `127.0.0.1`.
+
+### Automating integrations (MQTT / Home Assistant / scripts)
+
+The **Bridge** (Settings → Bridge) is the supported way to let other systems talk to OverMesh:
+
+- **Inbound** (`POST /api/bridge/send`, lets an automation inject a message onto the mesh): disabled by default, and protected by a **token** you set in Settings → Bridge. Keep that token secret — it can transmit RF.
+- **Outbound webhooks** (mesh messages → your automation): OverMesh signs each POST with the `X-OverMesh-Secret` header when you configure a secret. Have the receiving endpoint verify it.
+
+The token/secret are the only credentials that cross network boundaries — the session login only protects the browser UI.
 
 ---
 

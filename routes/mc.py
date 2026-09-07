@@ -218,6 +218,7 @@ def api_mc_status():
             "tx_power":   info.get("tx_power"),
             "max_tx_power": info.get("max_tx_power"),
             "max_channels": info.get("max_channels"),
+            "max_contacts": info.get("max_contacts"),
             "lat":        info.get("adv_lat") or None,
             "lon":        info.get("adv_lon") or None,
             "adv_loc_policy": info.get("adv_loc_policy"),

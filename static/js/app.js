@@ -112,6 +112,13 @@
   let allNodes      = [];
   let mapShowMt     = localStorage.getItem('mapShowMt') !== '0';
   let mapShowMc     = localStorage.getItem('mapShowMc') !== '0';
+  // Node grouping distance for the map (shared MT+MC), in metres. Two nodes
+  // closer than this (lat degrees) share a cluster badge. 0 = only exact-same
+  // coordinates group. Default 10m ≈ the old fixed ~11m grid. GH #23.
+  let groupMeters   = (() => {
+    const v = parseInt(localStorage.getItem('mapGroupMeters') || '10', 10);
+    return Number.isFinite(v) && v >= 0 ? Math.min(v, 500) : 10;
+  })();
   // MQTT node filter (MT only — via_mqtt is a Meshtastic concept). GH #19.
   // 'all' = no filtering · 'only' = MQTT-heard nodes only · 'hide' = direct RF only.
   let mtMqttFilter  = ['all', 'only', 'hide'].includes(localStorage.getItem('mtMqttFilter'))
@@ -4882,8 +4889,8 @@ if (targetEl) {
   let leafletMap    = null;
   let _mapStaticLoaded = false;  // waypoints/notes/GPS only fetched once per session
   let mapMarkers    = {};
-  let clusterMarkers = {};  // groupKey → MT cluster badge marker ('fanned' = fanned pile)
-  let mcClusterMarkers = {};  // groupKey → MC cluster badge marker ('fanned' = fanned pile)
+  let clusterMarkers = {};  // posKey → cluster badge marker
+  let mcClusterMarkers = {};  // posKey → MC cluster badge marker
   let waypointMarkers = {};
   let waypointsData   = {};  // wp_id → wp object (for edit modal)
   let notesData       = {};  // note_id → note object
@@ -7541,10 +7548,9 @@ if (targetEl) {
         if (trData) _drawTraceRouteOnMap(trData);
       }
       if (_mcActiveHoverPath) showMcHoverPath(_mcActiveHoverPath, true);
-      // Proximity grouping is zoom-dependent (pixel-based): re-render MT markers
-      // so spread nodes separate as you zoom in and re-merge as you zoom out.
+      // Same-point piles fan out at zoom >= 15 — re-render so badges ↔ fan
+      // transition at the threshold. (Grouping itself is zoom-independent.)
       if (mapShowMt && typeof updateMapMarkers === 'function') updateMapMarkers(allNodes);
-      if (mapShowMc && typeof renderMcMapMarkers === 'function') renderMcMapMarkers();
     });
 
     // Unlock when user drags manually
@@ -7658,6 +7664,47 @@ if (targetEl) {
       }
     });
     new LabelsCtrl({ position: 'topleft' }).addTo(leafletMap);
+
+    // Node-grouping distance control (GH #23): how close two nodes must be to
+    // share a cluster badge. 0 = only exact-same coordinates group.
+    const GroupCtrl = L.Control.extend({
+      onAdd() {
+        const wrap = L.DomUtil.create('div', 'map-locate-btn map-group-wrap');
+        wrap.id = 'map-group-btn';
+        wrap.title = 'Node grouping distance';
+        wrap.innerHTML = '<span id="map-group-label">⛁</span>';
+        wrap.style.fontSize = '13px';
+        wrap.style.cursor = 'pointer';
+        L.DomEvent.on(wrap, 'click', L.DomEvent.stopPropagation);
+        L.DomEvent.on(wrap, 'click', () => {
+          const pop = document.getElementById('map-group-pop');
+          if (pop) pop.style.display = pop.style.display === 'none' ? 'block' : 'none';
+        });
+        const pop = L.DomUtil.create('div', 'map-group-pop');
+        pop.id = 'map-group-pop';
+        pop.style.display = 'none';
+        pop.innerHTML = `
+          <div style="font-size:11px;font-weight:600;margin-bottom:6px;white-space:nowrap">Group nodes closer than <b id="map-group-val">${groupMeters} m</b></div>
+          <input id="map-group-range" type="range" min="0" max="200" step="5" value="${groupMeters}"
+            style="width:140px;vertical-align:middle">
+          <div style="font-size:10px;opacity:0.7;margin-top:4px;white-space:nowrap">0 = only identical positions</div>`;
+        wrap.appendChild(pop);
+        const range = pop.querySelector('#map-group-range');
+        L.DomEvent.on(range, 'input', L.DomEvent.stopPropagation);
+        range.addEventListener('input', () => {
+          groupMeters = parseInt(range.value, 10);
+          localStorage.setItem('mapGroupMeters', String(groupMeters));
+          const val = document.getElementById('map-group-val');
+          if (val) val.textContent = `${groupMeters} m`;
+        });
+        range.addEventListener('change', () => {
+          if (mapShowMt) updateMapMarkers(allNodes);
+          if (mapShowMc) renderMcMapMarkers();
+        });
+        return wrap;
+      }
+    });
+    new GroupCtrl({ position: 'topleft' }).addTo(leafletMap);
 
     // Layer switcher
     const LayerCtrl = L.Control.extend({
@@ -7789,7 +7836,7 @@ if (targetEl) {
     });
     Object.values(senseMarkers).forEach(marker => { if (show) marker.openTooltip(); else marker.closeTooltip(); });
     mcMapMarkers.forEach(marker => { if (show) marker.openTooltip(); else marker.closeTooltip(); });
-    Object.values(mcClusterMarkers).forEach(marker => { if (marker === 'fanned') return; if (show) marker.openTooltip(); else marker.closeTooltip(); });
+    Object.values(mcClusterMarkers).forEach(marker => { if (show) marker.openTooltip(); else marker.closeTooltip(); });
     if (_gpsMarker) { if (show) _gpsMarker.openTooltip(); else _gpsMarker.closeTooltip(); }
   }
 
@@ -7805,10 +7852,11 @@ if (targetEl) {
       if (!matches && leafletMap.hasLayer(marker)) leafletMap.removeLayer(marker);
     });
     // Also filter cluster badges: show if any node in the group matches
+    const posKey = n => _clusterKey(n.latitude, n.longitude);
     Object.entries(clusterMarkers).forEach(([k, marker]) => {
       if (marker === 'fanned') return; // fanned piles are individual markers
-      const members = marker?._mtGroupNodes || [];
-      const anyMatch = !mapSearchQuery || members.some(n =>
+      const anyMatch = !mapSearchQuery || allNodes.some(n =>
+        n.latitude != null && posKey(n) === k &&
         ((n.long_name || '').toLowerCase().includes(mapSearchQuery) ||
          (n.short_name || '').toLowerCase().includes(mapSearchQuery))
       );
@@ -7823,7 +7871,6 @@ if (targetEl) {
       if (!matches && leafletMap.hasLayer(marker)) leafletMap.removeLayer(marker);
     });
     Object.entries(mcClusterMarkers).forEach(([_, marker]) => {
-      if (marker === 'fanned') return; // fanned piles are individual markers
       const items = marker._omClusterItems || [];
       const anyMatch = !mapSearchQuery || items.some(item =>
         `${item.long_name || ''} ${item.name || ''} ${item.id || ''}`.toLowerCase().includes(mapSearchQuery)
@@ -9066,6 +9113,22 @@ if (targetEl) {
     }, 80);
   }
 
+  // Shared cluster key for MT + MC map markers (GH #23). Two nodes land in the
+  // same cluster when they are within `groupMeters` of each other (grid step =
+  // groupMeters in lat degrees ≈ metres/111320). 0 m → only exact-same
+  // coordinates group. Independent of zoom — spread nodes keep their positions
+  // at every zoom level; only genuinely-close nodes badge.
+  function _clusterGridDeg() { return groupMeters / 111320; }
+  function _clusterKey(lat, lon) {
+    const g = _clusterGridDeg();
+    if (g <= 0) {
+      return `${Number(lat).toFixed(6)}_${Number(lon).toFixed(6)}`; // exact position
+    }
+    const latG = Math.max(g, 1e-9);
+    const lonG = Math.max(g / Math.max(Math.cos(Number(lat) * Math.PI / 180), 0.2), 1e-9);
+    return `${(Math.round(Number(lat) / latG) * latG).toFixed(6)}_${(Math.round(Number(lon) / lonG) * lonG).toFixed(6)}`;
+  }
+
   function markerColor(node) {
     if (node.is_local) return '#3b82f6';   // blue — local node
     if (!node.last_heard_ts) return '#6e7681';
@@ -9138,33 +9201,6 @@ if (targetEl) {
       </div>`;
   }
 
-  // Pixel-proximity grouping for map markers (MT nodes or MC items). Returns a
-  // Map of key -> [items]. Items land in the same group when their markers would
-  // overlap on screen at the current zoom (clusterPx ≈ icon size), so spread
-  // nodes separate naturally as you zoom in ("don't group too soon"), while
-  // genuinely-co-located nodes stay grouped at every zoom.
-  function _proximityGroups(withGps) {
-    const clusterPx = 26; // icon ~24px; group when markers would collide
-    const groups = new Map();
-    // Local node first → becomes the anchor of its group (keeps the "you" stable)
-    const order = withGps.slice().sort((a, b) => (b.is_local ? 1 : 0) - (a.is_local ? 1 : 0));
-    for (const n of order) {
-      const pt = leafletMap.latLngToLayerPoint([n.latitude, n.longitude]);
-      let placed = false;
-      for (const [key, g] of groups) {
-        const gpt = leafletMap.latLngToLayerPoint([g[0].latitude, g[0].longitude]);
-        const dx = pt.x - gpt.x, dy = pt.y - gpt.y;
-        if (dx * dx + dy * dy <= clusterPx * clusterPx) {
-          g.push(n);
-          placed = true;
-          break;
-        }
-      }
-      if (!placed) groups.set(`g_${pt.x.toFixed(0)}_${pt.y.toFixed(0)}_${n.id || n._rid || n.latitude + '_' + n.longitude}`, [n]);
-    }
-    return groups;
-  }
-
   function updateMapMarkers(nodes) {
     if (!leafletMap) return;
     if (!mapShowMt) {
@@ -9185,37 +9221,17 @@ if (targetEl) {
     const seen = new Set();
     const withGps = nodes.filter(n => n.latitude != null && n.longitude != null);
 
-    // Group nodes by on-screen proximity (pixel-aware): spread nodes merge into
-    // one badge only when their markers would collide at this zoom, so they
-    // separate as you zoom in. Same-point piles stay grouped at every zoom.
-    const proxGroups = _proximityGroups(withGps);
-    const nodeGroupKey = {};
-    const groupNodes = new Map();
-    proxGroups.forEach((g, key) => {
-      groupNodes.set(key, g);
-      g.forEach(n => { nodeGroupKey[n.id] = key; });
-    });
+    // Group nodes that share the same position (within groupMeters, shared MT+MC)
+    const posKey = n => _clusterKey(n.latitude, n.longitude);
+    const clusters = {};
+    withGps.forEach(n => { const k = posKey(n); (clusters[k] = clusters[k] || []).push(n); });
 
-    // For clusters >1: use module-level clusterMarkers dict (groupKey → marker)
+    // For clusters >1: use module-level clusterMarkers dict (posKey → marker)
     const seenClusters = new Set();
-    // Same-point piles that fan out at high zoom are handled in one pass per
-    // group key (not per member). Decide membership up front so the per-node
-    // loop below skips members of an already-fanned group.
-    const _fanThreshold = 15;
-    const _zoomNow = leafletMap ? leafletMap.getZoom() : 0;
-    const _fannedKeys = new Set();
-    if (_zoomNow >= _fanThreshold) {
-      proxGroups.forEach((g, gk) => {
-        if (g.length > 1 && g.every(x =>
-          Math.abs(x.latitude - g[0].latitude) < 1e-5 &&
-          Math.abs(x.longitude - g[0].longitude) < 1e-5)) _fannedKeys.add(gk);
-      });
-    }
 
     withGps.forEach(n => {
       seen.add(n.id);
-      const gkey = nodeGroupKey[n.id];
-      const group = groupNodes.get(gkey) || [n];
+      const group = clusters[posKey(n)];
 
       if (group.length === 1) {
         // Normal single marker — remove any sense marker for this node to avoid overlap
@@ -9241,13 +9257,19 @@ if (targetEl) {
           if (!mapLabels) marker.closeTooltip();
         }
       } else {
-        // Cluster: one shared marker per proximity group, remove individual markers
-        const k = gkey;
+        // Cluster: one shared marker per unique position, remove individual markers
+        const k = posKey(n);
         seenClusters.add(k);
-        // Same-point pile fanned out at high zoom — already handled once; keep
-        // the fanned member markers (don't remove them below) and skip.
-        if (_fannedKeys.has(k)) {
+        // Exact-same-point pile at high zoom (>=15): fan the members out in a
+        // ring of individual markers instead of one badge, so each node is
+        // visible/clickable. Runs once per group (first member seen).
+        const _fanZoom = 15;
+        if ((leafletMap ? leafletMap.getZoom() : 0) >= _fanZoom &&
+            group.length > 1 &&
+            group.every(x => Math.abs(x.latitude - group[0].latitude) < 1e-5 &&
+                             Math.abs(x.longitude - group[0].longitude) < 1e-5)) {
           if (clusterMarkers[k] !== 'fanned') {
+            if (clusterMarkers[k]) { leafletMap.removeLayer(clusterMarkers[k]); } // drop old badge
             clusterMarkers[k] = 'fanned';
             const _n = group.length;
             group.forEach((x, i) => {
@@ -9269,6 +9291,7 @@ if (targetEl) {
           return;
         }
         if (mapMarkers[n.id]) { leafletMap.removeLayer(mapMarkers[n.id]); delete mapMarkers[n.id]; }
+        if (clusterMarkers[k] === 'fanned') delete clusterMarkers[k]; // un-fan on zoom-out
         if (clusterMarkers[k]) {
           // Update existing cluster marker (node count or local status may change)
           const hasLocal = group.some(x => x.is_local);
@@ -9338,7 +9361,6 @@ if (targetEl) {
         const marker = L.marker([group[0].latitude, group[0].longitude], {icon: clusterIcon})
           .bindPopup(clusterPopup, {maxWidth: 280, maxHeight: 400})
           .bindTooltip(`${group.length} nodes`, { permanent: true, direction: 'right', className: 'map-label', offset: [8, 0] });
-        marker._mtGroupNodes = group;
         clusterMarkers[k] = marker.addTo(leafletMap);
         if (!mapLabels) marker.closeTooltip();
       }
@@ -9349,9 +9371,8 @@ if (targetEl) {
       if (!seen.has(id)) { leafletMap.removeLayer(mapMarkers[id]); delete mapMarkers[id]; }
     });
 
-    // Remove cluster badges that no longer have nodes at that position.
-    // ('fanned' sentinel = group is fanned into individual markers, no badge —
-    // its members are cleaned up via mapMarkers/seen above.)
+    // Remove cluster badges that no longer have nodes at that position
+    // ('fanned' sentinel = group fanned into individuals; members cleaned via seen/mapMarkers)
     Object.keys(clusterMarkers).forEach(k => {
       if (!seenClusters.has(k)) {
         const cm = clusterMarkers[k];
@@ -12264,7 +12285,7 @@ if (targetEl) {
     mcMapMarkers.forEach(m => leafletMap.removeLayer(m));
     mcMapMarkers = [];
     mcMapMarkerById = {};
-    Object.values(mcClusterMarkers).forEach(m => { if (m && m !== 'fanned') leafletMap.removeLayer(m); });
+    Object.values(mcClusterMarkers).forEach(m => leafletMap.removeLayer(m));
     mcClusterMarkers = {};
     if (!mapShowMc) return;
 
@@ -12282,39 +12303,16 @@ if (targetEl) {
       items.push({...st, id: rid, latitude: st.lat, longitude: st.lon, _rid: rid, _kind: 'radio'});
     });
 
-    // Pixel-proximity grouping (same model as MT): spread items merge only when
-    // their markers would overlap on screen, so they separate as you zoom in.
-    const proxGroups = _proximityGroups(items);
-    const itemGroupKey = new Map(); // item object → group key
-    const groupItems = new Map();
-    proxGroups.forEach((g, key) => {
-      groupItems.set(key, g);
-      g.forEach(it => { itemGroupKey.set(it, key); });
+    const groups = {};
+    items.forEach(item => {
+      const key = _clusterKey(item.latitude, item.longitude);
+      (groups[key] = groups[key] || []).push(item);
     });
-    const fanZoom = 15;
-    const curZoom = leafletMap ? leafletMap.getZoom() : 0;
 
     items.forEach(item => {
-      const key = itemGroupKey.get(item);
-      const group = groupItems.get(key) || [item];
+      const key = _clusterKey(item.latitude, item.longitude);
+      const group = groups[key] || [item];
       if (group.length > 1) {
-        const samePoint = group.every(x =>
-          Math.abs(x.latitude - group[0].latitude) < 1e-5 &&
-          Math.abs(x.longitude - group[0].longitude) < 1e-5);
-        // Same-point pile at high zoom → fan out individual markers in a ring.
-        if (samePoint && curZoom >= fanZoom) {
-          if (mcClusterMarkers[key]) return;
-          mcClusterMarkers[key] = 'fanned';
-          const _n = group.length;
-          group.forEach((x, i) => {
-            const _ang = (2 * Math.PI * i) / _n - Math.PI / 2;
-            const _r = 16 + Math.min(_n, 12) * 2.4;
-            const _cpt = leafletMap.latLngToLayerPoint([x.latitude, x.longitude]);
-            const _fpt = leafletMap.layerPointToLatLng(L.point(_cpt.x + _r * Math.cos(_ang), _cpt.y + _r * Math.sin(_ang)));
-            _placeMcItem(x, _fpt.lat, _fpt.lng);
-          });
-          return;
-        }
         if (mcClusterMarkers[key]) return;
         const clat = group.reduce((s, x) => s + x.latitude, 0) / group.length;
         const clon = group.reduce((s, x) => s + x.longitude, 0) / group.length;
@@ -12330,24 +12328,18 @@ if (targetEl) {
         return;
       }
 
-      _placeMcItem(item, item.latitude, item.longitude);
-    });
-
-  // Place a single MC item (radio node or contact) on the map at the given
-  // coordinate. Used for individual markers and for fanned same-point piles.
-  function _placeMcItem(item, lat, lon) {
       if (item._kind === 'radio') {
         const name = escHtml(item.name || item.id);
         const radioDistance = _distanceLabel(_mcDistanceFromLocal(item, item._rid || item.id || ''));
         const glow = 'drop-shadow(0 0 5px #10b981) drop-shadow(0 1px 4px rgba(0,0,0,0.8))';
         const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30" style="filter:${glow};overflow:visible"><rect x="7" y="7" width="16" height="16" fill="white" transform="rotate(45,15,15)" rx="1.5"/><rect x="10" y="10" width="10" height="10" fill="#10b981" transform="rotate(45,15,15)" rx="1"/></svg>`;
         const icon = L.divIcon({ html: svg, className: '', iconSize: [30, 30], iconAnchor: [15, 15], popupAnchor: [0, -17] });
-        const marker = L.marker([lat, lon], { icon });
+        const marker = L.marker([item.latitude, item.longitude], { icon });
         marker._omMcMapData = item;
         marker.bindPopup(
           `<div class="map-popup-name">${name}<span class="map-popup-local" style="background:rgba(16,185,129,0.15);color:#10b981">MC Radio</span></div>`
           + `<div style="font-size:11px;color:var(--muted)">This radio node · ${escHtml(radioDistance)}</div>`
-          + `<div style="font-size:11px;color:var(--muted)">${Number(lat).toFixed(5)}, ${Number(lon).toFixed(5)}</div>`,
+          + `<div style="font-size:11px;color:var(--muted)">${item.latitude.toFixed(5)}, ${item.longitude.toFixed(5)}</div>`,
           { className: 'om-popup', maxWidth: 200 }
         );
         marker.bindTooltip(item.name || item.id, { permanent: true, direction: 'right', className: 'map-label', offset: [8, 0] });
@@ -12382,7 +12374,7 @@ if (targetEl) {
           ? `<button class="map-popup-btn" title="Remote repeater/room management" onclick="leafletMap.closePopup();openMcRemoteManage('${safePk}','${safeRid}','${safeName}')">Manage</button>`
           : `<button class="map-popup-btn" title="MC radio disconnected" disabled style="opacity:0.35;cursor:default">Manage</button>`)
         : '';
-      const marker = L.marker([lat, lon], { icon: makeMcIcon(false, c.type ?? 0) });
+      const marker = L.marker([c.latitude, c.longitude], { icon: makeMcIcon(false, c.type ?? 0) });
       const bat = c.battery ?? c.bat_pct ?? c.bat;
       const batStr = bat != null ? `${bat}%` : '—';
       const snrText = c.snr != null ? `${c.snr} dB` : '—';
@@ -12397,7 +12389,7 @@ if (targetEl) {
         + `<div><b>SNR:</b> ${snrText} &nbsp; <b>Battery:</b> ${batStr}</div>`
         + `<div><b>Hops:</b> ${hops !== null ? escHtml(mcPathHopLabel(hops, true)) : '—'} &nbsp; <b>Distance:</b> ${escHtml(distanceText)}</div>`
         + `<div><b>Last seen:</b> ${tsText}</div>`
-        + `<div style="font-size:11px;color:var(--muted)">${Number(lat).toFixed(5)}, ${Number(lon).toFixed(5)}</div>`
+        + `<div style="font-size:11px;color:var(--muted)">${c.latitude.toFixed(5)}, ${c.longitude.toFixed(5)}</div>`
         + `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">`
         + `<button class="map-popup-btn" title="Show in Nodes list" onclick="leafletMap.closePopup();showMcNodeInList('${jsSafe(c.id || '')}')">List</button>`
         + popupDmButton
@@ -12416,7 +12408,7 @@ if (targetEl) {
       if (!mapLabels) marker.closeTooltip();
       mcMapMarkers.push(marker);
       mcMapMarkerById[c.id || ''] = marker;
-  }
+    });
 
     if (_senseNet === 'mc') renderMcPathLines();
     updateHeaderMcCount();

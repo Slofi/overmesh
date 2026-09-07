@@ -381,6 +381,20 @@ async function _liveRxPoll(seed) {
   const radio = (S.mcRadios || []).find(r => r.connected);
   if (!radio) return;
   const rid = radio.id;
+  // Self-heal: if the radio object hasn't got its advertised position yet
+  // (loadMcSelfInfo may not have finished), fetch it once so traces can anchor.
+  const [rLat] = _liveRxRadioPos(radio);
+  if (rLat == null) {
+    try {
+      const sr = await fetch(`/api/mc/${encodeURIComponent(rid)}/self`);
+      if (sr.ok) {
+        const sd = await sr.json();
+        const ni = sd?.node_info || {};
+        radio.adv_lat = ni.adv_lat;
+        radio.adv_lon = ni.adv_lon;
+      }
+    } catch (_) { /* retry next poll */ }
+  }
   try {
     const r = await fetch(`/api/mc/${encodeURIComponent(rid)}/passive_obs?obs_types=rx&limit=${MC_LIVE_FETCH_LIMIT}`);
     if (!r.ok) return;

@@ -9109,7 +9109,8 @@ if (targetEl) {
   // Returns an array of groups, each an array of items.
   function _distanceGroups(items) {
     const n = items.length;
-    if (n <= 1) return items.slice();
+    if (n === 0) return [];
+    if (n === 1) return [items.slice()];   // one group containing the item
     const parent = Array.from({ length: n }, (_, i) => i);
     const find = x => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
     const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; };

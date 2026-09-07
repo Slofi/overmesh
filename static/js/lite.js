@@ -387,6 +387,7 @@ async function _liveRxPoll(seed) {
   if (rLat == null) {
     try {
       const sr = await fetch(`/api/mc/${encodeURIComponent(rid)}/self`);
+      if (!S.liveRxOn || S.activeTab !== 'map') return;   // toggled off mid-fetch
       if (sr.ok) {
         const sd = await sr.json();
         const ni = sd?.node_info || {};
@@ -397,6 +398,7 @@ async function _liveRxPoll(seed) {
   }
   try {
     const r = await fetch(`/api/mc/${encodeURIComponent(rid)}/passive_obs?obs_types=rx&limit=${MC_LIVE_FETCH_LIMIT}`);
+    if (!S.liveRxOn || S.activeTab !== 'map') return;     // toggled off mid-fetch
     if (!r.ok) return;
     const rows = await r.json();
     const list = Array.isArray(rows) ? rows : (rows.rows || rows.obs || []);
@@ -447,7 +449,7 @@ function _liveRxResolve(row, radio) {
 }
 
 function _liveRxDrawRow(row, radio) {
-  if (!map) return;
+  if (!map || !S.liveRxOn) return;
   const color = MC_LIVE_COLORS[row.payload_type] || MC_LIVE_COLORS.UNK;
   const res = _liveRxResolve(row, radio);
   const when = row.ts ? new Date(row.ts * 1000).toLocaleTimeString() : '';

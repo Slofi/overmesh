@@ -1211,6 +1211,16 @@ def api_settings_auth_get():
     })
 
 
+@bp.route("/api/settings/exposed-banner/dismiss", methods=["POST"])
+def api_settings_exposed_banner_dismiss():
+    """Acknowledge the exposed-no-auth warning so it stops showing on every
+    load. The operator has been told the instance is reachable beyond localhost
+    without a login; this records that choice persistently. The banner returns
+    only if the flag is cleared or auth is later enabled."""
+    set_auth_setting("exposed_banner_dismissed", "1")
+    return jsonify({"ok": True})
+
+
 @bp.route("/api/settings/auth", methods=["POST"])
 def api_settings_auth_set():
     from werkzeug.security import generate_password_hash

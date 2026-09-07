@@ -62,6 +62,17 @@ const LAYERS = {
   terrain: { label: 'Stadia Outdoors',  url: 'https://tiles.stadiamaps.com/tiles/outdoors/{z}/{x}/{y}{r}.png', attr: '© Stadia © OSM', maxZoom: 20 },
 };
 
+// Dismiss the exposed-no-auth warning banner persistently (server-stored, so it
+// stays hidden across restarts). Same contract as the main UI's dismiss.
+function dismissExposedBanner(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Hidden'; }
+  fetch('/api/settings/exposed-banner/dismiss', {method: 'POST'})
+    .catch(e => console.warn('[exposed-banner] dismiss failed:', e));
+  const banner = document.getElementById('exposed-banner');
+  if (banner) banner.style.display = 'none';
+  document.body.classList.remove('exposed-active');
+}
+
 function initMap() {
   const panel = document.getElementById('tab-map');
   map = L.map('map', {

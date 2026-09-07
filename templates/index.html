@@ -10,14 +10,11 @@
   <script src="{{ url_for('static', filename='js/leaflet-heat.js') }}"></script>
   <link rel="icon" type="image/png" href="/static/favicon.png?v=2">
 </head>
-<body>
+<body{% if exposed_no_auth %} class="exposed-active"{% endif %}>
 
-{% if exposed_no_auth %}
-<div id="exposed-warning" style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#7f1d1d;color:#fecaca;font-size:12px;padding:5px 10px;text-align:center;font-weight:600">
-  ⚠ This OverMesh instance has <b>no login enabled</b> and is reachable beyond this machine (bound to {{ bind_host }}).
-  Anyone on your network can send RF and control it. Enable a password in Settings&nbsp;→&nbsp;Authentication, or bind to 127.0.0.1 (see README&nbsp;→&nbsp;Security).
+<div id="exposed-banner">⚠ This OverMesh instance has <b>no login enabled</b> and is reachable beyond this machine (bound to {{ bind_host }}). Anyone on your network can send RF and control it — enable a password in Settings&nbsp;→&nbsp;Authentication, or bind to 127.0.0.1 (see README&nbsp;→&nbsp;Security).
+  <button onclick="dismissExposedBanner(this)" style="margin-left:12px;background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.35);color:#fecaca;padding:1px 10px;border-radius:4px;cursor:pointer;font-size:11px" title="Hide this warning until the instance is no longer exposed (stays hidden across restarts)">✕ Don't show again</button>
 </div>
-{% endif %}
 
 <div id="toast-stack"></div>
 

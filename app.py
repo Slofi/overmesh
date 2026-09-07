@@ -141,7 +141,7 @@ def index():
         "index.html",
         version=__version__,
         auth_enabled=is_auth_enabled(),
-        exposed_no_auth=not _is_loopback_bind() and not is_auth_enabled(),
+        exposed_no_auth=_exposed_no_auth(),
         bind_host=_BIND_HOST,
     )
 
@@ -152,9 +152,19 @@ def lite():
         "lite.html",
         version=__version__,
         auth_enabled=is_auth_enabled(),
-        exposed_no_auth=not _is_loopback_bind() and not is_auth_enabled(),
+        exposed_no_auth=_exposed_no_auth(),
         bind_host=_BIND_HOST,
     )
+
+
+def _exposed_no_auth():
+    """True when the instance is reachable beyond localhost with no login and
+    the operator has not dismissed the warning (Settings → the banner's dismiss
+    button stores exposed_banner_dismissed=1)."""
+    if _is_loopback_bind() or is_auth_enabled():
+        return False
+    from db import get_auth_setting
+    return get_auth_setting("exposed_banner_dismissed", "0") != "1"
 
 
 @app.route("/api/shutdown", methods=["POST"])

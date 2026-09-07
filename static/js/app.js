@@ -77,6 +77,19 @@
     } catch(e) { console.warn('[silent] toggle failed:', e); }
   }
 
+  // Dismiss the exposed-no-auth warning banner persistently (server-stored, so
+  // it stays hidden across restarts and browsers). The warning returns only if
+  // the instance stops being exposed, or the flag is cleared.
+  async function dismissExposedBanner(btn) {
+    if (btn) { btn.disabled = true; btn.textContent = 'Hidden'; }
+    try {
+      await fetch(BASE_PATH + '/api/settings/exposed-banner/dismiss', {method: 'POST'});
+    } catch(e) { console.warn('[exposed-banner] dismiss failed:', e); }
+    const banner = document.getElementById('exposed-banner');
+    if (banner) banner.style.display = 'none';
+    document.body.classList.remove('exposed-active');
+  }
+
   // Load silent mode state on page load
   fetch(BASE_PATH + '/api/silent_mode').then(r => r.json()).then(d => _updateSilentUi(d.silent_mode)).catch(() => {});
 

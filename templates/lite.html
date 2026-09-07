@@ -40,6 +40,17 @@
     }
 
     /* ── App header ── */
+    /* Exposed-no-auth warning: fixed strip above the header; shifts the header
+       down so it never overlaps (mirrors silent-mode handling in the main UI). */
+    #exposed-banner {
+      display: none; position: fixed; top: 0; left: 0; right: 0; z-index: 999;
+      background: #7f1d1d; color: #fecaca;
+      padding: 4px 12px; font-size: 11px; font-weight: 600; text-align: center;
+      letter-spacing: 0.3px; border-bottom: 1px solid #dc2626;
+    }
+    body.exposed-active #exposed-banner { display: block; }
+    body.exposed-active #app-header { top: 30px; }
+    body.exposed-active .tab-panel { top: calc(var(--header-h) + 30px); }
     #app-header {
       position: fixed; top: 0; left: 0; right: 0; height: var(--header-h);
       background: rgba(22,27,34,0.93); backdrop-filter: blur(8px);
@@ -484,13 +495,10 @@
     @media(prefers-reduced-motion:reduce){.ss-dot,.ss-mesh-node{animation:none}}
   </style>
 </head>
-<body>
-{% if exposed_no_auth %}
-<div id="exposed-warning" style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#7f1d1d;color:#fecaca;font-size:12px;padding:5px 10px;text-align:center;font-weight:600">
-  ⚠ This OverMesh instance has <b>no login enabled</b> and is reachable beyond this machine (bound to {{ bind_host }}).
-  Anyone on your network can send RF and control it. Enable a password or bind to 127.0.0.1 (see README&nbsp;→&nbsp;Security).
+<body{% if exposed_no_auth %} class="exposed-active"{% endif %}>
+<div id="exposed-banner">⚠ This OverMesh instance has <b>no login enabled</b> and is reachable beyond this machine (bound to {{ bind_host }}). Enable a password or bind to 127.0.0.1 (see README&nbsp;→&nbsp;Security).
+  <button onclick="dismissExposedBanner(this)" style="margin-left:12px;background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.35);color:#fecaca;padding:1px 10px;border-radius:4px;cursor:pointer;font-size:11px" title="Hide this warning until the instance is no longer exposed (stays hidden across restarts)">✕ Don't show again</button>
 </div>
-{% endif %}
 <div id="app-topo-bg"></div>
 
 <!-- ── APP HEADER ── -->

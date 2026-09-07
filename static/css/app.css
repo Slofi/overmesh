@@ -77,6 +77,23 @@
     #silent-banner button:hover { background: rgba(255,255,255,0.25); }
     #silent-btn.active { background: rgba(220,38,38,0.15) !important; border-color: rgba(220,38,38,0.5) !important; color: #ef4444 !important; }
 
+    /* Exposed-no-auth warning banner — same pattern as silent-banner so it
+       pushes content down instead of overlapping the 48px header row. */
+    #exposed-banner {
+      display: none; position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
+      background: #7f1d1d; color: #fecaca;
+      padding: 5px 16px; font-size: 12px; font-weight: 600; text-align: center;
+      letter-spacing: 0.3px; border-bottom: 1px solid #dc2626;
+    }
+    body.exposed-active #exposed-banner { display: block; }
+    body.exposed-active { padding-top: 32px; }
+    #exposed-banner a { color: #fecaca; }
+    /* Both banners active: exposure (security) wins the top strip; silent drops
+       below it so they don't overlap, and body padding is not doubled. */
+    body.silent-active.exposed-active { padding-top: 32px; }
+    body.silent-active.exposed-active #silent-banner { top: 30px; }
+    body.silent-active.exposed-active #exposed-banner { z-index: 10000; }
+
     /* Header */
     #header {
       background: var(--bg2);

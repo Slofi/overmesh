@@ -304,10 +304,10 @@ function toggleMapMenu() {
         <span style="font-size:15px">📡</span> Sense (MT)
       </div>
       <div class="layer-item${S.traceOn?' active':''}" onclick="toggleTrace()">
-        <span style="font-size:15px">〰</span> Trace (MC)
+        <span style="font-size:15px">〰</span> Msg trace
       </div>
       <div class="layer-item${S.liveRxOn?' active':''}" onclick="toggleLiveRx()">
-        <span style="font-size:15px">◉</span> Live traffic (MC)
+        <span style="font-size:15px">◉</span> Traces (MC)
       </div>
       <div class="layer-item" onclick="openActivitySheet();closeMapMenu()">
         <span style="font-size:15px">◷</span> Recent activity
@@ -331,15 +331,15 @@ function toggleSense() {
 function toggleTrace() {
   S.traceOn = !S.traceOn;
   if (!S.traceOn) { S.traceLines.forEach(l => map.removeLayer(l)); S.traceLines = []; }
-  toast(S.traceOn ? 'Trace: ON — trigger from node sheet' : 'Trace: OFF');
+  toast(S.traceOn ? 'Msg trace: ON — tap a message to trace it' : 'Msg trace: OFF');
   closeMapMenu();
 }
 
-// ── MC live traffic (overheard RX) ──────────────────────────────────────────
-// Small-screen adaptation of the full app's animated trace view: polls the
-// passive RX log and draws each newly-heard packet as one fading colored line
-// along its resolved hop path (no moving-dot animation). Type colors match the
-// full app. Stops when off, hidden, or no MC radio is connected.
+// ── MC Traces (overheard RX) ────────────────────────────────────────────────
+// Small-screen adaptation of the full app's animated "Traces" view (same name):
+// polls the passive RX log and draws each newly-heard packet as one fading
+// colored line along its resolved hop path (no moving-dot animation). Type
+// colors match the full app. Stops when off, hidden, or no MC radio is connected.
 const MC_LIVE_COLORS = {
   TEXT_MSG: '#8b5cf6', GRP_TXT: '#a855f7', ADVERT: '#3b82f6', ACK: '#22c55e',
   TRACE: '#f97316', REQ: '#eab308', RESPONSE: '#f59e0b', ANON_REQ: '#eab308',
@@ -358,8 +358,8 @@ let _liveRxLines = [];            // {layer, fadeTimer}
 function toggleLiveRx() {
   S.liveRxOn = !S.liveRxOn;
   closeMapMenu();
-  if (!S.liveRxOn) { stopLiveRx(); toast('Live traffic: OFF'); return; }
-  toast('Live traffic: ON');
+  if (!S.liveRxOn) { stopLiveRx(); toast('Traces: OFF'); return; }
+  toast('Traces: ON');
   _liveRxSeen = new Set();
   _liveRxPoll(true);
   if (_liveRxTimer) clearInterval(_liveRxTimer);

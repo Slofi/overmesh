@@ -3692,6 +3692,54 @@ def remove_mc_contact(config_id, pubkey_prefix, timeout=10):
     return run_mc(_remove_contact_async(config_id, pubkey_prefix), timeout=timeout)
 
 
+async def _remove_mc_radio_only_async(config_id, full_key):
+    """Remove a contact from the DEVICE only (radio scope). OM's archive and
+    merged state keep the contact, so it stays visible as 'app only'."""
+    mc, _ = _get_mc(config_id)
+    result = await mc.commands.remove_contact(full_key)
+    if result is not None and getattr(result, "type", None) is not None \
+            and getattr(result.type, "name", None) == "ERROR":
+        raise RuntimeError(f"Device rejected contact removal: {getattr(result, 'payload', {})}")
+    with mc_connections_lock:
+        state = mc_connections.get(config_id, {})
+        state.get("live_contacts", {}).pop(full_key, None)
+        # 'contacts' (merged with archive) keeps the entry on purpose — the
+        # contact still exists in OM and should list as app-only afterwards.
+    return result
+
+
+def remove_mc_contact_scoped(config_id, pubkey_prefix, scope="all", timeout=10):
+    """Scoped MC contact removal for the Nodes-tab delete popup.
+
+    scope='all'   -> device + OM archive/local (previous behaviour).
+    scope='app'   -> OM only (archive + local state); the device keeps it and
+                     the next poll will show it again as a radio contact.
+    scope='radio' -> device only; OM keeps it and lists it as 'app only'.
+    """
+    scope = (scope or "all").lower()
+    if scope not in ("all", "app", "radio"):
+        raise ValueError(f"invalid scope: {scope}")
+    with mc_connections_lock:
+        state = mc_connections.get(config_id, {})
+        contacts = dict(state.get("contacts", {}) or {})
+        live_contacts = dict(state.get("live_contacts", {}) or {})
+        mc = state.get("mc")
+    archive_contacts = get_mc_contact_archive(config_id)
+    lookup_contacts = _merge_mc_contacts(archive_contacts, contacts)
+    full_key, _contact = _resolve_mc_contact(lookup_contacts, pubkey_prefix)
+    if scope == "all":
+        return remove_mc_contact(config_id, pubkey_prefix, timeout=timeout)
+    if scope == "app":
+        _mc_remove_local_contact(config_id, full_key)
+        return None
+    # scope == "radio"
+    if mc is None:
+        raise RuntimeError("MC radio not connected")
+    if full_key not in live_contacts:
+        return None  # not on the device — nothing to remove there
+    return run_mc(_remove_mc_radio_only_async(config_id, full_key), timeout=timeout)
+
+
 async def _clear_mc_all_contacts_async(config_id):
     mc, _ = _get_mc(config_id)
     with mc_connections_lock:

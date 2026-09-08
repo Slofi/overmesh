@@ -25,6 +25,7 @@ from mesh_mc import (MC_PAYLOAD_TYPE_NAMES, MC_ROUTE_TYPE_NAMES,
                      set_device_name, set_device_coords, set_advert_loc_policy,
                      reboot_device, reboot_device_dtr, get_channels, set_channel,
                      req_node_status, get_stats, remove_mc_contact,
+                     remove_mc_contact_scoped,
                      send_trace_broadcast, send_discover_req, import_mc_contact, enable_mc_debug,
                      get_mc_contact_archive,
                      set_contact_path, reset_all_paths, remote_repeater_read,
@@ -370,10 +371,18 @@ def api_mc_contacts(radio_id):
 
 @bp.route("/api/mc/<radio_id>/contacts/<contact_id>", methods=["DELETE"])
 def api_mc_delete_contact(radio_id, contact_id):
-    """Remove a contact from the MC device (NVS delete)."""
+    """Remove a contact, scoped by ?scope=all|app|radio.
+
+    all   = device NVS + OverMesh (archive/local) — previous behaviour.
+    app   = OverMesh only (the radio keeps it; it will re-appear on the next poll).
+    radio = the radio only (OverMesh keeps it, listed as 'app only').
+    """
+    scope = (request.args.get("scope") or "all").lower()
+    if scope not in ("all", "app", "radio"):
+        return jsonify({"error": f"invalid scope: {scope} (use all|app|radio)"}), 400
     try:
-        remove_mc_contact(radio_id, contact_id)
-        return jsonify({"ok": True})
+        remove_mc_contact_scoped(radio_id, contact_id, scope=scope)
+        return jsonify({"ok": True, "scope": scope})
     except ValueError as e:
         return jsonify({"error": str(e)}), 404
     except RuntimeError as e:

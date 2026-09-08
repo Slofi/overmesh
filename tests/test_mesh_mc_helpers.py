@@ -1956,3 +1956,88 @@ class McAutoAddApprovalTests(unittest.TestCase):
 
     def test_friendly_error_unknown_returns_none(self):
         self.assertIsNone(mc_routes._mc_friendly_device_error("some unrelated error"))
+
+
+class McScopedDeleteTests(unittest.TestCase):
+    """Three-way MC contact removal: all / app-only / radio-only."""
+
+    def setUp(self):
+        mesh_mc.DATA_DIR = str(_DATA_DIR)
+        mesh_mc.MC_CONTACT_ARCHIVE_PATH = str(_DATA_DIR / "mc_contacts_archive.json")
+        mesh_mc._mc_contact_archive_cache = None
+        archive_path = _DATA_DIR / "mc_contacts_archive.json"
+        if archive_path.exists():
+            archive_path.unlink()
+        with mc_connections_lock:
+            mc_connections.clear()
+        self._orig_mc_nodes = list(CONFIG.get("mc_nodes", []))
+        CONFIG["mc_nodes"] = []
+
+    def tearDown(self):
+        CONFIG["mc_nodes"] = list(self._orig_mc_nodes)
+        with mc_connections_lock:
+            mc_connections.clear()
+        mesh_mc._mc_contact_archive_cache = None
+
+    def _ok_event(self):
+        from meshcore.events import EventType
+        return SimpleNamespace(type=EventType.OK, payload={})
+
+    def _seed(self, full_key, device=True, archive=True, mc=True):
+        rec = {"adv_name": "X", "type": 1}
+        if archive:
+            mesh_mc._mc_archive_merge_contacts("mc1", {full_key: dict(rec)})
+        state = {"status": "connected"}
+        if mc:
+            async def _rm_contact(k):
+                return self._ok_event()
+            state["mc"] = SimpleNamespace(commands=SimpleNamespace(
+                remove_contact=_rm_contact))
+        if device or archive:
+            state["contacts"] = {full_key: dict(rec)}
+        if device:
+            state["live_contacts"] = {full_key: dict(rec)}
+        with mc_connections_lock:
+            mc_connections["mc1"] = state
+
+    def test_scope_app_removes_om_keeps_device(self):
+        pk = "aa" * 32
+        calls = []
+
+        class Cmd:
+            def remove_contact(self, key):
+                calls.append(key)
+
+        with mc_connections_lock:
+            mc_connections["mc1"] = {"status": "connected", "mc": SimpleNamespace(commands=Cmd()),
+                                     "contacts": {pk: {"adv_name": "X", "type": 1}},
+                                     "live_contacts": {pk: {"adv_name": "X", "type": 1}}}
+        mesh_mc._mc_archive_merge_contacts("mc1", {pk: {"adv_name": "X", "type": 1}})
+
+        result = mesh_mc.remove_mc_contact_scoped("mc1", pk[:12], scope="app")
+        self.assertIsNone(result)
+        self.assertEqual(calls, [])  # device untouched
+        self.assertNotIn(pk, mesh_mc.get_mc_contact_archive("mc1"))
+        with mc_connections_lock:
+            self.assertNotIn(pk, mc_connections["mc1"].get("live_contacts", {}))
+
+    def test_scope_radio_removes_device_keeps_om(self):
+        pk = "bb" * 32
+        self._seed(pk, device=True, archive=True)
+        asyncio.run(mesh_mc._remove_mc_radio_only_async("mc1", pk))
+        self.assertIn(pk, mesh_mc.get_mc_contact_archive("mc1"))  # OM keeps it
+        with mc_connections_lock:
+            self.assertNotIn(pk, mc_connections["mc1"].get("live_contacts", {}))
+            # merged 'contacts' keeps it so it lists as app-only
+            self.assertIn(pk, mc_connections["mc1"].get("contacts", {}))
+
+    def test_scope_all_without_device_only_removes_local(self):
+        pk = "cc" * 32
+        self._seed(pk, device=False, archive=True, mc=False)
+        mesh_mc.remove_mc_contact_scoped("mc1", pk[:12], scope="all")
+        self.assertNotIn(pk, mesh_mc.get_mc_contact_archive("mc1"))
+
+    def test_invalid_scope_raises(self):
+        with self.assertRaises(ValueError):
+            mesh_mc.remove_mc_contact_scoped("mc1", "aa" * 6, scope="banana")
+

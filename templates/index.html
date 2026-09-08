@@ -34,6 +34,35 @@
   </div>
 </div>
 
+<!-- MC contact removal scope modal (Nodes tab delete) -->
+<div id="mc-delete-modal" class="modal-overlay" onclick="if(event.target===this)mcDeleteCancel()">
+  <div class="modal-box" style="width:400px">
+    <div class="modal-header">
+      <span class="modal-title">Remove contact</span>
+    </div>
+    <div class="modal-body">
+      <p id="mc-delete-msg" style="margin:0 0 14px;font-size:13px;color:var(--text)"></p>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button class="btn-secondary" style="text-align:left;line-height:1.35" onclick="mcDeleteDo('all')">
+          <b>Remove everywhere</b><br>
+          <span style="font-weight:400;font-size:12px;color:var(--muted)">Deletes it from this radio and from OverMesh.</span>
+        </button>
+        <button class="btn-secondary" style="text-align:left;line-height:1.35" onclick="mcDeleteDo('app')">
+          <b>Only from OverMesh</b><br>
+          <span style="font-weight:400;font-size:12px;color:var(--muted)">Forgets it in the app; the radio keeps it and it will re-appear on the next poll.</span>
+        </button>
+        <button class="btn-secondary" style="text-align:left;line-height:1.35" onclick="mcDeleteDo('radio')">
+          <b>Only from this radio</b><br>
+          <span style="font-weight:400;font-size:12px;color:var(--muted)">Frees a radio slot; OverMesh keeps it and lists it as "app only".</span>
+        </button>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:14px">
+        <button class="btn-secondary" onclick="mcDeleteCancel()">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Stale node cleanup modal -->
 <div id="node-cleanup-modal" class="modal-overlay" onclick="if(event.target===this)closeNodeCleanupModal()">
   <div class="modal-box" style="width:460px;max-width:94vw">

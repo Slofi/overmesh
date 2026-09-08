@@ -2696,26 +2696,46 @@ if (targetEl) {
     }).catch(e => console.error('ignoreMcContact failed:', e));
   }
 
+  let _mcDeleteTarget = null;
+
   function deleteMcContact(id, name, radioId) {
-    document.getElementById('confirm-ok').textContent = 'Delete';
-    showConfirm(`Remove "${name}" from OverMesh? If it is still on the MC radio, OM will remove it there too.`, () => {
-      fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/contacts/${encodeURIComponent(id)}`, {method: 'DELETE'})
-        .then(r => r.json()).then(d => {
-          if (d.error) { showAlert(d.error); return; }
-          if (leafletMap) { try { leafletMap.closePopup(); } catch(e) {} }
-          if (mcContacts[radioId]) {
-            delete mcContacts[radioId][id];
-            Object.entries(mcContacts[radioId]).forEach(([key, c]) => {
-              if (c?.id === id || c?.full_key === id) delete mcContacts[radioId][key];
-            });
-          }
-          mcIgnored.delete(id);
-          renderLive();
-          if (currentView === 'history') loadHistory();
-          renderMcMapMarkers();
-        }).catch(e => console.error('deleteMcContact failed:', e))
-        .finally(() => { document.getElementById('confirm-ok').textContent = 'OK'; });
-    });
+    _mcDeleteTarget = {id, name, radioId};
+    const msg = document.getElementById('mc-delete-msg');
+    if (msg) msg.textContent = `Remove "${name}"? Where should it be removed from?`;
+    const modal = document.getElementById('mc-delete-modal');
+    if (modal) modal.classList.add('open');
+  }
+
+  function mcDeleteCancel() {
+    _mcDeleteTarget = null;
+    const modal = document.getElementById('mc-delete-modal');
+    if (modal) modal.classList.remove('open');
+  }
+
+  function mcDeleteDo(scope) {
+    const t = _mcDeleteTarget;
+    mcDeleteCancel();
+    if (!t) return;
+    fetch(BASE_PATH + `/api/mc/${encodeURIComponent(t.radioId)}/contacts/${encodeURIComponent(t.id)}?scope=${encodeURIComponent(scope)}`, {method: 'DELETE'})
+      .then(r => r.json()).then(d => {
+        if (d.error) { showAlert(d.error); return; }
+        if (leafletMap) { try { leafletMap.closePopup(); } catch(e) {} }
+        if (mcContacts[t.radioId]) {
+          delete mcContacts[t.radioId][t.id];
+          Object.entries(mcContacts[t.radioId]).forEach(([key, c]) => {
+            if (c?.id === t.id || c?.full_key === t.id) delete mcContacts[t.radioId][key];
+          });
+        }
+        mcIgnored.delete(t.id);
+        renderLive();
+        if (currentView === 'history') loadHistory();
+        renderMcMapMarkers();
+        if (pipOpen) updatePipMarkers(allNodes);
+        // Re-sync from the device so the chosen scope shows truthfully right
+        // away (e.g. a radio-only removal re-lists the contact as 'app only').
+        _refreshMcContactsForNotification(t.radioId).then(() => { renderLive(); })
+          .catch(() => { renderLive(); });
+      }).catch(e => console.error('deleteMcContact failed:', e));
   }
 
   function toggleMcShowIgnored() {
@@ -3045,7 +3065,7 @@ if (targetEl) {
         const onRadio  = c.source_state ? c.source_state !== 'archive' : true;
         const locChip  = onRadio
           ? '<span style="display:inline-block;background:rgba(56,189,248,0.12);color:#7dd3fc;border:1px solid rgba(56,189,248,0.35);border-radius:10px;padding:0 6px;font-size:10px;line-height:16px" title="Stored in this MC radio\'s own contact table">on radio</span>'
-          : '<span style="display:inline-block;background:rgba(245,158,11,0.12);color:#fbbf24;border:1px solid rgba(245,158,11,0.35);border-radius:10px;padding:0 6px;font-size:10px;line-height:16px" title="Known to OverMesh only — not stored on the radio. Use + Radio to store it.">app only</span>';
+          : '<span style="display:inline-block;background:rgba(245,158,11,0.12);color:#fbbf24;border:1px solid rgba(245,158,11,0.35);border-radius:10px;padding:0 6px;font-size:10px;line-height:16px" title="Known to OverMesh only — not stored on the radio. Use "Add to radio" to store it.">app only</span>';
         const meta   = escHtml([shortKey, metaRadio].filter(Boolean).join(' · '));
         const passiveBadge = _mcPassiveBadgeHtml(c._rid, shortKey);
         const pk      = jsSafe(c.full_key || c.id || '');
@@ -3073,7 +3093,7 @@ if (targetEl) {
             : `<button class="act-btn" title="MC radio disconnected" style="opacity:0.35;cursor:default" disabled>Manage</button>`)
           : '';
         const storeButton = (!onRadio && radioConnected)
-          ? `<button class="act-btn" title="Store this contact on the radio (manual approval) — required before this radio can DM it" onclick="storeMcContact('${pk}','${rid}')">+ Radio</button>`
+          ? `<button class="act-btn" title="Store this contact on the radio (manual approval) — required before this radio can DM it" onclick="storeMcContact('${pk}','${rid}')">Add to radio</button>`
           : '';
         return `<tr data-id="${jsSafe(cid)}" class="${isFav ? 'is-favorite' : ''}${isIgnored ? ' is-ignored' : ''}">
           <td><span class="star ${isFav ? 'starred' : ''}" onclick="toggleMcFav('${jsSafe(cid)}')" title="${isFav ? 'Remove from favourites' : 'Add to favourites'}">&#9733;</span></td>
@@ -18113,7 +18133,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         if (statusEl) {
           statusEl.innerHTML = d.auto_add_contacts
             ? '<span style="color:var(--accent)">Auto-add is on — the radio stores every contact it hears.</span>'
-            : '<span style="color:var(--accent)">Manual approval is on — this radio will only store contacts you approve ("+ Radio") in the Contacts list.</span>';
+            : '<span style="color:var(--accent)">Manual approval is on — this radio will only store contacts you approve ("Add to radio") in the Contacts list.</span>';
           setTimeout(() => { if (statusEl) statusEl.innerHTML = _mcAutoAddStatusHtml(radioId); }, 5000);
         }
       }).catch(e => {

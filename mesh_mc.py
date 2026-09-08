@@ -2624,9 +2624,11 @@ async def _connect_mc_node_async(node_cfg):
     # Enforce the configured contact auto-add preference (manual approval mode)
     # after connect — same pattern as the scope re-apply above. Non-fatal: when
     # the firmware rejects the commands, the radio keeps its own behaviour and
-    # OM warns once per connection.
+    # OM warns once per connection. The applied value is re-published below
+    # (the SELF_INFO snapshot this connect uses was taken before the assert).
+    auto_applied = None
     try:
-        await _assert_mc_auto_add_async(
+        auto_applied = await _assert_mc_auto_add_async(
             config_id, mc=mc,
             known_manual=bool((node_info or {}).get("manual_add_contacts", False)),
         )
@@ -2667,6 +2669,11 @@ async def _connect_mc_node_async(node_cfg):
             "live_contacts": live_contacts,
             "contacts":  stored_contacts,
         })
+        # The SELF_INFO node_info published above was captured BEFORE the
+        # auto-add assert ran — restore the applied manual state so status APIs
+        # report the truth.
+        if auto_applied is not None and mc_connections[config_id].get("node_info"):
+            mc_connections[config_id]["node_info"]["manual_add_contacts"] = auto_applied
     _mc_archive_merge_contacts(config_id, stored_contacts)
 
     log.info(f"[MC:{name}] Connected — node_id={node_id} freq={node_info.get('radio_freq')} "

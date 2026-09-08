@@ -1902,3 +1902,27 @@
     #cpicker-field-hex input { flex:1; font-family:monospace; }
     #cpicker-field-rgb, #cpicker-field-hsl { display:none; gap:4px; flex:0 0 100%; }
     #cpicker-field-rgb input, #cpicker-field-hsl input { flex:1; text-align:center; }
+
+
+/* Nodes-tab toggleable columns (live table) */
+#live-table.hide-short th[data-live-col="short"], #live-table.hide-short td[data-live-col="short"],
+#live-table.hide-snr th[data-live-col="snr"], #live-table.hide-snr td[data-live-col="snr"],
+#live-table.hide-battery th[data-live-col="battery"], #live-table.hide-battery td[data-live-col="battery"],
+#live-table.hide-hops th[data-live-col="hops"], #live-table.hide-hops td[data-live-col="hops"],
+#live-table.hide-distance th[data-live-col="distance"], #live-table.hide-distance td[data-live-col="distance"],
+#live-table.hide-lastseen th[data-live-col="lastseen"], #live-table.hide-lastseen td[data-live-col="lastseen"],
+#live-table.hide-stored th[data-live-col="stored"], #live-table.hide-stored td[data-live-col="stored"] {
+  display: none;
+}
+#cols-menu .cols-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text);
+}
+#cols-menu .cols-menu-row:hover { background: var(--bg3); }
+#cols-menu .cols-menu-row input { margin: 0; }

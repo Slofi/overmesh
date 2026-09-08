@@ -2970,6 +2970,68 @@ if (targetEl) {
     renderLive();
   }
 
+  // ── Nodes-tab column visibility ──────────────────────────────────────────
+  const LIVE_COL_ORDER = ['star','name','short','snr','battery','hops','distance','lastseen','stored','actions','note','radio','del'];
+  const LIVE_COL_KEY   = 'liveColsHidden';
+  const LIVE_COL_KEYS  = ['short','snr','battery','hops','distance','lastseen','stored'];
+
+  function _liveColsHidden() {
+    try { return JSON.parse(localStorage.getItem(LIVE_COL_KEY) || '[]'); }
+    catch (e) { return []; }
+  }
+
+  function _mcStoredText(c) {
+    if (!c || !c.source_state) return 'radio + app';
+    if (c.source_state === 'archive') return 'app only';
+    if (c.source_state === 'live') return 'radio';
+    return 'radio + app';
+  }
+
+  function _applyLiveCols() {
+    const tbody = document.getElementById('live-tbody');
+    if (tbody) {
+      tbody.querySelectorAll('tr').forEach(tr => {
+        const cells = tr.children;
+        if (cells.length <= 1) return; // section header / no-data / loading rows
+        for (let i = 0; i < cells.length && i < LIVE_COL_ORDER.length; i++) {
+          cells[i].setAttribute('data-live-col', LIVE_COL_ORDER[i]);
+        }
+      });
+    }
+    const table = document.getElementById('live-table');
+    if (!table) return;
+    const hidden = new Set(_liveColsHidden());
+    LIVE_COL_KEYS.forEach(k => table.classList.toggle('hide-' + k, hidden.has(k)));
+  }
+
+  function toggleLiveColsMenu(evt) {
+    if (evt) evt.stopPropagation();
+    const menu = document.getElementById('cols-menu');
+    if (!menu) return;
+    const hidden = new Set(_liveColsHidden());
+    menu.querySelectorAll('input[data-live-col]').forEach(cb => {
+      cb.checked = !hidden.has(cb.getAttribute('data-live-col'));
+    });
+    menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+  }
+
+  function _closeLiveColsMenu() {
+    const menu = document.getElementById('cols-menu');
+    if (menu) menu.style.display = 'none';
+  }
+
+  function setLiveColVisible(key, visible) {
+    const hidden = _liveColsHidden().filter(k => k !== key);
+    if (!visible) hidden.push(key);
+    localStorage.setItem(LIVE_COL_KEY, JSON.stringify(hidden));
+    _applyLiveCols();
+  }
+
+  document.addEventListener('click', (evt) => {
+    const wrap = document.getElementById('cols-menu-wrap');
+    if (wrap && !wrap.contains(evt.target)) _closeLiveColsMenu();
+  });
+
   function renderLive() {
     const tbody  = document.getElementById('live-tbody');
     const query  = (document.getElementById('node-search')?.value || '').toLowerCase().trim();
@@ -2997,6 +3059,7 @@ if (targetEl) {
         <td>${n.hops_away != null ? n.hops_away : '—'}</td>
         <td>${escHtml(_mtNodeDistanceLabel(n))}</td>
         <td class="${lhClass(n.last_heard_ts)}">${escHtml(nodeLastHeardLabel(n))}</td>
+        <td>radio + app</td>
         <td class="node-actions">
           <button class="act-btn" title="Traceroute" onclick="doTraceroute('${jsSafe(n.id)}','${jsSafe(n.long_name)}','${jsSafe(n.radio_id || '')}')">TR</button>
           <button class="act-btn" title="Direct message" onclick="doDM('${jsSafe(n.id)}','${jsSafe(n.long_name)}')">DM</button>
@@ -3031,7 +3094,7 @@ if (targetEl) {
              (c.id || '').toLowerCase().includes(query);
     });
     if (!real.length && !mcFiltered.length) {
-      tbody.innerHTML = '<tr><td colspan="12" class="no-data">No nodes found</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="13" class="no-data">No nodes found</td></tr>';
     }
     if (mcFiltered.length) {
       // Sort MC contacts: by distance when active, otherwise favourites-first
@@ -3051,7 +3114,7 @@ if (targetEl) {
           ? [...mcFiltered.filter(c => mcFavs[c.id || c.full_key]), ...mcFiltered.filter(c => !mcFavs[c.id || c.full_key])]
           : mcFiltered;
       }
-      tbody.innerHTML += `<tr><td colspan="12" style="padding:3px 8px;font-size:11px;font-weight:600;color:var(--mc-color);background:rgba(56,189,248,0.07);border-top:1px solid rgba(56,189,248,0.25)">MeshCore</td></tr>`;
+      tbody.innerHTML += `<tr><td colspan="13" style="padding:3px 8px;font-size:11px;font-weight:600;color:var(--mc-color);background:rgba(56,189,248,0.07);border-top:1px solid rgba(56,189,248,0.25)">MeshCore</td></tr>`;
       tbody.innerHTML += mcSorted.map(c => {
         const cid    = c.id || c.full_key || '';
         const isFav  = !!mcFavs[cid];
@@ -3063,9 +3126,7 @@ if (targetEl) {
         const connectedRadios = Object.values(mcLastStatus).filter(s => s?.status === 'connected').length;
         const metaRadio = connectedRadios > 1 ? (mcLastStatus[c._rid]?.name || mcLastStatus[c._rid]?.node_name || '') : '';
         const onRadio  = c.source_state ? c.source_state !== 'archive' : true;
-        const locChip  = onRadio
-          ? '<span style="display:inline-block;background:rgba(56,189,248,0.12);color:#7dd3fc;border:1px solid rgba(56,189,248,0.35);border-radius:10px;padding:0 6px;font-size:10px;line-height:16px" title="Stored in this MC radio\'s own contact table">on radio</span>'
-          : '<span style="display:inline-block;background:rgba(245,158,11,0.12);color:#fbbf24;border:1px solid rgba(245,158,11,0.35);border-radius:10px;padding:0 6px;font-size:10px;line-height:16px" title="Known to OverMesh only — not stored on the radio. Use "Add to radio" to store it.">app only</span>';
+        const storedText = _mcStoredText(c);
         const meta   = escHtml([shortKey, metaRadio].filter(Boolean).join(' · '));
         const passiveBadge = _mcPassiveBadgeHtml(c._rid, shortKey);
         const pk      = jsSafe(c.full_key || c.id || '');
@@ -3101,13 +3162,14 @@ if (targetEl) {
             <div class="name-cell-main">
               <span class="name-cell-title">${name}</span>${mcTypeBadge(c.type ?? 0)}${mcRouteIndicator(c, c._rid)}
             </div>
-            <div class="name-cell-meta">${meta}${passiveBadge}${locChip}</div>
+            <div class="name-cell-meta">${meta}${passiveBadge}</div>
           </td>
           <td><span class="short-name">${sname}</span></td>
           <td>—</td><td>—</td>
           <td>${path}</td>
           <td>${escHtml(_mcNodeDistanceLabel(c, c._rid))}</td>
           <td>${last}</td>
+          <td>${escHtml(storedText)}</td>
           <td class="node-actions">
             ${storeButton}
             ${dmButton}
@@ -3136,6 +3198,8 @@ if (targetEl) {
       const _pPres = mcSorted.map(c => (c.full_key || c.id || '').slice(0, 12));
       _refreshMcPassiveSummary(_pRids, _pPres);
     }
+
+    _applyLiveCols();
 
     document.getElementById('last-updated').textContent = 'Updated ' + _formatAppTime(new Date(), {seconds: true});
     const countEl = document.getElementById('nodes-count');
@@ -3259,10 +3323,6 @@ if (targetEl) {
         const shortKey  = (c.full_key || c.id || '').slice(0, 12);
         const radioName = connectedRadios > 1 ? (mcLastStatus[c._rid]?.name || mcLastStatus[c._rid]?.node_name || '') : '';
         const meta      = escHtml([shortKey, radioName].filter(Boolean).join(' · '));
-        const onRadio2  = c.source_state ? c.source_state !== 'archive' : true;
-        const locChip2  = onRadio2
-          ? '<span style="display:inline-block;background:rgba(56,189,248,0.12);color:#7dd3fc;border:1px solid rgba(56,189,248,0.35);border-radius:10px;padding:0 6px;font-size:10px;line-height:16px" title="Stored in this MC radio\'s own contact table">on radio</span>'
-          : '<span style="display:inline-block;background:rgba(245,158,11,0.12);color:#fbbf24;border:1px solid rgba(245,158,11,0.35);border-radius:10px;padding:0 6px;font-size:10px;line-height:16px" title="Known to OverMesh only — not stored on the radio.">app only</span>';
         const pk        = jsSafe(c.full_key || c.id || '');
         const noteKey   = c.full_key || c.id || '';
         const rid       = jsSafe(c._rid);
@@ -3273,7 +3333,7 @@ if (targetEl) {
             <div class="name-cell-main">
               <span class="name-cell-title">${name}</span>${mcTypeBadge(c.type ?? 0)}${mcRouteIndicator(c, c._rid)}
             </div>
-            <div class="name-cell-meta">${meta}${passiveBadge}${locChip2}</div>
+            <div class="name-cell-meta">${meta}${passiveBadge}</div>
           </td>
           <td><span class="short-name">${sname}</span></td>
           <td>—</td><td>${last}</td><td>—</td><td>—</td><td>${path}</td><td>${escHtml(_mcNodeDistanceLabel(c, c._rid))}</td>

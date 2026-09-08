@@ -1022,6 +1022,64 @@ def api_settings_mc_nodes_force_flood(node_id):
     return jsonify({"ok": True, "force_flood": enabled})
 
 
+@bp.route("/api/settings/mc_nodes/<node_id>/auto_add_contacts", methods=["POST"])
+def api_settings_mc_nodes_auto_add_contacts(node_id):
+    """Per-node contact auto-add preference (manual approval mode).
+
+    auto_add_contacts True  -> the radio stores new contacts it hears (stock).
+    auto_add_contacts False -> manual approval: the radio stores nothing it only
+    hears; contacts go to OM's store and the user approves ("Add to radio").
+    Applied to the device immediately when connected; re-asserted on every
+    connect."""
+    data = request.get_json(silent=True) or {}
+    enabled = bool(data.get("auto_add_contacts", True))
+
+    with CONFIG_LOCK:
+        mc_nodes = CONFIG.get("mc_nodes", [])
+        node = next((n for n in mc_nodes if n["id"] == node_id), None)
+        if not node:
+            return jsonify({"error": "MC node not found"}), 404
+        node["auto_add_contacts"] = enabled
+        save_config()
+
+    with mc_connections_lock:
+        if node_id in mc_connections:
+            mc_connections[node_id].setdefault("config", {})["auto_add_contacts"] = enabled
+
+    connected = False
+    manual_active = None
+    warning = None
+    supported = True
+    with mc_connections_lock:
+        connected = bool(
+            mc_connections.get(node_id, {}).get("status") == "connected"
+            and mc_connections.get(node_id, {}).get("mc")
+        )
+    if connected:
+        try:
+            from mesh_mc import apply_mc_auto_add_contacts, get_mc_auto_add_state
+            applied = apply_mc_auto_add_contacts(node_id)
+            manual_active = bool(applied) if applied is not None else None
+            supported, device_manual = get_mc_auto_add_state(node_id)
+            if manual_active is None:
+                manual_active = device_manual
+        except Exception as e:
+            log.warning(f"[MC:{node_id}] auto_add_contacts {enabled} failed: {e}")
+            warning = ("Radio did not accept the auto-add command — it keeps its "
+                       "current behaviour until it is reflashed with firmware that "
+                       "supports manual contact mode.")
+
+    return jsonify({
+        "ok": True,
+        "auto_add_contacts": enabled,
+        "manual_add_active": manual_active,
+        "supported": supported,
+        "connected": connected,
+        "warning": warning,
+    })
+
+
+
 @bp.route("/api/settings/mc_nodes/<node_id>/passive_collection", methods=["POST"])
 def api_settings_mc_nodes_passive_collection(node_id):
     data = request.get_json(silent=True) or {}

@@ -1486,6 +1486,16 @@
         <span id="mc-reset-all-paths-status" style="font-size:12px;color:var(--muted);margin-left:8px"></span>
       </div>
 
+      <h2 class="settings-title">Contact Storage</h2>
+      <label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;max-width:640px;margin-bottom:6px">
+        <input type="checkbox" id="mc-auto-add-contacts" onchange="saveMcAutoAddContacts(this.checked)" style="margin-top:2px">
+        <span>
+          <b>Auto-store every contact this radio hears</b><br>
+          <span style="color:var(--muted)">ON = stock behaviour: the radio writes every node it hears into its own contact table (the ~350-slot NVS that fills overnight). OFF = manual approval: the radio stores nothing by itself; contacts stay in OM and you approve them with the "+ Radio" action in the Contacts list. Stored contacts are the only ones this radio can DM.</span>
+        </span>
+      </label>
+      <div id="mc-auto-add-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-bottom:14px"></div>
+
       <h2 class="settings-title">Device Info <button class="btn" onclick="loadMcDeviceInfo()" style="font-size:11px;padding:2px 8px;margin-left:6px" title="Query device for fresh info">↻ Refresh</button></h2>
       <div id="mc-device-info-content" style="color:var(--muted);font-size:12px;margin-bottom:14px">—</div>
 

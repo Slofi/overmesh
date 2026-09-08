@@ -29,7 +29,9 @@ from mesh_mc import (MC_PAYLOAD_TYPE_NAMES, MC_ROUTE_TYPE_NAMES,
                      get_mc_contact_archive,
                      set_contact_path, reset_all_paths, remote_repeater_read,
                      remote_repeater_command, clear_mc_all_contacts,
-                     get_rc_collect_events, get_local_neighbors, get_mc_scope_state)
+                     get_rc_collect_events, get_local_neighbors, get_mc_scope_state,
+                     apply_mc_auto_add_contacts, get_mc_auto_add_state,
+                     store_mc_contact)
 from db import (
     delete_mc_channel_messages,
     delete_mc_all_messages,
@@ -101,6 +103,93 @@ def _validate_mc_radio_params(data, include_repeat=False):
             raise ValueError("repeat must be 0 or 1")
         params["repeat"] = repeat
     return params
+
+
+def _mc_friendly_device_error(result_or_text):
+    """Map a device rejection (lib Event payload, dict, or exception text) to a
+    plain-language message with a fix — for the UI toast. Returns None when the
+    error is not one of the known device codes (caller keeps the original).
+
+    Known codes (meshcore lib events.py): 1 UNSUPPORTED_CMD, 2 NOT_FOUND,
+    3 TABLE_FULL, 4 BAD_STATE, 5 FILE_IO, 6 ILLEGAL_ARG.
+    """
+    payload = None
+    if hasattr(result_or_text, "payload"):
+        payload = getattr(result_or_text, "payload", None) or {}
+    elif isinstance(result_or_text, dict):
+        payload = result_or_text
+    text = f"{payload or result_or_text}".lower()
+    code = None
+    if isinstance(payload, dict):
+        code = payload.get("error_code")
+    if code == 1 or "err_code_unsupported" in text or "unsupported cmd" in text:
+        return ("The radio's firmware doesn't support this — update the node to "
+                "the latest MeshCore companion release.")
+    if code == 2 or "err_code_not_found" in text:
+        return ("This contact isn't stored on the radio — in manual-approval mode "
+                "add it to the radio first (Add to radio in the contacts list), "
+                "or switch the radio back to auto-add in MC settings.")
+    if code == 3 or "err_code_table_full" in text or "table full" in text:
+        return ("The radio's contact table is full — remove stale contacts "
+                "(cleanup), then try again.")
+    if code == 4 or "err_code_bad_state" in text:
+        return ("The radio couldn't do that in its current state — wait a few "
+                "seconds and retry.")
+    if code == 6 or "err_code_illegal" in text:
+        return "That request was invalid for this radio — check the contact."
+    return None
+
+
+def _mc_contact_device_payload(full_key, rec):
+    """Build the contact dict the meshcore lib's update_contact (cmd 0x09)
+    expects, from an OM archive/live record. Missing fields fall back to safe
+    defaults (flood route, type CHAT, no name yet — the radio completes the
+    entry from the next real advert)."""
+    out_path_len_raw = rec.get("out_path_len")
+    try:
+        out_path_len = int(out_path_len_raw) if out_path_len_raw is not None else -1
+    except (TypeError, ValueError):
+        out_path_len = -1
+    return {
+        "public_key": full_key,
+        "type": int(rec.get("type", 1) or 1),
+        "flags": int(rec.get("flags", 0) or 0),
+        "out_path": (rec.get("out_path") or "") or "",
+        "out_path_len": out_path_len,
+        "out_path_hash_mode": int(rec.get("out_path_hash_mode", 0) or 0),
+        "adv_name": (rec.get("adv_name") or "") or "",
+        "last_advert": int(rec.get("last_advert", 0) or 0),
+        "adv_lat": float(rec.get("adv_lat") or 0),
+        "adv_lon": float(rec.get("adv_lon") or 0),
+    }
+
+
+def _mc_lookup_full_contact(radio_id, prefix):
+    """Resolve a pubkey prefix to (full_key, record) using the radio's live +
+    merged contacts first, then OM's archive. Raises ValueError when the prefix
+    is empty/short or ambiguous, KeyError when nothing matches."""
+    prefix = (prefix or "").strip().lower()
+    if len(prefix) < 6:
+        raise ValueError("pubkey prefix too short (>= 6 hex chars)")
+    with mc_connections_lock:
+        state = mc_connections.get(radio_id, {})
+        merged = dict(state.get("contacts", {}) or {})
+        live = dict(state.get("live_contacts", {}) or {})
+    if not merged:
+        merged = dict(get_mc_contact_archive(radio_id))
+    archive = dict(get_mc_contact_archive(radio_id))
+    pools = (merged, archive)
+    found = {}
+    for pool in pools:
+        for k, v in pool.items():
+            if k.lower().startswith(prefix):
+                found.setdefault(k, v)
+    if not found:
+        raise KeyError("contact not found in OverMesh")
+    if len(found) > 1:
+        raise ValueError("pubkey prefix is ambiguous — use a longer prefix")
+    full_key, rec = next(iter(found.items()))
+    return full_key, (rec or {})
 
 
 def _mc_contact_last_seen_ts(contact, now=None):
@@ -204,6 +293,7 @@ def api_mc_status():
         if not merged_contacts and archive_contacts:
             merged_contacts = archive_contacts
         archived_only_count = len(set(archive_contacts.keys()) - set(live_contacts.keys()))
+        aa_supported, aa_manual = get_mc_auto_add_state(cid)
         result.append({
             "id":         cid,
             "name":       cfg.get("name", cid),
@@ -226,6 +316,9 @@ def api_mc_status():
             "stored_contacts": len(merged_contacts),
             "live_contacts": len(live_contacts),
             "archived_contacts": archived_only_count,
+            "auto_add_contacts": cfg.get("auto_add_contacts", True) is not False,
+            "manual_add_active": aa_manual,
+            "auto_add_supported": aa_supported,
             "enabled":    cfg.get("enabled", True),
             "path_hash_mode": cfg.get("path_hash_mode", info.get("path_hash_mode")),
             "force_flood": bool(cfg.get("force_flood", False)),
@@ -715,13 +808,14 @@ def api_mc_send_dm(radio_id):
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     except RuntimeError as e:
-        return jsonify({"error": str(e)}), 503
+        return jsonify({"error": _mc_friendly_device_error(e) or str(e)}), 503
     except Exception as e:
         log.warning(f"[MC] send_dm failed: {e}")
         return jsonify({"error": str(e)}), 500
     result_type = getattr(getattr(result, "type", None), "name", None)
     if result_type == "ERROR":
-        return jsonify({"error": f"Device rejected DM: {getattr(result, 'payload', {})}"}), 502
+        return jsonify({"error": _mc_friendly_device_error(result)
+                        or f"Device rejected DM: {getattr(result, 'payload', {})}"}), 502
 
     msg = {
         "type": "mc_message",
@@ -1400,11 +1494,59 @@ def api_mc_import_contact(radio_id):
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     except RuntimeError as e:
-        return jsonify({"error": str(e)}), 503
+        return jsonify({"error": _mc_friendly_device_error(e) or str(e)}), 503
     except Exception as e:
         log.warning(f"[MC] import_contact failed: {e}")
         return jsonify({"error": str(e)}), 500
     return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# Manual contact approval: "Add to radio"
+# ---------------------------------------------------------------------------
+
+@bp.route("/api/mc/<radio_id>/contacts/<contact_id>/store", methods=["POST"])
+def api_mc_store_contact(radio_id, contact_id):
+    """Store an app-known contact onto the radio's NVS contact list — the
+    'add to radio' approval action that manual contact mode requires before a
+    contact is DM-able. contact_id is a pubkey prefix (>= 6 hex chars); the full
+    record is taken from OM's live/archive store. Already-on-the-radio contacts
+    are a no-op (409) so the UI can't double-add."""
+    if CONFIG.get("silent_mode"):
+        return jsonify({"error": "Silent Running active — transmissions are blocked"}), 409
+    with mc_connections_lock:
+        state = mc_connections.get(radio_id, {})
+    if state.get("status") != "connected":
+        return jsonify({"error": "MC radio not connected"}), 503
+    try:
+        full_key, rec = _mc_lookup_full_contact(radio_id, contact_id)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except KeyError as e:
+        return jsonify({"error": str(e)}), 404
+    with mc_connections_lock:
+        self_pub = (mc_connections.get(radio_id, {}).get("node_info", {}) or {}).get("public_key", "")
+        live_keys = set((mc_connections.get(radio_id, {}).get("live_contacts", {}) or {}).keys())
+    if self_pub and full_key.lower() == str(self_pub).lower():
+        return jsonify({"error": "That's this radio's own key — nothing to store."}), 400
+    if full_key in live_keys:
+        return jsonify({"error": "This contact is already stored on the radio."}), 409
+    payload = _mc_contact_device_payload(full_key, rec)
+    try:
+        result = store_mc_contact(radio_id, payload)
+    except RuntimeError as e:
+        return jsonify({"error": _mc_friendly_device_error(e) or str(e)}), 503
+    except Exception as e:
+        log.warning(f"[MC] store contact {contact_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+    if getattr(getattr(result, "type", None), "name", None) == "ERROR":
+        return jsonify({"error": _mc_friendly_device_error(result)
+                        or f"Device rejected contact store: {getattr(result, 'payload', {})}"}), 502
+    try:
+        refresh_contacts(radio_id)
+    except Exception:
+        pass  # non-fatal — the next poll will pick the contact up
+    return jsonify({"ok": True, "stored": full_key[:12]})
 
 
 # ---------------------------------------------------------------------------

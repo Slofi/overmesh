@@ -106,6 +106,144 @@ def _mc_normalize_region_name(name):
     return raw
 
 
+# --- Auto-add / manual contact approval -----------------------------------
+# OM-level preference per MC node (config.json `mc_nodes[].auto_add_contacts`,
+# default True). The firmware holds two linked prefs: `manual_add_contacts`
+# (bit 0) and an `autoadd_config` per-type whitelist. Mapping:
+#   auto_add_contacts True  -> device manual_add_contacts=0 (stock: the radio
+#                              stores every node it hears — this is what fills
+#                              the 350-slot NVS overnight)
+#   auto_add_contacts False -> device manual_add_contacts=1 AND autoadd_config=0
+#                              (manual approval: the radio stores NOTHING it only
+#                              hears; OM keeps candidates in its archive and the
+#                              user approves -> stored via cmd 0x09
+#                              update_contact, the "add to radio" action)
+_mc_auto_add_unsupported: set = set()  # radios that errored on cmd 38/58 (old fw)
+
+
+def _mc_auto_add_configured(config_id, default=True):
+    """The node's configured auto-add preference (config.json), default True."""
+    with CONFIG_LOCK:
+        for n in CONFIG.get("mc_nodes", []):
+            if n.get("id") == config_id:
+                return n.get("auto_add_contacts", True) is not False
+    return default
+
+
+def _mc_auto_add_unsupported_event(event):
+    """Old companion firmware replies ERR_CODE_UNSUPPORTED_CMD to cmd 38/58."""
+    payload = getattr(event, "payload", None) or {}
+    text = f"{payload}".lower()
+    return (
+        "unsupported" in text
+        or "err_code_unsupported" in text
+        or "not supported" in text
+        or "unknown" in text
+    )
+
+
+async def _set_mc_auto_add_on_mc(mc, manual):
+    """Push the auto-add preference to the device.
+
+    manual=True  -> set_manual_add_contacts(True)  + autoadd_config=0 (nothing
+                   auto-stored — the firmware only stores what the type whitelist
+                   allows, and we zero it).
+    manual=False -> set_manual_add_contacts(False) (stock auto-store).
+
+    Returns the list of command results. The lib returns Events (not raises) on
+    a device rejection, so classification happens here from the events.
+    """
+    try:
+        results = [await mc.commands.set_manual_add_contacts(bool(manual))]
+    except AttributeError:
+        raise RuntimeError("Installed meshcore lib has no set_manual_add_contacts support")
+    if manual:
+        try:
+            results.append(await mc.commands.set_autoadd_config(0))
+        except AttributeError:
+            pass  # older lib without cmd 58 — the manual bit alone still blocks most
+    return results
+
+
+async def _assert_mc_auto_add_async(config_id, mc=None, known_manual=None):
+    """Enforce the configured auto-add preference on the device. Mirrors the
+    flood-scope assert: the device reports its own state in SELF_INFO
+    (node_info.manual_add_contacts), so we only write when it differs from the
+    OM config. Runs at connect (mc passed in, before the connection object is
+    published to mc_connections) and on demand from the settings route.
+
+    Returns the applied manual_add state (True = manual approval active).
+    Failure is non-fatal + warned once — OM keeps working; the radio keeps its
+    own behaviour when the firmware is too old to change it.
+    """
+    if config_id in _mc_auto_add_unsupported:
+        return None
+    if mc is None:
+        mc, _ = _get_mc(config_id)
+    if known_manual is None:
+        with mc_connections_lock:
+            info = dict(mc_connections.get(config_id, {}).get("node_info", {}) or {})
+        known_manual = bool(info.get("manual_add_contacts", False))
+    current_manual = known_manual
+    desired_manual = not _mc_auto_add_configured(config_id)
+    if current_manual == desired_manual:
+        return current_manual  # already in the desired state — no write
+    results = await _set_mc_auto_add_on_mc(mc, desired_manual)
+    for result in results:
+        if result is None:
+            continue
+        if getattr(result, "type", None) == EventType.ERROR:
+            if _mc_auto_add_unsupported_event(result):
+                _mc_auto_add_unsupported.add(config_id)
+                log.warning(
+                    f"[MC:{config_id}] Auto-add commands unsupported by this "
+                    f"firmware — manual approval disabled for it: "
+                    f"{getattr(result, 'payload', {})}"
+                )
+                return current_manual
+            raise RuntimeError(
+                f"Device rejected auto-add command: {getattr(result, 'payload', {})}"
+            )
+    with mc_connections_lock:
+        state = mc_connections.get(config_id)
+        if state is not None:
+            state.setdefault("node_info", {})["manual_add_contacts"] = desired_manual
+    mode = "manual approval" if desired_manual else "auto-add"
+    log.info(f"[MC:{config_id}] Contact storage: {mode} active on device")
+    return desired_manual
+
+
+def apply_mc_auto_add_contacts(config_id, timeout=10):
+    """Public entry for the settings route: apply the current config preference
+    immediately (does not wait for a reconnect)."""
+    return run_mc(_assert_mc_auto_add_async(config_id), timeout=timeout)
+
+
+def get_mc_auto_add_state(config_id):
+    """(supported, manual_active) for API surfaces. manual_active reflects what
+    the device reports (node_info.manual_add_contacts); None when this radio has
+    no device info yet."""
+    manual = None
+    with mc_connections_lock:
+        info = mc_connections.get(config_id, {}).get("node_info") or {}
+    if info:
+        manual = bool(info.get("manual_add_contacts", False))
+    return (config_id not in _mc_auto_add_unsupported, manual)
+
+
+async def _store_mc_contact_async(config_id, contact):
+    """Push a full contact record to the device NVS (manual-approval 'add to
+    radio', cmd 0x09 update_contact). Returns the lib Event so callers can
+    classify rejections into user-facing messages."""
+    mc, _ = _get_mc(config_id)
+    return await mc.commands.update_contact(contact)
+
+
+def store_mc_contact(config_id, contact, timeout=15):
+    """Public entry: store a contact record onto the radio's contact list."""
+    return run_mc(_store_mc_contact_async(config_id, contact), timeout=timeout)
+
+
 async def _set_mc_flood_scope_on_mc(mc, region):
     """Send CMD_SET_FLOOD_SCOPE (54). region None -> clear (unscoped).
 
@@ -2482,6 +2620,18 @@ async def _connect_mc_node_async(node_cfg):
         except Exception as scope_e:
             log.warning(f"[MC:{name}] Could not apply default flood scope "
                         f"'{configured_default}': {scope_e}")
+
+    # Enforce the configured contact auto-add preference (manual approval mode)
+    # after connect — same pattern as the scope re-apply above. Non-fatal: when
+    # the firmware rejects the commands, the radio keeps its own behaviour and
+    # OM warns once per connection.
+    try:
+        await _assert_mc_auto_add_async(
+            config_id, mc=mc,
+            known_manual=bool((node_info or {}).get("manual_add_contacts", False)),
+        )
+    except Exception as auto_e:
+        log.warning(f"[MC:{name}] Could not apply auto-add preference: {auto_e}")
 
     node_id = node_info.get("public_key", "")[:12]  # 6-byte pubkey prefix as ID
 

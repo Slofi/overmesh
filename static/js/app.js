@@ -3042,8 +3042,11 @@ if (targetEl) {
         const shortKey = (c.full_key || c.id || '').slice(0, 12);
         const connectedRadios = Object.values(mcLastStatus).filter(s => s?.status === 'connected').length;
         const metaRadio = connectedRadios > 1 ? (mcLastStatus[c._rid]?.name || mcLastStatus[c._rid]?.node_name || '') : '';
-        const archiveMeta = c.archived_only ? 'OM archive' : '';
-        const meta   = escHtml([shortKey, metaRadio, archiveMeta].filter(Boolean).join(' · '));
+        const onRadio  = c.source_state ? c.source_state !== 'archive' : true;
+        const locChip  = onRadio
+          ? '<span style="display:inline-block;background:rgba(56,189,248,0.12);color:#7dd3fc;border:1px solid rgba(56,189,248,0.35);border-radius:10px;padding:0 6px;font-size:10px;line-height:16px" title="Stored in this MC radio\'s own contact table">on radio</span>'
+          : '<span style="display:inline-block;background:rgba(245,158,11,0.12);color:#fbbf24;border:1px solid rgba(245,158,11,0.35);border-radius:10px;padding:0 6px;font-size:10px;line-height:16px" title="Known to OverMesh only — not stored on the radio. Use + Radio to store it.">app only</span>';
+        const meta   = escHtml([shortKey, metaRadio].filter(Boolean).join(' · '));
         const passiveBadge = _mcPassiveBadgeHtml(c._rid, shortKey);
         const pk      = jsSafe(c.full_key || c.id || '');
         const noteKey = c.full_key || c.id || '';
@@ -3069,13 +3072,16 @@ if (targetEl) {
             ? `<button class="act-btn" title="Remote repeater/room management" onclick="openMcRemoteManage('${pk}','${rid}','${jsSafe(c.long_name||c.name||cid||'')}')">Manage</button>`
             : `<button class="act-btn" title="MC radio disconnected" style="opacity:0.35;cursor:default" disabled>Manage</button>`)
           : '';
+        const storeButton = (!onRadio && radioConnected)
+          ? `<button class="act-btn" title="Store this contact on the radio (manual approval) — required before this radio can DM it" onclick="storeMcContact('${pk}','${rid}')">+ Radio</button>`
+          : '';
         return `<tr data-id="${jsSafe(cid)}" class="${isFav ? 'is-favorite' : ''}${isIgnored ? ' is-ignored' : ''}">
           <td><span class="star ${isFav ? 'starred' : ''}" onclick="toggleMcFav('${jsSafe(cid)}')" title="${isFav ? 'Remove from favourites' : 'Add to favourites'}">&#9733;</span></td>
           <td>
             <div class="name-cell-main">
               <span class="name-cell-title">${name}</span>${mcTypeBadge(c.type ?? 0)}${mcRouteIndicator(c, c._rid)}
             </div>
-            <div class="name-cell-meta">${meta}${passiveBadge}</div>
+            <div class="name-cell-meta">${meta}${passiveBadge}${locChip}</div>
           </td>
           <td><span class="short-name">${sname}</span></td>
           <td>—</td><td>—</td>
@@ -3083,6 +3089,7 @@ if (targetEl) {
           <td>${escHtml(_mcNodeDistanceLabel(c, c._rid))}</td>
           <td>${last}</td>
           <td class="node-actions">
+            ${storeButton}
             ${dmButton}
             ${routeButton}
             ${hasCoords
@@ -3232,6 +3239,10 @@ if (targetEl) {
         const shortKey  = (c.full_key || c.id || '').slice(0, 12);
         const radioName = connectedRadios > 1 ? (mcLastStatus[c._rid]?.name || mcLastStatus[c._rid]?.node_name || '') : '';
         const meta      = escHtml([shortKey, radioName].filter(Boolean).join(' · '));
+        const onRadio2  = c.source_state ? c.source_state !== 'archive' : true;
+        const locChip2  = onRadio2
+          ? '<span style="display:inline-block;background:rgba(56,189,248,0.12);color:#7dd3fc;border:1px solid rgba(56,189,248,0.35);border-radius:10px;padding:0 6px;font-size:10px;line-height:16px" title="Stored in this MC radio\'s own contact table">on radio</span>'
+          : '<span style="display:inline-block;background:rgba(245,158,11,0.12);color:#fbbf24;border:1px solid rgba(245,158,11,0.35);border-radius:10px;padding:0 6px;font-size:10px;line-height:16px" title="Known to OverMesh only — not stored on the radio.">app only</span>';
         const pk        = jsSafe(c.full_key || c.id || '');
         const noteKey   = c.full_key || c.id || '';
         const rid       = jsSafe(c._rid);
@@ -3242,7 +3253,7 @@ if (targetEl) {
             <div class="name-cell-main">
               <span class="name-cell-title">${name}</span>${mcTypeBadge(c.type ?? 0)}${mcRouteIndicator(c, c._rid)}
             </div>
-            <div class="name-cell-meta">${meta}${passiveBadge}</div>
+            <div class="name-cell-meta">${meta}${passiveBadge}${locChip2}</div>
           </td>
           <td><span class="short-name">${sname}</span></td>
           <td>—</td><td>${last}</td><td>—</td><td>—</td><td>${path}</td><td>${escHtml(_mcNodeDistanceLabel(c, c._rid))}</td>
@@ -3753,7 +3764,9 @@ if (targetEl) {
       ['ID', (c.id || fullKey || '').slice(0, 12)],
       ['Pubkey hex', fullKey],
       ['Radio', radio.name || radio.node_name || rid],
-      ['Source', c.archived_only ? 'OM archive' : (c.source_state || 'live')],
+      ['Source', (c.source_state ? c.source_state !== 'archive' : true)
+        ? 'stored on the radio'
+        : 'app only — not stored on the radio'],
       ['Path', c.out_path || ''],
       ['Hops', c.out_path_len != null ? mcPathHopLabel(c.out_path_len, true) : ''],
       ['Distance', _mcNodeDistanceLabel(c, rid)],
@@ -17550,6 +17563,10 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     if (hashSel) hashSel.value = String(_mcPreferredPathHashMode(radioId));
     if (forceFloodEl) forceFloodEl.checked = !!s.force_flood;
     if (passiveCollectionEl) passiveCollectionEl.checked = s.passive_collection !== false;
+    const autoAddEl = document.getElementById('mc-auto-add-contacts');
+    const autoAddStatusEl = document.getElementById('mc-auto-add-status');
+    if (autoAddEl) autoAddEl.checked = s.auto_add_contacts !== false;
+    if (autoAddStatusEl) autoAddStatusEl.innerHTML = _mcAutoAddStatusHtml(radioId);
     if (maxEl  && s.max_tx_power != null) maxEl.textContent = `max ${s.max_tx_power} dBm`;
     if (maxEl  && s.max_tx_power != null && txEl) txEl.max = s.max_tx_power;
     const latEl = document.getElementById('mc-coords-lat');
@@ -18072,6 +18089,67 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         if (cb) cb.checked = !enabled;
         if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`;
       });
+  }
+
+  function saveMcAutoAddContacts(enabled) {
+    const radioId = mcSettingsRadioId || activeMcRadioId;
+    const statusEl = document.getElementById('mc-auto-add-status');
+    if (!radioId) return;
+    if (statusEl) statusEl.textContent = 'Saving...';
+    fetch(BASE_PATH + `/api/settings/mc_nodes/${encodeURIComponent(radioId)}/auto_add_contacts`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({auto_add_contacts: !!enabled}),
+    }).then(r => r.json().then(d => ({ok: r.ok, d})))
+      .then(({ok, d}) => {
+        if (!ok || d.error) throw new Error(d.error || 'Request failed.');
+        if (!mcLastStatus[radioId]) mcLastStatus[radioId] = {};
+        mcLastStatus[radioId].auto_add_contacts = !!d.auto_add_contacts;
+        mcLastStatus[radioId].manual_add_active = d.manual_add_active;
+        mcLastStatus[radioId].auto_add_supported = d.supported !== false;
+        loadMcSettingsNodes();
+        const cb = document.getElementById('mc-auto-add-contacts');
+        if (cb) cb.checked = !!d.auto_add_contacts;
+        if (statusEl) {
+          statusEl.innerHTML = d.auto_add_contacts
+            ? '<span style="color:var(--accent)">Auto-add is on — the radio stores every contact it hears.</span>'
+            : '<span style="color:var(--accent)">Manual approval is on — this radio will only store contacts you approve ("+ Radio") in the Contacts list.</span>';
+          setTimeout(() => { if (statusEl) statusEl.innerHTML = _mcAutoAddStatusHtml(radioId); }, 5000);
+        }
+      }).catch(e => {
+        const cb = document.getElementById('mc-auto-add-contacts');
+        if (cb) cb.checked = !enabled;
+        if (statusEl) statusEl.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`;
+      });
+  }
+
+  function _mcAutoAddStatusHtml(radioId) {
+    const s = mcLastStatus[radioId] || {};
+    if (s.auto_add_supported === false) {
+      return '<span style="color:var(--red)">This radio\'s firmware doesn\'t support manual contact approval — auto-add stays as the radio decides.</span>';
+    }
+    if (s.manual_add_active) {
+      return '<span style="color:var(--accent)">Manual approval active — the radio stores only the contacts you approve in the Contacts list.</span>';
+    }
+    if (s.auto_add_contacts === false) {
+      return 'Manual approval is set in the config — it applies on the next radio connect.';
+    }
+    return 'Auto-add is on — the radio stores every contact it hears (this fills its contact table over time).';
+  }
+
+  function storeMcContact(id, radioId) {
+    fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/contacts/${encodeURIComponent(id)}/store`, {
+      method: 'POST'
+    }).then(r => r.json().then(d => ({ok: r.ok, d})))
+      .then(({ok, d}) => {
+        if (!ok || d.error) { showAlert(d.error || 'Failed to store contact on the radio.'); return; }
+        return _refreshMcContactsForNotification(radioId).then(() => {
+          renderLive();
+          if (currentView === 'history') loadHistory();
+          renderMcMapMarkers();
+          if (pipOpen) updatePipMarkers(allNodes);
+        }).catch(() => { renderLive(); });
+      }).catch(e => console.error('storeMcContact failed:', e));
   }
 
   function saveMcPassiveCollection(enabled) {

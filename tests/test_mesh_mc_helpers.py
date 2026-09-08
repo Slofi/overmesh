@@ -1780,3 +1780,179 @@ class McRegionDiscoverTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class McAutoAddApprovalTests(unittest.TestCase):
+    """Manual contact approval: config read, device assert/write, add-to-radio
+    payloads, and plain-language device-error mapping."""
+
+    def setUp(self):
+        mesh_mc.DATA_DIR = str(_DATA_DIR)
+        mesh_mc.MC_CONTACT_ARCHIVE_PATH = str(_DATA_DIR / "mc_contacts_archive.json")
+        mesh_mc._mc_contact_archive_cache = None
+        mesh_mc._mc_auto_add_unsupported.clear()
+        archive_path = _DATA_DIR / "mc_contacts_archive.json"
+        if archive_path.exists():
+            archive_path.unlink()
+        with mc_connections_lock:
+            mc_connections.clear()
+        self._orig_mc_nodes = list(CONFIG.get("mc_nodes", []))
+        CONFIG["mc_nodes"] = []
+
+    def tearDown(self):
+        CONFIG["mc_nodes"] = list(self._orig_mc_nodes)
+        mesh_mc._mc_auto_add_unsupported.clear()
+        with mc_connections_lock:
+            mc_connections.clear()
+
+    def _ok_event(self):
+        from meshcore.events import EventType
+        return SimpleNamespace(type=EventType.OK, payload={})
+
+    # --- config read -------------------------------------------------------
+
+    def test_auto_add_configured_defaults_true(self):
+        CONFIG["mc_nodes"] = [{"id": "mc1", "name": "MC One"}]
+        self.assertTrue(mesh_mc._mc_auto_add_configured("mc1"))
+        self.assertTrue(mesh_mc._mc_auto_add_configured("ghost"))
+
+    def test_auto_add_configured_false_when_disabled(self):
+        CONFIG["mc_nodes"] = [{"id": "mc1", "auto_add_contacts": False}]
+        self.assertFalse(mesh_mc._mc_auto_add_configured("mc1"))
+
+    # --- device command / assert -------------------------------------------
+
+    def test_set_mc_auto_add_manual_also_zeroes_whitelist(self):
+        calls = []
+
+        class Cmd:
+            async def set_manual_add_contacts(self, val):
+                calls.append(("manual", val))
+                return self._evt()
+
+            async def set_autoadd_config(self, val):
+                calls.append(("autoadd", val))
+                return self._evt()
+
+            def _evt(self):
+                from meshcore.events import EventType
+                return SimpleNamespace(type=EventType.OK, payload={})
+
+        mc = SimpleNamespace(commands=Cmd())
+        asyncio.run(mesh_mc._set_mc_auto_add_on_mc(mc, True))
+        self.assertEqual(calls, [("manual", True), ("autoadd", 0)])
+
+        calls.clear()
+        asyncio.run(mesh_mc._set_mc_auto_add_on_mc(mc, False))
+        self.assertEqual(calls, [("manual", False)])
+
+    def test_assert_skips_write_when_device_already_matches(self):
+        CONFIG["mc_nodes"] = [{"id": "mc1", "auto_add_contacts": False}]
+        wrote = []
+
+        class Cmd:
+            async def set_manual_add_contacts(self, val):
+                wrote.append(val)
+                raise AssertionError("should not write when state already matches")
+
+            async def set_autoadd_config(self, val):
+                raise AssertionError("should not write when state already matches")
+
+        mc = SimpleNamespace(commands=Cmd())
+        result = asyncio.run(mesh_mc._assert_mc_auto_add_async("mc1", mc=mc, known_manual=True))
+        self.assertIs(result, True)
+        self.assertEqual(wrote, [])
+
+    def test_assert_writes_manual_mode_when_configured_off(self):
+        CONFIG["mc_nodes"] = [{"id": "mc1", "auto_add_contacts": False}]
+        calls = []
+        with mc_connections_lock:
+            mc_connections["mc1"] = {"status": "connected",
+                                     "node_info": {"manual_add_contacts": False}}
+
+        class Cmd:
+            async def set_manual_add_contacts(self, val):
+                calls.append(("manual", val))
+                return self._evt()
+
+            async def set_autoadd_config(self, val):
+                calls.append(("autoadd", val))
+                return self._evt()
+
+            def _evt(self):
+                from meshcore.events import EventType
+                return SimpleNamespace(type=EventType.OK, payload={})
+
+        mc = SimpleNamespace(commands=Cmd())
+        result = asyncio.run(mesh_mc._assert_mc_auto_add_async("mc1", mc=mc))
+        self.assertIs(result, True)
+        self.assertEqual(calls, [("manual", True), ("autoadd", 0)])
+        with mc_connections_lock:
+            self.assertIs(mc_connections["mc1"]["node_info"]["manual_add_contacts"], True)
+
+    def test_unsupported_event_marks_radio_and_is_non_fatal(self):
+        CONFIG["mc_nodes"] = [{"id": "mc1", "auto_add_contacts": False}]
+        with mc_connections_lock:
+            mc_connections["mc1"] = {"status": "connected",
+                                     "node_info": {"manual_add_contacts": False}}
+
+        class Cmd:
+            async def set_manual_add_contacts(self, val):
+                from meshcore.events import EventType
+                return SimpleNamespace(type=EventType.ERROR,
+                                       payload={"error_code": 1,
+                                                "code_string": "ERR_CODE_UNSUPPORTED_CMD"})
+
+        mc = SimpleNamespace(commands=Cmd())
+        result = asyncio.run(mesh_mc._assert_mc_auto_add_async("mc1", mc=mc))
+        self.assertEqual(result, False)  # unchanged, warned once
+        self.assertIn("mc1", mesh_mc._mc_auto_add_unsupported)
+        # second call short-circuits without touching the device
+        result = asyncio.run(mesh_mc._assert_mc_auto_add_async("mc1", mc=mc))
+        self.assertIsNone(result)
+
+    # --- route helpers: payloads, lookup, friendly errors ------------------
+
+    def test_device_payload_fallbacks_are_safe(self):
+        full = "ab" * 32
+        p = mc_routes._mc_contact_device_payload(full, {})
+        self.assertEqual(p["public_key"], full)
+        self.assertEqual(p["type"], 1)          # CHAT default
+        self.assertEqual(p["out_path_len"], -1) # flood route default
+        self.assertEqual(p["adv_name"], "")
+        self.assertEqual(float(p["adv_lat"]), 0.0)
+
+    def test_device_payload_preserves_known_fields(self):
+        p = mc_routes._mc_contact_device_payload("cd" * 32, {
+            "type": 2, "adv_name": "SI-Repeater", "adv_lat": 46.05,
+            "adv_lon": 14.5, "last_advert": 1234,
+        })
+        self.assertEqual(p["type"], 2)
+        self.assertEqual(p["adv_name"], "SI-Repeater")
+        self.assertEqual(p["adv_lat"], 46.05)
+        self.assertEqual(p["last_advert"], 1234)
+
+    def test_lookup_ambiguous_prefix_raises(self):
+        with mc_connections_lock:
+            mc_connections["mc1"] = {
+                "status": "connected",
+                "contacts": {"aa0001" + "00" * 29: {}, "aa0002" + "00" * 29: {}},
+                "live_contacts": {},
+            }
+        with self.assertRaises(ValueError):
+            mc_routes._mc_lookup_full_contact("mc1", "aa")
+
+    def test_friendly_error_maps_not_found_to_approval_hint(self):
+        msg = mc_routes._mc_friendly_device_error(
+            {"error_code": 2, "code_string": "ERR_CODE_NOT_FOUND"})
+        self.assertIsNotNone(msg)
+        self.assertIn("Add to radio", msg)
+        self.assertIn("manual-approval", msg)
+
+    def test_friendly_error_maps_table_full_to_cleanup_hint(self):
+        msg = mc_routes._mc_friendly_device_error({"error_code": 3})
+        self.assertIsNotNone(msg)
+        self.assertIn("cleanup", msg)
+
+    def test_friendly_error_unknown_returns_none(self):
+        self.assertIsNone(mc_routes._mc_friendly_device_error("some unrelated error"))

@@ -3097,18 +3097,43 @@ if (targetEl) {
       tbody.innerHTML = '<tr><td colspan="13" class="no-data">No nodes found</td></tr>';
     }
     if (mcFiltered.length) {
-      // Sort MC contacts: by distance when active, otherwise favourites-first
+      // Sort MC contacts exactly like MT rows: active sort column applies,
+      // unknown values always go last (either direction), favourites only
+      // re-group when no explicit column sort is active.
       let mcSorted;
-      if (liveSort.col === '_dist') {
-        const withDist = mcFiltered.map(c => ({...c, _dist: _mcDistanceFromLocal(c, c._rid)}));
-        withDist.sort((a, b) => {
-          const av = a._dist, bv = b._dist;
+      const mcSortVal = (c, col) => {
+        if (col === 'long_name') {
+          const nm = (c.long_name || c.name || '').trim().toLowerCase();
+          return nm || null;
+        }
+        if (col === 'last_heard_ts') {
+          const t = nodeTs(c.last_heard_ts) || nodeTs(c.last_seen_ts);
+          return t || null;
+        }
+        if (col === 'hops_away') {
+          const p = c.out_path_len;
+          if (p == null || p < 0) return null; // flood/unknown — no hop count
+          return p;
+        }
+        if (col === '_dist') return c._dist;
+        return null;
+      };
+      const _sortMc = (arr) => {
+        arr.sort((a, b) => {
+          const av = mcSortVal(a, liveSort.col), bv = mcSortVal(b, liveSort.col);
           if (av == null && bv == null) return 0;
           if (av == null) return 1;
           if (bv == null) return -1;
-          return (av - bv) * liveSort.dir;
+          return (typeof av === 'string' ? av.localeCompare(bv) : av - bv) * liveSort.dir;
         });
-        mcSorted = withDist;
+        if (!favFirst) return arr;
+        return [...arr.filter(c => mcFavs[c.id || c.full_key]), ...arr.filter(c => !mcFavs[c.id || c.full_key])];
+      };
+      if (liveSort.col === '_dist') {
+        const withDist = mcFiltered.map(c => ({...c, _dist: _mcDistanceFromLocal(c, c._rid)}));
+        mcSorted = _sortMc(withDist);
+      } else if (['long_name', 'last_heard_ts', 'hops_away'].includes(liveSort.col)) {
+        mcSorted = _sortMc([...mcFiltered]);
       } else {
         mcSorted = favFirst
           ? [...mcFiltered.filter(c => mcFavs[c.id || c.full_key]), ...mcFiltered.filter(c => !mcFavs[c.id || c.full_key])]

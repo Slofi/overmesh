@@ -301,6 +301,19 @@
           <div id="nodes-mt-pill" class="btn btn-net-mt active" onclick="toggleNodeFilter('mt')" title="Show/hide Meshtastic nodes">MT</div>
           <div id="nodes-mc-pill" class="btn btn-net-mc active" onclick="toggleNodeFilter('mc')" title="Show/hide MeshCore contacts">MC</div>
         </div>
+        <div id="cols-menu-wrap" style="position:relative">
+          <button class="btn" id="cols-menu-btn" onclick="toggleLiveColsMenu(event)" title="Choose which columns are visible in the Nodes table">☰ Columns</button>
+          <div id="cols-menu" style="display:none;position:absolute;top:calc(100% + 4px);right:0;background:var(--bg2);border:1px solid var(--border);border-radius:6px;min-width:250px;z-index:999;padding:8px;box-shadow:0 4px 12px rgba(0,0,0,0.4)">
+            <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Visible columns in the Nodes table (Name is always shown):</div>
+            <label class="cols-menu-row" title="Short name or abbreviation (e.g. 4-letter code)"><input type="checkbox" data-live-col="short" onchange="setLiveColVisible('short', this.checked)"> Short</label>
+            <label class="cols-menu-row" title="Signal-to-noise ratio of the last heard packet"><input type="checkbox" data-live-col="snr" onchange="setLiveColVisible('snr', this.checked)"> SNR</label>
+            <label class="cols-menu-row" title="Reported battery level (Meshtastic nodes)"><input type="checkbox" data-live-col="battery" onchange="setLiveColVisible('battery', this.checked)"> Battery</label>
+            <label class="cols-menu-row" title="Hops away (MT). For MC contacts: route hops when a route is stored — 'flood' means no route is stored, so packets go to the whole mesh and no hop count exists yet."><input type="checkbox" data-live-col="hops" onchange="setLiveColVisible('hops', this.checked)"> Hops</label>
+            <label class="cols-menu-row" title="Estimated distance to your location"><input type="checkbox" data-live-col="distance" onchange="setLiveColVisible('distance', this.checked)"> Distance</label>
+            <label class="cols-menu-row" title="When this node/contact was last heard"><input type="checkbox" data-live-col="lastseen" onchange="setLiveColVisible('lastseen', this.checked)"> Last seen</label>
+            <label class="cols-menu-row" title="Where it is saved: on the radio, in OverMesh, or both"><input type="checkbox" data-live-col="stored" onchange="setLiveColVisible('stored', this.checked)"> Stored</label>
+          </div>
+        </div>
         <div id="nodes-mqtt-pill" class="btn" style="margin-left:4px" onclick="toggleMqttFilter()"
              title="Filter Meshtastic nodes by how they were last heard">MQTT: all</div>
       </div>
@@ -323,19 +336,6 @@
 
       <div class="toolbar-spacer"></div>
       <span id="nodes-count" style="font-size:11px;color:var(--muted);white-space:nowrap"></span>
-      <div id="cols-menu-wrap" style="position:relative">
-        <button class="btn" id="cols-menu-btn" onclick="toggleLiveColsMenu(event)" title="Choose which columns are visible in the Nodes table">☰ Columns</button>
-        <div id="cols-menu" style="display:none;position:absolute;top:calc(100% + 4px);right:0;background:var(--bg2);border:1px solid var(--border);border-radius:6px;min-width:250px;z-index:999;padding:8px;box-shadow:0 4px 12px rgba(0,0,0,0.4)">
-          <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Visible columns in the Nodes table (Name is always shown):</div>
-          <label class="cols-menu-row" title="Short name or abbreviation (e.g. 4-letter code)"><input type="checkbox" data-live-col="short" onchange="setLiveColVisible('short', this.checked)"> Short</label>
-          <label class="cols-menu-row" title="Signal-to-noise ratio of the last heard packet"><input type="checkbox" data-live-col="snr" onchange="setLiveColVisible('snr', this.checked)"> SNR</label>
-          <label class="cols-menu-row" title="Reported battery level (Meshtastic nodes)"><input type="checkbox" data-live-col="battery" onchange="setLiveColVisible('battery', this.checked)"> Battery</label>
-          <label class="cols-menu-row" title="Hops away (MT) / route hops (MC)"><input type="checkbox" data-live-col="hops" onchange="setLiveColVisible('hops', this.checked)"> Hops</label>
-          <label class="cols-menu-row" title="Estimated distance to your location"><input type="checkbox" data-live-col="distance" onchange="setLiveColVisible('distance', this.checked)"> Distance</label>
-          <label class="cols-menu-row" title="When this node/contact was last heard"><input type="checkbox" data-live-col="lastseen" onchange="setLiveColVisible('lastseen', this.checked)"> Last seen</label>
-          <label class="cols-menu-row" title="Where it is saved: on the radio, in OverMesh, or both"><input type="checkbox" data-live-col="stored" onchange="setLiveColVisible('stored', this.checked)"> Stored</label>
-        </div>
-      </div>
     </div>
 
     <!-- Live table -->
@@ -348,14 +348,14 @@
             <th data-live-col="short" title="Short name or abbreviation (e.g. 4-letter code)">Short</th>
             <th class="sortable" data-col="snr" data-live-col="snr" onclick="setLiveSort('snr')" title="Signal-to-noise ratio of the last heard packet">SNR <span class="sort-arrow"></span></th>
             <th class="sortable" data-col="battery" data-live-col="battery" onclick="setLiveSort('battery')" title="Reported battery level (Meshtastic nodes)">Battery <span class="sort-arrow"></span></th>
-            <th class="sortable" data-col="hops_away" data-live-col="hops" onclick="setLiveSort('hops_away')" title="Hops away (MT) / route hops (MC)">Hops <span class="sort-arrow"></span></th>
+            <th class="sortable" data-col="hops_away" data-live-col="hops" onclick="setLiveSort('hops_away')" title="Hops away (MT). For MC contacts: route hops when a route is stored — 'flood' means no route is stored, so packets go to the whole mesh and no hop count exists yet.">Hops <span class="sort-arrow"></span></th>
             <th class="sortable" data-col="_dist" data-live-col="distance" onclick="setLiveSort('_dist')" title="Estimated distance to your location">Distance <span class="sort-arrow"></span></th>
             <th class="sortable" data-col="last_heard_ts" data-live-col="lastseen" onclick="setLiveSort('last_heard_ts')" title="When this node/contact was last heard">Last Seen <span class="sort-arrow"></span></th>
             <th data-live-col="stored" title="Where it is saved: on the radio, in OverMesh, or both">Stored</th>
             <th></th>
             <th>Note</th>
             <th>Radio</th>
-            <th style="width:28px"></th>
+            <th style="min-width:96px" title="Mute (hide) or remove a node/contact">Mute/Remove</th>
           </tr>
         </thead>
         <tbody id="live-tbody"><tr><td colspan="13" class="no-data">Loading...</td></tr></tbody>

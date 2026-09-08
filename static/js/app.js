@@ -3074,7 +3074,7 @@ if (targetEl) {
           ${(() => { const p = _parseNotes(n.notes || ''); const s = _notesSummary(p); return s ? `<span class="note-text" title="${escHtml(s)}">${escHtml(s)}</span>` : `<span class="note-placeholder">+ note</span>`; })()}
         </td>
         <td>${escHtml(n.radio_name)}</td>
-        <td style="display:flex;gap:8px;align-items:center">
+        <td class="row-actions">
           ${n.is_ignored
             ? `<span class="unignore-btn" onclick="ignoreNode('${jsSafe(n.id)}', true, '${jsSafe(n.radio_id || '')}')" title="Un-ignore node">&#128683;</span>`
             : `<span class="ignore-btn" onclick="ignoreNode('${jsSafe(n.id)}', false, '${jsSafe(n.radio_id || '')}')" title="Ignore node">&#128683;</span>`}
@@ -3210,7 +3210,7 @@ if (targetEl) {
             ${(() => { const s = _notesSummary(_parseNotes(mcNotesCache[noteKey] || '{}')); return s ? `<span class="note-text" title="${escHtml(s)}">${escHtml(s)}</span>` : `<span class="note-placeholder">+ note</span>`; })()}
           </td>
           <td>${escHtml(mcLastStatus[c._rid]?.name || mcLastStatus[c._rid]?.node_name || '')}</td>
-          <td style="display:flex;gap:8px;align-items:center">
+          <td class="row-actions">
             ${isIgnored
               ? `<span class="unignore-btn" onclick="ignoreMcContact('${jsSafe(cid)}',true)" title="Unignore">&#128683;</span>`
               : `<span class="ignore-btn" onclick="ignoreMcContact('${jsSafe(cid)}',false)" title="Ignore">&#128683;</span>`}
@@ -3325,7 +3325,7 @@ if (targetEl) {
         <td class="notes-cell" onclick="openNoteEdit('${jsSafe(n.id)}','${jsSafe(n.long_name)}','${jsSafe(n.radio_id || '')}')" title="Edit note" style="cursor:pointer">
           ${(() => { const p = _parseNotes(n.notes || ''); const s = _notesSummary(p); return s ? `<span class="note-text" title="${escHtml(s)}">${escHtml(s)}</span>` : `<span class="note-placeholder">+ note</span>`; })()}
         </td>
-        <td style="display:flex;gap:8px;align-items:center">
+        <td class="row-actions">
           ${n.is_ignored
             ? `<span class="unignore-btn" onclick="ignoreNode('${jsSafe(n.id)}', true, '${jsSafe(n.radio_id || '')}')" title="Unignore">&#128683;</span>`
             : `<span class="ignore-btn"   onclick="ignoreNode('${jsSafe(n.id)}', false, '${jsSafe(n.radio_id || '')}')" title="Ignore">&#128683;</span>`}
@@ -3365,7 +3365,7 @@ if (targetEl) {
           <td class="notes-cell" onclick="openMcNoteModal('${pk}','${rid}','${jsSafe(c.long_name||c.name||'')}')" title="Personal notes" style="cursor:pointer">
             ${(() => { const s = _notesSummary(_parseNotes(mcNotesCache[noteKey] || '{}')); return s ? `<span class="note-text" title="${escHtml(s)}">${escHtml(s)}</span>` : `<span class="note-placeholder">+ note</span>`; })()}
           </td>
-          <td style="display:flex;gap:8px;align-items:center">
+          <td class="row-actions">
             ${isIgnored
               ? `<span class="unignore-btn" onclick="ignoreMcContact('${jsSafe(cid)}',true)" title="Unignore">&#128683;</span>`
               : `<span class="ignore-btn" onclick="ignoreMcContact('${jsSafe(cid)}',false)" title="Ignore">&#128683;</span>`}

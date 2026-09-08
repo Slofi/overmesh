@@ -1941,14 +1941,15 @@
 }
 #cols-menu-btn span[aria-hidden="true"] { line-height: 1; }
 
-/* Optically center mute/delete glyphs in the last table column (Nodes + History) */
-#live-view table tbody tr > td:last-child:not([colspan]),
-#history-view table tbody tr > td:last-child:not([colspan]) {
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  gap: 8px;
+/* Mute/delete actions: keep real table cells and center them inside the row */
+#live-view table tbody tr > td.row-actions,
+#history-view table tbody tr > td.row-actions {
+  text-align: center;
+  vertical-align: middle;
+  white-space: nowrap;
 }
+#live-view table tbody tr > td.row-actions .delete-btn,
+#history-view table tbody tr > td.row-actions .delete-btn { margin-left: 8px; }
 #live-view table .delete-btn, #live-view table .ignore-btn, #live-view table .unignore-btn,
 #history-view table .delete-btn, #history-view table .ignore-btn, #history-view table .unignore-btn {
   display: inline-flex;

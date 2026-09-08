@@ -267,6 +267,8 @@ def startup():
             threading.Thread(target=connect_mc_node, args=(mc_node_cfg,), daemon=True).start()
     threading.Thread(target=reconnect_mc_loop, daemon=True).start()
     threading.Thread(target=mc_watchdog_loop, daemon=True).start()
+    from routes.nodes import mt_auto_cleanup_loop
+    threading.Thread(target=mt_auto_cleanup_loop, daemon=True).start()
     if _sense_state["active_auto"]:
         _active_auto_event.clear()
         with _active_auto_running_lock:

@@ -1332,3 +1332,36 @@ def api_system_shutdown():
         os.system("XDG_RUNTIME_DIR=/run/user/1000 systemctl --user stop overmesh.service")
     threading.Thread(target=_do, daemon=True).start()
     return jsonify({"ok": True, "message": "Shutting down…"})
+
+
+@bp.route("/api/settings/mt_node_cleanup/<radio_id>")
+def api_settings_mt_node_cleanup_get(radio_id):
+    """MT node-DB hygiene prefs (app-side): auto stale purge per radio."""
+    with CONFIG_LOCK:
+        node = next((n for n in CONFIG.get("nodes", []) if n.get("id") == radio_id), None)
+    if not node:
+        return jsonify({"error": "MT node not found"}), 404
+    return jsonify({"ok": True, "radio_id": radio_id,
+                    "auto_cleanup": bool(node.get("auto_cleanup", False)),
+                    "auto_cleanup_days": int(node.get("auto_cleanup_days", 30))})
+
+
+@bp.route("/api/settings/mt_node_cleanup/<radio_id>", methods=["POST"])
+def api_settings_mt_node_cleanup_set(radio_id):
+    """Store MT node-DB hygiene prefs for this radio (used by the periodic
+    stale-node purge; no radio write needed - the purge acts later)."""
+    data = request.get_json(silent=True) or {}
+    try:
+        days = int(data.get("days", data.get("auto_cleanup_days", 30)))
+    except (TypeError, ValueError):
+        return jsonify({"error": "days must be a number"}), 400
+    days = max(7, min(365, days))
+    enabled = bool(data.get("enabled", data.get("auto_cleanup", False)))
+    with CONFIG_LOCK:
+        node = next((n for n in CONFIG.get("nodes", []) if n.get("id") == radio_id), None)
+        if not node:
+            return jsonify({"error": "MT node not found"}), 404
+        node["auto_cleanup"] = enabled
+        node["auto_cleanup_days"] = days
+        save_config()
+    return jsonify({"ok": True, "auto_cleanup": enabled, "auto_cleanup_days": days})

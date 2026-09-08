@@ -932,3 +932,75 @@ def api_clear_gps_history():
     node_id = data.get("node_id")   # optional — omit to clear all
     clear_position_history(node_id or None)
     return jsonify({"ok": True, "node_id": node_id or "all"})
+
+
+# ---- MT auto stale-node cleanup (radio + OM DB hygiene) ----
+def _mt_auto_evict_node(radio_id, node_id_str):
+    """Evict one MT node: live lib dicts, radio flash nodeDB, OM db row."""
+    with connections_lock:
+        state = connections.get(radio_id)
+        iface = state.get("iface") if state else None
+    if not iface:
+        return False
+    node = (getattr(iface, "nodes", None) or {}).get(node_id_str)
+    node_num = node.get("num") if node else None
+    with connections_lock:
+        if getattr(iface, "nodes", None):
+            iface.nodes.pop(node_id_str, None)
+        if node_num is not None and getattr(iface, "nodesByNum", None):
+            iface.nodesByNum.pop(node_num, None)
+    removed = False
+    try:
+        iface.localNode.removeNode(node_id_str)
+        removed = True
+    except Exception as e:
+        log.warning(f"[MT:{radio_id}] auto cleanup removeNode {node_id_str} failed: {e}")
+    try:
+        with get_prefs_db() as conn:
+            conn.execute("DELETE FROM nodes WHERE id=? AND radio_id=?", (node_id_str, radio_id))
+    except Exception as e:
+        log.warning(f"[MT:{radio_id}] auto cleanup db delete {node_id_str} failed: {e}")
+    return removed
+
+
+def run_mt_auto_cleanup_once():
+    """Hygiene pass: purge nodes not heard in N days on radios with
+    auto_cleanup enabled. _collect_stale_nodes already excludes favorites and
+    the local node. Uses only local serial admin commands - no RF traffic."""
+    results = {}
+    now = int(time.time())
+    cfgs = [dict(n) for n in CONFIG.get("nodes", []) if n.get("auto_cleanup")]
+    for cfg in cfgs:
+        rid = cfg.get("id")
+        if not rid:
+            continue
+        days = max(7, min(365, int(cfg.get("auto_cleanup_days", 30) or 30)))
+        cutoff = now - days * 86400
+        try:
+            stale = [s for s in _collect_stale_nodes(cutoff) if s.get("radio_id") == rid]
+        except Exception as e:
+            log.warning(f"[MT:{rid}] auto cleanup collect failed: {e}")
+            results[rid] = {"error": str(e)}
+            continue
+        removed = 0
+        for s in stale:
+            try:
+                if _mt_auto_evict_node(rid, s.get("id")):
+                    removed += 1
+            except Exception as e:
+                log.warning(f"[MT:{rid}] auto cleanup evict {s.get('id')} failed: {e}")
+        if stale:
+            log.info(f"[MT:{rid}] auto cleanup: removed {removed}/{len(stale)} stale nodes (not heard >={days}d)")
+        results[rid] = {"candidates": len(stale), "removed": removed}
+    return results
+
+
+def mt_auto_cleanup_loop():
+    """Background loop: first pass shortly after boot, then every 6 hours."""
+    while True:
+        time.sleep(120)
+        try:
+            run_mt_auto_cleanup_once()
+        except Exception as e:
+            log.warning(f"[MT] auto cleanup loop error: {e}")
+        time.sleep(6 * 3600)

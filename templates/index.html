@@ -1378,6 +1378,24 @@
         </div>
         <div id="node-cfg-actions-status" style="font-size:12px;min-height:16px;margin-top:6px"></div>
 
+        <!-- Node DB hygiene (auto stale cleanup) -->
+        <h2 class="settings-title">Node DB Hygiene</h2>
+        <label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;max-width:660px;margin-bottom:6px">
+          <input type="checkbox" id="mt-cleanup-enabled" onchange="saveMtCleanup(null)" style="margin-top:2px">
+          <span>
+            <b>Auto-remove stale nodes</b><br>
+            <span style="color:var(--muted)">MT radios keep a rolling node DB (~80-100 entries, oldest drop out on their own). ON = OM also purges nodes this radio hasn't heard for the chosen number of days - from the radio's flash nodeDB and its own records - so old entries don't linger or clutter OM. Favorites, ignored nodes and your own node are always kept. Runs roughly every 6 hours, using local serial admin only (no radio transmissions).</span>
+          </span>
+        </label>
+        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:4px">
+          <div>
+            <label class="settings-label">Purge after (days)</label>
+            <input id="mt-cleanup-days" class="settings-input" type="number" min="7" max="365" value="30" style="width:80px" title="Nodes not heard for this many days are removed">
+          </div>
+          <button class="btn" onclick="saveMtCleanup(this)" title="Save node DB hygiene settings for this radio">Save Hygiene</button>
+        </div>
+        <div id="mt-cleanup-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-bottom:14px"></div>
+
       </div>
     </div>
     </div><!-- /st-mt -->

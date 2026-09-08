@@ -19510,6 +19510,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         document.getElementById('node-cfg-bt-mode').value      = d.bt_mode ?? 0;
         document.getElementById('node-cfg-bt-pin').value       = d.bt_fixed_pin ?? 0;
         btModeChange();
+        loadMtCleanupPrefs(_selectedNodeId);
 
         // Network
         document.getElementById('node-cfg-wifi-enabled').checked  = !!d.wifi_enabled;
@@ -20193,6 +20194,45 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     if (!inp) return;
     inp.type = inp.type === 'password' ? 'text' : 'password';
     if (btn) btn.style.opacity = inp.type === 'text' ? '1' : '0.5';
+  }
+
+
+  function loadMtCleanupPrefs(radioId) {
+    if (!radioId) return;
+    fetch(BASE_PATH + `/api/settings/mt_node_cleanup/${encodeURIComponent(radioId)}`)
+      .then(r => r.json()).then(d => {
+        if (d.error) return;
+        const en = document.getElementById('mt-cleanup-enabled');
+        const da = document.getElementById('mt-cleanup-days');
+        const st = document.getElementById('mt-cleanup-status');
+        if (en) en.checked = !!d.auto_cleanup;
+        if (da) da.value = d.auto_cleanup_days ?? 30;
+        if (st) st.textContent = d.auto_cleanup
+          ? `On - nodes not heard for ${d.auto_cleanup_days}+ days are purged from this radio and OM.`
+          : '';
+      }).catch(() => {});
+  }
+
+  function saveMtCleanup(btn) {
+    const radioId = _selectedNodeId;
+    if (!radioId) return;
+    const enabled = !!document.getElementById('mt-cleanup-enabled')?.checked;
+    let days = parseInt(document.getElementById('mt-cleanup-days')?.value) || 30;
+    days = Math.max(7, Math.min(365, days));
+    const statusEl = document.getElementById('mt-cleanup-status');
+    if (statusEl) statusEl.textContent = 'Saving…';
+    fetch(BASE_PATH + `/api/settings/mt_node_cleanup/${encodeURIComponent(radioId)}`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enabled, days})
+    }).then(r => r.json()).then(d => {
+      if (d.error) { if (statusEl) statusEl.textContent = d.error; return; }
+      if (statusEl) {
+        statusEl.textContent = d.auto_cleanup
+          ? `On - nodes not heard for ${d.auto_cleanup_days}+ days are purged from this radio and OM (check runs roughly every 6 h).`
+          : 'Off - MT node DBs self-bound (~80-100 entries); nothing auto-removed.';
+      }
+      if (btn) btnFeedback(btn, '✓ Saved');
+    }).catch(e => { if (statusEl) statusEl.textContent = 'Error: ' + escHtml(String(e)); });
   }
 
   function btModeChange() {

@@ -1926,3 +1926,33 @@
 }
 #cols-menu .cols-menu-row:hover { background: var(--bg3); }
 #cols-menu .cols-menu-row input { margin: 0; }
+
+
+/* Columns menu button: match sibling .btn height, center glyph + label */
+#cols-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 4px 12px;
+  line-height: 1.2;
+  font-family: inherit;
+  white-space: nowrap;
+}
+#cols-menu-btn span[aria-hidden="true"] { line-height: 1; }
+
+/* Optically center mute/delete glyphs in the last table column (Nodes + History) */
+#live-view table tbody tr > td:last-child:not([colspan]),
+#history-view table tbody tr > td:last-child:not([colspan]) {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px;
+}
+#live-view table .delete-btn, #live-view table .ignore-btn, #live-view table .unignore-btn,
+#history-view table .delete-btn, #history-view table .ignore-btn, #history-view table .unignore-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}

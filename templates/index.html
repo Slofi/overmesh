@@ -302,7 +302,7 @@
           <div id="nodes-mc-pill" class="btn btn-net-mc active" onclick="toggleNodeFilter('mc')" title="Show/hide MeshCore contacts">MC</div>
         </div>
         <div id="cols-menu-wrap" style="position:relative">
-          <button class="btn" id="cols-menu-btn" onclick="toggleLiveColsMenu(event)" title="Choose which columns are visible in the Nodes table">☰ Columns</button>
+          <button class="btn" id="cols-menu-btn" onclick="toggleLiveColsMenu(event)" title="Choose which columns are visible in the Nodes table"><span aria-hidden="true">☰</span><span>Columns</span></button>
           <div id="cols-menu" style="display:none;position:absolute;top:calc(100% + 4px);right:0;background:var(--bg2);border:1px solid var(--border);border-radius:6px;min-width:250px;z-index:999;padding:8px;box-shadow:0 4px 12px rgba(0,0,0,0.4)">
             <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Visible columns in the Nodes table (Name is always shown):</div>
             <label class="cols-menu-row" title="Short name or abbreviation (e.g. 4-letter code)"><input type="checkbox" data-live-col="short" onchange="setLiveColVisible('short', this.checked)"> Short</label>

@@ -123,14 +123,23 @@ def _settings_local_request():
 
 
 def _git_cmd(args, timeout=30, check=False):
-    result = subprocess.run(
-        ["git", *args],
-        cwd=BASE_DIR,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=BASE_DIR,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        # Was an uncaught exception: a stalled `git fetch` aborted the whole update
+        # with a raw TimeoutExpired string (CD, 2026-09-10). Report it like any
+        # other git failure so callers can retry / show it.
+        msg = f"git {' '.join(args)} timed out after {timeout}s"
+        if check:
+            raise RuntimeError(msg)
+        return 124, "", msg
     out = (result.stdout or "").strip()
     err = (result.stderr or "").strip()
     if check and result.returncode != 0:
@@ -229,10 +238,22 @@ def _git_info(fetch=False):
     info["dirty_summary"] = status_lines[:12]
 
     if fetch:
-        frc, fout, ferr = _git_cmd(["fetch", "--prune", "origin"], timeout=45)
-        info["fetch_ok"] = frc == 0
-        if frc != 0:
-            info["fetch_error"] = ferr or fout or "Fetch failed."
+        # A cold or briefly stalled link made a single 45s attempt fail and took the
+        # whole update with it. Give it a longer timeout and one retry.
+        fetch_attempts = 2
+        last_err = ""
+        for attempt in range(1, fetch_attempts + 1):
+            frc, fout, ferr = _git_cmd(["fetch", "--prune", "origin"], timeout=90)
+            if frc == 0:
+                info["fetch_ok"] = True
+                break
+            last_err = ferr or fout or "Fetch failed."
+            log.warning(f"git fetch attempt {attempt}/{fetch_attempts} failed: {last_err}")
+            if attempt < fetch_attempts:
+                time.sleep(3)
+        else:
+            info["fetch_ok"] = False
+            info["fetch_error"] = last_err
 
     upstream = "origin/main"
     rc, remote_commit, _ = _git_cmd(["rev-parse", "--short", upstream], timeout=10)

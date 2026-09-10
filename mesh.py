@@ -492,11 +492,31 @@ def _om_suppress_cli_exit(msg=None, return_value=None, *args, **kwargs):
     log.warning("[MT] suppressed meshtastic CLI exit (kept link alive): %s", text)
     raise RuntimeError(text)
 
-try:
-    import meshtastic.mesh_interface as _mi_mod
-    _mi_mod.our_exit = _om_suppress_cli_exit
-except Exception as _e:  # pragma: no cover - defensive
-    log.warning("Could not install meshtastic our_exit guard: %s", _e)
+def _om_install_cli_exit_guard():
+    """Patch every meshtastic module that binds our_exit by name.
+
+    They each do `from meshtastic.util import our_exit`, so patching only the
+    util attribute is not enough - the imported name in each module must be
+    replaced. Covered: mesh_interface (reader thread!), node, remote_hardware,
+    serial_interface, util.
+    """
+    import importlib
+    patched = []
+    for modname in ("meshtastic.mesh_interface", "meshtastic.node",
+                    "meshtastic.remote_hardware", "meshtastic.serial_interface",
+                    "meshtastic.util"):
+        try:
+            mod = importlib.import_module(modname)
+        except Exception as e:  # pragma: no cover - defensive
+            log.warning("our_exit guard: could not import %s: %s", modname, e)
+            continue
+        if hasattr(mod, "our_exit"):
+            mod.our_exit = _om_suppress_cli_exit
+            patched.append(modname)
+    log.info("meshtastic CLI-exit guard installed on: %s", ", ".join(patched) or "none")
+
+
+_om_install_cli_exit_guard()
 
 def connect_node(node_cfg):
     node_id = node_cfg["id"]

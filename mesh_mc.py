@@ -1082,6 +1082,12 @@ async def _create_meshcore(connection, *, default_timeout=75.0):
 class OMSerialConnection(SerialConnection):
     """Serial connection that does not fail the whole connect on RTS ioctl errors."""
 
+    def __init__(self, *args, **kwargs):
+        # Remember the port path: line handling is board-dependent (see
+        # _mc_port_is_usb_cdc) and connection_made needs the port to decide.
+        self._om_port = args[0] if args else kwargs.get("port", "")
+        super().__init__(*args, **kwargs)
+
     class MCSerialClientProtocol(SerialConnection.MCSerialClientProtocol):
         def connection_made(self, transport):
             self.cx.transport = transport
@@ -1089,21 +1095,25 @@ class OMSerialConnection(SerialConnection):
             meshcore_log.debug("port opened")
             serial_obj = getattr(transport, "serial", None)
             if serial_obj is not None:
-                # Line order matters on this board's auto-reset wiring. Measured
-                # on ERA-3 (Heltec V3 + CP2102): releasing RTS (boot-select line)
-                # BEFORE DTR (reset line) leaves the chip in RUN mode and it answers
-                # appstart. The reverse order resets the chip into the ROM
-                # bootloader, which is silent — and leaving DTR asserted (the old
-                # behaviour) holds the chip in reset. Both produce the historic
-                # "stuck connecting" symptom. Verified with a 4-way order matrix.
+                # Line handling is board-dependent — see _mc_port_is_usb_cdc:
+                #   * UART bridge (CP2102): release RTS (boot-select) BEFORE DTR
+                #     (reset) so any reset lands in RUN mode. The reverse order
+                #     boots the ROM bootloader, and leaving DTR asserted holds the
+                #     chip in reset — both are silent. (4-way matrix, 2026-09-10.)
+                #   * Native USB-CDC: no auto-reset wiring, but the firmware gates
+                #     its TX on DTR, so DTR must be ASSERTED or the radio answers
+                #     nothing at all.
+                cdc = _mc_port_is_usb_cdc(getattr(self.cx, "_om_port", ""))
+                want_rts = False
+                want_dtr = True if cdc else False
                 try:
-                    serial_obj.rts = False
+                    serial_obj.rts = want_rts
                 except Exception as e:
                     log.warning(f"[MC] Serial RTS release failed during connect; continuing: {e!r}")
                 try:
-                    serial_obj.dtr = False
+                    serial_obj.dtr = want_dtr
                 except Exception as e:
-                    log.warning(f"[MC] Serial DTR release failed during connect; continuing: {e!r}")
+                    log.warning(f"[MC] Serial DTR set ({want_dtr}) failed during connect; continuing: {e!r}")
                 # Clear HUPCL so a future close of this port (process exit/restart)
                 # doesn't drop DTR and reset the radio's MCU, wiping in-RAM state
                 # (channel keys) even though we never asked for a reset. The radio
@@ -1526,6 +1536,29 @@ def _mc_tx_allowed_soft(context):
         log.info(f"[MC] Silent Running active — {context} suppressed")
         return False
     return True
+
+
+def _mc_port_is_usb_cdc(port):
+    """True for native USB-CDC devices (ttyACM*), False for USB-UART bridges (ttyUSB*).
+
+    The two need OPPOSITE line handling:
+
+      * USB-UART bridge (CP210x/CH34x — Heltec V3 on Gandalf): DTR/RTS are wired
+        to EN/GPIO0. Releasing RTS then DTR boots the app; leaving DTR asserted
+        holds the chip in reset. (Measured 2026-09-10 with a 4-way order matrix.)
+      * Native USB-CDC (ProMicro nRF52840 on CD): there is no auto-reset wiring,
+        and TinyUSB-style CDC firmware does not transmit unless the host asserts
+        DTR. Deasserting DTR leaves the device enumerated but mute — "No appstart
+        response". Regression seen live on CD 2026-09-10 after the CP2102 fix
+        reached it (it had been running c5bf270, pre-fix).
+
+    Symlinks (/dev/serial/by-id/...) are resolved first.
+    """
+    try:
+        resolved = os.path.realpath(port or "")
+    except Exception:
+        resolved = port or ""
+    return "ttyacm" in resolved.lower()
 
 
 def _rx_counters_frozen(before, after):
@@ -2406,7 +2439,15 @@ async def _drain_mc_queue(mc, config_id, name, reason="event", timeout=5, max_me
 
 
 def _dtr_reset_port(port, name=""):
-    """Brief RTS pulse to reset ESP32 serial state without manual replug."""
+    """Pulse the auto-reset lines of a USB-UART bridge to reset the attached
+    MCU without a manual replug. Returns True when a pulse was sent.
+
+    Not applicable to native USB-CDC devices: they have no EN/GPIO0 wiring, so
+    there is nothing to pulse — and toggling CDC line state can only hurt.
+    """
+    if _mc_port_is_usb_cdc(port):
+        log.info(f"[MC:{name}] reset pulse not applicable for USB-CDC {port} — skipping")
+        return False
     import serial as _serial
     try:
         s = _serial.Serial(port, 115200, timeout=0.5)
@@ -2420,8 +2461,10 @@ def _dtr_reset_port(port, name=""):
         time.sleep(0.05)
         s.close()
         log.info(f"[MC:{name}] hardware reset pulse sent on {port}")
+        return True
     except Exception as e:
         log.warning(f"[MC:{name}] hardware reset failed on {port}: {e}")
+        return False
 
 
 async def _connect_mc_serial(port, name, *, default_timeout=75.0, first_attempt=30.0):
@@ -2443,7 +2486,11 @@ async def _connect_mc_serial(port, name, *, default_timeout=75.0, first_attempt=
         mc = None
     if mc is not None:
         return mc
-    log.warning(f"[MC:{name}] No appstart response on {port} — pulsing hardware reset and retrying once")
+    if _mc_port_is_usb_cdc(port):
+        log.warning(f"[MC:{name}] No appstart response on {port} — USB-CDC device, retrying "
+                    f"(no reset pulse; DTR is held asserted)")
+    else:
+        log.warning(f"[MC:{name}] No appstart response on {port} — pulsing hardware reset and retrying once")
     await asyncio.sleep(0.5)
     _dtr_reset_port(port, name)
     await asyncio.sleep(2.0)

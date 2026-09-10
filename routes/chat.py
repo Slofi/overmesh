@@ -1,12 +1,13 @@
 import concurrent.futures
 import json
+import os
 import queue
 import time
 import threading
 
 from flask import Blueprint, Response, jsonify, request
 
-from config import CONFIG
+from config import BASE_DIR, CONFIG
 from cross import maybe_forward_mt_message
 from db import save_message
 from helpers import _next_msg_id, get_node_name, mt_node_id_from_num, push_to_sse
@@ -18,6 +19,25 @@ from state import (
 )
 import logging
 log = logging.getLogger(__name__)
+
+
+def _app_version():
+    """Version string of the running server (VERSION file, read once per process)."""
+    try:
+        with open(os.path.join(BASE_DIR, "VERSION"), encoding="utf-8") as f:
+            return f.read().strip() or "0.0.0"
+    except OSError:
+        return "0.0.0"
+
+
+def _sse_version_event():
+    """First SSE event: lets the page notice the server is running newer code.
+
+    The shell exposes window.OM_VERSION at load; when these differ the page
+    reloads itself, so an in-app update + restart (or any restart that lands new
+    code) refreshes every open browser without a manual hard refresh.
+    """
+    return {"type": "server_version", "version": _app_version()}
 
 bp = Blueprint('chat', __name__)
 
@@ -77,6 +97,10 @@ def api_chat_stream():
 
     def generate():
         try:
+            # Handshake first: the client compares this with the version its shell
+            # was built with and reloads if they differ, so a restart that lands new
+            # code refreshes every open page (even restarts not started from the UI).
+            yield f"data: {json.dumps(_sse_version_event())}\n\n"
             with chat_lock:
                 history = list(chat_messages)
             for msg in history:

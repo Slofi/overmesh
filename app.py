@@ -16,7 +16,7 @@ def _load_app_version():
 
 __version__ = _load_app_version()
 
-from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, jsonify, make_response, redirect, render_template, request, session, url_for
 from pubsub import pub
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -137,13 +137,21 @@ def inject_base_path():
 
 @app.route("/")
 def index():
-    return render_template(
+    # no-store: the shell HTML carries the version-stamped asset URLs. Without
+    # this, a restart's scripted reload (waitForServiceThenReload) could be served
+    # from the browser cache with the OLD markup + old ?v= URLs, so newly added
+    # controls only appeared after a manual hard refresh (seen with the MC Probe
+    # button, 2026-09-10).
+    resp = make_response(render_template(
         "index.html",
         version=__version__,
         auth_enabled=is_auth_enabled(),
         exposed_no_auth=_exposed_no_auth(),
         bind_host=_BIND_HOST,
-    )
+    ))
+    resp.headers["Cache-Control"] = "no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    return resp
 
 
 @app.route("/lite")

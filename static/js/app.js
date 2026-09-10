@@ -1290,6 +1290,16 @@
     chatSSE = new EventSource(BASE_PATH + '/api/chat/stream');
     chatSSE.onmessage = e => {
       let data; try { data = JSON.parse(e.data); } catch(err) { return; }
+      if (data.type === 'server_version') {
+        // Handshake: the server tells us which build it runs. If that is not the
+        // build this page was loaded with, the shell markup and its ?v= asset URLs
+        // are stale — reload (the shell is served no-store, so this is a real
+        // refresh). One-shot per version so a caching proxy can't cause a loop.
+        if (data.version && window.OM_VERSION && data.version !== window.OM_VERSION) {
+          _reloadForNewServerVersion(data.version);
+        }
+        return;
+      }
       if (data.type === 'gps_position') {
         _gpsUpdatePosition(data);
         return;
@@ -4994,6 +5004,16 @@ if (targetEl) {
       showOverMeshServiceSplash('restart');
       try { await fetch(BASE_PATH + '/api/restart', {method: 'POST'}); } catch(_) {}
       waitForServiceThenReload();
+  }
+
+  // Reload once for a given server version (guarded so it can never loop).
+  function _reloadForNewServerVersion(version) {
+      if (window._omReloadedFor === version) return;
+      try { if (sessionStorage.getItem('omReloadedFor') === version) return; } catch(_) {}
+      window._omReloadedFor = version;
+      try { sessionStorage.setItem('omReloadedFor', version); } catch(_) {}
+      console.info(`[OM] server runs ${version}, this page loaded ${window.OM_VERSION} — reloading`);
+      location.reload();
   }
 
   // Poll the server after a restart and reload as soon as it answers again,

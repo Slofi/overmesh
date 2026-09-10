@@ -1,6 +1,7 @@
 """
 Meshtastic interface management — connect, receive, reconnect, helpers.
 """
+import errno
 import gc
 import glob
 import json
@@ -9,6 +10,7 @@ import os
 import threading
 import time
 
+import serial
 import meshtastic.serial_interface
 import meshtastic.tcp_interface
 from meshtastic import config_pb2
@@ -469,6 +471,45 @@ def _release_port_fds(port):
         log.debug(f"_release_port_fds({port}): {e}")
 
 
+class OMSerialInterface(meshtastic.serial_interface.SerialInterface):
+    """SerialInterface that survives pyserial's spurious CP210x read error.
+
+    On EAGAIN/EWOULDBLOCK pyserial raises SerialException("device reports
+    readiness to read but returned no data (device disconnected or multiple
+    access on port?)"). The meshtastic reader thread treats ANY exception as
+    fatal (finally: _disconnected()), so the link is torn down and OM
+    reconnects for no reason - visible as nodes bouncing, e.g. when Sense
+    bursts traffic. We retry that benign case and re-raise real errors
+    (EIO/ENXIO/ENODEV on a genuine unplug), with a sanity cap so a port that
+    is truly gone still surfaces instead of looping forever.
+
+    Diagnosed 2026-09-10: no kernel USB event and no port grabber during a
+    Sense-triggered 'Connection lost during Sense (USB-CDC reset)' - the radio
+    never dropped; the library's reader just died on this read error.
+    """
+
+    _MAX_SPURIOUS_READS = 500
+
+    def __init__(self, *args, **kwargs):
+        self._spurious_reads = 0
+        super().__init__(*args, **kwargs)
+
+    def _readBytes(self, length):
+        try:
+            data = super()._readBytes(length)
+            self._spurious_reads = 0
+            return data
+        except serial.SerialException as e:
+            eno = getattr(e, "errno", None)
+            fatal = eno in (errno.EIO, errno.ENXIO, errno.ENODEV, errno.ENOTTY)
+            benign = eno in (errno.EAGAIN, errno.EWOULDBLOCK) or "returned no data" in str(e)
+            if benign and not fatal:
+                self._spurious_reads += 1
+                if self._spurious_reads <= self._MAX_SPURIOUS_READS:
+                    return b""
+            raise
+
+
 def connect_node(node_cfg):
     node_id = node_cfg["id"]
     node_type = node_cfg.get("type", "serial")
@@ -529,7 +570,7 @@ def connect_node(node_cfg):
         log.info(f"[{node_id}] Connecting to {port} (serial)...")
         iface = None
         try:
-            iface = meshtastic.serial_interface.SerialInterface(port)
+            iface = OMSerialInterface(port)
         except Exception as e:
             log.warning(f"[{node_id}] Serial connection failed: {e}")
             if iface is not None:

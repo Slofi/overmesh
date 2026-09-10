@@ -1089,19 +1089,21 @@ class OMSerialConnection(SerialConnection):
             meshcore_log.debug("port opened")
             serial_obj = getattr(transport, "serial", None)
             if serial_obj is not None:
-                # Order matters on ESP32 auto-reset circuits: DTR is wired to
-                # GPIO0 (boot select) and RTS to EN. Releasing RTS while DTR is
-                # still asserted boots the chip into the ROM bootloader, where it
-                # never answers appstart — the classic "stuck connecting" symptom.
-                # Deassert DTR first so any reset lands in RUN mode.
-                try:
-                    serial_obj.dtr = False
-                except Exception as e:
-                    log.warning(f"[MC] Serial DTR release failed during connect; continuing: {e!r}")
+                # Line order matters on this board's auto-reset wiring. Measured
+                # on ERA-3 (Heltec V3 + CP2102): releasing RTS (boot-select line)
+                # BEFORE DTR (reset line) leaves the chip in RUN mode and it answers
+                # appstart. The reverse order resets the chip into the ROM
+                # bootloader, which is silent — and leaving DTR asserted (the old
+                # behaviour) holds the chip in reset. Both produce the historic
+                # "stuck connecting" symptom. Verified with a 4-way order matrix.
                 try:
                     serial_obj.rts = False
                 except Exception as e:
                     log.warning(f"[MC] Serial RTS release failed during connect; continuing: {e!r}")
+                try:
+                    serial_obj.dtr = False
+                except Exception as e:
+                    log.warning(f"[MC] Serial DTR release failed during connect; continuing: {e!r}")
                 # Clear HUPCL so a future close of this port (process exit/restart)
                 # doesn't drop DTR and reset the radio's MCU, wiping in-RAM state
                 # (channel keys) even though we never asked for a reset. The radio
@@ -2379,13 +2381,13 @@ def _dtr_reset_port(port, name=""):
     import serial as _serial
     try:
         s = _serial.Serial(port, 115200, timeout=0.5)
-        # Deassert DTR (GPIO0 high) BEFORE pulsing RTS (EN) so the chip boots the
-        # application after the reset instead of the ROM bootloader.
-        s.setDTR(False)
-        time.sleep(0.1)
-        s.setRTS(True)
-        time.sleep(0.2)
-        s.setRTS(False)
+        # Reset pulse with the boot-select line already at its RUN level, so the
+        # chip boots the application (not the ROM bootloader). DTR = reset line,
+        # RTS = boot-select on this board (see OMSerialConnection.connection_made).
+        s.setDTR(True)        # hold in reset
+        s.setRTS(False)       # boot-select -> RUN
+        time.sleep(0.15)
+        s.setDTR(False)       # release reset -> boot app
         time.sleep(0.05)
         s.close()
         log.info(f"[MC:{name}] hardware reset pulse sent on {port}")

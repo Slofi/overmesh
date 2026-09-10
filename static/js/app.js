@@ -14249,10 +14249,14 @@ if (targetEl) {
         </div>`;
       }
       if (e.kind === 'scan') {
+        // Probe = DISCOVER_REQ only (no advert). Both modes send the discover
+        // request, so the mode is what distinguishes them — not e.discover.
+        const probeMode = e.mode === 'probe';
         const probe = e.discover ? ' + repeater probe' : '';
+        const label = probeMode ? 'Probe started (repeaters only, no advert)' : `Scan started${probe}`;
         return `<div style="padding:2px 0;border-bottom:1px solid var(--border)">
           <span style="color:var(--muted)">${_mcLogTs(e)}</span>
-          <span style="margin-left:4px;color:#94a3b8;font-size:10px;font-style:italic">Scan started${probe} · ${escHtml(e.radioName)}</span>
+          <span style="margin-left:4px;color:#94a3b8;font-size:10px;font-style:italic">${escHtml(label)} · ${escHtml(e.radioName)}</span>
         </div>`;
       }
       if (e.kind === 'discover') {

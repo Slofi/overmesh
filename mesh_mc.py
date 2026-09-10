@@ -1089,6 +1089,15 @@ class OMSerialConnection(SerialConnection):
             meshcore_log.debug("port opened")
             serial_obj = getattr(transport, "serial", None)
             if serial_obj is not None:
+                # Order matters on ESP32 auto-reset circuits: DTR is wired to
+                # GPIO0 (boot select) and RTS to EN. Releasing RTS while DTR is
+                # still asserted boots the chip into the ROM bootloader, where it
+                # never answers appstart — the classic "stuck connecting" symptom.
+                # Deassert DTR first so any reset lands in RUN mode.
+                try:
+                    serial_obj.dtr = False
+                except Exception as e:
+                    log.warning(f"[MC] Serial DTR release failed during connect; continuing: {e!r}")
                 try:
                     serial_obj.rts = False
                 except Exception as e:
@@ -2352,13 +2361,44 @@ def _dtr_reset_port(port, name=""):
     import serial as _serial
     try:
         s = _serial.Serial(port, 115200, timeout=0.5)
+        # Deassert DTR (GPIO0 high) BEFORE pulsing RTS (EN) so the chip boots the
+        # application after the reset instead of the ROM bootloader.
+        s.setDTR(False)
+        time.sleep(0.1)
         s.setRTS(True)
         time.sleep(0.2)
         s.setRTS(False)
+        time.sleep(0.05)
         s.close()
-        log.info(f"[MC:{name}] DTR reset sent on {port}")
+        log.info(f"[MC:{name}] hardware reset pulse sent on {port}")
     except Exception as e:
-        log.warning(f"[MC:{name}] DTR reset failed on {port}: {e}")
+        log.warning(f"[MC:{name}] hardware reset failed on {port}: {e}")
+
+
+async def _connect_mc_serial(port, name, *, default_timeout=75.0, first_attempt=30.0):
+    """Open an MC serial radio, self-healing the ESP32 boot-mode trap: if the
+    first attempt gets no appstart (chip left in the ROM bootloader by a previous
+    process exit or an unlucky line toggle), pulse a hardware reset and retry."""
+    async def _attempt(timeout):
+        return await asyncio.wait_for(
+            _create_meshcore(
+                OMSerialConnection(port, 115200, cx_dly=3.0),
+                default_timeout=default_timeout,
+            ),
+            timeout=timeout,
+        )
+
+    try:
+        mc = await _attempt(first_attempt)
+    except asyncio.TimeoutError:
+        mc = None
+    if mc is not None:
+        return mc
+    log.warning(f"[MC:{name}] No appstart response on {port} — pulsing hardware reset and retrying once")
+    await asyncio.sleep(0.5)
+    _dtr_reset_port(port, name)
+    await asyncio.sleep(2.0)
+    return await _attempt(105)
 
 
 def _stable_mc_msgs_db_path(config_id: str, node_cfg: dict) -> str:
@@ -2501,13 +2541,7 @@ async def _connect_mc_node_async(node_cfg):
                 timeout=100,
             )
         else:
-            mc = await asyncio.wait_for(
-                _create_meshcore(
-                    OMSerialConnection(port, 115200, cx_dly=3.0),
-                    default_timeout=75.0,
-                ),
-                timeout=105,
-            )
+            mc = await _connect_mc_serial(port, name)
     except Exception as e:
         log.warning(f"[MC:{name}] Connect failed: {e}")
         _mark_mc_disconnected(config_id)

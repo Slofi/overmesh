@@ -1410,6 +1410,24 @@ def _mc_remove_local_contact(config_id, full_key):
     _mc_archive_remove_contact(config_id, full_key)
 
 
+def _note_mc_connect_failure(config_id, name="", label=""):
+    """Count consecutive connect failures. After a few silent retries, say the
+    thing that actually helps: this state needs a power cycle, not a reset."""
+    with mc_connections_lock:
+        state = mc_connections.setdefault(config_id, {})
+        fails = int(state.get("connect_failures", 0)) + 1
+        state["connect_failures"] = fails
+    if fails == 3:
+        log.warning(
+            f"[MC:{name}] {fails} consecutive connect failures on {label} — the radio "
+            f"does not answer appstart even after hardware resets. A chip reset cannot "
+            f"clear this state: power-cycle the radio (unplug/replug its USB)."
+        )
+    elif fails > 3 and fails % 5 == 0:
+        log.warning(f"[MC:{name}] still unresponsive after {fails} attempts — power-cycle the radio.")
+    return fails
+
+
 def _mark_mc_disconnected(config_id):
     with mc_connections_lock:
         state = mc_connections.get(config_id)
@@ -2545,11 +2563,13 @@ async def _connect_mc_node_async(node_cfg):
     except Exception as e:
         log.warning(f"[MC:{name}] Connect failed: {e}")
         _mark_mc_disconnected(config_id)
+        _note_mc_connect_failure(config_id, name, connect_label)
         return
 
     if mc is None:
         log.warning(f"[MC:{name}] No response to send_appstart on {connect_label}")
         _mark_mc_disconnected(config_id)
+        _note_mc_connect_failure(config_id, name, connect_label)
         return
 
     # Sync clock (freshly flashed devices default to epoch 0)
@@ -2709,6 +2729,9 @@ async def _connect_mc_node_async(node_cfg):
         if auto_applied is not None and mc_connections[config_id].get("node_info"):
             mc_connections[config_id]["node_info"]["manual_add_contacts"] = auto_applied
     _mc_archive_merge_contacts(config_id, stored_contacts)
+
+    with mc_connections_lock:
+        mc_connections.setdefault(config_id, {})["connect_failures"] = 0
 
     log.info(f"[MC:{name}] Connected — node_id={node_id} freq={node_info.get('radio_freq')} "
              f"contacts={len(contacts)} (stored={len(stored_contacts)})")

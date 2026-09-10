@@ -320,6 +320,8 @@ def api_mc_status():
             "auto_add_contacts": cfg.get("auto_add_contacts", True) is not False,
             "manual_add_active": aa_manual,
             "auto_add_supported": aa_supported,
+            "connect_failures": int(v.get("connect_failures", 0) or 0),
+            "needs_power_cycle": int(v.get("connect_failures", 0) or 0) >= 3,
             "enabled":    cfg.get("enabled", True),
             "path_hash_mode": cfg.get("path_hash_mode", info.get("path_hash_mode")),
             "force_flood": bool(cfg.get("force_flood", False)),

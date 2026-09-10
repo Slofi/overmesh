@@ -15122,6 +15122,7 @@ if (targetEl) {
           <span class="radio-row-status" title="Preferred MC path hash size">${escHtml(_mcPathHashModeLabel(n.path_hash_mode ?? 2))}</span>
           ${n.force_flood ? '<span class="radio-row-status" title="MC DMs and pings force flood routing" style="color:var(--yellow)">Flood</span>' : ''}
           ${n.passive_collection === false ? '<span class="radio-row-status" title="Passive collection disabled" style="color:var(--yellow)">Passive off</span>' : ''}
+          ${n.needs_power_cycle ? '<span class="radio-row-status" title="This radio does not answer appstart even after hardware resets. A chip reset cannot clear this - unplug/replug its USB to power-cycle it." style="color:var(--red)">Power-cycle</span>' : ''}
           <span class="radio-row-status" style="${!n.enabled ? 'color:var(--muted)' : ''}">${n.enabled ? n.status : 'disabled'}</span>
           <button class="btn-secondary" style="font-size:11px;padding:3px 8px;${n.enabled ? '' : 'color:var(--accent);border-color:var(--accent)'}"
             title="${n.enabled ? 'Pause scanning for this radio — keeps config and message history intact' : 'Resume scanning and connecting to this radio'}"

@@ -1683,12 +1683,15 @@
     },
     {
       title: 'Nodes',
-      tags: 'nodes contacts table favorites ignored map dm traceroute route path mc mt ping trace info position manual path lock flood',
+      tags: 'nodes contacts table favorites ignored map dm traceroute route path mc mt ping trace info position manual path lock flood stored column columns menu visibility sort mute remove scoped delete approve add to radio',
       body: [
         'Nodes lists known Meshtastic nodes and MeshCore contacts. Use it to check identity, last-heard time, battery, signal, position, route state, and to take actions like DM, ping, trace, or route edit.',
         'The table is shared, but MT and MC route information means different things because the protocols expose different metadata.',
         'Info/Share opens full contact details. MT shows identity and public-key data. MC shows name, type, full public key, source state, path data, distance, and a MeshCore share link/QR when available.',
-        'Favorites are per-radio. A starred contact sorts above non-starred ones when Fav first is active. Favorites and ignored contacts are tracked by radio so the same contact on two different radios can be treated independently.'
+        'Favorites are per-radio. A starred contact sorts above non-starred ones when Fav first is active. Favorites and ignored contacts are tracked by radio so the same contact on two different radios can be treated independently.',
+        'Sorting applies to MT and MC rows alike: clicking Name, Last seen, Hops or Distance orders both sections the same way in either direction. Rows with unknown values (never heard, or MC flood/no stored route) always land at the bottom.',
+        'The Stored column shows where each row is saved: radio + app, radio (on the radio only), or app only (known to OM, not written to the radio). The Columns button (left of the MQTT filter) shows or hides Short, SNR, Battery, Hops, Distance, Last seen and Stored; Name is always shown. Choices persist per browser.',
+        'The last column is Mute/Remove. The mute icon hides a node/contact from normal views; the x removes it. For MC contacts the x asks where to remove from — Remove everywhere (radio + OM archive), Only from OverMesh (the radio keeps it and it returns on the next poll), or Only from this radio (frees a radio slot; OM keeps the record and lists it as app only).'
       ],
       split: [
         {
@@ -1698,7 +1701,8 @@
             'MT rows show Meshtastic node IDs, names, signal (SNR/RSSI), battery, position, hops, and Last Seen.',
             'Hops is the radio/nodeDB view of repeater distance. It is informational — it tells you hop count but not which nodes were involved. Use TR for exact route nodes.',
             'TR sends a real Meshtastic traceroute. When a response arrives OM draws the route-to-node and route-back on the map with SNR coloring per segment. If an intermediate node has no GPS, OM draws a bypass segment and marks the gap.',
-            'Last Seen comes from real received packets when available. NodeDB-only timestamps are treated more cautiously and may lag behind actual activity.'
+            'Last Seen comes from real received packets when available. NodeDB-only timestamps are treated more cautiously and may lag behind actual activity.',
+            'An MT radio keeps a rolling node DB of roughly 80-100 entries: the oldest entries drop out on their own and favorites are pinned, so a radio cannot hard-fill. Stale entries can still linger until overwritten — Settings → Meshtastic → Node DB Hygiene can purge them automatically (see that section).'
           ],
           buttons: [
             ['TR', 'Send an MT traceroute and draw route-to-node / route-back if the node responds.'],
@@ -1707,7 +1711,8 @@
             ['Info/Share', 'Open MT contact details, public-key data, and copyable share data.'],
             ['DM', 'Open a direct message thread with this MT node.'],
             ['Ignore', 'Hide this MT node from normal Live and History views.'],
-            ['Unignore', 'Restore an ignored MT node. Find ignored nodes under History → MT ignored.']
+            ['Unignore', 'Restore an ignored MT node. Find ignored nodes under History → MT ignored.'],
+            ['Mute/Remove', 'Last column: the mute icon hides this node from normal views; remove it from OM and the radio via History (single x) or the Clean up stale nodes modal.']
           ]
         },
         {
@@ -1722,7 +1727,10 @@
             'Ping popups show the path hash width when it is known: 1B/hop, 2B/hop, or 3B/hop. Direct responses have no relay hashes, so the path row can be empty while the hop row correctly says direct.',
             'If a Ping only proves fallback reachability, use Trace Probe deliberately from the ping popup. It sends one MC Trace broadcast and folds any returned hop data back into the same popup.',
             'Clearing a manual route (via Route → Clear) removes the 🔒 lock and reverts to flood routing when Force Flood is on, or leaves the path empty for the firmware to re-learn when Force Flood is off.',
-            'MC contacts are kept in an archive so contacts seen on previous sessions are available even after a contact list refresh or reconnect. The archive merges with live data — live data takes priority for path and seen-time fields.'
+            'MC contacts are kept in an archive so contacts seen on previous sessions are available even after a contact list refresh or reconnect. The archive merges with live data — live data takes priority for path and seen-time fields.',
+            'The Stored column shows this contact\'s storage: radio + app, radio, or app only. In manual approval mode new contacts arrive as app only; press Add to radio to write one to the radio.',
+            'Removing an MC contact (x) asks for scope: Remove everywhere (radio + OM archive), Only from OverMesh (the radio keeps it; it re-appears on the next poll), or Only from this radio (frees a radio slot; OM keeps the record and lists it as app only).',
+            'The radio can only DM contacts stored in its own table. If a DM fails because the contact is not on the radio, OM explains it in plain language and points at the fix (Add to radio, or Auto-store in Settings → MeshCore).'
           ],
           buttons: [
             ['Ping', 'Check MC reachability and signal; draws observed path hops when the response includes path metadata.'],
@@ -1735,7 +1743,10 @@
             ['Ignore', 'Hide this MC contact from normal views.'],
             ['Unignore', 'Restore an ignored MC contact. Find ignored contacts under History → MC ignored.'],
             ['➤', 'Auto-learned stored route exists. Force Flood will clear it before DMs/pings.'],
-            ['🔒➤', 'Manually set stored route. Protected from Force Flood — only cleared when you explicitly use Route → Clear.']
+            ['🔒➤', 'Manually set stored route. Protected from Force Flood — only cleared when you explicitly use Route → Clear.'],
+            ['Add to radio', 'Manual approval: write this app-only contact to the radio so it can be DM\'d and survive a purge. Appears when the radio is in manual contact mode.'],
+            ['Stored', 'Where this row lives: radio + app, radio, or app only.'],
+            ['Remove everywhere / Only from OverMesh / Only from this radio', 'Scoped removal from the x button. Radio-only frees a slot but keeps the OM record as app only.']
           ]
         }
       ],
@@ -1786,7 +1797,8 @@
             'MC Reply inserts a native bracketed mention where possible, so MC app users see a proper @mention in their client.',
             'Received MC messages show a hop badge when path metadata is available. Click the badge to open Sense/Map and pin the matching path entry.',
             'A badge like flood mode describes the routing mode for that message. A detail like 2B/hop describes the hop-hash size used in path metadata. They are independent facts — a flood-mode message can still carry 2B/hop path data.',
-            'MC channel slots are numbered 0–N. Channel 0 is usually the default public channel. Each slot can be renamed and given a custom key in Settings → MeshCore.'
+            'MC channel slots are numbered 0–N. Channel 0 is usually the default public channel. Each slot can be renamed and given a custom key in Settings → MeshCore.',
+            'With manual contact approval on, a DM to an app-only contact fails until it is stored on the radio. OM says so in plain language and points at Add to radio (or Auto-store in Settings → MeshCore).'
           ],
           buttons: [
             ['Route badge', 'Shows MC path metadata: direct/hop count/flood mode and hash size; click to open Sense/Map and inspect the message path.'],
@@ -1981,12 +1993,15 @@
     },
     {
       title: 'Settings - Meshtastic',
-      tags: 'settings meshtastic mt radios add remove serial tcp wifi channels lora gps telemetry mqtt bluetooth reboot shutdown node config key import',
+      tags: 'settings meshtastic mt radios add remove serial tcp wifi channels lora gps telemetry mqtt bluetooth reboot shutdown node config key import node db hygiene cleanup stale purge auto remove days',
       body: [
         'Settings → Meshtastic manages MT radios and MT node configuration.',
         'Add radios by USB serial port or TCP/WiFi host and port. OM remembers USB serial numbers so a radio reconnects to the right config even if the device path (e.g. /dev/ttyUSB0) changes.',
         'Node settings write directly to the connected node over the Meshtastic API. Some settings require a node reboot to take effect.',
-        'MT channel keys can be viewed (eye icon) and exported as a URL that others can use to import the channel directly. Import a channel key from a meshcore:// or similar URL using the import field.'
+        'MT channel keys can be viewed (eye icon) and exported as a URL that others can use to import the channel directly. Import a channel key from a meshcore:// or similar URL using the import field.',
+        'Each MT radio keeps a rolling node DB of roughly 80-100 entries. The oldest entries drop out automatically and favorites are pinned, and sending a DM automatically favorites the target — so the node DB cannot hard-fill the way the MC contact table can.',
+        'Node DB Hygiene (per MT radio) can remove nodes this radio has not heard for a chosen number of days from both the radio\'s flash nodeDB and OM, so stale entries and old keys do not accumulate. Favorites, ignored nodes and your own node are always kept. The check runs shortly after boot and then about every 6 hours; it uses local serial admin only, so no radio traffic is sent.',
+        'Clean up stale nodes (History toolbar) does the same purge on demand for a selected list. Removing a node also clears its entry in the radio flash nodeDB, so a stale PKI key cannot linger after the next reboot.'
       ],
       buttons: [
         ['Serial', 'Add a Meshtastic radio by USB serial device path.'],
@@ -2006,12 +2021,16 @@
         ['👁 (key view)', 'Reveal the channel key/secret for the selected MT channel.'],
         ['Copy URL', 'Copy the channel join URL to the clipboard.'],
         ['Import channel', 'Import a channel key from a URL or share link.'],
-        ['Clear known nodes', 'Clear all remembered remote nodes for this radio from OM history and live cache.']
+        ['Clear known nodes', 'Clear all remembered remote nodes for this radio from OM history and live cache.'],
+        ['Auto-remove stale nodes', 'Periodically purge nodes this radio has not heard for the configured number of days, from the radio flash nodeDB and OM. Favorites/ignored/local are kept.'],
+        ['Purge after (days)', 'Age threshold for auto-removal (7-365 days, default 30).'],
+        ['Save Hygiene', 'Save the Node DB Hygiene setting for this radio.'],
+        ['Clean up stale nodes', 'One-off purge: pick an age, review the list, remove from OM and the radio flash nodeDB.']
       ]
     },
     {
       title: 'Settings - MeshCore',
-      tags: 'settings meshcore mc radios serial tcp wifi bluetooth bt channels tx power coords position advert scan reboot import contacts radio params route flood qr share hash mode manual path lock repeater remote manage stats debug archive',
+      tags: 'settings meshcore mc radios serial tcp wifi bluetooth bt channels tx power coords position advert scan reboot import contacts radio params route flood qr share hash mode manual path lock repeater remote manage stats debug archive contact storage auto store manual approval add to radio',
       body: [
         'Settings → MeshCore manages MC radios, device identity, radio parameters, channels, coordinates, TX power, path hash mode, and position sharing.',
         'Add MC radios by USB serial, TCP/WiFi, or Bluetooth LE (BT address in AA:BB:CC:DD:EE:FF format, optional PIN).',
@@ -2027,7 +2046,9 @@
         'Remote Manage opens a login/read/command interface for MC repeater and room-server nodes. Only visible for contacts identified as repeaters or room servers.',
         'Remote Manage also has Quick settings for common RPTR/room-server options: name, repeat, power save, TX power, radio parameters, position, owner info, path hash mode, loop detect, advert timers, flood max, neighbour discovery, and local/flood adverts. After Admin Login + Read, OM best-effort pre-fills these fields from safe remote get commands; Read settings runs that prefill again. The Map button lets you pick RPTR coordinates directly from the map before pressing Set.',
         'Remember stores the RPTR admin password in this browser for this radio/contact pair, similar to the MeshCore Android app. Uncheck it before Login + Read to remove the saved password.',
-        'Remote Local advert and Flood advert try to send immediately while connected. They are manual actions so settings can be changed without forcing an advert during the admin session.'
+        'Remote Local advert and Flood advert try to send immediately while connected. They are manual actions so settings can be changed without forcing an advert during the admin session.',
+        'Contact Storage controls whether the radio writes every contact it hears into its own table (the ~350-slot NVS). ON is stock behaviour and the table can fill overnight on busy meshes — when it is full, DMs to new contacts fail until space is freed. OFF switches the radio to manual approval: it stores nothing on its own, contacts live in OM (Stored = app only) and you write the ones you want with Add to radio. The status line shows whether the radio accepted manual mode.',
+        'Contact Storage is applied to the device immediately when connected and re-asserted on every connect, so it survives reboots and reflashes.'
       ],
       buttons: [
         ['Serial', 'Add an MC radio by USB serial device path.'],
@@ -2044,6 +2065,8 @@
         ['Save TX Power', 'Write MC transmit power in dBm. Cannot exceed the radio hardware maximum.'],
         ['Save Path Mode', 'Write the preferred MC path hash width (1B/2B/3B) to the radio default and OM config.'],
         ['Always use flood routing', 'Before each DM/ping, clear stored contact paths so the firmware uses flood routing. Manually-set (🔒) paths are exempt.'],
+        ['Auto-store every contact this radio hears', 'ON = stock: the radio stores every contact it hears (table can fill). OFF = manual approval: the radio stores nothing by itself and you approve contacts with Add to radio.'],
+        ['Add to radio', 'Write an app-only contact to the radio (manual approval mode) so it can be DM\'d.'],
         ['Rename', 'Write a new device name to the MC radio (shown in adverts and contacts).'],
         ['Select on map', 'Pick static GPS coordinates for this MC radio by clicking on the map.'],
         ['Set Coords', 'Write the entered coordinates to the MC radio and immediately re-advertise to push the position to the mesh.'],

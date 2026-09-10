@@ -219,7 +219,11 @@ def _git_info(fetch=False):
         "remote": remote or "",
     })
 
-    rc, status, _ = _git_cmd(["status", "--porcelain"], timeout=10)
+    # Tracked modifications only. Untracked files are the user's own (config
+    # backups, scratch scripts) and do not block an update — `git reset --hard`
+    # leaves them alone. Counting them made the panel cry "local changes present"
+    # over e.g. config.json.bak-prehost (2026-09-10).
+    rc, status, _ = _git_cmd(["status", "--porcelain", "--untracked-files=no"], timeout=10)
     status_lines = _filter_update_status_lines(status) if rc == 0 else []
     info["dirty"] = bool(status_lines) if rc == 0 else True
     info["dirty_summary"] = status_lines[:12]

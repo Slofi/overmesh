@@ -1,6 +1,9 @@
 # User config (copy config.example.json to get started)
 config.json
 
+# Local config backups (e.g. config.json.bak-prehost)
+config.json.bak-*
+
 # Per-radio bot configs (generated at runtime)
 bot_config*.json
 

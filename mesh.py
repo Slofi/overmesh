@@ -518,6 +518,32 @@ def _om_install_cli_exit_guard():
 
 _om_install_cli_exit_guard()
 
+
+def send_position_request(iface, channel_index=0):
+    """Ask the mesh for positions WITHOUT the library's blocking wait.
+
+    meshtastic's sendPosition(wantResponse=True) transmits, then calls
+    waitForPosition(), which raises MeshInterfaceError("Timed out waiting for
+    position") when peers do not answer — normal on a mesh where nodes run older
+    firmware or simply are not listening. Its response handler is also the CLI one
+    that calls util.our_exit() (that killed the serial reader until we guarded it,
+    2026-09-10).
+
+    sendData() performs the same transmission (empty Position + want_response on
+    the packet) but returns immediately. We pass a no-op response handler, so
+    replies arrive as ordinary POSITION_APP packets, which the Sense collector
+    already consumes — no stall, no error, no CLI exit.
+    """
+    from meshtastic.protobuf import mesh_pb2, portnums_pb2
+    return iface.sendData(
+        mesh_pb2.Position(),
+        portNum=portnums_pb2.PortNum.POSITION_APP,
+        wantResponse=True,
+        onResponse=lambda _packet: None,
+        channelIndex=channel_index,
+    )
+
+
 def connect_node(node_cfg):
     node_id = node_cfg["id"]
     node_type = node_cfg.get("type", "serial")

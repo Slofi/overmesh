@@ -496,7 +496,8 @@
         <!-- MC sense content -->
         <div id="sense-mc-wrap" style="display:none;flex-direction:column;flex:1;min-height:0">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-shrink:0;flex-wrap:wrap">
-            <button id="mc-scan-btn" class="btn" onclick="startMcScan()" title="Send one MC advert and listen for contact responses during the scan window" style="display:none">Scan</button>
+            <button id="mc-scan-btn" class="btn" onclick="startMcScan()" title="Send one MC advert, then probe repeaters (DISCOVER_REQ) and listen for responses during the scan window" style="display:none">Scan</button>
+            <button id="mc-probe-btn" class="btn" onclick="startMcScan(false)" title="Probe repeaters only (DISCOVER_REQ), no advert — surfaces coverage without announcing your identity or being added to other nodes' contacts" style="display:none">Probe</button>
             <span id="mc-scan-status" style="display:none;font-size:11px;color:var(--muted);white-space:nowrap"></span>
             <button id="mc-trace-btn" class="btn" onclick="toggleMcTraces()" title="Show the paths of MeshCore packets this radio overheard — passive, transmits nothing" style="display:none">Traces</button>
             <button id="mc-neighbors-btn" class="btn" onclick="doMcNeighbors()" title="Show contacts by last known MC path: direct, nearby, recent, or all" style="display:none">Last Heard</button>

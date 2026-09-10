@@ -1922,7 +1922,8 @@
           body: [
             'MC Sense logs adverts, channel messages, DMs, pings, traces, scans, and bot replies. It is the primary place to inspect MC routing.',
             'When Heat is on and MC is selected in Sense, MC passive observations contribute to the heatmap. Remote Collector observations are included through the same passive-observation store.',
-            'Scan and Trace are separate on purpose. Scan sends the normal MC advert/scan request and listens for contact responses; it does not secretly run Trace.',
+            'Scan and Trace are separate on purpose. Scan sends a flood advert then a DISCOVER_REQ (repeaters answer), and listens for responses; it does not secretly run Trace.',
+            'Probe sends the DISCOVER_REQ only — the same repeater probe, but no advert, so it surfaces coverage without announcing your identity or being added to other nodes\' contact tables.',
             'Trace sends one mesh-wide broadcast trace probe, then waits for TRACE_DATA and draws any returned hop chain. The amber warning and cooldown are there because this is active mesh traffic.',
             'Route source badges explain where OM resolved the path from: live = this packet\'s RX-log metadata (best), cached = stored contact route, inferred = fallback line, refreshed = newer data changed the entry after it was logged.',
             'Flood mode is a routing/delivery mode label, not a byte count. 1B/hop, 2B/hop, and 3B/hop describe the hop-hash width used in path metadata. A flood-mode packet can still carry 2B/hop path data — these are independent.',
@@ -11532,10 +11533,12 @@ if (targetEl) {
                         && localStorage.getItem('mcHide') !== '1';
     // Scan/Trace/Neighbors buttons live inside MC sense wrap — visible only when MC connected
     const btn = document.getElementById('mc-scan-btn');
+    const probeBtn = document.getElementById('mc-probe-btn');
     const st  = document.getElementById('mc-scan-status');
     const traceBtn = document.getElementById('mc-trace-btn');
     const neighborsBtn = document.getElementById('mc-neighbors-btn');
     if (btn) btn.style.display = mcConnected ? '' : 'none';
+    if (probeBtn) probeBtn.style.display = mcConnected ? '' : 'none';
     if (st && !mcConnected) st.style.display = 'none';
     if (traceBtn) traceBtn.style.display = mcConnected ? '' : 'none';
     if (neighborsBtn) neighborsBtn.style.display = mcConnected ? '' : 'none';
@@ -11805,16 +11808,19 @@ if (targetEl) {
       _mcScanNewCount = 0;
       _mcScanWindow   = data.window || 60;
       _mcScanRemaining = _mcScanWindow;
-      const btn = document.getElementById('mc-scan-btn');
+      const isProbe = data.advert === false;
+      const btn = document.getElementById(isProbe ? 'mc-probe-btn' : 'mc-scan-btn');
+      const otherBtn = document.getElementById(isProbe ? 'mc-scan-btn' : 'mc-probe-btn');
       const st  = document.getElementById('mc-scan-status');
       if (btn) { btn.textContent = 'Scanning…'; btn.disabled = true; }
+      if (otherBtn) otherBtn.disabled = true;
       if (st)  { st.style.display = ''; st.textContent = `${_mcScanRemaining}s`; }
       // Log scan start in MC activity
       if (_senseNet === 'mc' && document.getElementById('sense-panel')?.style.display !== 'none') {
         const ts_epoch = Math.floor(Date.now() / 1000);
         const ts = _formatAppTime(ts_epoch, {seconds: true});
         const radioName = mcLastStatus[data.radio_id]?.name || data.radio_id;
-        const entry = { kind: 'scan', ts, ts_epoch, radioId: data.radio_id, radioName, discover: !!data.discover };
+        const entry = { kind: 'scan', mode: isProbe ? 'probe' : 'scan', ts, ts_epoch, radioId: data.radio_id, radioName, discover: !!data.discover };
         _mcSenseLogEntries.unshift(entry);
         if (_mcSenseLogEntries.length > 200) _mcSenseLogEntries.pop();
         renderMcSenseLog();
@@ -11830,8 +11836,10 @@ if (targetEl) {
         _mcScanActive = false;
         if (_mcScanTimer) { clearInterval(_mcScanTimer); _mcScanTimer = null; }
         const b = document.getElementById('mc-scan-btn');
+        const pb = document.getElementById('mc-probe-btn');
         const s = document.getElementById('mc-scan-status');
         if (b) { b.textContent = 'Scan'; b.disabled = false; }
+        if (pb) { pb.textContent = 'Probe'; pb.disabled = false; }
         if (s) s.textContent = '';
       }, (_mcScanWindow + 10) * 1000);
       return;
@@ -11840,8 +11848,10 @@ if (targetEl) {
       _mcScanActive = false;
       if (_mcScanTimer) { clearInterval(_mcScanTimer); _mcScanTimer = null; }
       const btn = document.getElementById('mc-scan-btn');
+      const probeBtn = document.getElementById('mc-probe-btn');
       const st  = document.getElementById('mc-scan-status');
       if (btn) { btn.textContent = 'Scan'; btn.disabled = false; }
+      if (probeBtn) { probeBtn.textContent = 'Probe'; probeBtn.disabled = false; }
       if (st)  {
         st.textContent = `Done — ${_mcScanNewCount} new`;
         setTimeout(() => { if (st) st.textContent = ''; }, 8000);
@@ -17560,24 +17570,30 @@ if (targetEl) {
     }
   }
 
-  async function startMcScan() {
+  async function startMcScan(advert = true) {
     const radioId = activeMcRadioId;
     if (!radioId) { showAlert('No MC radio selected.'); return; }
     if (_mcScanActive) return;
+    const isProbe = advert === false;          // Probe = DISCOVER_REQ only, no advert
+    const label   = isProbe ? 'Probe' : 'Scan';
     // Immediate feedback — SSE mc_scan_started will take over with countdown
-    const btn = document.getElementById('mc-scan-btn');
+    const btn = document.getElementById(isProbe ? 'mc-probe-btn' : 'mc-scan-btn');
     if (btn) { btn.textContent = '…'; btn.disabled = true; }
     try {
-      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/scan`, {method: 'POST'});
+      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/scan`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({advert: !isProbe}),
+      });
       const d = await r.json();
       if (!r.ok) {
-        if (btn) { btn.textContent = 'Scan'; btn.disabled = false; }
-        showAlert(d.error || 'Scan failed.');
+        if (btn) { btn.textContent = label; btn.disabled = false; }
+        showAlert(d.error || `${label} failed.`);
         return;
       }
     } catch(e) {
-      if (btn) { btn.textContent = 'Scan'; btn.disabled = false; }
-      showAlert('Scan failed: ' + e.message);
+      if (btn) { btn.textContent = label; btn.disabled = false; }
+      showAlert(`${label} failed: ` + e.message);
     }
   }
 

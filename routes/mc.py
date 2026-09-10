@@ -1378,19 +1378,26 @@ def api_mc_scan(radio_id):
     if state.get("status") != "connected":
         return jsonify({"error": "MC radio not connected"}), 503
 
+    data = request.get_json(silent=True) or {}
+    # Probe mode ({"advert": false}): DISCOVER_REQ only. Same repeater probe as
+    # Mesh-Torry's scan — surfaces coverage without announcing our identity, so
+    # other nodes do not add this radio to their contact tables.
+    advert = data.get("advert", True) is not False
     with _scan_lock:
         existing = _scan_timers.get(radio_id)
         if existing and existing.is_alive():
             return jsonify({"error": "Scan already in progress"}), 409
-        # Send flood advert
-        try:
-            send_advert(radio_id, flood=True)
-        except RuntimeError as e:
-            log.warning(f"[MC] scan advert unavailable: {e}")
-            return jsonify({"error": str(e)}), 503
-        except Exception as e:
-            log.warning(f"[MC] scan advert failed: {e}")
-            return jsonify({"error": str(e)}), 500
+        if advert:
+            try:
+                send_advert(radio_id, flood=True)
+            except RuntimeError as e:
+                log.warning(f"[MC] scan advert unavailable: {e}")
+                return jsonify({"error": str(e)}), 503
+            except Exception as e:
+                log.warning(f"[MC] scan advert failed: {e}")
+                return jsonify({"error": str(e)}), 500
+        else:
+            log.info("[MC] scan: DISCOVER-only probe (no advert)")
         # Active repeater probe: DISCOVER_REQ makes MC repeaters reply (0x8e) — the
         # only way a scan surfaces coverage without live traffic (channel msgs have
         # no ACK). Non-fatal: if it fails, the flood-advert scan still proceeds.
@@ -1402,6 +1409,7 @@ def api_mc_scan(radio_id):
         # Push scan_started SSE
         push_to_sse(json.dumps({"type": "mc_scan_started", "radio_id": radio_id,
                                 "window": MC_SCAN_WINDOW,
+                                "advert": advert,
                                 "discover": discover_tag is not None}))
         # Schedule scan_done after window
         def _scan_done():
@@ -1411,7 +1419,8 @@ def api_mc_scan(radio_id):
         _scan_timers[radio_id] = t
         t.start()
 
-    return jsonify({"ok": True, "window": MC_SCAN_WINDOW})
+    return jsonify({"ok": True, "window": MC_SCAN_WINDOW, "advert": advert,
+                    "discover": discover_tag is not None})
 
 
 # ---------------------------------------------------------------------------

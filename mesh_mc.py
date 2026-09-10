@@ -1514,6 +1514,35 @@ def _ensure_mc_tx_allowed(action="MC transmission"):
         raise RuntimeError(f"Silent Running active — {action} blocked")
 
 
+def _mc_tx_allowed_soft(context):
+    """Silent-Running gate for TX that is a side effect, not a user command.
+
+    Returns False (and logs) when Silent Running is on, so the caller simply
+    skips the transmission. Used where a config write must still succeed but
+    its re-advert must not go out: position updates, advert-loc-policy changes,
+    and the pre-adverts piggybacked on an already-guarded request.
+    """
+    if CONFIG.get("silent_mode"):
+        log.info(f"[MC] Silent Running active — {context} suppressed")
+        return False
+    return True
+
+
+def _rx_counters_frozen(before, after):
+    """True when a radio's RX counters did not move between two samples.
+
+    Frozen counters alone do NOT mean a stuck receiver — a quiet mesh produces
+    the same reading (observed 2026-09-10: healthy radio, recv 44->44, queue=0).
+    The startup watchdog therefore treats this as a first-stage signal only and
+    escalates to an active probe before rebooting anything.
+
+    Only an exact equality counts: a DECREASE means the radio rebooted between
+    the samples (counters reset, monotonic otherwise), which is movement, not a
+    frozen receiver.
+    """
+    return (after["recv"] - before["recv"]) == 0 and (after["rx_air"] - before["rx_air"]) == 0
+
+
 def _mc_passive_collection_enabled(config_id):
     with mc_connections_lock:
         cfg = (mc_connections.get(config_id, {}) or {}).get("config", {}) or {}
@@ -2828,13 +2857,48 @@ async def _connect_mc_node_async(node_cfg):
         flood_tx_delta = last["flood_tx"] - first["flood_tx"]
         fresh_radio_rx_seen = last["uptime"] < 180 and (last["recv"] > 0 or last["rx_air"] > 0)
 
-        if recv_delta <= 0 and rx_air_delta <= 0 and not fresh_radio_rx_seen:
+        if _rx_counters_frozen(first, last) and not fresh_radio_rx_seen:
             log.warning(
                 f"[MC:{name}] Startup RX watchdog: RX counters did not advance after startup "
                 f"(recv {first['recv']}->{last['recv']}, rx_air {first['rx_air']}->{last['rx_air']}s, "
                 f"sent_delta={sent_delta}, flood_tx_delta={flood_tx_delta}, "
                 f"uptime={last['uptime']}s, queue={last['queue_len']})"
             )
+            # Second stage before rebooting: actively ask the mesh to answer us
+            # (DISCOVER_REQ makes repeaters reply). A quiet mesh looks identical
+            # to a stuck receiver on counters alone, so only a probe that changes
+            # nothing justifies a reboot.
+            probed = False
+            if _mc_tx_allowed_soft("startup RX probe (DISCOVER_REQ)"):
+                try:
+                    await asyncio.wait_for(
+                        mc.commands.send_node_discover_req(
+                            filter=0x04, prefix_only=False, tag=random.randint(1, 0xFFFFFFFF)),
+                        timeout=10,
+                    )
+                    probed = True
+                except Exception as e:
+                    log.debug(f"[MC:{name}] startup RX probe failed: {e}")
+            if probed:
+                await asyncio.sleep(8)
+                if not _still_ours():
+                    return
+                try:
+                    probe = await _stats_sample()
+                except Exception as e:
+                    log.debug(f"[MC:{name}] startup RX watchdog probe stats skipped: {e}")
+                    return
+                if not _rx_counters_frozen(last, probe):
+                    log.info(
+                        f"[MC:{name}] Startup RX watchdog: counters moved after active DISCOVER probe "
+                        f"(recv {last['recv']}->{probe['recv']}, rx_air {last['rx_air']}->{probe['rx_air']}s) "
+                        f"— radio is listening, no reboot needed"
+                    )
+                    return
+                log.warning(
+                    f"[MC:{name}] Startup RX watchdog: still frozen after active DISCOVER probe "
+                    f"(recv {probe['recv']}, rx_air {probe['rx_air']}s, queue={probe['queue_len']}) — rebooting MC radio"
+                )
             await _mc_reboot_for_startup_rx_recovery(config_id, name, mc)
         else:
             log.info(
@@ -3697,6 +3761,10 @@ async def _send_advert_async(config_id, flood=False):
 
     async def _do_advert():
         try:
+            # Silent Running must gate the TX itself, not only the caller: this
+            # task is detached, so the flag can flip between schedule and send.
+            if not _mc_tx_allowed_soft(f"advert TX (flood={flood})"):
+                return
             # Re-assert the default scope right before TX. The advert task runs
             # detached (fire-and-forget), so a channel send on another thread may
             # have swapped the device's single scope slot after the sync wrapper
@@ -3995,8 +4063,12 @@ async def _send_statusreq_async(config_id, pubkey_prefix):
             # Refresh our identity on the mesh right before the ping. Startup advert
             # can be minutes or hours old; if the repeater rebooted since then it may
             # no longer have our pubkey and won't be able to return STATUS_RESPONSE.
-            advert_result = await mc.commands.send_advert(flood=True)
-            if advert_result.type.name == "OK":
+            advert_result = None
+            if _mc_tx_allowed_soft("statusreq pre-advert"):
+                advert_result = await mc.commands.send_advert(flood=True)
+            if advert_result is None:
+                pass  # Silent Running: no advert, the ping below still runs
+            elif advert_result.type.name == "OK":
                 log.info(f"[MC:{config_id}] statusreq pre-advert TX confirmed for {pubkey_prefix[:12]}")
             else:
                 log.warning(
@@ -4300,11 +4372,14 @@ async def _set_coords_async(config_id, lat, lon):
             mc_connections[config_id]["node_info"]["adv_lon"] = float(lon)
     push_to_sse({"type": "mc_coords_updated", "radio_id": config_id,
                  "lat": float(lat), "lon": float(lon)})
-    # Re-advertise so the new position reaches the mesh immediately
-    try:
-        await mc.commands.send_advert()
-    except Exception:
-        pass
+    # Re-advertise so the new position reaches the mesh immediately. The device
+    # write already happened (local, no RF) — only the advert transmits, so
+    # Silent Running skips the advert and keeps the config change.
+    if _mc_tx_allowed_soft("advert after position update"):
+        try:
+            await mc.commands.send_advert()
+        except Exception:
+            pass
     return r
 
 
@@ -4317,11 +4392,13 @@ async def _set_advert_loc_policy_async(config_id, policy):
         if config_id in mc_connections and mc_connections[config_id].get("node_info") is not None:
             mc_connections[config_id]["node_info"]["adv_loc_policy"] = int(policy)
     push_to_sse({"type": "mc_loc_policy_updated", "radio_id": config_id, "adv_loc_policy": int(policy)})
-    # Re-advertise so the change reaches the mesh immediately
-    try:
-        await mc.commands.send_advert()
-    except Exception:
-        pass
+    # Re-advertise so the change reaches the mesh immediately (advert only —
+    # the policy write itself is local, so Silent Running keeps it).
+    if _mc_tx_allowed_soft("advert after location-policy change"):
+        try:
+            await mc.commands.send_advert()
+        except Exception:
+            pass
     return r
 
 
@@ -4841,8 +4918,9 @@ async def _req_status_async(config_id, pubkey_prefix, prime_trace=False):
     # multi-hop paths (e.g. EDC-3 → ERA-2 → Krvavec) will receive our ping but
     # cannot reply. Give the mesh 2s to propagate before sending the request.
     try:
-        advert_result = await mc.commands.send_advert(flood=True)
-        log.info(f"[MC:{config_id}] req_status pre-advert for {pubkey_prefix[:12]}: {advert_result.type.name}")
+        if _mc_tx_allowed_soft("req_status pre-advert"):
+            advert_result = await mc.commands.send_advert(flood=True)
+            log.info(f"[MC:{config_id}] req_status pre-advert for {pubkey_prefix[:12]}: {advert_result.type.name}")
     except Exception as e:
         log.warning(f"[MC:{config_id}] req_status pre-advert failed for {pubkey_prefix[:12]}: {e}")
     await asyncio.sleep(2.0)

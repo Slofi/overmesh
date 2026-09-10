@@ -39,7 +39,7 @@ SENSE_COLLECTION_WINDOW = 60    # seconds to collect responses after broadcast
 def _run_sense_broadcast(iface, cooldown):
     """Broadcast position request, wait for collection window, close. Called in a thread."""
     # Lazy import — mesh.py doesn't exist yet; avoids circular dep at module load time
-    from mesh import _reconnect_disconnected
+    from mesh import _reconnect_disconnected, _is_iface_alive, send_position_request
     if CONFIG.get("silent_mode"):
         with _sense_lock:
             _sense_state["active"] = False
@@ -48,16 +48,32 @@ def _run_sense_broadcast(iface, cooldown):
                                 "error": "Silent Running active — broadcast blocked"}))
         return
     try:
-        iface.sendPosition(wantResponse=True)
+        send_position_request(iface)
     except Exception as e:
-        log.warning(f"Sense broadcast error: {e}")
-        with _sense_lock:
-            _sense_state["active"] = False
-            count = len(_sense_state["responses"])
-        push_to_sse(json.dumps({"type": "sense_done", "count": count,
-                                "error": "Node disconnected during broadcast"}))
-        threading.Thread(target=_reconnect_disconnected, daemon=True).start()
-        return
+        msg = str(e)
+        # A missing position reply is a normal mesh outcome, not a failure — the
+        # request went out and we simply collect whatever arrives in the window.
+        # Only a genuinely dead interface is reported and reconnected.
+        try:
+            live = bool(_is_iface_alive(iface))
+        except Exception:
+            live = False
+        benign = (
+            "Timed out waiting for position" in msg
+            or "Timed out waiting for an acknowledgment" in msg
+            or "No response" in msg
+        )
+        if benign or live:
+            log.info(f"Sense: no position reply ({e}) — link healthy, collecting anyway")
+        else:
+            log.warning(f"Sense broadcast error: {e}")
+            with _sense_lock:
+                _sense_state["active"] = False
+                count = len(_sense_state["responses"])
+            push_to_sse(json.dumps({"type": "sense_done", "count": count,
+                                    "error": "Node disconnected during broadcast"}))
+            threading.Thread(target=_reconnect_disconnected, daemon=True).start()
+            return
     # health_check_loop (5s interval) handles any real silent disconnect after sendPosition.
     # The old 0.5s post-sense check was catching brief USB-CDC glitches on the nRF52840
     # ProMicro during broadcast and triggering an unnecessary full reconnect cycle.

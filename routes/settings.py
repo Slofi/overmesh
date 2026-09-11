@@ -31,6 +31,23 @@ _UPDATE_STATE = {
 }
 _UPDATE_STATUS_IGNORED_PATHS = {"secret.key"}
 
+# ── "Is there a newer OverMesh upstream?" ───────────────────────────────────────
+# Checked shortly after boot and then periodically, so an always-on instance
+# (Gandalf) actually notices a release instead of only when someone opens
+# Settings. The result is cached here and served from /api/settings/update/available
+# so the browser can show a notice without triggering a fetch itself.
+_UPDATE_CHECK_INITIAL_DELAY = 25      # let radios/serial settle after a restart
+_UPDATE_CHECK_INTERVAL = 6 * 3600     # re-check; a long-running app would otherwise never notice
+_UPDATE_CHECK_STATE = {
+    "checked_at": None,
+    "available": False,
+    "remote_commit": None,
+    "local_commit": None,
+    "behind": 0,
+    "version": None,
+    "error": None,
+}
+
 
 def _app_settings_payload():
     app_cfg = dict(CONFIG.get("app") or {})
@@ -272,6 +289,64 @@ def _git_info(fetch=False):
     return info
 
 
+def check_for_update(push=True):
+    """One upstream check (git fetch). Returns the cached state dict.
+
+    Never fetches while an update job is running (that job does its own fetch and
+    reset), and never raises — a network/GitHub problem is recorded, not fatal.
+    """
+    if _UPDATE_STATE.get("running"):
+        return _UPDATE_CHECK_STATE
+    try:
+        info = _git_info(fetch=True)
+    except Exception as e:
+        log.warning(f"update check failed: {e}")
+        _UPDATE_CHECK_STATE.update({"error": str(e), "checked_at": int(time.time())})
+        return _UPDATE_CHECK_STATE
+
+    was_available = bool(_UPDATE_CHECK_STATE.get("available"))
+    _UPDATE_CHECK_STATE.update({
+        "checked_at": int(time.time()),
+        "available": bool(info.get("update_available")),
+        "remote_commit": info.get("remote_commit"),
+        "local_commit": info.get("commit"),
+        "behind": int(info.get("behind") or 0),
+        "version": info.get("version"),
+        "error": None if info.get("fetch_ok", True) else info.get("fetch_error"),
+    })
+    state = _UPDATE_CHECK_STATE
+    if state["available"]:
+        log.info(f"update available: {state['remote_commit']} ({state['behind']} commit(s) behind)")
+    # Only announce the transition (not every periodic re-check).
+    if push and state["available"] and not was_available:
+        try:
+            push_to_sse(json.dumps({
+                "type": "update_available",
+                "remote_commit": state["remote_commit"],
+                "behind": state["behind"],
+            }))
+        except Exception as e:
+            log.warning(f"update check: SSE push failed: {e}")
+    return state
+
+
+def update_check_loop():
+    """Background: check once shortly after start, then every _UPDATE_CHECK_INTERVAL."""
+    time.sleep(_UPDATE_CHECK_INITIAL_DELAY)
+    while True:
+        try:
+            check_for_update()
+        except Exception as e:      # belt and braces — the loop must never die
+            log.warning(f"update check loop error: {e}")
+        time.sleep(_UPDATE_CHECK_INTERVAL)
+
+
+@bp.route("/api/settings/update/available")
+def api_settings_update_available():
+    """Cached result of the last update check (instant — never fetches)."""
+    return jsonify(_UPDATE_CHECK_STATE)
+
+
 def _run_update_job():
     with _UPDATE_LOCK:
         _UPDATE_STATE.update({
@@ -339,6 +414,16 @@ def _run_update_job():
                 "ok": True,
                 "message": f"Updated to {final.get('commit', 'latest')}. Restart required.",
             })
+        # We are now on the latest code: drop the "update available" notice so the
+        # browser stops offering an update that has already been applied.
+        _UPDATE_CHECK_STATE.update({
+            "checked_at": int(time.time()),
+            "available": False,
+            "behind": 0,
+            "remote_commit": final.get("remote_commit"),
+            "local_commit": final.get("commit"),
+            "error": None,
+        })
         _update_append("Update complete. Restart required.")
     except Exception as e:
         log.warning(f"Update failed: {e}")

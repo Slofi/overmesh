@@ -1,0 +1,103 @@
+import json
+import os
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from flask import Flask
+
+_TEST_DIR = tempfile.TemporaryDirectory(prefix="overmesh-updcheck-test-")
+_TEST_ROOT = Path(_TEST_DIR.name)
+_CONFIG_PATH = _TEST_ROOT / "config.json"
+_DATA_DIR = _TEST_ROOT / "data"
+_DATA_DIR.mkdir(parents=True, exist_ok=True)
+_CONFIG_PATH.write_text(json.dumps({"nodes": [], "mc_nodes": [], "silent_mode": False}), encoding="utf-8")
+
+os.environ.setdefault("OVERMESH_CONFIG", str(_CONFIG_PATH))
+os.environ.setdefault("OVERMESH_DATA_DIR", str(_DATA_DIR))
+sys.path.insert(0, "/home/slofi/overmesh")
+
+import routes.settings as settings  # noqa: E402
+
+
+def _info(available, behind=1, commit="aaaaaaa", remote="bbbbbbb", fetch_ok=True, err=None):
+    return {"update_available": available, "behind": behind, "commit": commit,
+            "remote_commit": remote, "version": "2026.09.11.5",
+            "fetch_ok": fetch_ok, "fetch_error": err}
+
+
+class UpdateCheckTests(unittest.TestCase):
+    """The boot/periodic update check must be quiet, cached, and never fatal."""
+
+    def setUp(self):
+        settings._UPDATE_CHECK_STATE.update({
+            "checked_at": None, "available": False, "remote_commit": None,
+            "local_commit": None, "behind": 0, "version": None, "error": None})
+        settings._UPDATE_STATE.update({"running": False})
+        self.pushes = []
+        p = mock.patch.object(settings, "push_to_sse", side_effect=lambda m: self.pushes.append(json.loads(m)))
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_detects_available_update_and_pushes_once(self):
+        with mock.patch.object(settings, "_git_info", return_value=_info(True, behind=3)):
+            state = settings.check_for_update()
+        self.assertTrue(state["available"])
+        self.assertEqual(state["behind"], 3)
+        self.assertEqual(state["remote_commit"], "bbbbbbb")
+        self.assertEqual(len(self.pushes), 1, "must announce the flip")
+        self.assertEqual(self.pushes[0]["type"], "update_available")
+        self.assertEqual(self.pushes[0]["behind"], 3)
+        # a second check with the same answer must NOT spam
+        with mock.patch.object(settings, "_git_info", return_value=_info(True, behind=3)):
+            settings.check_for_update()
+        self.assertEqual(len(self.pushes), 1, "only the transition is pushed")
+
+    def test_up_to_date_reports_not_available(self):
+        with mock.patch.object(settings, "_git_info", return_value=_info(False, behind=0)):
+            state = settings.check_for_update()
+        self.assertFalse(state["available"])
+        self.assertEqual(state["behind"], 0)
+        self.assertEqual(self.pushes, [])
+
+    def test_skips_while_update_job_running(self):
+        settings._UPDATE_STATE["running"] = True
+        with mock.patch.object(settings, "_git_info") as git_info:
+            state = settings.check_for_update()
+        git_info.assert_not_called()
+        self.assertFalse(state["available"])
+
+    def test_fetch_failure_is_recorded_not_raised(self):
+        with mock.patch.object(settings, "_git_info", return_value=_info(False, fetch_ok=False, err="timed out")):
+            state = settings.check_for_update()
+        self.assertFalse(state["available"])
+        self.assertIn("timed out", state["error"])
+
+    def test_git_info_exception_is_swallowed(self):
+        with mock.patch.object(settings, "_git_info", side_effect=RuntimeError("boom")):
+            state = settings.check_for_update()
+        self.assertFalse(state["available"])
+        self.assertIn("boom", state["error"])
+
+    def test_endpoint_serves_cached_state_without_fetching(self):
+        app = Flask(__name__)
+        app.register_blueprint(settings.bp)
+        with mock.patch.object(settings, "_git_info") as git_info:
+            r = app.test_client().get("/api/settings/update/available")
+        git_info.assert_not_called()
+        self.assertEqual(r.status_code, 200)
+        body = r.get_json()
+        self.assertIn("available", body)
+        self.assertIn("remote_commit", body)
+
+    def test_completed_update_clears_availability(self):
+        settings._UPDATE_CHECK_STATE.update({"available": True, "behind": 2, "remote_commit": "bbbbbbb"})
+        src = open("/home/slofi/overmesh/routes/settings.py", encoding="utf-8").read()
+        # the success path of the update job must drop the notice
+        self.assertIn('_UPDATE_CHECK_STATE.update({\n            "checked_at": int(time.time()),\n            "available": False,', src)
+
+
+if __name__ == "__main__":
+    unittest.main()

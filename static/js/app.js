@@ -358,6 +358,66 @@
     if (!persistent) setTimeout(removeToast, 8000);
   }
 
+  // ── OverMesh update notice ──────────────────────────────────────────────────
+  // The server checks GitHub shortly after boot and every few hours, caching the
+  // answer at /api/settings/update/available and pushing the flip over SSE. The
+  // notice is a clickable toast that opens Settings → App (where Update lives).
+  // Dismissal is remembered per remote commit, so silencing one release does not
+  // hide the next one.
+  let _updateNoticeCommit = null;
+
+  function _updateNoticeDismissed(commit) {
+    if (!commit) return false;
+    try { return localStorage.getItem('omUpdateNoticeDismissed') === commit; } catch(_) { return false; }
+  }
+
+  function openUpdatePanel() {
+    try { switchTab('settings'); switchSettingsTab('app'); } catch(e) {}
+    const summary = document.getElementById('settings-update-summary');
+    if (summary) {
+      try { summary.scrollIntoView({behavior: 'smooth', block: 'center'}); } catch(e) { summary.scrollIntoView(); }
+    }
+    // Populate the panel (it normally loads when the tab is opened).
+    try { settingsLoadUpdateStatus(false); } catch(e) {}
+  }
+
+  function showUpdateNotice(remoteCommit, behind, opts = {}) {
+    if (!remoteCommit) return;
+    if (!opts.force && _updateNoticeDismissed(remoteCommit)) return;
+    const stack = document.getElementById('toast-stack');
+    if (!stack) return;
+    if (stack.querySelector('[data-toast-tag="update-available"]')) return;   // already shown
+    const n = parseInt(behind, 10);
+    _updateNoticeCommit = remoteCommit;
+    showToast(
+      'OverMesh update available',
+      `<b>${escHtml(remoteCommit)}</b>${n > 1 ? ` (${n} commits)` : ''} is ready to install.<br>` +
+      'Click to open <b>Settings → App</b> and update.',
+      'node-return', 'update-available', {persistent: true}
+    );
+    const toast = stack.querySelector('[data-toast-tag="update-available"]');
+    if (!toast) return;
+    toast.style.cursor = 'pointer';
+    toast.title = 'Open Settings → App to update OverMesh';
+    toast.onclick = (ev) => {
+      if (ev.target && ev.target.closest && ev.target.closest('.toast-close')) return;   // × handles itself
+      openUpdatePanel();
+    };
+    const closeBtn = toast.querySelector('.toast-close');
+    if (closeBtn) closeBtn.addEventListener('click', () => {
+      try { localStorage.setItem('omUpdateNoticeDismissed', remoteCommit); } catch(_) {}
+    });
+  }
+
+  async function checkUpdateNotice() {
+    try {
+      const r = await fetch(BASE_PATH + '/api/settings/update/available');
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d && d.available) showUpdateNotice(d.remote_commit, d.behind);
+    } catch(e) { /* offline / older server — the SSE push covers it later */ }
+  }
+
   function maybeShowInAppMessage(title, body, tag) {
     if (!_appPrefBool('inapp_notify_messages', true)) return;
     showToast(title, body, 'message', tag);
@@ -1290,6 +1350,11 @@
     chatSSE = new EventSource(BASE_PATH + '/api/chat/stream');
     chatSSE.onmessage = e => {
       let data; try { data = JSON.parse(e.data); } catch(err) { return; }
+      if (data.type === 'update_available') {
+        // Server checked upstream and found a newer commit — offer it now.
+        showUpdateNotice(data.remote_commit, data.behind);
+        return;
+      }
       if (data.type === 'server_version') {
         // Handshake: the server tells us which build it runs. If that is not the
         // build this page was loaded with, the shell markup and its ?v= asset URLs
@@ -20387,6 +20452,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   _alertsBadgeUpdate();
   loadLive();
   showOmIntroIfNeeded();
+  checkUpdateNotice();   // server-side check result (boot check + every 6h), shown as a toast
   setInterval(loadLive, 15000);
   setInterval(() => { if (currentTab === 'settings') settingsRefresh(); }, 4000);
   // Keep sense card timers ticking

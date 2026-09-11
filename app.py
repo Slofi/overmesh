@@ -277,6 +277,10 @@ def startup():
     threading.Thread(target=mc_watchdog_loop, daemon=True).start()
     from routes.nodes import mt_auto_cleanup_loop
     threading.Thread(target=mt_auto_cleanup_loop, daemon=True).start()
+    # Notice a newer OverMesh shortly after start (and every few hours) so the UI
+    # can offer it without anyone opening Settings.
+    from routes.settings import update_check_loop
+    threading.Thread(target=update_check_loop, daemon=True).start()
     if _sense_state["active_auto"]:
         _active_auto_event.clear()
         with _active_auto_running_lock:

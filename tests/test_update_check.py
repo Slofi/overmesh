@@ -81,6 +81,17 @@ class UpdateCheckTests(unittest.TestCase):
         self.assertFalse(state["available"])
         self.assertIn("boom", state["error"])
 
+    def test_check_logs_its_outcome(self):
+        # The loop is otherwise invisible in the log; 'did it check?' must be answerable.
+        with self.assertLogs("routes.settings", level="INFO") as cm:
+            with mock.patch.object(settings, "_git_info", return_value=_info(True, behind=2)):
+                settings.check_for_update()
+        self.assertTrue(any("2 commit(s) behind" in m for m in cm.output), cm.output)
+        with self.assertLogs("routes.settings", level="INFO") as cm:
+            with mock.patch.object(settings, "_git_info", return_value=_info(False, behind=0)):
+                settings.check_for_update()
+        self.assertTrue(any("up to date" in m for m in cm.output), cm.output)
+
     def test_endpoint_serves_cached_state_without_fetching(self):
         app = Flask(__name__)
         app.register_blueprint(settings.bp)

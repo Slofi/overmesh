@@ -315,6 +315,14 @@ def check_for_update(push=True):
         "error": None if info.get("fetch_ok", True) else info.get("fetch_error"),
     })
     state = _UPDATE_CHECK_STATE
+    # One line per check: the loop is otherwise invisible in the log, and 'did it
+    # even check?' is the first question when someone reports a missed release.
+    if state["error"]:
+        log.info(f"update check: fetch failed ({state['error']})")
+    elif state["available"]:
+        log.info(f"update check: {state['behind']} commit(s) behind — {state['remote_commit']} available")
+    else:
+        log.info(f"update check: up to date ({state['local_commit']})")
     if state["available"]:
         log.info(f"update available: {state['remote_commit']} ({state['behind']} commit(s) behind)")
     # Only announce the transition (not every periodic re-check).

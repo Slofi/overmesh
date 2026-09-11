@@ -2211,6 +2211,7 @@
       tags: 'settings app appearance zoom accent notifications sounds offline maps gps update manual intro cache regions auth security login password',
       body: [
         'Settings → App controls UI zoom, accent color, notification sounds, GPS, offline maps, updates, security/authentication, and help.',
+        'Updates announce themselves: OM checks GitHub shortly after startup and every 6 hours, and shows a clickable “update available” notice that opens this tab.',
         'Notification sounds play on new MT/MC messages and node-seen events. Connect/disconnect events play a distinct two-tone radio sound.',
         'The updater pulls from GitHub main. It refuses dirty worktrees, locally-ahead commits, or non-Git installs. On PEP 668 externally-managed Python it retries with --break-system-packages automatically.',
         'Distance units switch all distance displays and polar-grid labels between kilometres and miles.',
@@ -2326,9 +2327,11 @@
     },
     {
       title: 'Version and Updates',
-      tags: 'version update github build release restart dirty worktree fast forward requirements',
+      tags: 'version update github build release restart dirty worktree fast forward requirements notice toast banner boot check',
       body: [
         'OM versions use YYYY.MM.DD.N format. The Settings updater shows the current version, the latest GitHub version, the exact Git build hash, and whether the install is clean and up to date.',
+        'OM also checks GitHub by itself — about 25 seconds after startup and then every 6 hours — so a long-running instance notices a release without anyone opening Settings. When something is newer, a clickable notice appears (bottom right): click it to jump straight to Settings → App, where Update lives. The × silences that release only; the next one shows again.',
+        'The check never runs inside a page load: the browser asks for the cached answer, and a background refresh happens only if that answer is older than 10 minutes. Like Update itself, the check is available only from your own machine/network, not from the open internet.',
         'The updater performs a safe fast-forward pull. It refuses to update if the local checkout is dirty (uncommitted changes), ahead of GitHub, not a Git repository, or already current.',
         'When requirements.txt changes, the updater installs the new dependencies after pulling. On PEP 668 externally-managed Python systems (e.g. Debian/Ubuntu with system Python), it retries with --break-system-packages and logs that step.',
         'After any update, use Restart so the new code is loaded by the server process.'

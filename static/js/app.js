@@ -9770,9 +9770,7 @@ if (targetEl) {
 
   function saveBotConfig() {
     if (!botConfig) {
-      const st = document.getElementById('bot-save-status');
-      if (st) { st.textContent = 'Still loading…'; setTimeout(() => { st.textContent = ''; }, 2000); }
-      return;
+      return;  // config has not loaded yet — nothing to save
     }
     botConfig.enabled   = document.getElementById('bot-enable').checked;
     botConfig.bot_label = document.getElementById('bot-label').value.trim() || 'OM Bot';
@@ -11627,9 +11625,6 @@ if (targetEl) {
     if (stCross && !show) stCross.style.display = 'none';
     // Map legend — sync with current network visibility state
     _updateMapLegend();
-    // Sync hide toggle checkbox
-    const hideToggle = document.getElementById('mc-hide-toggle');
-    if (hideToggle) hideToggle.checked = forcedHide;
     // MC pill in Nodes tab + MT pill (only makes sense when both networks are visible)
     const mcNodesPill = document.getElementById('nodes-mc-pill');
     if (mcNodesPill) mcNodesPill.style.display = show && mcConnected ? '' : 'none';
@@ -17528,30 +17523,6 @@ if (targetEl) {
     }
   }
 
-
-  async function sendMcDm(pubkeyPrefix, radioId) {
-    const input = document.getElementById('mc-dm-input');
-    const text = input?.value.trim();
-    if (!text) return;
-    const status = document.getElementById('mc-dm-status');
-    status.innerHTML = '<div class="modal-loading">Sending...</div>';
-    try {
-      const chunks = _mcSplitTextByBytes(text, _mcTargetMsgLimit('dm', radioId));
-      for (let i = 0; i < chunks.length; i++) {
-        const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/send_dm`, {
-          method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({text: chunks[i], target: pubkeyPrefix}),
-        });
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok || d.error) throw new Error(d.error || `HTTP ${r.status}`);
-        if (chunks.length > 1 && i < chunks.length - 1) await _sleep(MC_SPLIT_SEND_DELAY_MS);
-      }
-      status.innerHTML = `<div class="modal-success">Sent${chunks.length > 1 ? ` as ${chunks.length} messages` : ''}.</div>`;
-      input.value = '';
-    } catch(e) {
-      status.innerHTML = `<div class="modal-error">Failed: ${escHtml(e.message)}</div>`;
-    }
-  }
 
   async function doMcNeighbors(mode) {
     const radioId = activeMcRadioId;

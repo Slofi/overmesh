@@ -46,4 +46,29 @@ assert(/sendNotif\(title, _p\.plain,/.test(src), 'system notification must get t
 assert(/maybeShowInAppMessage\(title, _p\.html,/.test(src), 'in-app toast must get the HTML multi-row body');
 assert(/function _mcSenderName\(data\)/.test(src), 'MC sender must be resolved from the contact list');
 
+// MC sender-name resolution must never credit an ambiguous pubkey prefix to one
+// contact (showing the wrong sender is worse than showing the prefix).
+const mp = src.match(/function _pickMcSenderName\(map, dmCache, fid\) \{[\s\S]*?\n  \}/);
+assert(mp, '_pickMcSenderName() must exist');
+const _pickMcSenderName = eval('(' + mp[0] + ')');
+
+const FULL = 'f'.repeat(58);
+const EDC  = { id: 'abc123', full_key: 'abc123' + FULL, long_name: 'EDC-3' };
+// Real ambiguity: neither id equals the incoming short prefix, but both full keys
+// start with it — the name must NOT be guessed.
+const AMB1 = { id: 'abc111', full_key: 'abc111' + FULL, long_name: 'Wrong One' };
+const AMB2 = { id: 'abc222', full_key: 'abc222' + FULL, long_name: 'Wrong Two' };
+
+assert(_pickMcSenderName({ k: EDC }, {}, 'abc123') === 'EDC-3', 'exact id match wins');
+assert(_pickMcSenderName({ k: EDC }, {}, EDC.full_key) === 'EDC-3', 'exact full_key match wins');
+assert(_pickMcSenderName({ k: EDC }, {}, 'abc12') === 'EDC-3', 'single prefix match resolves');
+assert(_pickMcSenderName({ a: AMB1, b: AMB2 }, {}, 'abc') === 'abc',
+       'ambiguous prefix falls back to the prefix (got ' +
+       _pickMcSenderName({ a: AMB1, b: AMB2 }, {}, 'abc') + ')');
+assert(_pickMcSenderName({ k: EDC }, { abc123: 'Cached DM Name' }, 'abc123') === 'Cached DM Name',
+       'DM name cache takes precedence');
+assert(_pickMcSenderName({}, {}, '') === '?', 'no sender -> ?');
+assert(_pickMcSenderName({ k: { id: 'x', full_key: 'x', long_name: '' } }, {}, 'x') === 'x',
+       'a nameless contact falls back to the id, not an empty row');
+
 console.log('ok: message pop-up layout (system + channel / sender / message) for MT and MC');

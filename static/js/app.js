@@ -552,15 +552,24 @@
     };
   }
 
-  // MC messages carry the sender's public-key prefix, not a name — resolve it from
-  // the contact list (records expose both `id` and `full_key`).
+  // MC messages carry the sender's public-key PREFIX, not a name. Resolve it from
+  // the contact list (records expose both `id` and `full_key`): exact matches first,
+  // then a prefix match only when it is unambiguous — a short prefix can hit several
+  // contacts, and showing the *wrong* sender name is worse than showing the prefix
+  // (same rule as the passive-intel badge).
+  function _pickMcSenderName(map, dmCache, fid) {
+    if (!fid) return '?';
+    if (dmCache && dmCache[fid]) return dmCache[fid];
+    const list = Object.values(map || {});
+    const exact = list.find(c => c && (c.id === fid || c.full_key === fid));
+    if (exact) return exact.long_name || exact.name || fid;
+    const pref = list.filter(c => c && c.full_key && c.full_key.startsWith(fid));
+    if (pref.length === 1) return pref[0].long_name || pref[0].name || fid;
+    return fid;
+  }
+
   function _mcSenderName(data) {
-    const fid = data.from_id || '';
-    if (mcDmContacts[fid]) return mcDmContacts[fid];
-    const map = mcContacts[data.radio_id] || {};
-    const hit = Object.values(map).find(c => c && fid &&
-      (c.id === fid || c.full_key === fid || (c.full_key || '').startsWith(fid)));
-    return (hit && (hit.long_name || hit.name)) || fid || '?';
+    return _pickMcSenderName(mcContacts[data.radio_id] || {}, mcDmContacts, data.from_id || '');
   }
 
   function sendNotif(title, body, tag, type, opts = {}) {
@@ -1619,11 +1628,10 @@
             playNotificationSound('message');
             // Browser notification
             if (document.hidden || currentTab !== 'chat' || chatChannel !== msgCh) {
-              // Match the MC notification: network + CHANNEL NAME in the title, the
-              // message in the body (DM keeps "from <name>"). channel_name comes from
-              // the server payload; the tab list is a fallback for older/queued rows,
-              // then the raw index. The sender stays visible in the chat list itself —
-              // MC does the same, so both networks read identically.
+              // Same three-row shape as MC: (1) system + channel, (2) sender,
+              // (3) message — see _msgNotifParts(). The channel name comes from the
+              // server payload; the tab list is a fallback for older/queued rows,
+              // then the raw index. DMs have no channel, so row 1 reads "MT DM".
               const _mtChan = data.channel_name
                 || (chatChannels.find(c => c.index === data.channel) || {}).name
                 || ('CH' + data.channel);

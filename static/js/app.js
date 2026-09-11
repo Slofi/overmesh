@@ -10423,6 +10423,22 @@ if (targetEl) {
   }
 
   // ── Stale node cleanup (MeshCore + Meshtastic) ──────────────────────────────
+
+  // MC favourites live ONLY in this browser (localStorage `mcFavs`, keyed by the
+  // contact id) — the server cannot see them, so the MC cleanup preview always
+  // includes them. Exclude them here: a favourite must never be listed,
+  // pre-selected or deleted. (MT favourites are real and excluded server-side by
+  // get_favorites(); this closes the same hole for MC.)
+  function _mcFilterFavourites(nodes, favs) {
+    const out = [];
+    const kept = [];
+    (nodes || []).forEach(n => {
+      if (n && n.network === 'mc' && n.id && favs && favs[n.id]) kept.push(n);
+      else out.push(n);
+    });
+    return {nodes: out, kept};
+  }
+
   async function runStaleNodeCleanup(btn) {
     const input = document.getElementById('settings-node-cleanup-days');
     const days = parseInt(input?.value, 10);
@@ -10439,7 +10455,8 @@ if (targetEl) {
         fetch(BASE_PATH + '/api/db/nodes/cleanup/preview', opts).then(r => r.json()).catch(() => ({})),
       ]);
       const nodes = [...(mc.nodes || []), ...(mt.nodes || [])];
-      openNodeCleanupModal(nodes, days);
+      const filtered = _mcFilterFavourites(nodes, mcFavs);
+      openNodeCleanupModal(filtered.nodes, days, filtered.kept.length);
     } catch(e) {
       showAlert(String(e.message || e));
     } finally {
@@ -10453,13 +10470,19 @@ if (targetEl) {
     return `<span style="font-size:9px;font-weight:700;letter-spacing:.04em;color:${col};border:1px solid ${col};border-radius:3px;padding:0 4px;flex-shrink:0">${isMc ? 'MC' : 'MT'}</span>`;
   }
 
-  function openNodeCleanupModal(nodes, days) {
+  function openNodeCleanupModal(nodes, days, keptFavs = 0) {
     const summary = document.getElementById('node-cleanup-summary');
     const list = document.getElementById('node-cleanup-list');
     const empty = !nodes.length;
-    summary.textContent = empty
-      ? `Nothing has been silent for more than ${days} day${days === 1 ? '' : 's'}.`
-      : `${nodes.length} node${nodes.length === 1 ? '' : 's'} not heard from in over ${days} day${days === 1 ? '' : 's'}. All are selected — deselect any you want to keep. Your own node and favourites are never listed.`;
+    const keptNote = keptFavs
+      ? ` ${keptFavs} favourite${keptFavs === 1 ? '' : 's'} kept and never listed.`
+      : '';
+    summary.textContent = (empty && keptFavs)
+      ? `Nothing to clean: the only stale contact${keptFavs === 1 ? ' is a favourite' : 's are favourites'}.${keptNote}`
+      : (empty
+         ? `Nothing has been silent for more than ${days} day${days === 1 ? '' : 's'}.`
+         : `${nodes.length} node${nodes.length === 1 ? '' : 's'} not heard from in over ${days} day${days === 1 ? '' : 's'}. All are selected — deselect any you want to keep. Your own node and favourites are never listed.`)
+        + keptNote;
     list.innerHTML = empty
       ? `<div style="padding:16px;text-align:center;color:var(--muted);font-size:13px">Nothing to remove.</div>`
       : nodes.map(n => `
@@ -10510,7 +10533,10 @@ if (targetEl) {
   async function commitNodeCleanup(mode) {
     const cbs = [...document.querySelectorAll('.node-cleanup-cb')];
     const chosen = (mode === 'all' ? cbs : cbs.filter(cb => cb.checked))
-      .map(cb => ({id: cb.dataset.id, radio_id: cb.dataset.radio, network: cb.dataset.network}));
+      .map(cb => ({id: cb.dataset.id, radio_id: cb.dataset.radio, network: cb.dataset.network}))
+      // Defensive second gate (favourites are browser-only state): a favourite must
+      // never be deleted even if it somehow made it into the list.
+      .filter(c => !(c.network === 'mc' && mcFavs[c.id]));
     if (!chosen.length) {
       showAlert(mode === 'all' ? 'There is nothing to delete.' : 'Nothing is selected.');
       return;

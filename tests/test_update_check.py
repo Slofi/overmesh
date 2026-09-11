@@ -81,6 +81,26 @@ class UpdateCheckTests(unittest.TestCase):
         self.assertFalse(state["available"])
         self.assertIn("boom", state["error"])
 
+    def test_stale_cache_triggers_a_background_refresh(self):
+        # A page load must stay instant, but an old answer must not stay stale: the
+        # endpoint kicks a thread instead of fetching inline.
+        settings._UPDATE_CHECK_STATE["checked_at"] = int(__import__('time').time()) - 3600
+        started = []
+        with mock.patch.object(settings.threading, "Thread", side_effect=lambda *a, **k: mock.Mock(start=lambda: started.append(k.get('target')))) as T,              mock.patch.object(settings, "check_for_update") as chk:
+            app = Flask(__name__); app.register_blueprint(settings.bp)
+            r = app.test_client().get("/api/settings/update/available")
+        self.assertEqual(r.status_code, 200)
+        chk.assert_not_called()                      # never inline
+        self.assertEqual(len(started), 1, "must start exactly one refresh thread")
+        self.assertIs(started[0], chk)               # the thread runs the check
+
+    def test_fresh_cache_does_not_refresh(self):
+        settings._UPDATE_CHECK_STATE["checked_at"] = int(__import__('time').time())
+        with mock.patch.object(settings.threading, "Thread") as T:
+            app = Flask(__name__); app.register_blueprint(settings.bp)
+            r = app.test_client().get("/api/settings/update/available")
+        T.assert_not_called()
+
     def test_check_logs_its_outcome(self):
         # The loop is otherwise invisible in the log; 'did it check?' must be answerable.
         with self.assertLogs("routes.settings", level="INFO") as cm:
@@ -92,7 +112,10 @@ class UpdateCheckTests(unittest.TestCase):
                 settings.check_for_update()
         self.assertTrue(any("up to date" in m for m in cm.output), cm.output)
 
-    def test_endpoint_serves_cached_state_without_fetching(self):
+    def test_endpoint_serves_cached_state_without_fetching_inline(self):
+        # The request itself never fetches (a page load must stay instant). When the
+        # cache is stale the endpoint only *starts a thread* — covered separately above.
+        settings._UPDATE_CHECK_STATE["checked_at"] = int(__import__('time').time())
         app = Flask(__name__)
         app.register_blueprint(settings.bp)
         with mock.patch.object(settings, "_git_info") as git_info:

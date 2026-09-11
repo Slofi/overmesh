@@ -38,6 +38,8 @@ _UPDATE_STATUS_IGNORED_PATHS = {"secret.key"}
 # so the browser can show a notice without triggering a fetch itself.
 _UPDATE_CHECK_INITIAL_DELAY = 25      # let radios/serial settle after a restart
 _UPDATE_CHECK_INTERVAL = 6 * 3600     # re-check; a long-running app would otherwise never notice
+_UPDATE_CHECK_STALE_AFTER = 10 * 60   # asking the endpoint this long after the last check refreshes it
+_update_check_thread = None           # only one on-demand refresh at a time
 _UPDATE_CHECK_STATE = {
     "checked_at": None,
     "available": False,
@@ -349,9 +351,29 @@ def update_check_loop():
         time.sleep(_UPDATE_CHECK_INTERVAL)
 
 
+def _refresh_update_check_if_stale():
+    """Kick a background check when the cached answer is old.
+
+    The page load must stay instant (no git fetch in the request path), but the
+    answer must also not be up to _UPDATE_CHECK_INTERVAL stale — otherwise a
+    release published minutes ago would go unnoticed until the next 6h sweep. The
+    refresh happens in a thread and announces itself over SSE if it finds
+    something, so an open page shows the notice without polling.
+    """
+    global _update_check_thread
+    if _update_check_thread is not None and _update_check_thread.is_alive():
+        return
+    checked_at = _UPDATE_CHECK_STATE.get("checked_at") or 0
+    if (time.time() - checked_at) < _UPDATE_CHECK_STALE_AFTER:
+        return
+    _update_check_thread = threading.Thread(target=check_for_update, daemon=True)
+    _update_check_thread.start()
+
+
 @bp.route("/api/settings/update/available")
 def api_settings_update_available():
-    """Cached result of the last update check (instant — never fetches)."""
+    """Cached result of the last update check (instant — never fetches inline)."""
+    _refresh_update_check_if_stale()
     return jsonify(_UPDATE_CHECK_STATE)
 
 

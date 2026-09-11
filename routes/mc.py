@@ -31,7 +31,7 @@ from mesh_mc import (MC_PAYLOAD_TYPE_NAMES, MC_ROUTE_TYPE_NAMES,
                      set_contact_path, reset_all_paths, remote_repeater_read,
                      remote_repeater_command, clear_mc_all_contacts,
                      get_rc_collect_events, get_local_neighbors, get_mc_scope_state,
-                     apply_mc_auto_add_contacts, get_mc_auto_add_state,
+                     get_mc_auto_add_state,
                      store_mc_contact)
 from db import (
     delete_mc_channel_messages,
@@ -179,7 +179,13 @@ def _mc_lookup_full_contact(radio_id, prefix):
     if not merged:
         merged = dict(get_mc_contact_archive(radio_id))
     archive = dict(get_mc_contact_archive(radio_id))
-    pools = (merged, archive)
+    # `live` MUST be searched: a contact can be on the radio but absent from the
+    # merged/archive views (e.g. right after a connect, before contacts load), and
+    # the docstring promises "live + merged contacts first, then OM's archive".
+    # `found` is keyed by full pubkey, so the same contact appearing in two pools
+    # still counts once; a *different* contact sharing the prefix stays ambiguous
+    # and is refused rather than guessed.
+    pools = (merged, live, archive)
     found = {}
     for pool in pools:
         for k, v in pool.items():

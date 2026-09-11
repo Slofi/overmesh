@@ -2735,7 +2735,10 @@ if (targetEl) {
   function deleteMcContact(id, name, radioId) {
     _mcDeleteTarget = {id, name, radioId};
     const msg = document.getElementById('mc-delete-msg');
-    if (msg) msg.textContent = `Remove "${name}"? Where should it be removed from?`;
+    // MC stars are browser-side only; "Remove everywhere" would take the star with it.
+    const fav = !!mcFavs[id];
+    if (msg) msg.innerHTML = `Remove "${escHtml(name)}"? Where should it be removed from?`
+      + (fav ? '<br><span style="color:#f59e0b;font-size:12px">This contact is one of your favourites — "Remove everywhere" drops the star too.</span>' : '');
     const modal = document.getElementById('mc-delete-modal');
     if (modal) modal.classList.add('open');
   }
@@ -3413,7 +3416,15 @@ if (targetEl) {
   // ── Delete node ────────────────────────────────────────────────────────────
   function deleteNode(nodeId, name, radioId='') {
     document.getElementById('confirm-ok').textContent = 'Delete';
-    showConfirm(`Delete "${name}" from the device and OverMesh history?`, () => {
+    // Deleting the OM row also drops the star/ignore flags stored on it, so say so
+    // rather than silently losing them (favourites are deliberate state).
+    const _n = allNodes.find(x => x.id === nodeId && (!radioId || x.radio_id === radioId))
+            || allNodes.find(x => x.id === nodeId);
+    const _flags = _n ? [_n.is_favorite ? 'starred (favourite)' : '', _n.is_ignored ? 'ignored/muted' : ''].filter(Boolean) : [];
+    const _warn = _flags.length
+      ? `<br><small style="color:#f59e0b">This node is ${_flags.join(' and ')} — deleting it also drops that setting.</small>`
+      : '';
+    showConfirm(`Delete "${name}" from the device and OverMesh history?${_warn}`, () => {
       const qs = radioId ? `?radio_id=${encodeURIComponent(radioId)}` : '';
       fetch(BASE_PATH + `/api/db/node/${encodeURIComponent(nodeId)}${qs}`, { method: 'DELETE' })
         .then(r => {

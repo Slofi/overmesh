@@ -48,6 +48,14 @@ assert(/openNodeCleanupModal\(filtered\.nodes, days, filtered\.kept\.length\)/.t
 assert(/favourite\$\{keptFavs === 1 \? '' : 's'\} kept and never listed/.test(src),
        'the modal must tell the user how many favourites were kept');
 
+// Single deletes must warn when a star/ignore flag would be dropped too.
+assert(/This contact is one of your favourites — "Remove everywhere" drops the star too/.test(src),
+       'MC single delete must warn when removing a starred contact');
+assert(/deleting it also drops that setting/.test(src),
+       'MT single delete must warn when removing a starred/ignored node');
+assert(/const fav = !!mcFavs\[id\]/.test(src),
+       'the MC delete warning must be driven by the actual favourite state');
+
 // Clearing ALL contacts is a different, explicit action — it must say that stars
 // are not spared (it cannot know them server-side either).
 assert(/starred \(favourite\) contacts are <b>not<\/b> spared/.test(src),

@@ -292,7 +292,7 @@ def _git_info(fetch=False):
     return info
 
 
-def check_for_update(push=True):
+def check_for_update():
     """One upstream check (git fetch). Returns the cached state dict.
 
     Never fetches while an update job is running (that job does its own fetch and
@@ -336,7 +336,7 @@ def check_for_update(push=True):
     if state["available"]:
         log.info(f"update available: {state['remote_commit']} ({state['behind']} commit(s) behind)")
     # Only announce the transition (not every periodic re-check).
-    if push and should_push:
+    if should_push:
         try:
             push_to_sse(json.dumps({
                 "type": "update_available",

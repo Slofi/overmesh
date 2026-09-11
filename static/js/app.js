@@ -364,8 +364,6 @@
   // notice is a clickable toast that opens Settings → App (where Update lives).
   // Dismissal is remembered per remote commit, so silencing one release does not
   // hide the next one.
-  let _updateNoticeCommit = null;
-
   function _updateNoticeDismissed(commit) {
     if (!commit) return false;
     try { return localStorage.getItem('omUpdateNoticeDismissed') === commit; } catch(_) { return false; }
@@ -382,14 +380,13 @@
     Promise.resolve(settingsLoadUpdateStatus(false)).catch(() => {});
   }
 
-  function showUpdateNotice(remoteCommit, behind, opts = {}) {
+  function showUpdateNotice(remoteCommit, behind) {
     if (!remoteCommit) return;
-    if (!opts.force && _updateNoticeDismissed(remoteCommit)) return;
+    if (_updateNoticeDismissed(remoteCommit)) return;
     const stack = document.getElementById('toast-stack');
     if (!stack) return;
     if (stack.querySelector('[data-toast-tag="update-available"]')) return;   // already shown
     const n = parseInt(behind, 10);
-    _updateNoticeCommit = remoteCommit;
     showToast(
       '⬆ OverMesh update available',
       `<b>${escHtml(remoteCommit)}</b>${n > 1 ? ` (${n} commits)` : ''} is ready to install.` +

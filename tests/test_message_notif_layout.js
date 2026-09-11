@@ -71,4 +71,37 @@ assert(_pickMcSenderName({}, {}, '') === '?', 'no sender -> ?');
 assert(_pickMcSenderName({ k: { id: 'x', full_key: 'x', long_name: '' } }, {}, 'x') === 'x',
        'a nameless contact falls back to the id, not an empty row');
 
+// ── Alerts panel parity (Filip: "fix those two") ────────────────────────────
+// The Alerts record must mirror the pop-up (sender row) ...
+assert(/_logAlert\('message', title, _p\.html, \{\s*\n\s*network: 'mt',/.test(src),
+       'MT alert body must carry the sender row and an mt network tag');
+assert(/_logAlert\('message', title, _p\.html, \{ network: 'mc',/.test(src),
+       'MC alert body must carry the sender row and an mc network tag');
+
+// ... and an Alerts click must jump to the right conversation on BOTH networks.
+assert(/a\.meta\.network === 'mt'/.test(src), 'the Alerts panel must dispatch MT alerts');
+assert(/jumpToMtChat\(/.test(src), 'jumpToMtChat() must exist and be used');
+
+// Drive the real jumpToMtChat: channel message -> channel tab, DM -> dm tab.
+const jm = src.match(/function jumpToMtChat\(channel, fromId\) \{[\s\S]*?\n  \}/);
+assert(jm, 'jumpToMtChat() must exist');
+const calls = [];
+const jumpToMtChat = new Function(
+  'setChatNetwork', 'switchTab', 'switchChatChannel', 'document', 'setTimeout',
+  'return ' + jm[0]
+)(
+  net => calls.push('network:' + net),
+  tab => calls.push('tab:' + tab),
+  idx => calls.push('channel:' + idx),
+  { getElementById: () => ({ scrollTop: 0, scrollHeight: 42 }) },
+  fn => fn()   // run timers synchronously
+);
+jumpToMtChat(3, null);
+assert(calls.includes('network:mt'), 'jump must select the MT network');
+assert(calls.includes('tab:chat'), 'jump must open the Chat tab');
+assert(calls.includes('channel:3'), 'channel message must select that channel');
+calls.length = 0;
+jumpToMtChat(0, '!abc123');
+assert(calls.includes('channel:dm:!abc123'), 'DM must select the dm: tab (got ' + calls.join(',') + ')');
+
 console.log('ok: message pop-up layout (system + channel / sender / message) for MT and MC');

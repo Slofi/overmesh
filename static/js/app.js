@@ -225,7 +225,9 @@
             ? `<span class="alert-node-link" onclick="_alertNodePopup(event,'${escHtml(a.id)}')">${a.body}</span>`
             : a.body;
           const msgClick = isMsgAlert
-            ? `onclick="toggleAlertsPanel();jumpToMcChat(null,'${escHtml(a.meta.radioId)}',${a.meta.channel},'${escHtml(a.meta.fromId || '')}')"`
+            ? (a.meta.network === 'mt'
+               ? `onclick="toggleAlertsPanel();jumpToMtChat(${a.meta.channel ?? 0},'${escHtml(a.meta.fromId || '')}')"`
+               : `onclick="toggleAlertsPanel();jumpToMcChat(null,'${escHtml(a.meta.radioId)}',${a.meta.channel},'${escHtml(a.meta.fromId || '')}')"`)
             : '';
           return `
           <div class="alert-entry alert-type-${escHtml(a.type)}${isMsgAlert ? ' alert-clickable' : ''}" ${msgClick}>
@@ -1644,7 +1646,14 @@
               const title = _p.title;
               maybeShowInAppMessage(title, _p.html, `toast-msg-${data.id}`);
               sendNotif(title, _p.plain, `msg-${data.id}`, 'message');
-              _logAlert('message', title, escHtml(data.text));
+              // Alerts record mirrors the pop-up (sender row included) and carries the
+              // meta the Alerts panel needs to jump back to this conversation.
+              _logAlert('message', title, _p.html, {
+                network: 'mt',
+                radioId: data.radio_id,
+                channel: data.channel ?? 0,
+                fromId: data.is_dm ? (data.from_id || null) : null,
+              });
             }
           }
           if (!data.radio_id || data.radio_id === activeRadioId) renderChannelTabs();
@@ -12132,7 +12141,7 @@ if (targetEl) {
           const title = _p.title;
           maybeShowInAppMessage(title, _p.html, `toast-mc-msg-${data.radio_id}-${data.id || data.ts || Date.now()}`);
           sendNotif(title, _p.plain, `mc-msg-${data.radio_id}-${data.id || data.ts || Date.now()}`, 'message');
-          _logAlert('message', title, escHtml(_text), { radioId: data.radio_id, fromId: data.subtype === 'dm' ? (data.from_id || null) : null, channel: data.channel ?? 0, subtype: data.subtype });
+          _logAlert('message', title, _p.html, { network: 'mc', radioId: data.radio_id, fromId: data.subtype === 'dm' ? (data.from_id || null) : null, channel: data.channel ?? 0, subtype: data.subtype });
         }
       }
       if (addedMcMessage) {
@@ -15233,6 +15242,23 @@ if (targetEl) {
       switchMcTab(tab);
       setTimeout(() => {
         const c = document.getElementById('mc-chat-messages');
+        if (c) c.scrollTop = c.scrollHeight;
+      }, 80);
+    }, 80);
+  }
+
+  // MT counterpart of jumpToMcChat, with the same behaviour so an Alerts click
+  // reads the same on both networks: open Chat on the MT network, select the
+  // channel (or the DM tab) and scroll to the newest message. Like the MC version
+  // it does not force a radio switch — the tab list belongs to the active radio.
+  function jumpToMtChat(channel, fromId) {
+    try { setChatNetwork('mt'); } catch(e) {}
+    switchTab('chat');
+    const idx = fromId ? `dm:${fromId}` : channel;
+    setTimeout(() => {
+      try { switchChatChannel(idx); } catch(e) {}
+      setTimeout(() => {
+        const c = document.getElementById('chat-messages');
         if (c) c.scrollTop = c.scrollHeight;
       }, 80);
     }, 80);

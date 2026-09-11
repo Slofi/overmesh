@@ -1591,7 +1591,15 @@
             playNotificationSound('message');
             // Browser notification
             if (document.hidden || currentTab !== 'chat' || chatChannel !== msgCh) {
-              const title = data.is_dm ? `DM from ${data.from_name}` : `${data.from_name} on CH${data.channel}`;
+              // Match the MC notification: network + CHANNEL NAME in the title, the
+              // message in the body (DM keeps "from <name>"). channel_name comes from
+              // the server payload; the tab list is a fallback for older/queued rows,
+              // then the raw index. The sender stays visible in the chat list itself —
+              // MC does the same, so both networks read identically.
+              const _mtChan = data.channel_name
+                || (chatChannels.find(c => c.index === data.channel) || {}).name
+                || ('CH' + data.channel);
+              const title = data.is_dm ? `MT DM from ${data.from_name}` : `MT ${_mtChan}`;
               maybeShowInAppMessage(title, escHtml(data.text), `toast-msg-${data.id}`);
               sendNotif(title, data.text, `msg-${data.id}`, 'message');
               _logAlert('message', title, escHtml(data.text));

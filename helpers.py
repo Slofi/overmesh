@@ -344,3 +344,27 @@ def get_node_data():
                     connections[node_id]["iface"]  = None
 
     return result
+
+
+def mt_channel_name(iface, index):
+    """Display name of a Meshtastic channel on this interface, by index.
+
+    Mirrors the naming the chat UI uses in /api/chat/channels (same fallbacks:
+    the channel's own settings.name, else "Primary" for index 0, else "CH<index>"),
+    so a message notification can show the channel name the way the MC side does.
+    Never raises — a notification must not fail because a radio object is odd.
+    """
+    idx = 0 if index is None else index
+    try:
+        ln = getattr(iface, "localNode", None)
+        for ch in (getattr(ln, "channels", None) or []):
+            if getattr(ch, "index", None) != idx:
+                continue
+            settings = getattr(ch, "settings", None)
+            name = (getattr(settings, "name", "") or "") if settings else ""
+            if name:
+                return name
+            break
+    except Exception:
+        pass
+    return "Primary" if idx == 0 else f"CH{idx}"

@@ -10,7 +10,7 @@ from flask import Blueprint, Response, jsonify, request
 from config import BASE_DIR, CONFIG
 from cross import maybe_forward_mt_message
 from db import save_message
-from helpers import _next_msg_id, get_node_name, mt_node_id_from_num, push_to_sse
+from helpers import _next_msg_id, get_node_name, mt_channel_name, mt_node_id_from_num, push_to_sse
 from mesh import get_any_iface, get_any_iface_with_id, get_iface_by_radio
 from state import (
     chat_lock, chat_messages,
@@ -58,12 +58,11 @@ def api_chat_channels():
                 role = getattr(ch, "role", 0)
                 if role == 0:
                     continue
-                settings = getattr(ch, "settings", None)
-                name     = (getattr(settings, "name", "") or "") if settings else ""
                 index    = getattr(ch, "index", 0)
                 result.append({
                     "index": index,
-                    "name":  name or ("Primary" if index == 0 else f"CH{index}"),
+                    # one naming rule, shared with the message notification
+                    "name":  mt_channel_name(iface, index),
                     "role":  role,
                 })
         return jsonify(result or [{"index": 0, "name": "Primary", "role": 1}])

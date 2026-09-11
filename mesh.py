@@ -19,7 +19,7 @@ from config import CONFIG, CONFIG_LOCK, DATA_DIR, save_config
 from cross import maybe_forward_mt_message
 from db import get_prefs_db, init_msgs_db, load_messages, save_message, update_message_status
 from bridge import publish_inbound_message
-from helpers import _next_msg_id, _radio_id_for_iface, get_node_name, push_to_sse
+from helpers import _next_msg_id, _radio_id_for_iface, get_node_name, mt_channel_name, push_to_sse
 from sense import _sense_lock, _sense_state
 from state import (
     chat_lock, chat_messages,
@@ -357,6 +357,9 @@ def on_text_receive(packet, interface):
             "to_id":        to_id,
             "to_name":      get_node_name(to_id) if is_dm else "All",
             "channel":      channel,
+            # Channel NAME (e.g. "Don't Panic"), not just the index — the chat
+            # notification titles match the MC side, which shows the channel name.
+            "channel_name": mt_channel_name(interface, channel),
             "text":         text,
             "ts":           ts,
             "snr":          snr,

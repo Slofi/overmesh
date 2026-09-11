@@ -391,13 +391,17 @@
     const n = parseInt(behind, 10);
     _updateNoticeCommit = remoteCommit;
     showToast(
-      'OverMesh update available',
-      `<b>${escHtml(remoteCommit)}</b>${n > 1 ? ` (${n} commits)` : ''} is ready to install.<br>` +
-      'Click to open <b>Settings → App</b> and update.',
-      'node-return', 'update-available', {persistent: true}
+      '⬆ OverMesh update available',
+      `<b>${escHtml(remoteCommit)}</b>${n > 1 ? ` (${n} commits)` : ''} is ready to install.` +
+      '<br><span class="toast-update-cta">Open Settings → App</span>',
+      'update', 'update-available', {persistent: true}
     );
     const toast = stack.querySelector('[data-toast-tag="update-available"]');
     if (!toast) return;
+    // Persistent (no timeout) and nothing in the app evicts toasts from the stack,
+    // so this stays put — on this page load and every reload — until the X is
+    // clicked, which is the only thing that removes it (and it remembers the
+    // release, so the notice returns for the *next* one).
     toast.style.cursor = 'pointer';
     toast.title = 'Open Settings → App to update OverMesh';
     toast.onclick = (ev) => {

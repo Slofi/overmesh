@@ -30,6 +30,18 @@ assert(/omUpdateNoticeDismissed/.test(src), 'dismissal must be remembered (per c
 assert(/localStorage\.setItem\('omUpdateNoticeDismissed', remoteCommit\)/.test(src),
        'dismissal must be stored against the remote commit so the next release still shows');
 
+// The notice must be LOUD and STICKY: loud variant + CTA chip, and persistent
+// (no timeout) so only the X removes it.
+const css = fs.readFileSync('/home/slofi/overmesh/static/css/app.css', 'utf8');
+assert(/\.toast\.toast-update\s*\{/.test(css), 'a dedicated loud .toast-update style must exist in app.css');
+assert(/@keyframes update-glow/.test(css), 'the one-off attention glow must be defined');
+assert(/'update', 'update-available', \{persistent: true\}/.test(src),
+       'the notice must use the loud variant and be persistent');
+assert(/toast-update-cta/.test(src), 'the notice must carry a visible CTA chip');
+assert(!/stack\.innerHTML/.test(src), 'nothing may wipe the toast stack — the notice must survive');
+assert(/localStorage\.setItem\('omUpdateNoticeDismissed', remoteCommit\)/.test(src),
+       'only the X (per release) dismisses it');
+
 // Wiring order: showToast must be defined before the notice uses it (same IIFE).
 assert(src.indexOf('function showToast(') < src.indexOf('function showUpdateNotice('),
        'showToast must be defined before showUpdateNotice');

@@ -202,6 +202,35 @@
     .toast.toast-node { border-left-color: var(--accent); }
     .toast.toast-node-return { border-left-color: #f59e0b; }
     .toast.toast-message { border-left-color: var(--mc-color); }
+    /* Update-available notice — deliberately louder than the chat toasts: it is
+       actionable, it must not be missed, and it stays until the X is clicked
+       (showToast is called with persistent:true). The one-off glow draws the eye
+       without pulsing forever. */
+    .toast.toast-update {
+      background: rgba(6, 24, 16, 0.97);
+      border: 1px solid #22c55e;
+      border-left: 5px solid #22c55e;
+      box-shadow: 0 12px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(34,197,94,0.28);
+      padding: 12px 14px;
+      animation: toast-in 0.16s ease-out, update-glow 1.3s ease-in-out 2;
+    }
+    .toast.toast-update .toast-title { font-size: 14px; color: #86efac; }
+    .toast.toast-update .toast-body { font-size: 12.5px; color: var(--text); }
+    .toast.toast-update .toast-close { font-size: 16px; padding: 0 2px; }
+    .toast-update-cta {
+      display: inline-block;
+      margin-top: 9px;
+      padding: 5px 12px;
+      border-radius: 6px;
+      background: #22c55e;
+      color: #052e16;
+      font-weight: 700;
+      font-size: 12px;
+    }
+    @keyframes update-glow {
+      0%, 100% { box-shadow: 0 12px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(34,197,94,0.28); }
+      50%      { box-shadow: 0 12px 32px rgba(0,0,0,0.5), 0 0 0 6px rgba(34,197,94,0.22); }
+    }
     .toast-head {
       display: flex;
       align-items: flex-start;

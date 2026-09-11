@@ -104,4 +104,47 @@ calls.length = 0;
 jumpToMtChat(0, '!abc123');
 assert(calls.includes('channel:dm:!abc123'), 'DM must select the dm: tab (got ' + calls.join(',') + ')');
 
+// ── Sweep #6: caches and alert text ─────────────────────────────────────────
+// The toast dedupe map is keyed by tag, and message tags carry the message id, so
+// it must be pruned or it grows for the life of the page.
+const pm = src.match(/function _pruneToastSeen\(map, now, windowMs = 15000, max = 500\) \{[\s\S]*?\n  \}/);
+assert(pm, '_pruneToastSeen() must exist');
+const _pruneToastSeen = eval('(' + pm[0] + ')');
+
+const small = new Map([['a', 1000], ['b', 1001]]);
+_pruneToastSeen(small, 1100);
+assert(small.size === 2, 'a small map is left alone');
+
+// all fresh -> keep the newest ~80% of the cap, drop the oldest
+const fresh = new Map();
+for (let i = 0; i < 1000; i++) fresh.set('t' + i, 100000 + i);
+_pruneToastSeen(fresh, 100999);
+assert(fresh.size === 400, 'over-cap map trimmed to 80% of max (got ' + fresh.size + ')');
+assert(fresh.has('t999') && fresh.has('t600') && !fresh.has('t0'),
+       'the newest entries survive, the oldest go');
+
+// stale entries go first, and fresh ones are never dropped to satisfy the cap
+const mixed = new Map();
+for (let i = 0; i < 600; i++) mixed.set('old' + i, 1000);          // far older than the window
+mixed.set('fresh1', 100500); mixed.set('fresh2', 100500);
+_pruneToastSeen(mixed, 100500);
+assert(mixed.size === 2 && mixed.has('fresh1') && mixed.has('fresh2'),
+       'stale entries pruned first, fresh ones kept (got ' + mixed.size + ')');
+
+// Alert bodies are HTML now, so the Log prefill must turn <br> into a real newline
+// BEFORE stripping tags, or the sender row and the message run together.
+const ap = src.match(/function _alertPlainText\(html\) \{[\s\S]*?\n  \}/);
+assert(ap, '_alertPlainText() must exist');
+const _alertPlainText = eval('(' + ap[0] + ')');
+assert(_alertPlainText('EDC-3<br>hello there') === 'EDC-3\nhello there',
+       'sender row and message keep their line break (got ' +
+       JSON.stringify(_alertPlainText('EDC-3<br>hello there')) + ')');
+assert(_alertPlainText('a<br/>b<br />c') === 'a\nb\nc', 'all <br> spellings become newlines');
+assert(_alertPlainText('<b>x</b> plain') === 'x plain', 'other tags still stripped');
+assert(_alertPlainText(null) === '', 'null body is safe');
+assert(_alertPlainText('single line') === 'single line', 'single-line bodies unchanged');
+
+const uses = (src.match(/_alertPlainText\(a\.body\)/g) || []).length;
+assert(uses === 4, 'every alert->Log path must use the helper (found ' + uses + ')');
+
 console.log('ok: message pop-up layout (system + channel / sender / message) for MT and MC');

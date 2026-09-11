@@ -329,6 +329,19 @@
     return value * (_returnedGapUnit() === 'hours' ? 3600 : 24 * 3600);
   }
 
+  // _inAppToastSeen is keyed by toast tag and message tags carry the MESSAGE ID, so
+  // on a busy mesh it would grow for the life of the page. Entries older than the
+  // dedupe window are useless: drop those first, then the oldest if still large.
+  function _pruneToastSeen(map, now, windowMs = 15000, max = 500) {
+    if (map.size <= max) return map;
+    for (const [k, ts] of map) { if (now - ts > windowMs) map.delete(k); }
+    // NOTE: iterate keys explicitly — `for (const k of map)` yields [key, value]
+    // entries, so map.delete(k) would silently delete nothing.
+    let drop = map.size - Math.floor(max * 0.8);
+    for (const k of map.keys()) { if (drop-- <= 0) break; map.delete(k); }
+    return map;
+  }
+
   function showToast(title, body, type = 'message', tag = '', opts = {}) {
     const stack = document.getElementById('toast-stack');
     if (!stack) return;
@@ -337,6 +350,7 @@
       const prev = _inAppToastSeen.get(tag) || 0;
       if (now - prev < 15000) return;
       _inAppToastSeen.set(tag, now);
+      _pruneToastSeen(_inAppToastSeen, now);
     }
     const persistent = !!opts.persistent;
     const toast = document.createElement('div');
@@ -22692,13 +22706,22 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     document.getElementById('toc-category').scrollIntoView({block: 'center', behavior: 'smooth'});
   }
 
+  // Alert bodies may carry HTML (message alerts mirror the pop-up, sender on its
+  // own row). The Log tab wants plain text: turn <br> into a real newline FIRST,
+  // then drop any remaining tags, so rows do not run together.
+  function _alertPlainText(html) {
+    return String(html == null ? '' : html)
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<[^>]+>/g, '');
+  }
+
   function tocFromAlert(alertId) {
     const a = _alertsLoad().find(x => x.id === alertId);
     if (!a) return;
     const ts = a.ts ? Math.floor(a.ts / 1000) : Math.floor(Date.now() / 1000);
     if (a.type === 'geofence') {
       // body is already HTML-escaped plain text like "NodeName entered geofenceName"
-      const detail = a.body.replace(/<[^>]+>/g, '');
+      const detail = _alertPlainText(a.body);
       const body = _tocStructuredMarkdown({
         Priority: 'Medium',
         Type: 'Geofence',
@@ -22712,11 +22735,11 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       });
       _tocPrefill('ALERT', body, ts, 'alert');
     } else if (a.type === 'message') {
-      _tocPrefill('COMMS', a.body.replace(/<[^>]+>/g, ''), ts);
+      _tocPrefill('COMMS', _alertPlainText(a.body), ts);
     } else if (a.type === 'node-new' || a.type === 'node-return') {
-      _tocPrefill('CONTACT', a.body.replace(/<[^>]+>/g, ''), ts);
+      _tocPrefill('CONTACT', _alertPlainText(a.body), ts);
     } else {
-      _tocPrefill('NOTE', `${a.title}: ${a.body.replace(/<[^>]+>/g, '')}`, ts);
+      _tocPrefill('NOTE', `${a.title}: ${_alertPlainText(a.body)}`, ts);
     }
   }
 

@@ -86,7 +86,10 @@ class WiringTests(unittest.TestCase):
         self.assertIn("mt_channel_name(iface, index)", self.chat)
 
     def test_client_title_uses_the_channel_name(self):
-        self.assertIn("const title = data.is_dm ? `MT DM from ${data.from_name}` : `MT ${_mtChan}`;", self.js)
+        # the title now comes from the shared 3-row layout helper
+        self.assertIn("const _p = _msgNotifParts('MT', {", self.js)
+        self.assertIn("chanName: _mtChan,", self.js)
+        self.assertIn("const title = _p.title;", self.js)
         self.assertIn("data.channel_name", self.js)
 
     def test_client_falls_back_before_showing_a_bare_index(self):

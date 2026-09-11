@@ -535,6 +535,34 @@
     if (gapUnitEl) gapUnitEl.value = _returnedGapUnit();
   }
 
+  // Message pop-up layout, shared by BOTH networks (Filip, 2026-09-11):
+  //   row 1: system + channel      ("MT Slovenija", "MC Don't Panic", "MT DM")
+  //   row 2: sender
+  //   row 3: the message
+  // Returns the title plus both bodies: a browser/system notification can only
+  // take plain text (newline), the in-app toast renders HTML (<br>).
+  function _msgNotifParts(system, { isDm = false, chanName = '', sender = '', text = '' } = {}) {
+    const chan = isDm ? 'DM' : (chanName || '');
+    const who  = sender || 'Unknown';
+    const body = text || '';
+    return {
+      title: chan ? `${system} ${chan}` : system,
+      plain: `${who}\n${body}`,
+      html:  `${escHtml(who)}<br>${escHtml(body)}`,
+    };
+  }
+
+  // MC messages carry the sender's public-key prefix, not a name — resolve it from
+  // the contact list (records expose both `id` and `full_key`).
+  function _mcSenderName(data) {
+    const fid = data.from_id || '';
+    if (mcDmContacts[fid]) return mcDmContacts[fid];
+    const map = mcContacts[data.radio_id] || {};
+    const hit = Object.values(map).find(c => c && fid &&
+      (c.id === fid || c.full_key === fid || (c.full_key || '').startsWith(fid)));
+    return (hit && (hit.long_name || hit.name)) || fid || '?';
+  }
+
   function sendNotif(title, body, tag, type, opts = {}) {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
     const prefKey = type === 'node' ? 'notif_nodes' : 'notif_messages';
@@ -1599,9 +1627,15 @@
               const _mtChan = data.channel_name
                 || (chatChannels.find(c => c.index === data.channel) || {}).name
                 || ('CH' + data.channel);
-              const title = data.is_dm ? `MT DM from ${data.from_name}` : `MT ${_mtChan}`;
-              maybeShowInAppMessage(title, escHtml(data.text), `toast-msg-${data.id}`);
-              sendNotif(title, data.text, `msg-${data.id}`, 'message');
+              const _p = _msgNotifParts('MT', {
+                isDm: !!data.is_dm,
+                chanName: _mtChan,
+                sender: data.from_name || data.from_id,
+                text: data.text,
+              });
+              const title = _p.title;
+              maybeShowInAppMessage(title, _p.html, `toast-msg-${data.id}`);
+              sendNotif(title, _p.plain, `msg-${data.id}`, 'message');
               _logAlert('message', title, escHtml(data.text));
             }
           }
@@ -12079,12 +12113,18 @@ if (targetEl) {
         playNotificationSound('message');
         const currentMcTab = (currentTab === 'chat' && chatNetwork === 'mc') ? mcChatTab : null;
         if (document.hidden || currentMcTab !== msgTab) {
-          const title = data.subtype === 'dm'
-            ? `MC DM from ${mcDmContacts[data.from_id] || data.from_id || '?'}`
-            : `MC ${mcKnownChannels[data.channel ?? 0] || ('CH' + (data.channel ?? 0))}`;
-          maybeShowInAppMessage(title, escHtml(_mcMsgText(data, mcDmContacts[data.from_id] || '')), `toast-mc-msg-${data.radio_id}-${data.id || data.ts || Date.now()}`);
-          sendNotif(title, _mcMsgText(data, mcDmContacts[data.from_id] || ''), `mc-msg-${data.radio_id}-${data.id || data.ts || Date.now()}`, 'message');
-          _logAlert('message', title, escHtml(_mcMsgText(data, mcDmContacts[data.from_id] || '')), { radioId: data.radio_id, fromId: data.subtype === 'dm' ? (data.from_id || null) : null, channel: data.channel ?? 0, subtype: data.subtype });
+          const _sender = _mcSenderName(data);
+          const _text   = _mcMsgText(data, _sender);   // drops a leading "Name: "
+          const _p = _msgNotifParts('MC', {
+            isDm: data.subtype === 'dm',
+            chanName: mcKnownChannels[data.channel ?? 0] || ('CH' + (data.channel ?? 0)),
+            sender: _sender,
+            text: _text,
+          });
+          const title = _p.title;
+          maybeShowInAppMessage(title, _p.html, `toast-mc-msg-${data.radio_id}-${data.id || data.ts || Date.now()}`);
+          sendNotif(title, _p.plain, `mc-msg-${data.radio_id}-${data.id || data.ts || Date.now()}`, 'message');
+          _logAlert('message', title, escHtml(_text), { radioId: data.radio_id, fromId: data.subtype === 'dm' ? (data.from_id || null) : null, channel: data.channel ?? 0, subtype: data.subtype });
         }
       }
       if (addedMcMessage) {

@@ -40,6 +40,7 @@ _UPDATE_CHECK_INITIAL_DELAY = 25      # let radios/serial settle after a restart
 _UPDATE_CHECK_INTERVAL = 6 * 3600     # re-check; a long-running app would otherwise never notice
 _UPDATE_CHECK_STALE_AFTER = 10 * 60   # asking the endpoint this long after the last check refreshes it
 _update_check_thread = None           # only one on-demand refresh at a time
+_update_check_lock = threading.Lock()  # one check at a time: one git fetch, atomic state+transition
 _UPDATE_CHECK_STATE = {
     "checked_at": None,
     "available": False,
@@ -299,24 +300,31 @@ def check_for_update(push=True):
     """
     if _UPDATE_STATE.get("running"):
         return _UPDATE_CHECK_STATE
-    try:
-        info = _git_info(fetch=True)
-    except Exception as e:
-        log.warning(f"update check failed: {e}")
-        _UPDATE_CHECK_STATE.update({"error": str(e), "checked_at": int(time.time())})
-        return _UPDATE_CHECK_STATE
+    # Serialised: the periodic loop and an on-demand refresh could otherwise run two
+    # git fetches at once (contending on refs) and interleave the state, which also
+    # made the "did it just become available?" test race and could double-push the
+    # SSE notice. The lock is held across the fetch on purpose — a second check
+    # waiting is exactly what we want.
+    with _update_check_lock:
+        try:
+            info = _git_info(fetch=True)
+        except Exception as e:
+            log.warning(f"update check failed: {e}")
+            _UPDATE_CHECK_STATE.update({"error": str(e), "checked_at": int(time.time())})
+            return _UPDATE_CHECK_STATE
 
-    was_available = bool(_UPDATE_CHECK_STATE.get("available"))
-    _UPDATE_CHECK_STATE.update({
-        "checked_at": int(time.time()),
-        "available": bool(info.get("update_available")),
-        "remote_commit": info.get("remote_commit"),
-        "local_commit": info.get("commit"),
-        "behind": int(info.get("behind") or 0),
-        "version": info.get("version"),
-        "error": None if info.get("fetch_ok", True) else info.get("fetch_error"),
-    })
-    state = _UPDATE_CHECK_STATE
+        was_available = bool(_UPDATE_CHECK_STATE.get("available"))
+        _UPDATE_CHECK_STATE.update({
+            "checked_at": int(time.time()),
+            "available": bool(info.get("update_available")),
+            "remote_commit": info.get("remote_commit"),
+            "local_commit": info.get("commit"),
+            "behind": int(info.get("behind") or 0),
+            "version": info.get("version"),
+            "error": None if info.get("fetch_ok", True) else info.get("fetch_error"),
+        })
+        state = dict(_UPDATE_CHECK_STATE)
+        should_push = bool(state["available"]) and not was_available
     # One line per check: the loop is otherwise invisible in the log, and 'did it
     # even check?' is the first question when someone reports a missed release.
     if state["error"]:
@@ -328,7 +336,7 @@ def check_for_update(push=True):
     if state["available"]:
         log.info(f"update available: {state['remote_commit']} ({state['behind']} commit(s) behind)")
     # Only announce the transition (not every periodic re-check).
-    if push and state["available"] and not was_available:
+    if push and should_push:
         try:
             push_to_sse(json.dumps({
                 "type": "update_available",
@@ -361,20 +369,31 @@ def _refresh_update_check_if_stale():
     something, so an open page shows the notice without polling.
     """
     global _update_check_thread
-    if _update_check_thread is not None and _update_check_thread.is_alive():
-        return
-    checked_at = _UPDATE_CHECK_STATE.get("checked_at") or 0
-    if (time.time() - checked_at) < _UPDATE_CHECK_STALE_AFTER:
-        return
-    _update_check_thread = threading.Thread(target=check_for_update, daemon=True)
-    _update_check_thread.start()
+    # check-and-start under the lock: two concurrent page loads would otherwise both
+    # see "no thread running" and start two refreshes.
+    with _update_check_lock:
+        if _update_check_thread is not None and _update_check_thread.is_alive():
+            return
+        checked_at = _UPDATE_CHECK_STATE.get("checked_at") or 0
+        if (time.time() - checked_at) < _UPDATE_CHECK_STALE_AFTER:
+            return
+        _update_check_thread = threading.Thread(target=check_for_update, daemon=True)
+        _update_check_thread.start()
 
 
 @bp.route("/api/settings/update/available")
 def api_settings_update_available():
-    """Cached result of the last update check (instant — never fetches inline)."""
+    """Cached result of the last update check (instant — never fetches inline).
+
+    Same policy as the sibling updater endpoints: loopback/LAN/tailnet only. A
+    remote (public-internet) caller gets 403 — they could not run the updater
+    anyway, and this endpoint can trigger a fetch.
+    """
+    if not _settings_local_request():
+        return jsonify({"error": "Updater is only available from the local machine."}), 403
     _refresh_update_check_if_stale()
-    return jsonify(_UPDATE_CHECK_STATE)
+    with _update_check_lock:
+        return jsonify(dict(_UPDATE_CHECK_STATE))
 
 
 def _run_update_job():

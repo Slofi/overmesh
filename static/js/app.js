@@ -377,8 +377,9 @@
     if (summary) {
       try { summary.scrollIntoView({behavior: 'smooth', block: 'center'}); } catch(e) { summary.scrollIntoView(); }
     }
-    // Populate the panel (it normally loads when the tab is opened).
-    try { settingsLoadUpdateStatus(false); } catch(e) {}
+    // Populate the panel (it normally loads when the tab is opened). It is async, so
+    // swallow a rejection via the promise — a try/catch would not catch it.
+    Promise.resolve(settingsLoadUpdateStatus(false)).catch(() => {});
   }
 
   function showUpdateNotice(remoteCommit, behind, opts = {}) {

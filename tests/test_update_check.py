@@ -101,6 +101,41 @@ class UpdateCheckTests(unittest.TestCase):
             r = app.test_client().get("/api/settings/update/available")
         T.assert_not_called()
 
+    def test_endpoint_is_local_only_like_its_siblings(self):
+        # update/status and update/run are 403 to non-local callers; this endpoint can
+        # trigger a fetch, so it follows the same policy.
+        app = Flask(__name__); app.register_blueprint(settings.bp)
+        with mock.patch.object(settings, "_settings_local_request", return_value=False),              mock.patch.object(settings, "_refresh_update_check_if_stale") as refresh:
+            r = app.test_client().get("/api/settings/update/available")
+        self.assertEqual(r.status_code, 403)
+        refresh.assert_not_called()
+
+    def test_concurrent_requests_start_only_one_refresh(self):
+        # Real threads (patching settings.threading.Thread would patch the shared
+        # module and fake the test's own threads too). The fake check blocks, so the
+        # refresh thread stays alive for the duration — exactly the window in which a
+        # second caller must NOT start another refresh.
+        import threading as _t
+        settings._UPDATE_CHECK_STATE["checked_at"] = 0        # stale
+        calls, entered, release = [], _t.Event(), _t.Event()
+
+        def fake_check(*a, **k):
+            calls.append(1)
+            entered.set()
+            release.wait(3)
+
+        barrier = _t.Barrier(5)
+        with mock.patch.object(settings, "check_for_update", side_effect=fake_check):
+            def call():
+                barrier.wait()
+                settings._refresh_update_check_if_stale()
+            callers = [_t.Thread(target=call) for _ in range(5)]
+            for t in callers: t.start()
+            for t in callers: t.join()
+            entered.wait(2)
+        self.assertEqual(len(calls), 1, f"must start exactly one refresh (got {len(calls)})")
+        release.set()
+
     def test_check_logs_its_outcome(self):
         # The loop is otherwise invisible in the log; 'did it check?' must be answerable.
         with self.assertLogs("routes.settings", level="INFO") as cm:

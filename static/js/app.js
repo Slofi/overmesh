@@ -2011,7 +2011,7 @@
         'Node settings write directly to the connected node over the Meshtastic API. Some settings require a node reboot to take effect.',
         'MT channel keys can be viewed (eye icon) and exported as a URL that others can use to import the channel directly. Import a channel key from a meshcore:// or similar URL using the import field.',
         'Each MT radio keeps a rolling node DB of roughly 80-100 entries. The oldest entries drop out automatically and favorites are pinned, and sending a DM automatically favorites the target — so the node DB cannot hard-fill the way the MC contact table can.',
-        'Node DB Hygiene (per MT radio) can remove nodes this radio has not heard for a chosen number of days from both the radio\'s flash nodeDB and OM, so stale entries and old keys do not accumulate. Favorites, ignored nodes and your own node are always kept. The check runs shortly after boot and then about every 6 hours; it uses local serial admin only, so no radio traffic is sent.',
+        'Node DB Hygiene (per MT radio) can remove nodes this radio has not heard for a chosen number of days from both the radio\'s flash nodeDB and OM, so stale entries and old keys do not accumulate. Favorites and your own node are always kept. Ignored/muted nodes are removed from the radio only — their OM entry stays, so they stay ignored. The check runs shortly after boot and then about every 6 hours; it uses local serial admin only, so no radio traffic is sent.',
         'Clean up stale nodes (History toolbar) does the same purge on demand for a selected list. Removing a node also clears its entry in the radio flash nodeDB, so a stale PKI key cannot linger after the next reboot.'
       ],
       buttons: [
@@ -2033,7 +2033,7 @@
         ['Copy URL', 'Copy the channel join URL to the clipboard.'],
         ['Import channel', 'Import a channel key from a URL or share link.'],
         ['Clear known nodes', 'Clear all remembered remote nodes for this radio from OM history and live cache.'],
-        ['Auto-remove stale nodes', 'Periodically purge nodes this radio has not heard for the configured number of days, from the radio flash nodeDB and OM. Favorites/ignored/local are kept.'],
+        ['Auto-remove stale nodes', 'Periodically purge nodes this radio has not heard for the configured number of days from the radio flash nodeDB and OM. Favorites and your own node are always kept; ignored/muted nodes are removed from the radio only and kept in OM so they stay ignored.'],
         ['Purge after (days)', 'Age threshold for auto-removal (7-365 days, default 30).'],
         ['Save Hygiene', 'Save the Node DB Hygiene setting for this radio.'],
         ['Clean up stale nodes', 'One-off purge: pick an age, review the list, remove from OM and the radio flash nodeDB.']
@@ -17713,7 +17713,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   function settingsMcClearContacts(id, name) {
     document.getElementById('confirm-ok').textContent = 'Clear';
-    showConfirm(`Clear all contacts for "${escHtml(name)}"?<br><small style="color:var(--muted)">Removes from node flash and OM. Cannot be undone.</small>`, () => {
+    showConfirm(`Clear all contacts for "${escHtml(name)}"?<br><small style="color:var(--muted)">Removes from node flash and OM. Cannot be undone — starred (favourite) contacts are <b>not</b> spared by this button; use "Clean up" for a favourite-safe removal.</small>`, () => {
       fetch(BASE_PATH + `/api/mc/${encodeURIComponent(id)}/contacts/all`, {method: 'DELETE'})
         .then(r => r.json())
         .then(d => {

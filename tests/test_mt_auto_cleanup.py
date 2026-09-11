@@ -28,7 +28,7 @@ class MtAutoCleanupPassTests(unittest.TestCase):
     def _run(self, stale):
         with mock.patch.object(nodes_mod, "_collect_stale_nodes", return_value=stale), \
              mock.patch.object(nodes_mod, "_mt_auto_evict_node",
-                               side_effect=lambda rid, nid: (self.evicted.append((rid, nid)) or True)):
+                               side_effect=lambda rid, nid, keep_om_row=False: (self.evicted.append((rid, nid)) or True)):
             return nodes_mod.run_mt_auto_cleanup_once()
 
     def test_only_enabled_radios_are_processed_and_filtered_by_radio(self):

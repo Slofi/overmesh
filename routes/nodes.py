@@ -8,7 +8,7 @@ from flask import Blueprint, jsonify, request
 from pubsub import pub
 from meshtastic.protobuf import mesh_pb2, portnums_pb2
 from config import CONFIG, _valid_node_id
-from db import get_db_nodes, get_position_history, get_prefs_db, get_traceroute_history, save_message, save_traceroute, delete_channel_messages, delete_mt_all_messages, get_mc_contact_notes, set_mc_contact_notes, get_node_note, set_node_note, get_mc_note, set_mc_note, get_all_mc_notes, get_favorites
+from db import get_db_nodes, get_position_history, get_prefs_db, get_traceroute_history, save_message, save_traceroute, delete_channel_messages, delete_mt_all_messages, get_mc_contact_notes, set_mc_contact_notes, get_node_note, set_node_note, get_mc_note, set_mc_note, get_all_mc_notes, get_favorites, get_ignored
 from helpers import (
     _format_last_heard, _next_msg_id, _node_ts, _radio_id_for_iface,
     get_node_data, get_node_name, push_to_sse,
@@ -460,6 +460,7 @@ def api_db_nodes_cleanup():
         return jsonify({"error": "No nodes selected"}), 400
 
     favorites = get_favorites()
+    ignored = get_ignored()
     # Group requested ids by radio so we look up each iface once.
     by_radio = {}
     for item in requested:
@@ -496,11 +497,15 @@ def api_db_nodes_cleanup():
                     iface.localNode.removeNode(node_id_str)
                 except Exception as e:
                     log.warning(f"cleanup: removeNode {node_id_str} failed: {e}")
-            try:
-                with get_prefs_db() as conn:
-                    conn.execute("DELETE FROM nodes WHERE id=? AND radio_id=?", (node_id_str, radio_id))
-            except Exception as e:
-                log.warning(f"cleanup: db delete {node_id_str} failed: {e}")
+            if (node_id_str, radio_id) in ignored or (node_id_str, "") in ignored:
+                # Ignored/muted: cleared from the radio above, OM row kept so it stays muted.
+                log.info(f"cleanup: {node_id_str} is ignored/muted — kept in OM, removed from radio")
+            else:
+                try:
+                    with get_prefs_db() as conn:
+                        conn.execute("DELETE FROM nodes WHERE id=? AND radio_id=?", (node_id_str, radio_id))
+                except Exception as e:
+                    log.warning(f"cleanup: db delete {node_id_str} failed: {e}")
             removed += 1
 
     return jsonify({"ok": True, "removed": removed})
@@ -935,8 +940,12 @@ def api_clear_gps_history():
 
 
 # ---- MT auto stale-node cleanup (radio + OM DB hygiene) ----
-def _mt_auto_evict_node(radio_id, node_id_str):
-    """Evict one MT node: live lib dicts, radio flash nodeDB, OM db row."""
+def _mt_auto_evict_node(radio_id, node_id_str, keep_om_row=False):
+    """Evict one MT node: live lib dicts, radio flash nodeDB, OM db row.
+
+    keep_om_row=True for ignored/muted nodes: they are removed from the radio but
+    their OM row stays, so the ignore flag survives and they remain muted
+    (Filip, 2026-09-11)."""
     with connections_lock:
         state = connections.get(radio_id)
         iface = state.get("iface") if state else None
@@ -955,11 +964,15 @@ def _mt_auto_evict_node(radio_id, node_id_str):
         removed = True
     except Exception as e:
         log.warning(f"[MT:{radio_id}] auto cleanup removeNode {node_id_str} failed: {e}")
-    try:
-        with get_prefs_db() as conn:
-            conn.execute("DELETE FROM nodes WHERE id=? AND radio_id=?", (node_id_str, radio_id))
-    except Exception as e:
-        log.warning(f"[MT:{radio_id}] auto cleanup db delete {node_id_str} failed: {e}")
+    if keep_om_row:
+        log.info(f"[MT:{radio_id}] auto cleanup: {node_id_str} is ignored/muted — "
+                 f"removed from the radio, OM row kept so it stays muted")
+    else:
+        try:
+            with get_prefs_db() as conn:
+                conn.execute("DELETE FROM nodes WHERE id=? AND radio_id=?", (node_id_str, radio_id))
+        except Exception as e:
+            log.warning(f"[MT:{radio_id}] auto cleanup db delete {node_id_str} failed: {e}")
     return removed
 
 
@@ -983,9 +996,12 @@ def run_mt_auto_cleanup_once():
             results[rid] = {"error": str(e)}
             continue
         removed = 0
+        ignored = get_ignored()
         for s in stale:
+            nid = s.get("id")
+            keep_row = (nid, rid) in ignored or (nid, "") in ignored
             try:
-                if _mt_auto_evict_node(rid, s.get("id")):
+                if _mt_auto_evict_node(rid, nid, keep_om_row=keep_row):
                     removed += 1
             except Exception as e:
                 log.warning(f"[MT:{rid}] auto cleanup evict {s.get('id')} failed: {e}")

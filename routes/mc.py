@@ -727,6 +727,7 @@ def api_mc_contacts_cleanup():
         return jsonify({"error": "No contacts selected"}), 400
     removed = 0
     errors = 0
+    ignored = get_mc_ignored()
     for item in requested:
         if not isinstance(item, dict):
             continue
@@ -735,7 +736,12 @@ def api_mc_contacts_cleanup():
         if not cid or not radio_id:
             continue
         try:
-            remove_mc_contact(radio_id, cid)
+            if cid in ignored:
+                # Ignored/muted MC contact: clear it from the RADIO only. The OM copy and
+                # the ignore flag (its own table) stay, so it remains muted.
+                remove_mc_contact_scoped(radio_id, cid, scope="radio")
+            else:
+                remove_mc_contact(radio_id, cid)
             removed += 1
         except Exception as e:
             errors += 1

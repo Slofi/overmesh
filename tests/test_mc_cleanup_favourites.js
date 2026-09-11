@@ -48,4 +48,9 @@ assert(/openNodeCleanupModal\(filtered\.nodes, days, filtered\.kept\.length\)/.t
 assert(/favourite\$\{keptFavs === 1 \? '' : 's'\} kept and never listed/.test(src),
        'the modal must tell the user how many favourites were kept');
 
+// Clearing ALL contacts is a different, explicit action — it must say that stars
+// are not spared (it cannot know them server-side either).
+assert(/starred \(favourite\) contacts are <b>not<\/b> spared/.test(src),
+       'Clear all contacts must warn that favourites are not spared by that button');
+
 console.log('ok: MC cleanup leaves favourites alone');

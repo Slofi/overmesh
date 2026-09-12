@@ -23,7 +23,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 from auth import check_credentials, is_auth_enabled, load_secret_key
-from config import CONFIG, DATA_DIR, save_config, _valid_node_id
+from config import CONFIG, DATA_DIR
 
 # Effective bind host — same precedence as __main__ (env > config > loopback).
 # Used to warn in the UI when the instance is reachable beyond localhost while

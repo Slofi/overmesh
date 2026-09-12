@@ -219,7 +219,6 @@ def on_text_receive(packet, interface):
             tel      = decoded.get("telemetry", {}) or {}
             dev      = tel.get("deviceMetrics", {}) or {}
             env      = tel.get("environmentMetrics", {}) or {}
-            pwr      = tel.get("powerMetrics", {}) or {}
             user     = decoded.get("user", {}) or {}
             tr       = decoded.get("traceroute", {}) or {}
             nb       = decoded.get("neighborinfo", {}) or {}
@@ -519,7 +518,37 @@ def _om_install_cli_exit_guard():
     log.info("meshtastic CLI-exit guard installed on: %s", ", ".join(patched) or "none")
 
 
+
+def _om_install_serial_close_guard():
+    """Swallow the library's close error when OM already closed the stream.
+
+    On disconnect the library's reader thread calls `_disconnected()`, whose body
+    closes the stream. OM's reconnect path may have closed it first, and closing a
+    closed fd raises `OSError: [Errno 9] Bad file descriptor` - which Python then
+    dumps as a full traceback for the thread (seen in the field on every MT
+    reconnect). The close is best-effort, so ignore that specific failure.
+    """
+    try:
+        from meshtastic import stream_interface as _si
+    except Exception as e:  # pragma: no cover - defensive
+        log.warning("serial-close guard: could not import stream_interface: %s", e)
+        return
+    original = getattr(_si.StreamInterface, "_disconnected", None)
+    if original is None or getattr(original, "_om_guarded", False):
+        return
+
+    def _guarded(self, *args, **kwargs):
+        try:
+            return original(self, *args, **kwargs)
+        except OSError as e:
+            log.debug("[MT] ignored close error on an already-closed serial stream: %s", e)
+
+    _guarded._om_guarded = True
+    _si.StreamInterface._disconnected = _guarded
+    log.info("meshtastic serial-close guard installed")
+
 _om_install_cli_exit_guard()
+_om_install_serial_close_guard()
 
 
 def send_position_request(iface, channel_index=0):

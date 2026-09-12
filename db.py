@@ -4,7 +4,6 @@ import logging
 import math
 import os
 import uuid
-import shutil
 import sqlite3
 import threading
 import time

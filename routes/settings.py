@@ -917,7 +917,6 @@ def api_settings_cross_set():
         if rule["source_radio_id"] == rule["target_radio_id"]:
             return jsonify({"error": "Source and target radios must be on different systems"}), 400
         source_net = rule["source_network"]
-        target_net = "mc" if source_net == "mt" else "mt"
         if source_net == "mt":
             if rule["source_radio_id"] not in mt_ids:
                 return jsonify({"error": f'Source radio {rule["source_radio_id"]} is not an MT radio'}), 400

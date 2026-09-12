@@ -44,32 +44,56 @@ assert(/const _p = _msgNotifParts\('MT', \{/.test(src), 'MT notification must us
 assert(/const _p = _msgNotifParts\('MC', \{/.test(src), 'MC notification must use the shared layout');
 assert(/sendNotif\(title, _p\.plain,/.test(src), 'system notification must get the plain multi-row body');
 assert(/maybeShowInAppMessage\(title, _p\.html,/.test(src), 'in-app toast must get the HTML multi-row body');
-assert(/function _mcSenderName\(data\)/.test(src), 'MC sender must be resolved from the contact list');
+assert(/function _mcSenderInfo\(m\)/.test(src), 'MC sender must be resolved by the existing _mcSenderInfo() helper');
 
-// MC sender-name resolution must never credit an ambiguous pubkey prefix to one
-// contact (showing the wrong sender is worse than showing the prefix).
-const mp = src.match(/function _pickMcSenderName\(map, dmCache, fid\) \{[\s\S]*?\n  \}/);
-assert(mp, '_pickMcSenderName() must exist');
-const _pickMcSenderName = eval('(' + mp[0] + ')');
+// MC channel messages carry NO pubkey at all — the library's payload has
+// type/channel_idx/txt_type/sender_timestamp/text only — so from_id is literally
+// '?' and the sender lives in the text prefix. Filip's live pop-up showed:
+//     MC Public / ? / IW3QVZ_mau_provv.: @[IK4FMY] ciao, a Trieste 8 hop
+// i.e. a "?" sender row and the name still inside the message. Drive the real
+// resolver and the real layout with that exact message.
+const si = src.match(/function _mcSenderInfo\(m\) \{[\s\S]*?\n  \}/);
+assert(si, '_mcSenderInfo() must exist');
+const mkSenderInfo = find => new Function('_mcFindContact', 'return ' + si[0])(find);
 
-const FULL = 'f'.repeat(58);
-const EDC  = { id: 'abc123', full_key: 'abc123' + FULL, long_name: 'EDC-3' };
-// Real ambiguity: neither id equals the incoming short prefix, but both full keys
-// start with it — the name must NOT be guessed.
-const AMB1 = { id: 'abc111', full_key: 'abc111' + FULL, long_name: 'Wrong One' };
-const AMB2 = { id: 'abc222', full_key: 'abc222' + FULL, long_name: 'Wrong Two' };
+const mt = src.match(/function _mcMsgText\(m, senderName\) \{[\s\S]*?\n  \}/);
+assert(mt, '_mcMsgText() must exist');
+const _mcMsgText = eval('(' + mt[0] + ')');
 
-assert(_pickMcSenderName({ k: EDC }, {}, 'abc123') === 'EDC-3', 'exact id match wins');
-assert(_pickMcSenderName({ k: EDC }, {}, EDC.full_key) === 'EDC-3', 'exact full_key match wins');
-assert(_pickMcSenderName({ k: EDC }, {}, 'abc12') === 'EDC-3', 'single prefix match resolves');
-assert(_pickMcSenderName({ a: AMB1, b: AMB2 }, {}, 'abc') === 'abc',
-       'ambiguous prefix falls back to the prefix (got ' +
-       _pickMcSenderName({ a: AMB1, b: AMB2 }, {}, 'abc') + ')');
-assert(_pickMcSenderName({ k: EDC }, { abc123: 'Cached DM Name' }, 'abc123') === 'Cached DM Name',
-       'DM name cache takes precedence');
-assert(_pickMcSenderName({}, {}, '') === '?', 'no sender -> ?');
-assert(_pickMcSenderName({ k: { id: 'x', full_key: 'x', long_name: '' } }, {}, 'x') === 'x',
-       'a nameless contact falls back to the id, not an empty row');
+const live = {
+  text: 'IW3QVZ_mau_provv.: @[IK4FMY] ciao, a Trieste 8 hop',
+  from_id: '?',
+  radio_id: 'r1',
+};
+const noContacts = mkSenderInfo(() => null);
+const liveSender = noContacts(live).name;
+assert(liveSender === 'IW3QVZ_mau_provv.',
+       'sender must come from the message prefix when there is no pubkey (got ' + liveSender + ')');
+
+const liveParts = _msgNotifParts('MC', {
+  chanName: 'Public',
+  sender: liveSender,
+  text: _mcMsgText(live, liveSender),
+});
+assert(liveParts.title === 'MC Public', 'row 1 = system + channel');
+assert(liveParts.plain === 'IW3QVZ_mau_provv.\n@[IK4FMY] ciao, a Trieste 8 hop',
+       'rows 2/3 = sender then message only (got ' + JSON.stringify(liveParts.plain) + ')');
+assert(liveParts.plain.split('\n')[0] !== '?', 'row 2 must never be a bare "?" for channel messages');
+assert(liveParts.plain.indexOf('@[IK4FMY]') > 0, 'message body is preserved');
+
+// A contact hit (matched by the embedded name) wins over the raw prefix
+const known = mkSenderInfo((rid, fid, name) => (name === 'IW3QVZ_mau_provv.' ? { long_name: 'IW3QVZ (Mauro)' } : null));
+assert(known(live).name === 'IW3QVZ (Mauro)', 'contact match by name takes precedence');
+
+// Hex-only senders still read as a hex id, not "?"
+const hexSender = mkSenderInfo(() => null)({ text: 'E905518E: test', from_id: '?', radio_id: 'r1' });
+assert(hexSender.name === 'E905518E', 'hex-prefixed sender is used as-is (got ' + hexSender.name + ')');
+
+// The notification must use this resolver — and my old prefix-only helper is gone
+assert(/const _sender = _mcSenderInfo\(data\)\.name;/.test(src),
+       'the MC notification must resolve the sender with _mcSenderInfo()');
+assert(!/_mcSenderName|_pickMcSenderName/.test(src),
+       'the removed prefix-only helper must not linger');
 
 // ── Alerts panel parity (Filip: "fix those two") ────────────────────────────
 // The Alerts record must mirror the pop-up (sender row) ...

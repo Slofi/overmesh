@@ -568,26 +568,6 @@
     };
   }
 
-  // MC messages carry the sender's public-key PREFIX, not a name. Resolve it from
-  // the contact list (records expose both `id` and `full_key`): exact matches first,
-  // then a prefix match only when it is unambiguous — a short prefix can hit several
-  // contacts, and showing the *wrong* sender name is worse than showing the prefix
-  // (same rule as the passive-intel badge).
-  function _pickMcSenderName(map, dmCache, fid) {
-    if (!fid) return '?';
-    if (dmCache && dmCache[fid]) return dmCache[fid];
-    const list = Object.values(map || {});
-    const exact = list.find(c => c && (c.id === fid || c.full_key === fid));
-    if (exact) return exact.long_name || exact.name || fid;
-    const pref = list.filter(c => c && c.full_key && c.full_key.startsWith(fid));
-    if (pref.length === 1) return pref[0].long_name || pref[0].name || fid;
-    return fid;
-  }
-
-  function _mcSenderName(data) {
-    return _pickMcSenderName(mcContacts[data.radio_id] || {}, mcDmContacts, data.from_id || '');
-  }
-
   function sendNotif(title, body, tag, type, opts = {}) {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
     const prefKey = type === 'node' ? 'notif_nodes' : 'notif_messages';
@@ -12144,7 +12124,7 @@ if (targetEl) {
         playNotificationSound('message');
         const currentMcTab = (currentTab === 'chat' && chatNetwork === 'mc') ? mcChatTab : null;
         if (document.hidden || currentMcTab !== msgTab) {
-          const _sender = _mcSenderName(data);
+          const _sender = _mcSenderInfo(data).name;
           const _text   = _mcMsgText(data, _sender);   // drops a leading "Name: "
           const _p = _msgNotifParts('MC', {
             isDm: data.subtype === 'dm',

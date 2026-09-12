@@ -97,6 +97,8 @@ class HandlerTests(unittest.TestCase):
         fake_iface.localNode = ln
         fake_iface.myInfo = None
         fake_iface.nodes = {}
+        fake_iface.nodesByNum = {}
+        self.iface = fake_iface
         from meshtastic.protobuf import channel_pb2
         ln.channels = [channel_pb2.Channel() for _ in range(3)]
         for i, c in enumerate(ln.channels):
@@ -142,6 +144,30 @@ class HandlerTests(unittest.TestCase):
         r = self.client.get(f"/api/radio/{RADIO}/config")
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
         self.assertEqual(r.get_json().get("mqtt_root"), "si/meshnet/slovenia")
+
+    # ── a hidden device-write failure must not look like success (field bug 2026-09-12)
+    def test_position_send_failure_is_surfaced(self):
+        """The admin send used to be swallowed ('best-effort'): the API said OK, the
+        radio kept its old position, and the optimistic local update hid it in the UI."""
+        self.ln._sendAdmin.side_effect = RuntimeError("serial link is busy")
+        r = self._post("/config/position", {"fixed_position": True, "lat": 46.040314,
+                                            "lon": 14.504438, "alt": 242})
+        self.assertEqual(r.status_code, 500, r.get_data(as_text=True))
+        self.assertIn("Could not send the position", r.get_json().get("error", ""))
+
+    def test_position_send_failure_does_not_fake_a_local_position(self):
+        """And it must not write the position into the iface's own copy either."""
+        self.ln._sendAdmin.side_effect = RuntimeError("serial link is busy")
+        r = self._post("/config/position", {"fixed_position": True, "lat": 46.040314,
+                                            "lon": 14.504438, "alt": 242})
+        self.assertEqual(r.status_code, 500)
+        self.assertEqual(self.iface.nodesByNum, {}, "no optimistic position on failure")
+
+    def test_position_save_success_still_returns_ok(self):
+        r = self._post("/config/position", {"fixed_position": True, "lat": 46.040314,
+                                            "lon": 14.504438, "alt": 242})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        self.assertEqual(self.ln._sendAdmin.call_count, 1)
 
     def test_config_read_exposes_the_map_report_settings(self):
         self.ln.moduleConfig.mqtt.map_report_settings.should_report_location = True

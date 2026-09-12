@@ -428,8 +428,16 @@ def api_radio_config_position(radio_id):
                 a.set_fixed_position.CopyFrom(p)
                 iface.localNode.ensureSessionKey()
                 iface.localNode._sendAdmin(a)
-            except Exception:
-                pass  # best-effort
+            except Exception as e:
+                # This used to be swallowed ("best-effort"), so the API reported success
+                # while the radio never received the position — and the optimistic
+                # in-memory update below then made the UI show a position the device did
+                # not have. (Consequence seen in the field: with a fixed position plus
+                # gpsMode NOT_PRESENT the firmware never seeds localPosition at boot, so
+                # the MQTT map report kept being skipped with "no position available".)
+                log.error("[MT] %s: could not send the fixed position to the radio: %r",
+                          radio_id, e)
+                return jsonify({"error": f"Could not send the position to the radio: {e}"}), 500
 
             # Update in-memory position immediately
             try:
@@ -440,8 +448,9 @@ def api_radio_config_position(radio_id):
                     if precision is not None:
                         mem_pos["precisionBits"] = precision
                     iface.nodesByNum[local_num]["position"] = mem_pos
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning("[MT] %s: position saved on the radio but the local copy "
+                            "could not be updated: %r", radio_id, e)
 
             # Cache in connections (in-memory session)
             with connections_lock:

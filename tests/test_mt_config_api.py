@@ -95,6 +95,8 @@ class HandlerTests(unittest.TestCase):
         ln.writeConfig.side_effect = lambda name: self.written.append(name)
         fake_iface = mock.Mock()
         fake_iface.localNode = ln
+        fake_iface.myInfo = None
+        fake_iface.nodes = {}
         self.ln = ln
         self.patch = mock.patch("routes.radio.get_iface_by_radio", return_value=fake_iface)
         self.patch.start()
@@ -116,12 +118,21 @@ class HandlerTests(unittest.TestCase):
         self.assertEqual(self.written, ["network"])
 
     def test_mqtt_save_uses_writeConfig(self):
-        r = self._post("/config/mqtt", {"mqtt_enabled": True, "mqtt_address": "mqtt.example:1883",
-                                        "mqtt_username": "u", "mqtt_password": "p", "mqtt_tls": True})
+        r = self._post("/config/mqtt", {"mqtt_enabled": True, "mqtt_address": "mqtt.meshnet.si",
+                                        "mqtt_username": "u", "mqtt_password": "p", "mqtt_tls": True,
+                                        "mqtt_root": "si/meshnet/slovenia"})
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
         self.assertEqual(self.written, ["mqtt"])
         self.assertTrue(self.ln.moduleConfig.mqtt.enabled)
-        self.assertEqual(self.ln.moduleConfig.mqtt.address, "mqtt.example:1883")
+        self.assertEqual(self.ln.moduleConfig.mqtt.address, "mqtt.meshnet.si")
+        self.assertEqual(self.ln.moduleConfig.mqtt.root, "si/meshnet/slovenia",
+                         "the Root topic (community servers need their own) must be written")
+
+    def test_config_read_exposes_the_root_topic(self):
+        self.ln.moduleConfig.mqtt.root = "si/meshnet/slovenia"
+        r = self.client.get(f"/api/radio/{RADIO}/config")
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        self.assertEqual(r.get_json().get("mqtt_root"), "si/meshnet/slovenia")
 
     def test_telemetry_save_uses_writeConfig(self):
         r = self._post("/config/telemetry", {"tel_device_update": 1800})

@@ -19715,6 +19715,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         // MQTT
         document.getElementById('node-cfg-mqtt-enabled').checked    = !!d.mqtt_enabled;
         document.getElementById('node-cfg-mqtt-address').value      = d.mqtt_address   || '';
+        document.getElementById('node-cfg-mqtt-root').value         = d.mqtt_root      || '';
         document.getElementById('node-cfg-mqtt-username').value     = d.mqtt_username  || '';
         document.getElementById('node-cfg-mqtt-password').value     = '';
         document.getElementById('node-cfg-mqtt-password').placeholder = d.mqtt_pwd_set ? '(set — leave blank to keep)' : '(not set)';
@@ -20392,6 +20393,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const radioId = _selectedNodeId;
     const enabled    = document.getElementById('node-cfg-mqtt-enabled').checked;
     const address    = document.getElementById('node-cfg-mqtt-address').value.trim();
+    const root_topic = document.getElementById('node-cfg-mqtt-root').value.trim();
     const username   = document.getElementById('node-cfg-mqtt-username').value.trim();
     const password   = document.getElementById('node-cfg-mqtt-password').value;   // may be empty = keep
     const encryption = document.getElementById('node-cfg-mqtt-encryption').checked;
@@ -20404,7 +20406,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({mqtt_enabled: enabled, mqtt_address: address, mqtt_username: username,
                             mqtt_password: password, mqtt_encryption: encryption, mqtt_json: json_enabled,
-                            mqtt_tls: tls, mqtt_map: map_reporting})
+                            mqtt_tls: tls, mqtt_map: map_reporting,
+                            mqtt_root: root_topic})
     }).then(r => { if (!r.ok) return _cfgFail(r); return r.json(); }).then(d => {
       nodeCfgStatus('mqtt', d.error || 'Saved.', !d.error);
       if (!d.error) btnFeedback(btn, '✓ Saved');

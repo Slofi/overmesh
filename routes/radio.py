@@ -128,6 +128,7 @@ def api_radio_config_get(radio_id):
 
         # mqtt (module config)
         mqtt_enabled    = _bool(mc, "mqtt", "enabled")
+        mqtt_root       = _str(mc,  "mqtt", "root")
         mqtt_address    = _str(mc,  "mqtt", "address")
         mqtt_username   = _str(mc,  "mqtt", "username")
         mqtt_pwd_set    = bool(_str(mc, "mqtt", "password"))
@@ -183,6 +184,7 @@ def api_radio_config_get(radio_id):
             "tel_env":    tel_env,
             # mqtt
             "mqtt_enabled":    mqtt_enabled,
+            "mqtt_root":       mqtt_root,
             "mqtt_address":    mqtt_address,
             "mqtt_username":   mqtt_username,
             "mqtt_pwd_set":    mqtt_pwd_set,
@@ -549,6 +551,9 @@ def api_radio_config_mqtt(radio_id):
         if "mqtt_json"       in data: mqtt.json_enabled       = bool(data["mqtt_json"])
         if "mqtt_tls"        in data: mqtt.tls_enabled        = bool(data["mqtt_tls"])
         if "mqtt_map"        in data: mqtt.map_reporting_enabled = bool(data["mqtt_map"])
+        # Meshtastic's "Root topic" (community servers often require their own,
+        # e.g. si/meshnet/slovenia) — it was missing from this form entirely.
+        if "mqtt_root"       in data: mqtt.root                 = str(data["mqtt_root"])
         iface.localNode.writeConfig("mqtt")  # writeConfig covers module sections too
         return jsonify({"ok": True})
     except Exception as e:

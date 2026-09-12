@@ -97,6 +97,15 @@ class HandlerTests(unittest.TestCase):
         fake_iface.localNode = ln
         fake_iface.myInfo = None
         fake_iface.nodes = {}
+        from meshtastic.protobuf import channel_pb2
+        ln.channels = [channel_pb2.Channel() for _ in range(3)]
+        for i, c in enumerate(ln.channels):
+            c.role = 2
+            c.settings.name = ["LongFast", "Slovenija", "Test"][i]
+            c.settings.uplink_enabled = False
+            c.settings.downlink_enabled = False
+        self.written_channels = []
+        ln.writeChannel.side_effect = lambda idx: self.written_channels.append(idx)
         self.ln = ln
         self.patch = mock.patch("routes.radio.get_iface_by_radio", return_value=fake_iface)
         self.patch.start()
@@ -133,6 +142,60 @@ class HandlerTests(unittest.TestCase):
         r = self.client.get(f"/api/radio/{RADIO}/config")
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
         self.assertEqual(r.get_json().get("mqtt_root"), "si/meshnet/slovenia")
+
+    def test_config_read_exposes_the_map_report_settings(self):
+        self.ln.moduleConfig.mqtt.map_report_settings.should_report_location = True
+        r = self.client.get(f"/api/radio/{RADIO}/config")
+        body = r.get_json()
+        for key in ("mqtt_map_location", "mqtt_map_interval", "mqtt_map_precision"):
+            self.assertIn(key, body, f"{key} must be exposed (the map opt-in gates map reports)")
+        self.assertTrue(body["mqtt_map_location"])
+
+    # ── the two controls OM was missing (Filip: "add the toggles") ──────────────
+    def test_map_report_optin_is_written(self):
+        """Without should_report_location the firmware skips the map report entirely."""
+        r = self._post("/config/mqtt", {"mqtt_enabled": True, "mqtt_map": True,
+                                        "mqtt_map_location": True,
+                                        "mqtt_map_interval": 900,
+                                        "mqtt_map_precision": 13})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        mrs = self.ln.moduleConfig.mqtt.map_report_settings
+        self.assertTrue(mrs.should_report_location)
+        self.assertEqual(mrs.publish_interval_secs, 900)
+        self.assertEqual(mrs.position_precision, 13)
+
+    def test_map_report_precision_out_of_range_is_rejected(self):
+        r = self._post("/config/mqtt", {"mqtt_map_location": True, "mqtt_map_precision": 20})
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True))
+
+    def test_map_interval_blank_leaves_the_device_value_alone(self):
+        self.ln.moduleConfig.mqtt.map_report_settings.publish_interval_secs = 3600
+        r = self._post("/config/mqtt", {"mqtt_map_location": True, "mqtt_map_interval": 0})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.ln.moduleConfig.mqtt.map_report_settings.publish_interval_secs, 3600)
+
+    def test_channel_uplink_and_downlink_are_written(self):
+        r = self._post("/channels/0", {"role": 2, "name": "LongFast", "psk_type": "keep",
+                                       "uplink_enabled": True, "downlink_enabled": False})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        self.assertTrue(self.ln.channels[0].settings.uplink_enabled)
+        self.assertFalse(self.ln.channels[0].settings.downlink_enabled)
+        self.assertEqual(self.written_channels, [0])
+
+    def test_channel_save_without_the_flags_keeps_them(self):
+        """A save that omits the keys (e.g. an older page) must not silently clear them."""
+        self.ln.channels[1].settings.uplink_enabled = True
+        r = self._post("/channels/1", {"role": 2, "name": "Slovenija", "psk_type": "keep"})
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(self.ln.channels[1].settings.uplink_enabled)
+
+    def test_channel_list_exposes_the_flags(self):
+        self.ln.channels[0].settings.uplink_enabled = True
+        r = self.client.get(f"/api/radio/{RADIO}/channels")
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        body = r.get_json()
+        self.assertTrue(body[0]["uplink_enabled"])
+        self.assertFalse(body[0]["downlink_enabled"])
 
     def test_telemetry_save_uses_writeConfig(self):
         r = self._post("/config/telemetry", {"tel_device_update": 1800})

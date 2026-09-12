@@ -1157,6 +1157,16 @@
               </select>
             </div>
           </div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-top:10px">
+            <label style="display:flex;align-items:center;gap:5px;font-size:12px"
+                   title="Uplink = publish this channel's packets (messages, telemetry, positions) to the MQTT broker. Leave OFF to keep your local mesh traffic off the internet.">
+              <input type="checkbox" id="node-cfg-ch-uplink"> MQTT uplink
+            </label>
+            <label style="display:flex;align-items:center;gap:5px;font-size:12px"
+                   title="Downlink = inject MQTT traffic from the network into your local mesh.">
+              <input type="checkbox" id="node-cfg-ch-downlink"> MQTT downlink
+            </label>
+          </div>
           <div style="margin-top:10px">
             <label class="settings-label">Encryption Key</label>
             <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -1323,6 +1333,20 @@
           <label style="display:flex;align-items:center;gap:5px;font-size:12px"><input type="checkbox" id="node-cfg-mqtt-json"> JSON output</label>
           <label style="display:flex;align-items:center;gap:5px;font-size:12px"><input type="checkbox" id="node-cfg-mqtt-tls"> TLS</label>
           <label style="display:flex;align-items:center;gap:5px;font-size:12px"><input type="checkbox" id="node-cfg-mqtt-map"> Map reporting</label>
+        </div>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-top:8px">
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px"
+                 title="Publishes THIS node's name/position/model to the map topic. It does NOT upload mesh traffic — publishing channel traffic needs 'MQTT uplink' on that channel.">
+            <input type="checkbox" id="node-cfg-mqtt-map-location"> Report my location to the map
+          </label>
+          <div>
+            <label class="settings-label">Map report interval (s) <span style="font-weight:400">— blank = firmware default</span></label>
+            <input id="node-cfg-mqtt-map-interval" type="number" min="60" max="86400" class="settings-input" style="width:120px" placeholder="e.g. 900">
+          </div>
+          <div>
+            <label class="settings-label">Position precision (12–15)</label>
+            <input id="node-cfg-mqtt-map-precision" type="number" min="12" max="15" class="settings-input" style="width:80px" placeholder="14">
+          </div>
         </div>
         <button class="btn" onclick="saveNodeMqtt(this)" title="Save MQTT settings to the node">Save</button>
         <div id="node-cfg-mqtt-status" style="font-size:12px;min-height:16px;margin-top:4px"></div>

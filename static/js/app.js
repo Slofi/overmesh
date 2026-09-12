@@ -19723,6 +19723,10 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         document.getElementById('node-cfg-mqtt-json').checked       = !!d.mqtt_json;
         document.getElementById('node-cfg-mqtt-tls').checked        = !!d.mqtt_tls;
         document.getElementById('node-cfg-mqtt-map').checked        = !!d.mqtt_map;
+        document.getElementById('node-cfg-mqtt-map-location').checked = !!d.mqtt_map_location;
+        // 0 = unset on the device -> leave the field blank ("firmware default")
+        document.getElementById('node-cfg-mqtt-map-interval').value  = d.mqtt_map_interval  || '';
+        document.getElementById('node-cfg-mqtt-map-precision').value = d.mqtt_map_precision || '';
 
         // Bluetooth
         document.getElementById('node-cfg-bt-enabled').checked = !!d.bt_enabled;
@@ -19951,6 +19955,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     document.getElementById('node-cfg-ch-name').value = ch.name || '';
     document.getElementById('node-cfg-ch-role').value = ch.role;
     document.getElementById('node-cfg-ch-psk-type').value = 'keep';
+    document.getElementById('node-cfg-ch-uplink').checked   = !!ch.uplink_enabled;
+    document.getElementById('node-cfg-ch-downlink').checked = !!ch.downlink_enabled;
     document.getElementById('node-cfg-ch-psk-hex').style.display = 'none';
     const keyRow     = document.getElementById('node-cfg-ch-key-row');
     const keyDisplay = document.getElementById('node-cfg-ch-key-display');
@@ -20122,7 +20128,9 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     fetch(BASE_PATH + `/api/radio/${encodeURIComponent(radioId)}/channels/${_editingChIndex}`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({role, name, psk_type, psk_hex})
+      body: JSON.stringify({role, name, psk_type, psk_hex,
+                            uplink_enabled:   document.getElementById('node-cfg-ch-uplink').checked,
+                            downlink_enabled: document.getElementById('node-cfg-ch-downlink').checked})
     }).then(r => r.json().then(d => ({ok: r.ok, d}))).then(({ok, d}) => {
       if (!ok || d.error) { nodeCfgStatus('channels', d.error || 'Save failed.', false); return; }
       nodeCfgStatus('channels', 'Saved.', true);
@@ -20400,6 +20408,9 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const json_enabled = document.getElementById('node-cfg-mqtt-json').checked;
     const tls        = document.getElementById('node-cfg-mqtt-tls').checked;
     const map_reporting = document.getElementById('node-cfg-mqtt-map').checked;
+    const map_location  = document.getElementById('node-cfg-mqtt-map-location').checked;
+    const map_interval  = parseInt(document.getElementById('node-cfg-mqtt-map-interval').value || '0', 10) || 0;
+    const map_precision = parseInt(document.getElementById('node-cfg-mqtt-map-precision').value || '0', 10) || 0;
     nodeCfgStatus('mqtt', 'Saving…', true);
     fetch(BASE_PATH + `/api/radio/${encodeURIComponent(radioId)}/config/mqtt`, {
       method: 'POST',
@@ -20407,6 +20418,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       body: JSON.stringify({mqtt_enabled: enabled, mqtt_address: address, mqtt_username: username,
                             mqtt_password: password, mqtt_encryption: encryption, mqtt_json: json_enabled,
                             mqtt_tls: tls, mqtt_map: map_reporting,
+                            mqtt_map_location: map_location, mqtt_map_interval: map_interval,
+                            mqtt_map_precision: map_precision,
                             mqtt_root: root_topic})
     }).then(r => { if (!r.ok) return _cfgFail(r); return r.json(); }).then(d => {
       nodeCfgStatus('mqtt', d.error || 'Saved.', !d.error);

@@ -136,6 +136,11 @@ def api_radio_config_get(radio_id):
         mqtt_json       = _bool(mc, "mqtt", "json_enabled")
         mqtt_tls        = _bool(mc, "mqtt", "tls_enabled")
         mqtt_map        = _bool(mc, "mqtt", "map_reporting_enabled")
+        # Map reporting needs BOTH the module toggle above and this per-node opt-in;
+        # with the opt-in unset the firmware silently skips the map report.
+        mqtt_map_loc    = _bool(mc, "mqtt", "map_report_settings", "should_report_location")
+        mqtt_map_secs   = _int(mc,  "mqtt", "map_report_settings", "publish_interval_secs")
+        mqtt_map_prec   = _int(mc,  "mqtt", "map_report_settings", "position_precision")
 
         # bluetooth
         bt_enabled   = _bool(lc, "bluetooth", "enabled")
@@ -192,6 +197,9 @@ def api_radio_config_get(radio_id):
             "mqtt_json":       mqtt_json,
             "mqtt_tls":        mqtt_tls,
             "mqtt_map":        mqtt_map,
+            "mqtt_map_location":  mqtt_map_loc,
+            "mqtt_map_interval":  mqtt_map_secs,
+            "mqtt_map_precision": mqtt_map_prec,
             # bluetooth
             "bt_enabled":   bt_enabled,
             "bt_mode":      bt_mode,
@@ -300,6 +308,10 @@ def api_radio_channels_get(radio_id):
                 "name":    name,
                 "role":    role,
                 "psk_set": len(psk) > 0,
+                # Per-channel MQTT gates: uplink = publish this channel's packets to the
+                # broker; downlink = pull the network's MQTT traffic into the local mesh.
+                "uplink_enabled":   bool(getattr(settings, "uplink_enabled", False)) if settings else False,
+                "downlink_enabled": bool(getattr(settings, "downlink_enabled", False)) if settings else False,
                 "psk_b64": base64.b64encode(psk).decode("ascii") if psk else "",
                 "psk_hex": psk.hex() if psk else "",
             })
@@ -551,6 +563,22 @@ def api_radio_config_mqtt(radio_id):
         if "mqtt_json"       in data: mqtt.json_enabled       = bool(data["mqtt_json"])
         if "mqtt_tls"        in data: mqtt.tls_enabled        = bool(data["mqtt_tls"])
         if "mqtt_map"        in data: mqtt.map_reporting_enabled = bool(data["mqtt_map"])
+        if "mqtt_map_location" in data:
+            mqtt.map_report_settings.should_report_location = bool(data["mqtt_map_location"])
+        if data.get("mqtt_map_interval"):
+            try:
+                secs = int(data["mqtt_map_interval"])
+            except (TypeError, ValueError):
+                return jsonify({"error": "mqtt_map_interval must be a number"}), 400
+            mqtt.map_report_settings.publish_interval_secs = max(60, min(secs, 86400))
+        if data.get("mqtt_map_precision"):
+            try:
+                prec = int(data["mqtt_map_precision"])
+            except (TypeError, ValueError):
+                return jsonify({"error": "mqtt_map_precision must be a number"}), 400
+            if not (12 <= prec <= 15):
+                return jsonify({"error": "mqtt_map_precision must be 12-15"}), 400
+            mqtt.map_report_settings.position_precision = prec
         # Meshtastic's "Root topic" (community servers often require their own,
         # e.g. si/meshnet/slovenia) — it was missing from this form entirely.
         if "mqtt_root"       in data: mqtt.root                 = str(data["mqtt_root"])
@@ -742,6 +770,10 @@ def api_radio_channel_set(radio_id, ch_index):
                         return jsonify({"error": "Invalid key — enter as hex or base64"}), 400
                 ch.settings.psk = psk_bytes
             # else "keep" — don't touch psk
+            if "uplink_enabled" in data:
+                ch.settings.uplink_enabled = bool(data["uplink_enabled"])
+            if "downlink_enabled" in data:
+                ch.settings.downlink_enabled = bool(data["downlink_enabled"])
 
         iface.localNode.writeChannel(ch_index)
         return jsonify({"ok": True})

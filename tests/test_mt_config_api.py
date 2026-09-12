@@ -200,6 +200,48 @@ class HandlerTests(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(self.ln.moduleConfig.mqtt.map_report_settings.publish_interval_secs, 3600)
 
+    # ── /config/reload: the device-truth read for verify-after-write ──
+    def test_config_reload_asks_for_a_module_section(self):
+        r = self._post("/config/reload", {"section": "mqtt"})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        self.assertEqual(r.get_json().get("section"), "mqtt")
+        self.ln.requestConfig.assert_called_once()
+        field = self.ln.requestConfig.call_args[0][0]
+        self.assertEqual(field.name, "mqtt")
+        self.assertEqual(field.containing_type.name, "LocalModuleConfig",
+                         "mqtt lives in LocalModuleConfig, not LocalConfig")
+
+    def test_config_reload_asks_for_a_local_section(self):
+        r = self._post("/config/reload", {"section": "lora"})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        field = self.ln.requestConfig.call_args[0][0]
+        self.assertEqual(field.name, "lora")
+        self.assertEqual(field.containing_type.name, "LocalConfig")
+
+    def test_config_reload_rejects_an_unknown_section(self):
+        r = self._post("/config/reload", {"section": "definitely_not_a_section"})
+        self.assertEqual(r.status_code, 400)
+        self.ln.requestConfig.assert_not_called()
+
+    def test_config_reload_returns_503_when_the_radio_is_not_connected(self):
+        with mock.patch("routes.radio.get_iface_by_radio", return_value=None):
+            r = self.client.post(f"/api/radio/{RADIO}/config/reload", json={"section": "mqtt"})
+        self.assertEqual(r.status_code, 503)
+        self.ln.requestConfig.assert_not_called()
+
+    # ── `bool("false") == True` trap (sweep 2026-09-12) ──
+    def test_string_false_is_not_treated_as_true(self):
+        """A client sending the STRING "false" must not switch the flag on."""
+        r = self._post("/config/lora", {"region": 3, "ok_to_mqtt": "false", "ignore_mqtt": "false"})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        self.assertFalse(self.ln.localConfig.lora.config_ok_to_mqtt, 'the string "false" must mean False')
+        self.assertFalse(self.ln.localConfig.lora.ignore_mqtt)
+
+    def test_string_true_is_treated_as_true(self):
+        r = self._post("/config/lora", {"region": 3, "ok_to_mqtt": "true"})
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(self.ln.localConfig.lora.config_ok_to_mqtt)
+
     # ── LoRa-level MQTT participation: OK to MQTT / ignore MQTT (absent from OM) ──
     def test_lora_mqtt_participation_flags_are_written(self):
         """config_ok_to_mqtt sets the ok_to_mqtt bit on our packets (what community maps

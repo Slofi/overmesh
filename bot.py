@@ -776,7 +776,7 @@ def _build_mc_test_hops_info(msg, config_id):
 def send_mc_bot_response(config_id, text, chan_idx, dest_pre=None):
     """Send bot reply via MC. Runs in a background thread — blocks until sent or timeout."""
     if CONFIG.get("silent_mode"):
-        log.info(f"[bot] Silent Running active — MC bot response suppressed")
+        log.info("[bot] Silent Running active — MC bot response suppressed")
         return False
     from mesh_mc import send_chan_msg, send_dm
     try:

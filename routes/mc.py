@@ -1654,11 +1654,21 @@ def api_mc_passive_obs_collector_stats(radio_id):
         return jsonify({}), 500
 
 
-@bp.route("/api/mc/<radio_id>/passive_obs/summary")
+@bp.route("/api/mc/<radio_id>/passive_obs/summary", methods=["GET", "POST"])
 def api_mc_passive_obs_summary(radio_id):
-    """Return per-contact passive obs summary (count, best signal, last seen) for a list of pubkey prefixes."""
-    prefixes_raw = request.args.get("prefixes", "")
-    prefixes = [p.strip() for p in prefixes_raw.split(",") if p.strip()]
+    """Per-contact passive obs summary (count, best signal, last seen) for pubkey prefixes.
+
+    Accepts ?prefixes=a,b,c (legacy, still supported) or a JSON body {"prefixes": [...]}.
+    Preferred: with ~450 contacts the query string reached ~5 KB and every poll flooded
+    the access log (sweep finding 2026-09-12).
+    """
+    body = request.get_json(silent=True) or {}
+    body_prefixes = body.get("prefixes")
+    if isinstance(body_prefixes, list):
+        prefixes = [str(p).strip() for p in body_prefixes if str(p).strip()]
+    else:
+        prefixes_raw = request.args.get("prefixes", "")
+        prefixes = [p.strip() for p in prefixes_raw.split(",") if p.strip()]
     if not prefixes:
         return jsonify({})
     try:

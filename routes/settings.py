@@ -1355,8 +1355,6 @@ def api_settings_mc_nodes_default_scope(node_id):
             else:
                 applied = True
     else:
-        from mesh_mc import reset_mc_scope_cache
-
         reset_mc_scope_cache(node_id)  # offline — re-assert applies on connect
 
     return jsonify({

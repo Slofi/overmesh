@@ -430,7 +430,6 @@ def _gps_start_proxy(proxy_url, fallback_port=""):
 
 
 def gps_watchdog_loop():
-    global _gps_thread
     while True:
         time.sleep(5)
         cfg = CONFIG.get("gps", {}) or {}

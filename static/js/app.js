@@ -292,7 +292,12 @@
         const unique = [...new Set(prefixes)].filter(Boolean);
         if (!unique.length) continue;
         try {
-          const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/passive_obs/summary?prefixes=${unique.join(',')}`);
+          // POST the list: ~450 prefixes as a query string made a ~5 KB GET every few seconds
+          const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/passive_obs/summary`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({prefixes: unique})
+          });
           if (r.ok) {
             const data = await r.json();
             _mcPassiveSummaryCache[rid] = Object.assign(_mcPassiveSummaryCache[rid] || {}, data);
@@ -19811,6 +19816,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     }).then(r => { if (!r.ok) return _cfgFail(r); return r.json(); }).then(d => {
       nodeCfgStatus('device', d.error || 'Saved. Reboot may be needed.', !d.error);
       if (!d.error) btnFeedback(btn, '✓ Saved');
+      if (!d.error) cfgVerifyAfterSave('device', 'device', {role, led_heartbeat_disabled}, 'Saved.');
     }).catch(e => nodeCfgStatus('device', 'Error: ' + escHtml(String(e)), false));
   }
 
@@ -19830,6 +19836,10 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     }).then(r => { if (!r.ok) return _cfgFail(r); return r.json(); }).then(d => {
       nodeCfgStatus('lora', d.error || 'Saved. Reboot node to apply region/preset.', !d.error);
       if (!d.error) btnFeedback(btn, '✓ Saved');
+      if (!d.error) cfgVerifyAfterSave('lora', 'lora',
+        {region, modem_preset, tx_power, hop_limit,
+         ok_to_mqtt:   document.getElementById('node-cfg-ok-to-mqtt').checked,
+         ignore_mqtt:  document.getElementById('node-cfg-ignore-mqtt').checked}, 'Saved.');
     }).catch(e => nodeCfgStatus('lora', 'Error: ' + escHtml(String(e)), false));
   }
 
@@ -20200,6 +20210,57 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   }
 
   // ── Position ────────────────────────────────────────────────────────────────
+  // Key names that differ between what a panel SENDS and what /config returns.
+  const _CFG_KEY_ALIAS = {
+    ok_to_mqtt: 'lora_ok_to_mqtt',
+    ignore_mqtt: 'lora_ignore_mqtt',
+    lat: 'fixed_lat',
+    lon: 'fixed_lon',
+    alt: 'fixed_alt',
+  };
+
+  // After a save: ask the radio to resend that section and compare what we sent with
+  // what it reports. A config write is fire-and-forget, so "Saved." alone can be a lie
+  // (the radio reboots on config writes and can drop them). Best-effort by design:
+  // nothing here can fail the save itself.
+  async function cfgVerifyAfterSave(section, statusKey, sent, okMsg) {
+    try {
+      const rid = _selectedNodeId;
+      const reload = await fetch(BASE_PATH + `/api/radio/${encodeURIComponent(rid)}/config/reload`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({section})
+      });
+      if (!reload.ok) return;                       // radio not connected: say nothing
+      await new Promise(r => setTimeout(r, 1800));  // give the radio time to answer
+      const r = await fetch(BASE_PATH + `/api/radio/${encodeURIComponent(rid)}/config`);
+      if (!r.ok) {
+        nodeCfgStatus(statusKey, `${okMsg} Saved, but could not verify: the radio is not answering (it may be rebooting).`, true);
+        return;
+      }
+      const d = await r.json();
+      const diffs = [];
+      for (const [k, v] of Object.entries(sent || {})) {
+        const key = _CFG_KEY_ALIAS[k] || k;
+        if (!(key in d)) continue;                  // not echoed by /config (e.g. passwords)
+        const got = d[key];
+        const same = (typeof got === 'boolean' || typeof v === 'boolean')
+          ? (!!got === !!v)
+          : (got === v || (typeof got === 'number' && typeof v === 'number' && Math.abs(got - v) < 1e-6));
+        if (!same) diffs.push(`${key}: radio reports ${JSON.stringify(got)}`);
+      }
+      if (diffs.length) {
+        nodeCfgStatus(statusKey,
+          `${okMsg} NOT confirmed by the radio — ${diffs.join(', ')}. It may have rebooted mid-write; check and retry.`,
+          false);
+      } else {
+        nodeCfgStatus(statusKey, `${okMsg} Confirmed by the radio.`, true);
+      }
+    } catch (e) {
+      /* verification is best-effort; never mask a successful save */
+    }
+  }
+
   function precMeterLabel(m) {
     return m === 0 ? 'Actual position' : `~${m} m radius`;
   }
@@ -20319,6 +20380,10 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
                             alt: fixed_alt})
     }).then(r => { if (!r.ok) return _cfgFail(r); return r.json(); }).then(d => {
       nodeCfgStatus('position', d.error || 'Saved.', !d.error);
+      if (!d.error) cfgVerifyAfterSave('position', 'position',
+        {gps_mode, pos_broadcast_secs: position_broadcast_secs, pos_precision: position_precision,
+         fixed_position, smart_position,
+         lat: fixed_position ? fixed_lat : null, lon: fixed_position ? fixed_lon : null, alt: fixed_alt}, 'Saved.');
       if (!d.error) btnFeedback(btn, '✓ Saved');
     }).catch(e => nodeCfgStatus('position', 'Error: ' + escHtml(String(e)), false));
   }
@@ -20333,6 +20398,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       body: JSON.stringify({fixed_position: false})
     }).then(r => { if (!r.ok) return _cfgFail(r); return r.json(); }).then(d => {
       nodeCfgStatus('position', d.error || 'Position removed. GPS will resume.', !d.error);
+      if (!d.error) cfgVerifyAfterSave('position', 'position', {fixed_position: false}, 'Position removed.');
       if (!d.error) {
         btnFeedback(btn, '✓ Removed');
         document.getElementById('node-cfg-fixed-pos').checked = false;
@@ -20355,6 +20421,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       body: JSON.stringify({power_saving: is_power_saving, shutdown_after_secs: on_battery_shutdown_after_secs})
     }).then(r => { if (!r.ok) return _cfgFail(r); return r.json(); }).then(d => {
       nodeCfgStatus('power', d.error || 'Saved.', !d.error);
+      if (!d.error) cfgVerifyAfterSave('power', 'power',
+        {power_saving: is_power_saving, shutdown_after_secs: on_battery_shutdown_after_secs}, 'Saved.');
       if (!d.error) btnFeedback(btn, '✓ Saved');
     }).catch(e => nodeCfgStatus('power', 'Error: ' + escHtml(String(e)), false));
   }
@@ -20380,6 +20448,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       body: JSON.stringify({screen_on_secs, flip_screen, display_units: units})
     }).then(r => { if (!r.ok) return _cfgFail(r); return r.json(); }).then(d => {
       nodeCfgStatus('display', d.error || 'Saved.', !d.error);
+      if (!d.error) cfgVerifyAfterSave('display', 'display',
+        {screen_on_secs, flip_screen, display_units: units}, 'Saved.');
       if (!d.error) btnFeedback(btn, '✓ Done');
     }).catch(e => nodeCfgStatus('display', 'Error: ' + escHtml(String(e)), false));
   }
@@ -20396,6 +20466,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       body: JSON.stringify({tel_device: device_update_interval, tel_env: environment_update_interval})
     }).then(r => { if (!r.ok) return _cfgFail(r); return r.json(); }).then(d => {
       nodeCfgStatus('telemetry', d.error || 'Saved.', !d.error);
+      if (!d.error) cfgVerifyAfterSave('telemetry', 'telemetry',
+        {tel_device: device_update_interval, tel_env: environment_update_interval}, 'Saved.');
       if (!d.error) btnFeedback(btn, '✓ Saved');
     }).catch(e => nodeCfgStatus('telemetry', 'Error: ' + escHtml(String(e)), false));
   }
@@ -20427,6 +20499,12 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
                             mqtt_root: root_topic})
     }).then(r => { if (!r.ok) return _cfgFail(r); return r.json(); }).then(d => {
       nodeCfgStatus('mqtt', d.error || 'Saved.', !d.error);
+      if (!d.error) cfgVerifyAfterSave('mqtt', 'mqtt',
+        {mqtt_enabled: enabled, mqtt_address: address, mqtt_username: username,
+         mqtt_tls: tls, mqtt_encryption: encryption, mqtt_json: json_enabled,
+         mqtt_map: map_reporting, mqtt_map_location: map_location,
+         mqtt_map_interval: map_interval, mqtt_map_precision: map_precision,
+         mqtt_root: root_topic}, 'Saved.');
       if (!d.error) btnFeedback(btn, '✓ Saved');
       if (!d.error && password) {
         document.getElementById('node-cfg-mqtt-password').value = '';
@@ -20505,6 +20583,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       return r.json();
     }).then(d => {
       nodeCfgStatus('bluetooth', d.error || 'Saved. Reboot to apply.', !d.error);
+      if (!d.error) cfgVerifyAfterSave('bluetooth', 'bluetooth', {bt_enabled, bt_mode, bt_fixed_pin}, 'Saved.');
       if (!d.error) btnFeedback(btn, '✓ Saved');
     }).catch(e => nodeCfgStatus('bluetooth', 'Error: ' + escHtml(String(e)), false));
   }
@@ -20530,6 +20609,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     }).then(d => {
       const _ign = (d.ignored && d.ignored.length) ? ` (ignored: ${d.ignored.join(', ')} — not supported by this radio) ` : '';
       nodeCfgStatus('network', d.error || `Saved. Reboot to apply.${_ign}`, !d.error);
+      if (!d.error) cfgVerifyAfterSave('network', 'network', payload, 'Saved.');
       if (!d.error) {
         btnFeedback(btn, '✓ Saved');
         const pskEl = document.getElementById('node-cfg-wifi-psk');

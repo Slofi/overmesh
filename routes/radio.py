@@ -21,6 +21,18 @@ from routes.mc import _qr_svg
 import logging
 log = logging.getLogger(__name__)
 
+
+def _as_bool(value):
+    """Coerce a request value to a bool, avoiding `bool("false") == True`.
+
+    The UI sends real JSON booleans, but anything else talking to these endpoints
+    (curl, Home Assistant, a script) may send the string "false" - which `bool()`
+    happily turns into True. Sweep finding 2026-09-12.
+    """
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
 bp = Blueprint('radio', __name__)
 
 
@@ -271,7 +283,7 @@ def api_radio_config_device(radio_id):
     try:
         iface.localNode.localConfig.device.role = role
         if "led_heartbeat_disabled" in data:
-            iface.localNode.localConfig.device.led_heartbeat_disabled = bool(data["led_heartbeat_disabled"])
+            iface.localNode.localConfig.device.led_heartbeat_disabled = _as_bool(data["led_heartbeat_disabled"])
         iface.localNode.writeConfig("device")
         return jsonify({"ok": True})
     except Exception as e:
@@ -294,12 +306,56 @@ def api_radio_config_lora(radio_id):
         if "modem_preset" in int_fields: lc.lora.modem_preset = int_fields["modem_preset"]
         if "tx_power"     in int_fields: lc.lora.tx_power     = int_fields["tx_power"]
         if "hop_limit"    in int_fields: lc.lora.hop_limit    = int_fields["hop_limit"]
-        if "ok_to_mqtt"  in data: lc.lora.config_ok_to_mqtt = bool(data["ok_to_mqtt"])
-        if "ignore_mqtt" in data: lc.lora.ignore_mqtt       = bool(data["ignore_mqtt"])
+        if "ok_to_mqtt"  in data: lc.lora.config_ok_to_mqtt = _as_bool(data["ok_to_mqtt"])
+        if "ignore_mqtt" in data: lc.lora.ignore_mqtt       = _as_bool(data["ignore_mqtt"])
         iface.localNode.writeConfig("lora")
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+_CONFIG_SECTIONS_LOCAL = ("device", "position", "lora", "power", "display", "network", "bluetooth")
+_CONFIG_SECTIONS_MODULE = ("mqtt", "telemetry", "ambientLighting", "cannedMessage", "detectionSensor",
+                           "externalNotification", "rangeTest", "serial", "storeForward", "audio",
+                           "remoteHardware", "neighborInfo", "paxcounter")
+
+
+@bp.route("/api/radio/<radio_id>/config/reload", methods=["POST"])
+def api_radio_config_reload(radio_id):
+    """Ask the radio to resend one config section.
+
+    Why this exists: config writes go out as fire-and-forget admin messages, so a
+    successful `writeConfig()` does NOT prove the radio applied the value. A node that
+    reboots (which a config write itself can trigger) silently drops it, and OM then
+    shows the value it *tried* to set - seen live 2026-09-12, twice (a position write
+    and a map-interval write both "succeeded" while the radio kept the old value).
+
+    The UI calls this right after a save, waits briefly, re-reads /config and compares
+    what it sent against what the radio now reports.
+    """
+    iface = get_iface_by_radio(radio_id)
+    if not iface:
+        return jsonify({"error": "Radio not connected"}), 503
+    data = request.get_json(silent=True) or {}
+    section = (data.get("section") or "").strip()
+    node = getattr(iface, "localNode", None)
+    if section in _CONFIG_SECTIONS_LOCAL:
+        container = getattr(node, "localConfig", None)
+    elif section in _CONFIG_SECTIONS_MODULE:
+        container = getattr(node, "moduleConfig", None)
+    else:
+        container = None
+    if container is None or not hasattr(container, section):
+        return jsonify({"error": f"Unknown config section {section!r}"}), 400
+    field = container.DESCRIPTOR.fields_by_name.get(section)
+    if field is None:
+        return jsonify({"error": f"Config section {section!r} does not exist on this firmware"}), 400
+    try:
+        node.requestConfig(field)
+    except Exception as e:
+        return jsonify({"error": f"Could not ask the radio for its config: {e}"}), 500
+    # Deliberately no sleep: the caller waits, so a slow radio cannot block other requests.
+    return jsonify({"ok": True, "section": section})
 
 
 @bp.route("/api/radio/<radio_id>/channels")
@@ -406,7 +462,7 @@ def api_radio_config_position(radio_id):
             try:    pos.position_broadcast_secs = int(data["pos_broadcast_secs"])
             except (TypeError, ValueError): return jsonify({"error": "pos_broadcast_secs must be a number"}), 400
         if "smart_position"     in data:
-            try:    pos.position_broadcast_smart_enabled = bool(data["smart_position"])
+            try:    pos.position_broadcast_smart_enabled = _as_bool(data["smart_position"])
             except AttributeError: pass
         # NOTE: position_precision field does not exist in current meshtastic protobuf —
         # precision_bits is set on the Position message (admin), not via PositionConfig
@@ -510,8 +566,8 @@ def api_radio_config_position(radio_id):
             try:
                 if local_num is not None and local_num in iface.nodesByNum:
                     iface.nodesByNum[local_num].setdefault("position", {})["precisionBits"] = precision
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("[MT] could not update the in-memory precisionBits: %r", e)
 
         return jsonify({"ok": True})
     except Exception as e:
@@ -526,7 +582,7 @@ def api_radio_config_power(radio_id):
     data = request.get_json(silent=True) or {}
     try:
         pwr = iface.localNode.localConfig.power
-        if "power_saving"        in data: pwr.is_power_saving              = bool(data["power_saving"])
+        if "power_saving"        in data: pwr.is_power_saving              = _as_bool(data["power_saving"])
         if "shutdown_after_secs" in data: pwr.on_battery_shutdown_after_secs = int(data["shutdown_after_secs"])
         iface.localNode.writeConfig("power")
         return jsonify({"ok": True})
@@ -543,7 +599,7 @@ def api_radio_config_display(radio_id):
     try:
         disp = iface.localNode.localConfig.display
         if "screen_on_secs" in data: disp.screen_on_secs = int(data["screen_on_secs"])
-        if "flip_screen"    in data: disp.flip_screen    = bool(data["flip_screen"])
+        if "flip_screen"    in data: disp.flip_screen    = _as_bool(data["flip_screen"])
         if "display_units"  in data: disp.units          = int(data["display_units"])
         iface.localNode.writeConfig("display")
         return jsonify({"ok": True})
@@ -575,16 +631,16 @@ def api_radio_config_mqtt(radio_id):
     data = request.get_json(silent=True) or {}
     try:
         mqtt = iface.localNode.moduleConfig.mqtt
-        if "mqtt_enabled"    in data: mqtt.enabled            = bool(data["mqtt_enabled"])
+        if "mqtt_enabled"    in data: mqtt.enabled            = _as_bool(data["mqtt_enabled"])
         if "mqtt_address"    in data: mqtt.address            = str(data["mqtt_address"])
         if "mqtt_username"   in data: mqtt.username           = str(data["mqtt_username"])
         if data.get("mqtt_password"):  mqtt.password          = str(data["mqtt_password"])
-        if "mqtt_encryption" in data: mqtt.encryption_enabled = bool(data["mqtt_encryption"])
-        if "mqtt_json"       in data: mqtt.json_enabled       = bool(data["mqtt_json"])
-        if "mqtt_tls"        in data: mqtt.tls_enabled        = bool(data["mqtt_tls"])
-        if "mqtt_map"        in data: mqtt.map_reporting_enabled = bool(data["mqtt_map"])
+        if "mqtt_encryption" in data: mqtt.encryption_enabled = _as_bool(data["mqtt_encryption"])
+        if "mqtt_json"       in data: mqtt.json_enabled       = _as_bool(data["mqtt_json"])
+        if "mqtt_tls"        in data: mqtt.tls_enabled        = _as_bool(data["mqtt_tls"])
+        if "mqtt_map"        in data: mqtt.map_reporting_enabled = _as_bool(data["mqtt_map"])
         if "mqtt_map_location" in data:
-            mqtt.map_report_settings.should_report_location = bool(data["mqtt_map_location"])
+            mqtt.map_report_settings.should_report_location = _as_bool(data["mqtt_map_location"])
         if data.get("mqtt_map_interval"):
             try:
                 secs = int(data["mqtt_map_interval"])
@@ -632,7 +688,7 @@ def api_radio_config_bluetooth(radio_id):
             return jsonify({"error": "bt_fixed_pin must be 0–999999"}), 400
     try:
         bt = iface.localNode.localConfig.bluetooth
-        if "bt_enabled"   in data: bt.enabled   = bool(data["bt_enabled"])
+        if "bt_enabled"   in data: bt.enabled   = _as_bool(data["bt_enabled"])
         if "bt_mode"      in data: bt.mode       = int(data["bt_mode"])
         if "bt_fixed_pin" in data: bt.fixed_pin  = int(data["bt_fixed_pin"])
         iface.localNode.writeConfig("bluetooth")
@@ -654,7 +710,7 @@ def api_radio_config_network(radio_id):
     ignored = []
     try:
         net = iface.localNode.localConfig.network
-        if "wifi_enabled" in data: net.wifi_enabled  = bool(data["wifi_enabled"])
+        if "wifi_enabled" in data: net.wifi_enabled  = _as_bool(data["wifi_enabled"])
         if "wifi_ssid"    in data: net.wifi_ssid      = str(data["wifi_ssid"])
         if data.get("wifi_psk"):    net.wifi_psk       = str(data["wifi_psk"])
         # NetworkConfig in the installed library (meshtastic 2.7.10) has no
@@ -794,9 +850,9 @@ def api_radio_channel_set(radio_id, ch_index):
                 ch.settings.psk = psk_bytes
             # else "keep" — don't touch psk
             if "uplink_enabled" in data:
-                ch.settings.uplink_enabled = bool(data["uplink_enabled"])
+                ch.settings.uplink_enabled = _as_bool(data["uplink_enabled"])
             if "downlink_enabled" in data:
-                ch.settings.downlink_enabled = bool(data["downlink_enabled"])
+                ch.settings.downlink_enabled = _as_bool(data["downlink_enabled"])
 
         iface.localNode.writeChannel(ch_index)
         return jsonify({"ok": True})

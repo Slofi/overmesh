@@ -273,8 +273,8 @@ def get_node_data():
                                     if connections.get(node_id):
                                         connections[node_id]["fixed_lat"] = lat
                                         connections[node_id]["fixed_lon"] = lon
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            log.debug("[MT] could not cache the fixed position for %s: %r", node_id, e)
 
                 fixed_override = get_fixed_node_position(node_id_str)
                 if fixed_override:
@@ -284,8 +284,8 @@ def get_node_data():
                     try:
                         if iface.localNode.localConfig.position.fixed_position and lat is not None and lon is not None:
                             remember_fixed_node_position(node_id_str, lat, lon, pos.get("altitude", 0), pos.get("precisionBits"))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log.debug("[MT] could not remember the fixed position for %s: %r", node_id_str, e)
 
                 fav_key = (node_id_str, node_id)
                 legacy_key = (node_id_str, "")
@@ -365,6 +365,6 @@ def mt_channel_name(iface, index):
             if name:
                 return name
             break
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug("[MT] channel-name lookup failed for index %s: %r", idx, e)
     return "Primary" if idx == 0 else f"CH{idx}"

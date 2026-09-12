@@ -31,7 +31,7 @@ from meshcore.packets import AnonReqType, BinaryReqType
 from meshcore.serial_cx import SerialConnection
 from meshcore.tcp_cx import TCPConnection
 
-from config import CONFIG, CONFIG_LOCK, DATA_DIR, save_config
+from config import CONFIG, CONFIG_LOCK, DATA_DIR
 from cross import maybe_forward_mc_message
 from bridge import publish_inbound_message
 from db import log_position, save_mc_message, update_mc_message_rx, save_passive_obs, save_passive_obs_bulk, mc_msgs_db_path, register_mc_msgs_db, init_mc_msgs_db, mc_passive_db_path, register_mc_passive_db
@@ -2122,14 +2122,14 @@ def _rx_copy_key(copy):
 def _dedup_rx_copies(copies):
     out = []
     seen = set()
-    for copy in copies or []:
-        if not copy:
+    for dup in copies or []:
+        if not dup:
             continue
-        key = _rx_copy_key(copy)
+        key = _rx_copy_key(dup)
         if key in seen:
             continue
         seen.add(key)
-        out.append(copy)
+        out.append(dup)
     return out
 
 
@@ -3126,8 +3126,8 @@ def _subscribe_mc_events(mc, config_id, name):
             )
             path_fields = _mc_message_path_fields(msg, rx)
             rx_copies = _dedup_rx_copies([_rx_copy_from_entry(msg, rx)] if rx else [])
-            for copy in rx_copies:
-                copy["confidence"] = _rx_correlation_confidence({**msg, "subtype": "channel"}, rx)
+            for dup in rx_copies:
+                dup["confidence"] = _rx_correlation_confidence({**msg, "subtype": "channel"}, rx)
             sse_msg = {
                 "type":       "mc_message",
                 "radio_id":   config_id,
@@ -3189,8 +3189,8 @@ def _subscribe_mc_events(mc, config_id, name):
             )
             path_fields = _mc_message_path_fields(msg, rx)
             rx_copies = _dedup_rx_copies([_rx_copy_from_entry(msg, rx)] if rx else [])
-            for copy in rx_copies:
-                copy["confidence"] = _rx_correlation_confidence({**msg, "subtype": "dm"}, rx)
+            for dup in rx_copies:
+                dup["confidence"] = _rx_correlation_confidence({**msg, "subtype": "dm"}, rx)
             sse_msg = {
                 "type":       "mc_message",
                 "radio_id":   config_id,
@@ -4478,7 +4478,7 @@ async def _set_channel_async(config_id, idx, name, key_hex=None):
         try:
             secret = bytes.fromhex(key_hex)
         except ValueError:
-            raise ValueError(f"Invalid key hex: must be valid hex string")
+            raise ValueError("Invalid key hex: must be valid hex string")
         if len(secret) != 16:
             raise ValueError(f"Key must be 16 bytes (32 hex chars), got {len(secret)}")
     r = await mc.commands.set_channel(int(idx), name, secret)

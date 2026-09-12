@@ -8,7 +8,7 @@ from flask import Blueprint, jsonify, request
 from pubsub import pub
 from meshtastic.protobuf import mesh_pb2, portnums_pb2
 from config import CONFIG, _valid_node_id
-from db import get_db_nodes, get_position_history, get_prefs_db, get_traceroute_history, save_message, save_traceroute, delete_channel_messages, delete_mt_all_messages, get_mc_contact_notes, set_mc_contact_notes, get_node_note, set_node_note, get_mc_note, set_mc_note, get_all_mc_notes, get_favorites, get_ignored
+from db import get_db_nodes, get_position_history, get_prefs_db, get_traceroute_history, save_message, save_traceroute, delete_channel_messages, delete_mt_all_messages, set_node_note, get_mc_note, set_mc_note, get_all_mc_notes, get_favorites, get_ignored
 from helpers import (
     _format_last_heard, _next_msg_id, _node_ts, _radio_id_for_iface,
     get_node_data, get_node_name, push_to_sse,

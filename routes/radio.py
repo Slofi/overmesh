@@ -527,7 +527,7 @@ def api_radio_config_telemetry(radio_id):
         tel = iface.localNode.moduleConfig.telemetry
         if "tel_device" in data: tel.device_update_interval      = int(data["tel_device"])
         if "tel_env"    in data: tel.environment_update_interval  = int(data["tel_env"])
-        iface.localNode.writeModuleConfig("telemetry")
+        iface.localNode.writeConfig("telemetry")  # writeConfig covers module sections too
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -549,7 +549,7 @@ def api_radio_config_mqtt(radio_id):
         if "mqtt_json"       in data: mqtt.json_enabled       = bool(data["mqtt_json"])
         if "mqtt_tls"        in data: mqtt.tls_enabled        = bool(data["mqtt_tls"])
         if "mqtt_map"        in data: mqtt.map_reporting_enabled = bool(data["mqtt_map"])
-        iface.localNode.writeModuleConfig("mqtt")
+        iface.localNode.writeConfig("mqtt")  # writeConfig covers module sections too
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -593,14 +593,22 @@ def api_radio_config_network(radio_id):
     data = request.get_json(silent=True) or {}
     if "wifi_ssid" in data and len(str(data["wifi_ssid"])) > 32:
         return jsonify({"error": "SSID too long (max 32 characters)"}), 400
+    # Keys this radio library cannot set are reported back, never assigned blindly:
+    # a stray name used to raise AttributeError and surface as a bare HTTP 500.
+    ignored = []
     try:
         net = iface.localNode.localConfig.network
         if "wifi_enabled" in data: net.wifi_enabled  = bool(data["wifi_enabled"])
-        if "wifi_ap_mode" in data: net.wifi_ap_mode  = bool(data["wifi_ap_mode"])
         if "wifi_ssid"    in data: net.wifi_ssid      = str(data["wifi_ssid"])
         if data.get("wifi_psk"):    net.wifi_psk       = str(data["wifi_psk"])
+        # NetworkConfig in the installed library (meshtastic 2.7.10) has no
+        # wifi_ap_mode field at all — assigning it raised AttributeError.
+        if "wifi_ap_mode" in data:
+            ignored.append("wifi_ap_mode")
+            log.warning("[MT] network save: wifi_ap_mode is not supported by the installed "
+                        "meshtastic library — ignored")
         iface.localNode.writeConfig("network")
-        return jsonify({"ok": True})
+        return jsonify({"ok": True, "ignored": ignored})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

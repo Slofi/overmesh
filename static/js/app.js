@@ -19755,6 +19755,15 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     }).join(' ');
   }
 
+  // Radio-config saves return {"error": "..."} on failure. Showing only "HTTP 500"
+  // hides the cause (that is how the broken mqtt/network saves looked), so read the
+  // body and prefer the server's message.
+  function _cfgFail(r) {
+    return r.json().catch(() => ({})).then(d => {
+      throw new Error((d && d.error) ? d.error : ('HTTP ' + r.status));
+    });
+  }
+
   function nodeCfgStatus(key, msg, ok) {
     const el = document.getElementById(`node-cfg-${key}-status`);
     if (!el) return;
@@ -19792,7 +19801,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({role, led_heartbeat_disabled})
-    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+    }).then(r => { if (!r.ok) return _cfgFail(r); return r.json(); }).then(d => {
       nodeCfgStatus('device', d.error || 'Saved. Reboot may be needed.', !d.error);
       if (!d.error) btnFeedback(btn, '✓ Saved');
     }).catch(e => nodeCfgStatus('device', 'Error: ' + escHtml(String(e)), false));
@@ -19809,7 +19818,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({region, modem_preset, tx_power, hop_limit})
-    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+    }).then(r => { if (!r.ok) return _cfgFail(r); return r.json(); }).then(d => {
       nodeCfgStatus('lora', d.error || 'Saved. Reboot node to apply region/preset.', !d.error);
       if (!d.error) btnFeedback(btn, '✓ Saved');
     }).catch(e => nodeCfgStatus('lora', 'Error: ' + escHtml(String(e)), false));
@@ -20295,7 +20304,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
                             lat: fixed_position ? fixed_lat : null,
                             lon: fixed_position ? fixed_lon : null,
                             alt: fixed_alt})
-    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+    }).then(r => { if (!r.ok) return _cfgFail(r); return r.json(); }).then(d => {
       nodeCfgStatus('position', d.error || 'Saved.', !d.error);
       if (!d.error) btnFeedback(btn, '✓ Saved');
     }).catch(e => nodeCfgStatus('position', 'Error: ' + escHtml(String(e)), false));
@@ -20309,7 +20318,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({fixed_position: false})
-    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+    }).then(r => { if (!r.ok) return _cfgFail(r); return r.json(); }).then(d => {
       nodeCfgStatus('position', d.error || 'Position removed. GPS will resume.', !d.error);
       if (!d.error) {
         btnFeedback(btn, '✓ Removed');
@@ -20331,7 +20340,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({power_saving: is_power_saving, shutdown_after_secs: on_battery_shutdown_after_secs})
-    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+    }).then(r => { if (!r.ok) return _cfgFail(r); return r.json(); }).then(d => {
       nodeCfgStatus('power', d.error || 'Saved.', !d.error);
       if (!d.error) btnFeedback(btn, '✓ Saved');
     }).catch(e => nodeCfgStatus('power', 'Error: ' + escHtml(String(e)), false));
@@ -20356,7 +20365,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({screen_on_secs, flip_screen, display_units: units})
-    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+    }).then(r => { if (!r.ok) return _cfgFail(r); return r.json(); }).then(d => {
       nodeCfgStatus('display', d.error || 'Saved.', !d.error);
       if (!d.error) btnFeedback(btn, '✓ Done');
     }).catch(e => nodeCfgStatus('display', 'Error: ' + escHtml(String(e)), false));
@@ -20372,7 +20381,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({tel_device: device_update_interval, tel_env: environment_update_interval})
-    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+    }).then(r => { if (!r.ok) return _cfgFail(r); return r.json(); }).then(d => {
       nodeCfgStatus('telemetry', d.error || 'Saved.', !d.error);
       if (!d.error) btnFeedback(btn, '✓ Saved');
     }).catch(e => nodeCfgStatus('telemetry', 'Error: ' + escHtml(String(e)), false));
@@ -20396,7 +20405,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       body: JSON.stringify({mqtt_enabled: enabled, mqtt_address: address, mqtt_username: username,
                             mqtt_password: password, mqtt_encryption: encryption, mqtt_json: json_enabled,
                             mqtt_tls: tls, mqtt_map: map_reporting})
-    }).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+    }).then(r => { if (!r.ok) return _cfgFail(r); return r.json(); }).then(d => {
       nodeCfgStatus('mqtt', d.error || 'Saved.', !d.error);
       if (!d.error) btnFeedback(btn, '✓ Saved');
       if (!d.error && password) {
@@ -20472,7 +20481,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({bt_enabled, bt_mode, bt_fixed_pin})
     }).then(r => {
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok) return _cfgFail(r);
       return r.json();
     }).then(d => {
       nodeCfgStatus('bluetooth', d.error || 'Saved. Reboot to apply.', !d.error);
@@ -20484,10 +20493,11 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     if (!_nodeCfgData) { nodeCfgStatus('network', 'Reload config first.', false); return; }
     const radioId    = _selectedNodeId;
     const wifi_enabled = document.getElementById('node-cfg-wifi-enabled').checked;
-    const wifi_ap_mode = document.getElementById('node-cfg-wifi-ap-mode').checked;
     const wifi_ssid    = document.getElementById('node-cfg-wifi-ssid').value.trim();
     const wifi_psk     = document.getElementById('node-cfg-wifi-psk').value;
-    const payload      = {wifi_enabled, wifi_ap_mode, wifi_ssid};
+    // wifi_ap_mode is NOT sent: the installed meshtastic library has no such field
+    // on NetworkConfig, so the radio cannot be told (and the old handler 500'd on it).
+    const payload      = {wifi_enabled, wifi_ssid};
     if (wifi_psk.trim()) payload.wifi_psk = wifi_psk;
     nodeCfgStatus('network', 'Saving…', true);
     fetch(BASE_PATH + `/api/radio/${encodeURIComponent(radioId)}/config/network`, {
@@ -20495,10 +20505,11 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(payload)
     }).then(r => {
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok) return _cfgFail(r);
       return r.json();
     }).then(d => {
-      nodeCfgStatus('network', d.error || 'Saved. Reboot to apply.', !d.error);
+      const _ign = (d.ignored && d.ignored.length) ? ` (ignored: ${d.ignored.join(', ')} — not supported by this radio) ` : '';
+      nodeCfgStatus('network', d.error || `Saved. Reboot to apply.${_ign}`, !d.error);
       if (!d.error) {
         btnFeedback(btn, '✓ Saved');
         const pskEl = document.getElementById('node-cfg-wifi-psk');

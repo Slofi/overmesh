@@ -17540,7 +17540,7 @@ if (targetEl) {
   function toggleMcTraceType(t) {
     if (_mcRxHidden.has(t)) _mcRxHidden.delete(t); else _mcRxHidden.add(t);
     _renderMcTraceLegend();
-    _mcRxAnimateNew(seed);
+    _mcRxAnimateNew(false);   // immediate: the newly revealed packets, no seed staggering
   }
 
   function _mcHandleTraceData(data) {
@@ -20382,7 +20382,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       nodeCfgStatus('position', d.error || 'Saved.', !d.error);
       if (!d.error) cfgVerifyAfterSave('position', 'position',
         {gps_mode, pos_broadcast_secs: position_broadcast_secs, pos_precision: position_precision,
-         fixed_position, smart_position,
+         fixed_position, smart_position: smart_position_enabled,
          lat: fixed_position ? fixed_lat : null, lon: fixed_position ? fixed_lon : null, alt: fixed_alt}, 'Saved.');
       if (!d.error) btnFeedback(btn, '✓ Saved');
     }).catch(e => nodeCfgStatus('position', 'Error: ' + escHtml(String(e)), false));

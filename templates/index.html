@@ -1132,6 +1132,16 @@
           </div>
           <button class="btn" onclick="saveNodeLora(this)" title="Save LoRa region, modem preset and hop limit to the node">Save</button>
         </div>
+        <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center;margin-top:8px">
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px"
+                 title="Sets the ok_to_mqtt bit on this node's outgoing packets, so OTHER gateways may uplink them too. Community maps (e.g. map.meshnet.si) ask for this. It does not itself enable MQTT or uplinking.">
+            <input type="checkbox" id="node-cfg-ok-to-mqtt"> OK to MQTT <span style="color:var(--muted)">(others may uplink my packets)</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px"
+                 title="Refuse any packet that travelled via MQTT (keeps internet traffic out of your local mesh). Independent of uplinking — your own packets still go up if a channel has Uplink enabled.">
+            <input type="checkbox" id="node-cfg-ignore-mqtt"> Ignore MQTT-relayed packets
+          </label>
+        </div>
         <p style="font-size:11px;color:var(--muted);margin:8px 0 0">Region and preset changes take effect after node reboot. Hop limit applies immediately (also used for Traceroute).</p>
         <div id="node-cfg-lora-status" style="font-size:12px;min-height:16px;margin-top:4px"></div>
 
@@ -1336,12 +1346,12 @@
         </div>
         <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-top:8px">
           <label style="display:flex;align-items:center;gap:5px;font-size:12px"
-                 title="Publishes THIS node's name/position/model to the map topic. It does NOT upload mesh traffic — publishing channel traffic needs 'MQTT uplink' on that channel.">
+                 title="Map REPORTING: publishes this node's name/position/model to the <root>/2/map/ topic. Used by maps that consume MAP_REPORT (e.g. meshmap.net). NOTE: map.meshnet.si does NOT use map reports — it builds its map from uplinked NODEINFO + POSITION packets, so for that map enable 'MQTT uplink' on the primary channel instead.">
             <input type="checkbox" id="node-cfg-mqtt-map-location"> Report my location to the map
           </label>
           <div>
-            <label class="settings-label">Map report interval (s) <span style="font-weight:400">— blank = firmware default</span></label>
-            <input id="node-cfg-mqtt-map-interval" type="number" min="60" max="86400" class="settings-input" style="width:120px" placeholder="e.g. 900">
+            <label class="settings-label">Map report interval (s) <span style="font-weight:400">— blank = firmware default; firmware minimum 3600</span></label>
+            <input id="node-cfg-mqtt-map-interval" type="number" min="3600" max="86400" class="settings-input" style="width:120px" placeholder="e.g. 3600">
           </div>
           <div>
             <label class="settings-label">Position precision (12–15)</label>

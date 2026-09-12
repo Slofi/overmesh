@@ -19649,6 +19649,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         if (snEl) { snEl.value = ''; snEl.placeholder = d.short_name || ''; }
         document.getElementById('node-cfg-txpower').value    = d.tx_power   || 0;
         document.getElementById('node-cfg-hoplimit').value   = d.hop_limit  || 3;
+        document.getElementById('node-cfg-ok-to-mqtt').checked   = !!d.lora_ok_to_mqtt;
+        document.getElementById('node-cfg-ignore-mqtt').checked  = !!d.lora_ignore_mqtt;
 
         // Populate role dropdown
         const roleSel = document.getElementById('node-cfg-role');
@@ -19822,7 +19824,9 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     fetch(BASE_PATH + `/api/radio/${encodeURIComponent(radioId)}/config/lora`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({region, modem_preset, tx_power, hop_limit})
+      body: JSON.stringify({region, modem_preset, tx_power, hop_limit,
+                            ok_to_mqtt:   document.getElementById('node-cfg-ok-to-mqtt').checked,
+                            ignore_mqtt:  document.getElementById('node-cfg-ignore-mqtt').checked})
     }).then(r => { if (!r.ok) return _cfgFail(r); return r.json(); }).then(d => {
       nodeCfgStatus('lora', d.error || 'Saved. Reboot node to apply region/preset.', !d.error);
       if (!d.error) btnFeedback(btn, '✓ Saved');

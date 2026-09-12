@@ -182,12 +182,12 @@ class HandlerTests(unittest.TestCase):
         """Without should_report_location the firmware skips the map report entirely."""
         r = self._post("/config/mqtt", {"mqtt_enabled": True, "mqtt_map": True,
                                         "mqtt_map_location": True,
-                                        "mqtt_map_interval": 900,
+                                        "mqtt_map_interval": 3600,
                                         "mqtt_map_precision": 13})
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
         mrs = self.ln.moduleConfig.mqtt.map_report_settings
         self.assertTrue(mrs.should_report_location)
-        self.assertEqual(mrs.publish_interval_secs, 900)
+        self.assertEqual(mrs.publish_interval_secs, 3600)
         self.assertEqual(mrs.position_precision, 13)
 
     def test_map_report_precision_out_of_range_is_rejected(self):
@@ -198,6 +198,45 @@ class HandlerTests(unittest.TestCase):
         self.ln.moduleConfig.mqtt.map_report_settings.publish_interval_secs = 3600
         r = self._post("/config/mqtt", {"mqtt_map_location": True, "mqtt_map_interval": 0})
         self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.ln.moduleConfig.mqtt.map_report_settings.publish_interval_secs, 3600)
+
+    # ── LoRa-level MQTT participation: OK to MQTT / ignore MQTT (absent from OM) ──
+    def test_lora_mqtt_participation_flags_are_written(self):
+        """config_ok_to_mqtt sets the ok_to_mqtt bit on our packets (what community maps
+        ask for); ignore_mqtt refuses MQTT-relayed packets. Both are LoRa config fields."""
+        r = self._post("/config/lora", {"region": 3, "modem_preset": 0, "tx_power": 27,
+                                        "hop_limit": 6, "ok_to_mqtt": True,
+                                        "ignore_mqtt": False})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        self.assertTrue(self.ln.localConfig.lora.config_ok_to_mqtt)
+        self.assertFalse(self.ln.localConfig.lora.ignore_mqtt)
+
+    def test_lora_save_without_the_new_flags_keeps_them(self):
+        """An older cached page must not silently clear them."""
+        self.ln.localConfig.lora.config_ok_to_mqtt = True
+        r = self._post("/config/lora", {"region": 3, "modem_preset": 0, "tx_power": 27, "hop_limit": 6})
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(self.ln.localConfig.lora.config_ok_to_mqtt)
+
+    def test_config_read_exposes_the_lora_mqtt_flags(self):
+        self.ln.localConfig.lora.config_ok_to_mqtt = True
+        self.ln.localConfig.lora.ignore_mqtt = True
+        r = self.client.get(f"/api/radio/{RADIO}/config")
+        body = r.get_json()
+        self.assertIn("lora_ok_to_mqtt", body)
+        self.assertIn("lora_ignore_mqtt", body)
+        self.assertTrue(body["lora_ok_to_mqtt"])
+        self.assertTrue(body["lora_ignore_mqtt"])
+
+    # ── the map-report interval minimum is 3600 s (documented) ──
+    def test_map_interval_below_the_firmware_minimum_is_rejected(self):
+        r = self._post("/config/mqtt", {"mqtt_map_location": True, "mqtt_map_interval": 900})
+        self.assertEqual(r.status_code, 400, r.get_data(as_text=True))
+        self.assertIn("3600", r.get_json().get("error", ""))
+
+    def test_map_interval_at_the_minimum_is_accepted(self):
+        r = self._post("/config/mqtt", {"mqtt_map_location": True, "mqtt_map_interval": 3600})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
         self.assertEqual(self.ln.moduleConfig.mqtt.map_report_settings.publish_interval_secs, 3600)
 
     def test_channel_uplink_and_downlink_are_written(self):

@@ -71,6 +71,13 @@ def api_radio_config_get(radio_id):
         preset    = _int(lc, "lora", "modem_preset")
         tx_power  = _int(lc, "lora", "tx_power")
         hop_limit = _int(lc, "lora", "hop_limit") or 3
+        # LoRa-level MQTT participation (both were invisible in OM):
+        #  ok_to_mqtt  - sets the ok_to_mqtt bit on OUR outgoing packets, which is what
+        #                lets other gateways uplink them (community maps ask for it).
+        #  ignore_mqtt - we refuse packets that travelled via MQTT (keeps internet
+        #                traffic out of the local mesh). Independent of uplinking.
+        lora_ok_to_mqtt  = _bool(lc, "lora", "config_ok_to_mqtt")
+        lora_ignore_mqtt = _bool(lc, "lora", "ignore_mqtt")
 
         # position — get live position data for local node (used for coords + precisionBits)
         node_hex = mt_node_id_from_num(local_num)
@@ -166,6 +173,8 @@ def api_radio_config_get(radio_id):
             "modem_preset":  preset,
             "tx_power":      tx_power,
             "hop_limit":     hop_limit,
+            "lora_ok_to_mqtt":  lora_ok_to_mqtt,
+            "lora_ignore_mqtt": lora_ignore_mqtt,
             "lora_regions":  LORA_REGIONS,
             "modem_presets": MODEM_PRESETS,
             # position
@@ -285,6 +294,8 @@ def api_radio_config_lora(radio_id):
         if "modem_preset" in int_fields: lc.lora.modem_preset = int_fields["modem_preset"]
         if "tx_power"     in int_fields: lc.lora.tx_power     = int_fields["tx_power"]
         if "hop_limit"    in int_fields: lc.lora.hop_limit    = int_fields["hop_limit"]
+        if "ok_to_mqtt"  in data: lc.lora.config_ok_to_mqtt = bool(data["ok_to_mqtt"])
+        if "ignore_mqtt" in data: lc.lora.ignore_mqtt       = bool(data["ignore_mqtt"])
         iface.localNode.writeConfig("lora")
         return jsonify({"ok": True})
     except Exception as e:
@@ -579,7 +590,10 @@ def api_radio_config_mqtt(radio_id):
                 secs = int(data["mqtt_map_interval"])
             except (TypeError, ValueError):
                 return jsonify({"error": "mqtt_map_interval must be a number"}), 400
-            mqtt.map_report_settings.publish_interval_secs = max(60, min(secs, 86400))
+            if secs < 3600:
+                return jsonify({"error": "Map report interval minimum is 3600 s "
+                                         "(1 hour) — the firmware's documented minimum."}), 400
+            mqtt.map_report_settings.publish_interval_secs = min(secs, 86400)
         if data.get("mqtt_map_precision"):
             try:
                 prec = int(data["mqtt_map_precision"])

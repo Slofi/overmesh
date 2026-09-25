@@ -3,6 +3,25 @@
 
 'use strict';
 
+// ── Repair note (2026-09-25) ───────────────────────────────────────────────────────────────────
+// The 2026-06-24 overhaul renamed/removed several chat and activity helpers and left the old calls behind, and
+// it spliced the body of `renderMsgChannelOptions` into the tail of `renderMissionStrip` (losing the header).
+// The chat panel's channel/DM selector and message list therefore cannot be built on this page yet: the missing
+// pieces are real work, not a rename. Until that repair lands, these paths degrade with a visible reason
+// instead of throwing a ReferenceError out of a tap handler and killing the rest of the tab.
+function $(id) { return document.getElementById(id); }   // the file uses document.getElementById everywhere else
+
+function _liteChatHelpers() {
+  return typeof renderMsgList === 'function' && typeof renderMsgChannelOptions === 'function';
+}
+function _liteChatUnavailable(what) {
+  // console, not a toast: this is a build limitation, not something the operator can act on, and it must not
+  // interrupt a tap that was doing something else (logging a message, deleting a DM).
+  console.warn('OM Lite: ' + what + ' is unavailable in this build - the chat helpers were lost in the 2026-06-24 overhaul (see the repair note at the top of lite.js).');
+}
+// ───────────────────────────────────────────────────────────────────────────────────────────────
+
+
 // ── State ────────────────────────────────────────────────────────────────────
 const S = {
   nodes:      {},   // MT: node_id → node obj
@@ -1369,7 +1388,11 @@ function addActivity(kind, title, sub) {
 }
 
 function openActivitySheet() {
-  renderActivity();
+  if (typeof renderActivity === 'function') {
+    renderActivity();
+  } else {
+    _liteChatUnavailable('the activity view');
+  }
   openSheet('activity-sheet');
 }
 
@@ -2293,16 +2316,18 @@ function renderMissionStrip() {
     wrap.innerHTML = `<span style="color:var(--muted);font-size:12px;padding:4px 0">No missions yet</span>`;
     return;
   }
-  const chOpts = channels.map(ch => `<option value="ch:${ch.index}" ${!S.activeDmNodeId && ch.index === activeCh ? "selected" : ""}>${esc(ch.name)}</option>`).join("");
-  const dmOpts = convs.map(c => `<option value="dm:${c.id}" ${S.activeDmNodeId === c.id ? "selected" : ""}>DM: ${esc(c.name)}</option>`).join("");
-  return `<optgroup label="Channels">${chOpts}</optgroup><optgroup label="Direct Messages">${dmOpts}</optgroup>`;
+  // ⚠️ REMOVED 2026-09-25 (DeepSeek): this was the chat channel/DM options builder, spliced in here by the
+  // 2026-06-24 overhaul with its header lost, referencing `channels`, `convs` and `activeCh` - none of which are
+  // defined anywhere. A NON-EMPTY mission list therefore returned <optgroup> HTML, and the strip was empty
+  // either way. The selector belongs in its own function and needs the DM state re-read: see the note at the top.
+  return;
 }
 
 function setMsgNet(net) {
   S.activeMsgNet = net === "mc" ? "mc" : "mt";
   S.activeDmNodeId = null;
   const chSel = $("msg-ch");
-  if (chSel) {
+  if (chSel && _liteChatHelpers()) {
     chSel.innerHTML = renderMsgChannelOptions();
     chSel.value = `ch:${S.activeMsgNet === "mc" ? S.activeMcCh : S.activeMtCh}`;
   }
@@ -2311,7 +2336,7 @@ function setMsgNet(net) {
     btn.classList.toggle("active", active);
     btn.style.color = active ? "var(--accent)" : "";
   });
-  renderMsgList();
+  if (_liteChatHelpers()) renderMsgList(); else _liteChatUnavailable('the message list');
 }
 
 function filterLogMission(mission) {
@@ -2342,7 +2367,7 @@ function renderLog() {
       else S.activeMcCh = idx;
     }
     updateDmDelBtn();
-    renderMsgList();
+    if (_liteChatHelpers()) renderMsgList(); else _liteChatUnavailable('the message list');
   };
 
   function updateDmDelBtn() {
@@ -2353,21 +2378,26 @@ function renderLog() {
       if (!confirm("Delete DM conversation with this contact?")) return;
       const net = S.activeMsgNet;
       if (net === "mc" && S.activeMcRadio) {
-        await apiFetch(`/api/mc/${S.activeMcRadio}/dm_messages/${S.activeDmNodeId}`, { method: "DELETE" });
+        await fetch(`/api/mc/${S.activeMcRadio}/dm_messages/${S.activeDmNodeId}`, { method: "DELETE" });
       }
       S.messages = S.messages.filter(m => !(m.network === net && m.is_dm && (m.from_id === S.activeDmNodeId || m.to_id === S.activeDmNodeId)));
       S.activeDmNodeId = null;
       const chSel = $("msg-ch");
-      if (chSel) {
+      if (chSel && _liteChatHelpers()) {
         chSel.innerHTML = renderMsgChannelOptions();
         chSel.value = `ch:${S.activeMsgNet === "mc" ? S.activeMcCh : S.activeMtCh}`;
       }
       updateDmDelBtn();
-      renderMsgList();
+      if (_liteChatHelpers()) renderMsgList(); else _liteChatUnavailable('the message list');
     };
   }
   renderMissionControls();
   renderMissionStrip();
+  // `el` is out of scope at the two uses below (the overhaul moved this block away from the function that had it).
+  // Resolved tolerantly: the ids the log tab uses, and if neither exists, stop with a reason instead of throwing.
+  // Today those lines throw, so the worst case here cannot regress anything.
+  const el = document.getElementById('log-list') || document.getElementById('log-entries');
+  if (!el) { console.warn('OM Lite: log list container not found (log-list / log-entries) - not rendering entries.'); return; }
   if (!entries.length) {
     el.innerHTML = `<div style="padding:24px;text-align:center;color:var(--muted);font-size:13px">${S.logEntries.length ? 'No matching entries' : 'No entries yet'}</div>`;
     return;

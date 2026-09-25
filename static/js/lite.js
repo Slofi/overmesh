@@ -11,9 +11,59 @@
 // instead of throwing a ReferenceError out of a tap handler and killing the rest of the tab.
 function $(id) { return document.getElementById(id); }   // the file uses document.getElementById everywhere else
 
+function renderMsgList() {
+  // The overhaul renamed this to renderMessages() and left the old name in the callers. That function is complete
+  // (it renders per S.chatCtx into #chat-messages), so this is the 3 callers' intent and nothing more.
+  if (typeof window.renderMessages === 'function') window.renderMessages();
+}
+
 function _liteChatHelpers() {
   return typeof window.renderMsgList === 'function' && typeof window.renderMsgChannelOptions === 'function';
 }
+function renderMsgChannelOptions() {
+  // Rebuilt on the CURRENT state model (the old one used `channels`/`convs`/`activeCh`, which the overhaul
+  // removed). Same value formats as before - 'ch:<index>' / 'dm:<nodeId>' - so setMsgNet and the DM delete path
+  // need no change. DM names are resolved the same way renderActiveDms() does it.
+  const isMc = S.activeMsgNet === 'mc';
+  const chans = isMc ? (S.mcChannels[S.activeMcRadio] || []) : (S.mtChannels || []);
+  const activeIdx = isMc ? S.activeMcCh : S.activeMtCh;
+  const chOpts = chans.map(ch => {
+    const sel = String(ch.index) === String(activeIdx) ? ' selected' : '';
+    return `<option value="ch:${ch.index}"${sel}>${esc(ch.name || ('ch' + ch.index))}</option>`;
+  }).join('');
+  const dmOpts = [...S.activeDms].map(key => {
+    const [type, radioId, nodeId] = key.split(':');
+    let name = nodeId;
+    if (type === 'mt_dm') name = S.nodes[nodeId]?.name || nodeId;
+    else if (type === 'mc_dm') name = S.mcNodes[radioId]?.[nodeId]?.name || nodeId;
+    return `<option value="dm:${nodeId}">DM: ${esc(name)}</option>`;
+  }).join('');
+  return (chOpts ? `<optgroup label="Channels">${chOpts}</optgroup>` : '')
+       + (dmOpts ? `<optgroup label="Direct Messages">${dmOpts}</optgroup>` : '');
+}
+
+function renderActivity() {
+  // addActivity(kind, title, sub) fills S.activity; nothing ever rendered it (the overhaul lost this). Rendered
+  // into the activity sheet's own body container, with the same muted styling the rest of the file uses.
+  const el = document.getElementById('activity-body');
+  if (!el) return;
+  if (!S.activity.length) {
+    el.innerHTML = '<div style="padding:16px 14px;font-size:13px;color:var(--muted)">Nothing yet.</div>';
+    return;
+  }
+  el.innerHTML = S.activity.map(a => {
+    const ts = a.ts ? new Date(a.ts * 1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
+    return `<div style="display:flex;gap:8px;align-items:flex-start;padding:7px 2px;border-bottom:1px solid var(--border)">
+      <span style="flex:0 0 auto">${esc(a.kind || '')}</span>
+      <span style="flex:1;min-width:0">
+        <span style="font-size:13px">${esc(a.title || '')}</span>
+        ${a.sub ? `<span style="display:block;font-size:11px;color:var(--muted)">${esc(a.sub)}</span>` : ''}
+      </span>
+      <span style="flex:0 0 auto;font-size:11px;color:var(--muted)">${ts}</span>
+    </div>`;
+  }).join('');
+}
+
 function _liteChatUnavailable(what) {
   // console, not a toast: this is a build limitation, not something the operator can act on, and it must not
   // interrupt a tap that was doing something else (logging a message, deleting a DM).
@@ -2316,11 +2366,19 @@ function renderMissionStrip() {
     wrap.innerHTML = `<span style="color:var(--muted);font-size:12px;padding:4px 0">No missions yet</span>`;
     return;
   }
-  // ⚠️ REMOVED 2026-09-25 (DeepSeek): this was the chat channel/DM options builder, spliced in here by the
-  // 2026-06-24 overhaul with its header lost, referencing `channels`, `convs` and `activeCh` - none of which are
-  // defined anywhere. A NON-EMPTY mission list therefore returned <optgroup> HTML, and the strip was empty
-  // either way. The selector belongs in its own function and needs the DM state re-read: see the note at the top.
-  return;
+  // Rebuilt 2026-09-25 (DeepSeek): the chat options builder was spliced in here by the 2026-06-24 overhaul and
+  // its header lost, so a non-empty mission list returned <optgroup> HTML and the strip stayed empty. The builder
+  // lives in renderMsgChannelOptions() now; this renders the mission pills, using the same class and onclick idiom
+  // the log rows already use.
+  const names = [...missionStats().values()].map(m => (m && m.name) ? m.name : m).filter(Boolean);
+  const shown = active ? names.filter(n => String(n).toLowerCase().includes(active)) : names;
+  if (!shown.length) {
+    wrap.innerHTML = `<span style="color:var(--muted);font-size:12px;padding:4px 0">${active ? 'No matching missions' : 'No missions yet'}</span>`;
+    return;
+  }
+  wrap.innerHTML = shown.map(n =>
+    `<span class="log-mission" style="margin-right:6px" onclick="event.stopPropagation();filterLogMission('${jsSafe(n)}')">${esc(n)}</span>`
+  ).join('');
 }
 
 function setMsgNet(net) {

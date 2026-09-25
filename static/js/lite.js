@@ -12,7 +12,7 @@
 function $(id) { return document.getElementById(id); }   // the file uses document.getElementById everywhere else
 
 function _liteChatHelpers() {
-  return typeof renderMsgList === 'function' && typeof renderMsgChannelOptions === 'function';
+  return typeof window.renderMsgList === 'function' && typeof window.renderMsgChannelOptions === 'function';
 }
 function _liteChatUnavailable(what) {
   // console, not a toast: this is a build limitation, not something the operator can act on, and it must not
@@ -1388,8 +1388,8 @@ function addActivity(kind, title, sub) {
 }
 
 function openActivitySheet() {
-  if (typeof renderActivity === 'function') {
-    renderActivity();
+  if (typeof window.renderActivity === 'function') {
+    window.renderActivity();
   } else {
     _liteChatUnavailable('the activity view');
   }
@@ -2328,7 +2328,7 @@ function setMsgNet(net) {
   S.activeDmNodeId = null;
   const chSel = $("msg-ch");
   if (chSel && _liteChatHelpers()) {
-    chSel.innerHTML = renderMsgChannelOptions();
+    chSel.innerHTML = window.renderMsgChannelOptions();
     chSel.value = `ch:${S.activeMsgNet === "mc" ? S.activeMcCh : S.activeMtCh}`;
   }
   document.querySelectorAll("[data-msg-net]").forEach(btn => {
@@ -2336,7 +2336,7 @@ function setMsgNet(net) {
     btn.classList.toggle("active", active);
     btn.style.color = active ? "var(--accent)" : "";
   });
-  if (_liteChatHelpers()) renderMsgList(); else _liteChatUnavailable('the message list');
+  if (_liteChatHelpers()) window.renderMsgList(); else _liteChatUnavailable('the message list');
 }
 
 function filterLogMission(mission) {
@@ -2367,7 +2367,7 @@ function renderLog() {
       else S.activeMcCh = idx;
     }
     updateDmDelBtn();
-    if (_liteChatHelpers()) renderMsgList(); else _liteChatUnavailable('the message list');
+    if (_liteChatHelpers()) window.renderMsgList(); else _liteChatUnavailable('the message list');
   };
 
   function updateDmDelBtn() {
@@ -2384,11 +2384,11 @@ function renderLog() {
       S.activeDmNodeId = null;
       const chSel = $("msg-ch");
       if (chSel && _liteChatHelpers()) {
-        chSel.innerHTML = renderMsgChannelOptions();
+        chSel.innerHTML = window.renderMsgChannelOptions();
         chSel.value = `ch:${S.activeMsgNet === "mc" ? S.activeMcCh : S.activeMtCh}`;
       }
       updateDmDelBtn();
-      if (_liteChatHelpers()) renderMsgList(); else _liteChatUnavailable('the message list');
+      if (_liteChatHelpers()) window.renderMsgList(); else _liteChatUnavailable('the message list');
     };
   }
   renderMissionControls();

@@ -2258,6 +2258,15 @@
         <button class="btn-primary" onclick="saveMapTilerKey()">Save</button>
       </div>
       <div id="mt-key-status" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>
+      <p style="color:var(--muted);font-size:12px;margin:16px 0 10px 0">Required for CARTO layers (Voyager, Voyager No Labels, Positron, Dark Matter, Dark No Labels). The app ships no key of its own — these layers stayed broken after the shared one was rotated (CARTO answers a revoked key with HTTP 403), so each user needs their own. Get one at <a href="https://carto.com/" target="_blank" style="color:var(--accent)">carto.com</a>.</p>
+      <div class="settings-row" style="align-items:flex-end;gap:8px;max-width:480px">
+        <div style="flex:1">
+          <label class="settings-label" for="carto-api-key-input">CARTO API key</label>
+          <input id="carto-api-key-input" class="settings-input" type="text" placeholder="Enter API key..." maxlength="64" style="font-family:monospace">
+        </div>
+        <button class="btn-primary" onclick="saveCartoKey()">Save</button>
+      </div>
+      <div id="carto-key-status" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>
     </div>
 
     <!-- Offline maps -->

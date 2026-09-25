@@ -54,8 +54,8 @@ let map, activeLayer;
 let _mcPosPickRadio = null;
 
 const LAYERS = {
-  voyager: { label: 'Voyager',          url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key=cb1_28gv_1_9a660bc1a18b5547f66e1762', attr: '© OSM © CARTO', maxZoom: 19 },
-  dark:    { label: 'Dark Matter',      url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=cb1_28gv_1_9a660bc1a18b5547f66e1762', attr: '© OSM © CARTO', maxZoom: 19 },
+  voyager: { label: 'Voyager',          url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key={cartokey}', attr: '© OSM © CARTO', maxZoom: 19 },
+  dark:    { label: 'Dark Matter',      url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key={cartokey}', attr: '© OSM © CARTO', maxZoom: 19 },
   osm:     { label: 'OpenStreetMap',    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attr: '© OSM', maxZoom: 19 },
   topo:    { label: 'OpenTopoMap',      url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', attr: '© OSM © OpenTopoMap', maxZoom: 17 },
   sat:     { label: 'Esri Satellite',   url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attr: '© Esri', maxZoom: 18 },
@@ -230,7 +230,16 @@ function installTouchPanFallback() {
 function applyLayer(key) {
   const def = LAYERS[key] || LAYERS.voyager;
   if (activeLayer) map.removeLayer(activeLayer);
-  activeLayer = L.tileLayer(def.url, { attribution: def.attr, maxZoom: def.maxZoom }).addTo(map);
+  // CARTO layers take the user's OWN key — the same one the main app's Settings field stores (same origin),
+  // so entering it once covers Lite too. With no key the parameter is dropped rather than left empty: a keyless
+  // CARTO request returns its placeholder image, while the revoked shared key these entries used to carry
+  // answered HTTP 403 (2026-09-25).
+  let url = def.url || '';
+  if (url.includes('{cartokey}')) {
+    const k = localStorage.getItem('cartoApiKey') || '';
+    url = k ? url.replace('{cartokey}', encodeURIComponent(k)) : url.replace('?key={cartokey}', '');
+  }
+  activeLayer = L.tileLayer(url, { attribution: def.attr, maxZoom: def.maxZoom }).addTo(map);
   localStorage.setItem('lm_layer', LAYERS[key] ? key : 'voyager');
   document.querySelectorAll('.layer-item').forEach(el =>
     el.classList.toggle('active', el.dataset.key === key));

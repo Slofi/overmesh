@@ -6146,6 +6146,38 @@ if (targetEl) {
     return url;
   }
 
+  // Does this layer need a key it does not have? (2026-09-25) A keyed layer with no key of the user's own does
+  // not fail loudly: CARTO answers 200 with a placeholder image, and Thunderforest/MapTiler with an empty key
+  // return their own error image. Caching either makes a "downloaded" region full of watermarks that reports
+  // success. So the download paths ask this BEFORE fetching.
+  function _layerKeyMissing(layerKey) {
+    const def = allTileLayers()[layerKey];
+    const u = (def && def.url) || '';
+    if (u.includes('{apikey}'))   return !(localStorage.getItem('thunderforestApiKey') || '').trim();
+    if (u.includes('{mtapikey}')) return !(localStorage.getItem('mapTilerApiKey') || '').trim();
+    if (u.includes('{cartokey}')) return !(localStorage.getItem('cartoApiKey') || '').trim();
+    return false;
+  }
+
+  // The user's key is part of a cached tile's IDENTITY (2026-09-25). Without this tag, tiles cached before a key
+  // was entered were served afterwards for ever - the user pastes their key and the map stays watermarked - and
+  // two operators on one device shared each other's tiles. Layer identity (region metadata, the download
+  // dropdown) stays the LAYER NAME; only the cache key gains the tag, and no key means ':nokey'. The tag is a
+  // djb2 hash in base36, not the key: a cache key is written into IndexedDB and can be exported with a region,
+  // and the API key must never travel in that record.
+  function _keyTag(layerKey) {
+    const def = allTileLayers()[layerKey];
+    const u = (def && def.url) || '';
+    if (!(u.includes('{apikey}') || u.includes('{mtapikey}') || u.includes('{cartokey}'))) return '';
+    let raw = '';
+    if (u.includes('{apikey}'))        raw = localStorage.getItem('thunderforestApiKey') || '';
+    else if (u.includes('{mtapikey}')) raw = localStorage.getItem('mapTilerApiKey') || '';
+    else                               raw = localStorage.getItem('cartoApiKey') || '';
+    let h = 5381;
+    for (let i = 0; i < raw.length; i++) h = ((h << 5) + h + raw.charCodeAt(i)) >>> 0;
+    return ':' + (raw ? h.toString(36) : 'nokey');
+  }
+
   function setTileLayer(key) {
     if (!leafletMap) return;
     const layers = allTileLayers();
@@ -6154,6 +6186,7 @@ if (targetEl) {
     if (_activeTileLayer) {
       // Update cache prefix BEFORE setUrl so new tiles use the right key
       _activeTileLayer.options.cachePrefix = key;
+      _activeTileLayer.options.keyTag      = _keyTag(key);
       _activeTileLayer.setUrl(url);
       if (leafletMap.attributionControl) {
         leafletMap.attributionControl.removeAttribution(_activeTileLayer.options.attribution);
@@ -6162,7 +6195,7 @@ if (targetEl) {
       _activeTileLayer.options.attribution = def.attribution;
       _activeTileLayer.options.maxZoom     = def.maxZoom;
     } else {
-      _activeTileLayer = new OfflineTileLayer(url, { attribution: def.attribution, maxZoom: def.maxZoom, cachePrefix: key });
+      _activeTileLayer = new OfflineTileLayer(url, { attribution: def.attribution, maxZoom: def.maxZoom, cachePrefix: key, keyTag: _keyTag(key) });
       _activeTileLayer.addTo(leafletMap);
     }
     try { localStorage.setItem('mapTileLayer', key); } catch(e) {}
@@ -6272,7 +6305,7 @@ if (targetEl) {
       tile.setAttribute('role', 'presentation');
       L.DomEvent.on(tile, 'load',  L.Util.bind(this._tileOnLoad,  this, done, tile));
       L.DomEvent.on(tile, 'error', L.Util.bind(this._tileOnError, this, done, tile));
-      const key = `${this.options.cachePrefix || 'osm'}/${coords.z}/${coords.x}/${coords.y}`;
+      const key = `${this.options.cachePrefix || 'osm'}${this.options.keyTag || ''}/${coords.z}/${coords.x}/${coords.y}`;
       const _setBlobSrc = (img, blob) => {
         const url = URL.createObjectURL(blob);
         const revoke = () => URL.revokeObjectURL(url);
@@ -6343,11 +6376,18 @@ if (targetEl) {
     let saved = 0, skipped = 0, failed = 0;
 
     const _layerKey = _activeTileLayer ? (_activeTileLayer.options.cachePrefix || 'osm') : 'osm';
+    if (_layerKeyMissing(_layerKey)) {
+      // Refuse rather than cache placeholders: a keyed layer with no key of the user's own answers 200 with a
+      // placeholder image, which would be stored as a tile and counted as saved.
+      txt.textContent = 'This layer needs your own API key — set it in Settings → Map, then save tiles.';
+      if (btn) { btn.disabled = false; btn.textContent = 'Key needed'; }
+      return;
+    }
     const BATCH = 4;
     try {
     for (let i = 0; i < tiles.length; i += BATCH) {
       await Promise.all(tiles.slice(i, i + BATCH).map(async ({ z, x, y }) => {
-        const key = `${_layerKey}/${z}/${x}/${y}`;
+        const key = `${_layerKey}${_keyTag(_layerKey)}/${z}/${x}/${y}`;
         if (await tileGet(key)) { skipped++; return; }
         try {
           const tileUrl = _activeTileLayer
@@ -6559,12 +6599,17 @@ if (targetEl) {
 
     const layerKey   = document.getElementById('region-dl-layer').value || 'osm';
     const layerLabel = (allTileLayers()[layerKey] || TILE_LAYERS.osm).label;
+    if (_layerKeyMissing(layerKey)) {
+      txt.textContent = 'This layer needs your own API key — set it in Settings → Map, then download again.';
+      btn.disabled = false;
+      return;
+    }
     let saved = 0, skipped = 0, failed = 0;
     const BATCH = 4;
     try {
     for (let i = 0; i < tiles.length; i += BATCH) {
       await Promise.all(tiles.slice(i, i + BATCH).map(async ({ z, x, y }) => {
-        const key = `${layerKey}/${z}/${x}/${y}`;
+        const key = `${layerKey}${_keyTag(layerKey)}/${z}/${x}/${y}`;
         if (await tileGet(key)) { skipped++; return; }
         try {
           const r = await fetch(_tileUrlForLayer(layerKey, z, x, y));

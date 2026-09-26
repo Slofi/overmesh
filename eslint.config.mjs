@@ -5,7 +5,7 @@ export default [
       ecmaVersion: 2022,
       sourceType: "script",
       globals: {
-    FormData: 'readonly', FileReader: 'readonly', Blob: 'readonly', AbortController: 'readonly',
+        FormData: "readonly",
         window: "readonly", document: "readonly", console: "readonly", fetch: "readonly",
         localStorage: "readonly", sessionStorage: "readonly", setTimeout: "readonly",
         clearTimeout: "readonly", setInterval: "readonly", clearInterval: "readonly",

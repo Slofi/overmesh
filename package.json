@@ -1,0 +1,12 @@
+{
+  "name": "overmesh",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Dev tooling only — eslint for the browser JS. The app is plain Flask + static files; there is no build step and nothing here ships.",
+  "scripts": {
+    "lint": "eslint --config eslint.config.mjs static/js/app.js static/js/lite.js"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.5"
+  }
+}

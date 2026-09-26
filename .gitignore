@@ -30,6 +30,10 @@ venv/
 # Logs
 *.log
 
+# Node dev tooling (eslint — dev only, nothing here ships). package.json +
+# package-lock.json ARE committed; restore with `npm ci`.
+node_modules/
+
 # OS
 .DS_Store
 Thumbs.db

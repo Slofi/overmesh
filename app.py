@@ -156,13 +156,21 @@ def index():
 
 @app.route("/lite")
 def lite():
-    return render_template(
+    # no-store, mirroring index() above. /lite is the Hand-Deck UI's page and it
+    # carried NO cache header until 2026-09-26 — unlike /, which has had no-store
+    # since 2026-09-10 — so whether the kiosk re-read the shell was a browser
+    # lottery. The page carries the version-stamped asset URLs, so a cached copy
+    # can pin a stale ?v= exactly the way index()'s comment describes.
+    resp = make_response(render_template(
         "lite.html",
         version=__version__,
         auth_enabled=is_auth_enabled(),
         exposed_no_auth=_exposed_no_auth(),
         bind_host=_BIND_HOST,
-    )
+    ))
+    resp.headers["Cache-Control"] = "no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    return resp
 
 
 def _exposed_no_auth():

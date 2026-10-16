@@ -20,13 +20,18 @@ function extract(startMarker, endMarker) {
   return src.slice(start, end + endMarker.length);
 }
 
-function makeReasonFn(fetchImpl) {
+function makeReasonFn(fetchImpl, shared = false) {
+  // 'shared' simulates an OPS-TOC MBTiles layer (sharedTileServer: true), which must be probed at the server, not a tile.
   const code = [
+    'let _sharedTileServerUrl = "http://localhost:8092";',
+    'let SHARED = {};',
+    'function allTileLayers() { return SHARED; }',
     'function _tileUrlForLayer(layerKey, z, x, y) { return `https://example.test/${layerKey}/${z}/${x}/${y}.png`; }',
     extract('async function _tileDownloadReason(', '\n  }'),
     'return _tileDownloadReason;',
   ].join('\n');
-  return new Function('fetch', code)(fetchImpl);
+  const fn = new Function('fetch', code)(fetchImpl);
+  return (layerKey, z, x, y) => fn(layerKey, z, x, y);
 }
 
 function respond(status) {
@@ -52,6 +57,33 @@ function respond(status) {
   const blocked = await makeReasonFn(async () => { throw new TypeError('Failed to fetch'); })('tf_outdoors');
   assert(/CORS|offline/.test(blocked), `a thrown fetch must explain CORS/offline: got ${blocked}`);
 
+  // ── an OPS-TOC shared layer is probed at the SERVER, never at a tile ──
+  // A regional MBTiles has no tile at the world origin, so probing a tile would call a healthy layer broken.
+  const seen = [];
+  const sharedFn = new Function('fetch',
+    ['let _sharedTileServerUrl = "http://localhost:8092";',
+     'let SHARED = { shared_si: { label: "Slovenia", url: "http://localhost:8092/services/si/tiles/{z}/{x}/{y}.png", sharedTileServer: true } };',
+     'function allTileLayers() { return SHARED; }',
+     'function _tileUrlForLayer(l, z, x, y) { return "TILE"; }',
+     extract('async function _tileDownloadReason(', '\n  }'),
+     'return _tileDownloadReason;'].join('\n'))(async (u) => { seen.push(u); return { ok: true, status: 200 }; });
+
+  const offline = await sharedFn('shared_si', 9, 270, 178);
+  assert(/already stored offline/.test(offline), `a served shared layer must say the tiles are already local: got ${offline}`);
+  assert(!seen.some(u => u.includes('/tiles/')), `a shared layer must NOT be probed at a tile: ${seen.join(', ')}`);
+  assert(seen.some(u => u.endsWith('/services')), `a shared layer must be probed at the tile server: ${seen.join(', ')}`);
+
+  const down = new Function('fetch',
+    ['let _sharedTileServerUrl = "http://localhost:8092";',
+     'let SHARED = { shared_si: { url: "x", sharedTileServer: true } };',
+     'function allTileLayers() { return SHARED; }',
+     'function _tileUrlForLayer() { return "TILE"; }',
+     extract('async function _tileDownloadReason(', '\n  }'),
+     'return _tileDownloadReason;'].join('\n'))(async () => { throw new TypeError('Failed to fetch'); });
+  const downMsg = await down('shared_si', 9, 270, 178);
+  assert(/OPS-TOC tile server/.test(downMsg) && /not answering/.test(downMsg),
+    `a dead local tile server must be named: got ${downMsg}`);
+
   // ── and both download paths must use it, before burning requests on a hopeless area ──
   for (const fn of ['saveTilesCurrentView', 'downloadSelectedRegion']) {
     const start = src.indexOf('function ' + fn + '(');
@@ -61,6 +93,8 @@ function respond(status) {
       `${fn} must probe the layer before downloading (otherwise the user gets "N failed" and no reason)`);
     assert(/firstFailure/.test(body),
       `${fn} must report the first failure reason, not just the count`);
+    assert(/_tileDownloadReason\([^)]*tiles\[0\]/.test(body),
+      `${fn} must probe a tile the download actually needs (a regional layer has no world-origin tile)`);
   }
 
   console.log('ok: tile downloads explain a rejected key, a rate limit, a CORS/offline failure — and both paths ask first');

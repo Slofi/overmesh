@@ -6260,8 +6260,23 @@ if (targetEl) {
   // Why did a tile download fail? A bare "N failed" cannot be acted on: a rejected key, a provider that blocks
   // browser downloads (no CORS header — the tile still shows as an <img>, so the map looks fine) and a dead network
   // all look identical. One probe tile before the loop tells the user which it is (2026-10-16).
-  async function _tileDownloadReason(layerKey) {
-    const url = _tileUrlForLayer(layerKey, 1, 0, 0);
+  async function _tileDownloadReason(layerKey, z, x, y) {
+    const def = allTileLayers()[layerKey] || {};
+    if (def.sharedTileServer) {
+      // OPS-TOC's MBTiles (mbtileserver on the deck). These tiles are ALREADY offline on the device, so downloading
+      // them into the browser cache is pointless; the only useful answer is whether that server is answering. Never
+      // probe a tile here: a regional MBTiles has no tile at the world origin, so a valid layer would look broken.
+      try {
+        const r = await fetch(`${_sharedTileServerUrl}/services`, { cache: 'no-store' });
+        if (r.ok) return 'these tiles are already stored offline on this device by OPS-TOC — nothing to download here';
+        return `the local OPS-TOC tile server (${_sharedTileServerUrl}) answered HTTP ${r.status}`;
+      } catch (e) {
+        return `the local OPS-TOC tile server (${_sharedTileServerUrl}) is not answering — start it on the deck and retry`;
+      }
+    }
+    // Otherwise probe a tile the download is about to fetch anyway (not an arbitrary one, which a regional layer
+    // would not have).
+    const url = _tileUrlForLayer(layerKey, (z === undefined ? 1 : z), (x === undefined ? 0 : x), (y === undefined ? 0 : y));
     let r;
     try {
       r = await fetch(url, { method: 'GET' });
@@ -6509,7 +6524,7 @@ if (targetEl) {
       if (btn) { btn.disabled = false; btn.textContent = 'Key needed'; }
       return;
     }
-    const reason = await _tileDownloadReason(_layerKey);
+    const reason = await _tileDownloadReason(_layerKey, tiles[0].z, tiles[0].x, tiles[0].y);
     if (reason) {
       txt.textContent = `Cannot save tiles: ${reason}.`;
       if (btn) { btn.disabled = false; btn.textContent = 'Save tiles'; }
@@ -6749,7 +6764,7 @@ if (targetEl) {
       btn.disabled = false;
       return;
     }
-    const reason = await _tileDownloadReason(layerKey);
+    const reason = await _tileDownloadReason(layerKey, tiles[0].z, tiles[0].x, tiles[0].y);
     if (reason) {
       txt.textContent = `Cannot download '${layerLabel}': ${reason}.`;
       btn.disabled = false;

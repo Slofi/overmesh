@@ -1,5 +1,12 @@
 # OverMesh Release Notes
 
+## 2026.10.16.17
+
+### Fixed
+
+- **Offline downloads no longer misjudge a locally-served map layer.** The check that runs before a download asked for a tile at the very corner of the world — which a regional map (Slovenia) simply does not contain — so a perfectly healthy layer served by OPS-TOC's local tile server would have been reported as failing. Now a locally-served layer is checked against **the tile server itself**: if it answers, the app tells you the tiles are already stored on the device (there is nothing to download), and if it does not, it names the local tile server that is not answering.
+- The pre-download check also now tests **a tile the download actually needs**, so a limited/regional layer can no longer produce a misleading failure.
+
 ## 2026.10.16.16
 
 ### Fixed

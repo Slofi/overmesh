@@ -37,3 +37,7 @@ node_modules/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local pin of the exact versions TestBox ran before the 26.04 upgrade (2026-09-30, S435).
+# A machine-specific record, deliberately not published; requirements.txt is the shared list.
+requirements.lock.txt

@@ -1536,9 +1536,8 @@ def _mc_tx_allowed_soft(context):
     """Silent-Running gate for TX that is a side effect, not a user command.
 
     Returns False (and logs) when Silent Running is on, so the caller simply
-    skips the transmission. Used where a config write must still succeed but
-    its re-advert must not go out: position updates, advert-loc-policy changes,
-    and the pre-adverts piggybacked on an already-guarded request.
+    skips the transmission. Two remaining users: the detached advert task (which
+    can outlive the check that scheduled it) and the startup RX probe.
     """
     if CONFIG.get("silent_mode"):
         log.info(f"[MC] Silent Running active — {context} suppressed")
@@ -2846,9 +2845,11 @@ async def _connect_mc_node_async(node_cfg):
 
     # Re-apply the configured default flood scope (regions) after connect. The
     # companion holds ONE device-global scope slot; asserting it here scopes the
-    # node's own origin floods (startup advert, statusreq pre-adverts) even
-    # before the first user send. Failure is non-fatal — connect proceeds and the
-    # first send re-asserts (or scoping is skipped if the firmware rejects 54).
+    # node's own origin floods (an explicit advert, a user send) from the start, so
+    # the first transmission after a restart is already scoped. (Adverts are
+    # manual-only since 2026-10-16, S453 — the old startup advert is gone.)
+    # Failure is non-fatal — connect proceeds and the first send re-asserts
+    # (or scoping is skipped if the firmware rejects 54).
     # mc is passed directly: this runs before mc is published to mc_connections,
     # so _get_mc would raise "Not connected" here.
     _mc_scope_cache.pop(config_id, None)          # unknown until we assert below
@@ -2962,18 +2963,14 @@ async def _connect_mc_node_async(node_cfg):
             await asyncio.sleep(8)
     _mc_bg_task(_periodic_drain(), "periodic_drain")
 
-    # Startup flood advert — announces our identity to the whole mesh.
-    # Essential after a reflash or first connection so that remote nodes (repeaters, etc.)
-    # can add our pubkey to their NVS. Without this, STATUS_REQUEST (ping) goes out but
-    # the remote can't decrypt it (ECDH requires our pubkey) and won't respond.
-    async def _startup_advert():
-        await asyncio.sleep(8)   # let serial/drain settle first
-        if CONFIG.get("silent_mode"):
-            log.info(f"[MC:{name}] Silent Running active — startup advert suppressed")
-            return
-        await _send_advert_async(config_id, flood=True)
-        log.info(f"[MC:{name}] Startup flood advert sent — remote nodes will learn our identity")
-    _mc_bg_task(_startup_advert(), "startup_advert")
+    # Adverts are MANUAL-ONLY since 2026-10-16 (Filip, S453).
+    # A startup flood advert used to fire here ~8 s after every connect, to put our pubkey
+    # into the repeaters' NVS so their ECDH STATUS_REQUESTs could be answered. Filip removed
+    # it deliberately: OM must never transmit an advert unless he asks for one (the Advert
+    # button, Scan, or a managed repeater's own Local/Flood advert). Known consequence,
+    # accepted: on a remote that has never heard us, a ping/status request can go unanswered
+    # until we send one advert from the UI. Do NOT reintroduce this without asking.
+    log.info(f"[MC:{name}] startup advert disabled — OM adverts only when asked (Advert button / Scan)")
 
     async def _startup_rx_watchdog():
         def _still_ours():
@@ -4116,12 +4113,11 @@ async def _import_contact_async(config_id, card_data=None, contact_dict=None):
         raise RuntimeError(f"import_contact returned: {result.type if result else 'None'} {getattr(result, 'payload', '')}")
     # Refresh contacts so the new entry shows up in our in-memory list
     await _get_contacts_async(config_id)
-    # Flood advert so the newly imported node learns our identity.
-    # MeshCore STATUS_RESPONSE requires ECDH: remote must have our pubkey in its NVS
-    # to decrypt the request and route a response back.  A flood advert propagates
-    # our public key to all mesh nodes including the one we just imported.
-    await _send_advert_async(config_id, flood=True)
-    log.info(f"[MC:{config_id}] import_contact: flood advert scheduled — remote will learn our identity and can respond to pings")
+    # No advert here: manual-only since 2026-10-16 (Filip, S453). This call used to flood
+    # an advert so the freshly imported node learned our pubkey (MeshCore STATUS_RESPONSE
+    # needs it for ECDH). If a ping to a newly imported contact goes unanswered, press
+    # Advert once first — that is the accepted trade for never transmitting unprompted.
+    log.info(f"[MC:{config_id}] import_contact: contact added, no advert sent (manual-only policy) — press Advert if the remote must learn our pubkey")
     return result
 
 
@@ -4226,24 +4222,11 @@ async def _send_statusreq_async(config_id, pubkey_prefix):
     async def _do_statusreq():
         try:
             log.info(f"[MC:{config_id}] statusreq background task started for {pubkey_prefix[:12]}")
-            # Refresh our identity on the mesh right before the ping. Startup advert
-            # can be minutes or hours old; if the repeater rebooted since then it may
-            # no longer have our pubkey and won't be able to return STATUS_RESPONSE.
-            advert_result = None
-            if _mc_tx_allowed_soft("statusreq pre-advert"):
-                advert_result = await mc.commands.send_advert(flood=True)
-            if advert_result is None:
-                pass  # Silent Running: no advert, the ping below still runs
-            elif advert_result.type.name == "OK":
-                log.info(f"[MC:{config_id}] statusreq pre-advert TX confirmed for {pubkey_prefix[:12]}")
-            else:
-                log.warning(
-                    f"[MC:{config_id}] statusreq pre-advert returned {advert_result.type.name} "
-                    f"before pinging {pubkey_prefix[:12]}"
-                )
-            # Give the far side a brief window to process the advert before we send
-            # the binary status request.
-            await asyncio.sleep(1.2)
+            # No pre-advert: manual-only since 2026-10-16 (Filip, S453). This used to flood
+            # an advert before every ping so a repeater that had rebooted would still have
+            # our pubkey (STATUS_RESPONSE is ECDH: the remote must know us to answer).
+            # Consequence, accepted by Filip: if a ping comes back empty, press Advert once
+            # and ping again. The 1.2 s propagation sleep that served the advert is gone too.
             # Binary send_binary_req (opcode 0x32) — fire-and-forget send.
             # Response arrives asynchronously as BINARY_RESPONSE (0x8C) → reader dispatches
             # STATUS_RESPONSE event with tag → caught by on_status_response.
@@ -4538,14 +4521,10 @@ async def _set_coords_async(config_id, lat, lon):
             mc_connections[config_id]["node_info"]["adv_lon"] = float(lon)
     push_to_sse({"type": "mc_coords_updated", "radio_id": config_id,
                  "lat": float(lat), "lon": float(lon)})
-    # Re-advertise so the new position reaches the mesh immediately. The device
-    # write already happened (local, no RF) — only the advert transmits, so
-    # Silent Running skips the advert and keeps the config change.
-    if _mc_tx_allowed_soft("advert after position update"):
-        try:
-            await mc.commands.send_advert()
-        except Exception:
-            pass
+    # No advert here: adverts are manual-only since 2026-10-16 (Filip, S453). This call
+    # used to re-advertise so the new position reached the mesh immediately. The device
+    # write above is local (no RF) and still happens; Filip presses Advert when he wants
+    # the mesh to see the new position.
     return r
 
 
@@ -4558,13 +4537,9 @@ async def _set_advert_loc_policy_async(config_id, policy):
         if config_id in mc_connections and mc_connections[config_id].get("node_info") is not None:
             mc_connections[config_id]["node_info"]["adv_loc_policy"] = int(policy)
     push_to_sse({"type": "mc_loc_policy_updated", "radio_id": config_id, "adv_loc_policy": int(policy)})
-    # Re-advertise so the change reaches the mesh immediately (advert only —
-    # the policy write itself is local, so Silent Running keeps it).
-    if _mc_tx_allowed_soft("advert after location-policy change"):
-        try:
-            await mc.commands.send_advert()
-        except Exception:
-            pass
+    # No advert here: manual-only since 2026-10-16 (Filip, S453). The policy write is a
+    # local device write (no RF) and still happens; the mesh learns the new policy on the
+    # next advert he sends.
     return r
 
 
@@ -5122,17 +5097,11 @@ async def _req_status_async(config_id, pubkey_prefix, prime_trace=False):
         f"(full_key={full_key[:16]}..., out_path_len={contact.get('out_path_len')}, "
         f"out_path={contact.get('out_path', '')!r}, type={contact.get('type')}, force_flood={force_flood})"
     )
-    # Flood-advertise our identity before pinging. The remote node needs our pubkey
-    # in its NVS to encrypt and route STATUS_RESPONSE back. Without a recent advert,
-    # multi-hop paths (e.g. EDC-3 → ERA-2 → Krvavec) will receive our ping but
-    # cannot reply. Give the mesh 2s to propagate before sending the request.
-    try:
-        if _mc_tx_allowed_soft("req_status pre-advert"):
-            advert_result = await mc.commands.send_advert(flood=True)
-            log.info(f"[MC:{config_id}] req_status pre-advert for {pubkey_prefix[:12]}: {advert_result.type.name}")
-    except Exception as e:
-        log.warning(f"[MC:{config_id}] req_status pre-advert failed for {pubkey_prefix[:12]}: {e}")
-    await asyncio.sleep(2.0)
+    # No pre-advert: manual-only since 2026-10-16 (Filip, S453). This used to flood an advert
+    # and wait 2 s for it to propagate before every status request, so a remote that had
+    # rebooted would still have our pubkey (STATUS_RESPONSE is ECDH). Accepted consequence:
+    # if a multi-hop ping comes back empty, press Advert once, then ping again. Removing it
+    # also takes 2 s off every status request.
     # First try the legacy companion protocol status request (CMD 27). The
     # official protocol still documents it separately from binary requests, and
     # some companion firmware builds may implement only this path reliably.

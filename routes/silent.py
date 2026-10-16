@@ -37,8 +37,9 @@ def _silent_enable():
             log.info(f"[silent] MT {radio_id}: tx_enabled → False (was {tx_enabled})")
         except Exception as e:
             log.warning(f"[silent] MT {radio_id} enable failed: {e}")
-    # MC companion nodes have no firmware-side auto-advert — app-layer gating
-    # in mesh_mc.py (_startup_advert, send_advert) is sufficient.
+    # MC companion nodes have no firmware-side auto-advert, and since 2026-10-16 (S453)
+    # OM sends an advert only on an explicit request — so the app-layer gate in
+    # mesh_mc.py (send_advert / _send_advert_async) covers what remains.
     with CONFIG_LOCK:
         CONFIG["silent_mode"] = True
         CONFIG["silent_snapshot"] = snapshot

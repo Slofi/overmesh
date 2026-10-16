@@ -27,8 +27,11 @@ class _FakeMc:
 class SilentRunningTxGateTests(unittest.TestCase):
     """Silent Running must gate transmissions, not config writes.
 
-    Position updates kept transmitting a re-advert while silent — the raw
-    mc.commands.send_advert() calls never consulted the flag.
+    History: position updates used to re-advertise, and those raw
+    mc.commands.send_advert() calls never consulted the flag (fixed 2026-09-10).
+    Then on 2026-10-16 (Filip, S453) OM became manual-only for adverts and that
+    re-advert was removed outright, so the assertion is now the stronger one:
+    a position update writes to the device and transmits nothing, in either mode.
     """
 
     def setUp(self):
@@ -48,18 +51,26 @@ class SilentRunningTxGateTests(unittest.TestCase):
         config_mod.CONFIG["silent_mode"] = False
         self.assertTrue(mesh_mc._mc_tx_allowed_soft("test"))
 
-    def test_position_update_skips_advert_but_still_writes_while_silent(self):
+    def test_position_update_writes_but_transmits_nothing_while_silent(self):
         config_mod.CONFIG["silent_mode"] = True
         self._run_coords()
         kinds = [r[0] for r in self.recorder]
         self.assertIn("set_coords", kinds, "the local device write must still happen")
-        self.assertNotIn("send_advert", kinds, "Silent Running must suppress the re-advert")
+        self.assertNotIn("send_advert", kinds, "Silent Running must suppress any advert")
 
-    def test_position_update_advertises_when_not_silent(self):
+    def test_position_update_never_advertises_when_not_silent(self):
+        """Adverts are manual-only (Filip, 2026-10-16) — a coords write must not transmit.
+
+        This test used to assert the opposite (``["set_coords", "send_advert"]``). The
+        re-advert was removed on his order, so it now guards the new policy: the only
+        ways an advert leaves OM are the Advert button, Scan, and a managed repeater's
+        own Local/Flood advert.
+        """
         config_mod.CONFIG["silent_mode"] = False
         self._run_coords()
         kinds = [r[0] for r in self.recorder]
-        self.assertEqual(kinds, ["set_coords", "send_advert"])
+        self.assertEqual(kinds, ["set_coords"],
+                         "adverts are manual-only: pressing Advert is the only way")
 
 
 if __name__ == "__main__":

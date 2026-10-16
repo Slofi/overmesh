@@ -15939,7 +15939,7 @@ if (targetEl) {
     const out = document.getElementById('mc-remote-quick-result');
     if (out) out.textContent = `Reading ${command}…`;
     try {
-      const data = await mcRemoteRunCommand(command, 'mc-remote-quick-result', {silentError: true});
+      const data = await mcRemoteRunCommand(command, 'mc-remote-quick-result', {silentError: true, report: false});
       if (data) {
         const ok = _mcRemoteApplyPrefill(command, data);
         if (out) out.innerHTML = ok
@@ -15967,6 +15967,71 @@ if (targetEl) {
     el.innerHTML = channels.map(ch =>
       `<div style="margin-bottom:2px"><b style="color:var(--fg)">${ch.idx}:</b> ${escHtml(ch.name)}</div>`
     ).join('');
+  }
+
+  // ── RPTR reply strip ───────────────────────────────────────────────────────
+  // One place where the RPTR's answer is always readable: pinned to the bottom of
+  // the Manage panel (sticky inside the modal's scroll container), keeping the
+  // last few exchanges until the user clears them. Actions that already fill a
+  // field of their own pass {report:false} so this stays a reply log, not noise.
+  const _MC_REMOTE_REPLY_MAX = 4;
+  const _mcRemoteReplies = [];
+
+  function _mcRemoteReplyStripHtml() {
+    return `
+      <div id="mc-remote-reply" style="position:sticky;bottom:0;z-index:5;background:var(--bg2);border-top:1px solid var(--border);margin:16px -16px -16px;padding:8px 16px 10px;transition:box-shadow 0.25s ease">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.04em">RPTR reply</span>
+          <span style="font-size:11px;color:var(--muted)">last ${_MC_REMOTE_REPLY_MAX} kept</span>
+          <button class="btn" style="margin-left:auto;padding:0 8px;font-size:12px" onclick="mcRemoteClearReplies()" title="Clear these replies">Clear</button>
+        </div>
+        <div id="mc-remote-reply-log" style="margin-top:4px;max-height:104px;overflow-y:auto;font-size:12px;color:var(--muted)">
+          Nothing from the RPTR yet. Replies stay here until you clear them.
+        </div>
+      </div>`;
+  }
+
+  function _mcRemoteReplyTime(ts) {
+    try { return new Date(ts).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'}); }
+    catch (_) { return ''; }
+  }
+
+  function mcRemoteReport(command, reply, kind = 'ok') {
+    const text = String(reply == null ? '' : reply).trim();
+    _mcRemoteReplies.unshift({
+      command: String(command || '').trim(),
+      reply: text || 'no reply',
+      kind,
+      ts: Date.now(),
+    });
+    if (_mcRemoteReplies.length > _MC_REMOTE_REPLY_MAX) _mcRemoteReplies.length = _MC_REMOTE_REPLY_MAX;
+    _mcRemoteRenderReplies();
+  }
+
+  function _mcRemoteRenderReplies() {
+    const log = document.getElementById('mc-remote-reply-log');
+    if (!log) return;
+    if (!_mcRemoteReplies.length) {
+      log.innerHTML = 'Nothing from the RPTR yet. Replies stay here until you clear them.';
+      return;
+    }
+    const colour = {ok: 'var(--green)', warn: '#f59e0b', error: 'var(--red)'};
+    log.innerHTML = _mcRemoteReplies.map((r, i) => `
+      <div style="margin-bottom:6px;${i ? 'opacity:0.55' : ''}">
+        <div style="font-family:monospace;font-size:11px;color:var(--muted)">&gt; ${escHtml(r.command)} &middot; ${_mcRemoteReplyTime(r.ts)}</div>
+        <div style="color:${colour[r.kind] || colour.ok};white-space:pre-wrap;word-break:break-word">${escHtml(r.reply)}</div>
+      </div>`).join('');
+    // A short glow so a new answer is noticed without stealing focus.
+    const strip = document.getElementById('mc-remote-reply');
+    if (strip) {
+      strip.style.boxShadow = '0 0 0 2px var(--accent)';
+      setTimeout(() => { strip.style.boxShadow = ''; }, 700);
+    }
+  }
+
+  function mcRemoteClearReplies() {
+    _mcRemoteReplies.length = 0;
+    _mcRemoteRenderReplies();
   }
 
   const _mcRemoteRegionState = {names: [], facts: {}};
@@ -16043,8 +16108,39 @@ if (targetEl) {
       const d = await r.json();
       if (!r.ok || d.ok === false) throw new Error(d.error || r.status);
       _mcRemoteRenderRegionList(d.regions);
+      const names = Array.isArray(d.regions) ? d.regions : [];
+      const diag = d.diag || {};
+      let answer;
+      if (names.length) {
+        answer = names.join(', ');
+      } else if (diag.send_failed) {
+        answer = `request could not be sent${diag.error ? ': ' + diag.error : ''}`;
+      } else if (diag.no_reply) {
+        answer = 'the RPTR did not answer the region request (it may be busy or out of range)';
+      } else if (diag.got_reply) {
+        answer = `answered ${diag.reply_bytes} bytes, but no region name could be read from it`;
+      } else {
+        answer = 'no regions reported';
+      }
+      mcRemoteReport('regions (read)', answer, names.length ? 'ok' : 'warn');
+      if (!names.length) {
+        // The 0-hop request can go unanswered even when the RPTR has regions
+        // (seen on SI-LJ-Trnovo II, firmware 1.17). Its own CLI does answer, so
+        // ask it as a fallback and show ITS words rather than parsing a format
+        // I have not seen yet. Needs Admin Login; the reply says so if not.
+        const cli = await mcRemoteRunCommand('region', 'mc-remote-region-list',
+                                             {silentError: true, report: false});
+        const cliText = _mcRemoteReplyText(cli);
+        mcRemoteReport('region', cliText || 'no answer to the region command either (are you logged in?)',
+                       cliText ? 'ok' : 'warn');
+        if (out) {
+          out.innerHTML = '<span style="color:#f59e0b">The fast region read got no list. The RPTR\'s own '
+            + '<code>region</code> output is in the reply strip at the bottom.</span>';
+        }
+      }
     } catch (e) {
       if (out) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
+      mcRemoteReport('regions (read)', e.message, 'error');
     } finally {
       if (btn) btn.disabled = false;
     }
@@ -16055,7 +16151,7 @@ if (targetEl) {
     const out = document.getElementById('mc-remote-quick-result');
     if (out) out.textContent = 'Reading channels from RPTR…';
     try {
-      const data = await mcRemoteRunCommand('get channels', 'mc-remote-quick-result', {silentError: true});
+      const data = await mcRemoteRunCommand('get channels', 'mc-remote-quick-result', {silentError: true, report: false});
       if (!data) return;
       const text = _mcRemoteReplyText(data).replace(/^>\s*/, '').trim();
       const channels = [];
@@ -16298,7 +16394,8 @@ if (targetEl) {
           <button class="btn" onclick="mcRemoteCommand()">Run</button>
         </div>
         <div id="mc-remote-command-result" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
-      </div>`;
+      </div>
+      ${_mcRemoteReplyStripHtml()}`;
     const savedPassword = localStorage.getItem(_mcRemotePasswordKey(pubkeyPrefix, radioId)) || '';
     const pwEl = document.getElementById('mc-remote-password');
     const rememberEl = document.getElementById('mc-remote-remember-password');
@@ -16331,12 +16428,16 @@ if (targetEl) {
       if (!r.ok) throw new Error(d.error || r.status);
       if (login && d.login?.ok) {
         if (remember && password) localStorage.setItem(passwordKey, password);
+        mcRemoteReport(loginOnly ? 'login' : 'login + read',
+                       loginOnly ? `logged in${d.login.is_admin ? ' (admin)' : ' (guest)'}` : 'logged in, reading settings',
+                       'ok');
         if (out) out.innerHTML = loginOnly
           ? `<span style="color:var(--green)">Logged in${d.login.is_admin ? ' · admin' : ''}. Use ↻ or Read all for settings.</span>`
           : '';
         if (_mcRemoteAutoClockSyncEnabled()) await mcRemoteSyncClock(true);
       } else if (login && !d.login?.ok) {
         if (out) out.innerHTML = `<span style="color:var(--red)">Login failed.</span>`;
+        mcRemoteReport('login', 'login failed (wrong password, or the RPTR has no admin password set)', 'error');
         return;
       }
       if (!loginOnly) {
@@ -16345,6 +16446,7 @@ if (targetEl) {
       }
     } catch (e) {
       if (out) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
+      mcRemoteReport(login ? 'login + read' : 'guest read', e.message, 'error');
     }
   }
 
@@ -16380,6 +16482,10 @@ if (targetEl) {
       if (!r.ok || d.ok === false || d.reply_error) throw new Error(d.error || d.reply?.text || r.status);
       const reply = d.reply?.text ? `<div style="margin-top:6px;color:var(--text)">${escHtml(d.reply.text)}</div>` : '';
       if (out && !opts.silentError) out.innerHTML = `<span style="color:var(--green)">Sent: ${escHtml(d.command || command)}</span>${reply}${d.note ? `<div style="margin-top:4px">${escHtml(d.note)}</div>` : ''}`;
+      if (opts.report !== false) {
+        const answer = _mcRemoteReplyText(d) || (d.note ? String(d.note) : 'sent');
+        mcRemoteReport(d.command || command, answer, d.reply_error ? 'error' : 'ok');
+      }
       if (opts.senseLogAdvertMode) _mcLogRemoteAdvertRequest(opts.senseLogAdvertMode, {..._mcRemoteManage});
       return d;
     } catch (e) {
@@ -16394,6 +16500,7 @@ if (targetEl) {
         return null;
       }
       if (out && !opts.silentError) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
+      if (opts.report !== false) mcRemoteReport(command, e.message, 'error');
       throw e;
     }
   }
@@ -16459,9 +16566,11 @@ if (targetEl) {
       if (out) out.innerHTML = `<span style="color:var(--accent)">Region command ${done.length}/${commands.length}</span><div style="margin-top:4px;color:var(--muted)">${escHtml(command)}</div>`;
       await new Promise(resolve => setTimeout(resolve, 250));
     }
+    // The per-command transcript now lives in the RPTR reply strip, so this only
+    // reports the outcome (Filip asked for less clutter in the section).
     if (out) {
       out.innerHTML = `<span style="color:var(--green)">${escHtml(label || 'Region settings applied')}.</span>
-        <div style="margin-top:6px;color:var(--muted);white-space:pre-wrap">${escHtml(done.join('\n'))}</div>`;
+        <span style="color:var(--muted)"> ${done.length} command${done.length === 1 ? '' : 's'} sent, replies below.</span>`;
     }
   }
 

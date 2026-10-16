@@ -200,6 +200,73 @@ class RegionsReadTests(_RemoteTestCase):
         self.assertEqual(out["regions"], [])
 
 
+class RegionsReadDiagnosticsTests(_RemoteTestCase):
+    """An empty region list alone cannot say WHY it is empty.
+
+    On the live repeater Filip pressed Read regions and got "No regions
+    reported" while the RPTR demonstrably had regions, so the read now records
+    what actually happened and ships it with the answer."""
+
+    def _run_read(self, event_payload=None, timeout=0.3):
+        calls = {}
+
+        class _Sub:
+            def unsubscribe(self):
+                calls["unsubscribed"] = True
+
+        class _Mc:
+            def __init__(self):
+                self.commands = self
+
+            def subscribe(self, event_type, callback):
+                calls["event_type"] = event_type
+                if event_payload is not None:
+                    callback(_Event(mesh_mc.EventType.BINARY_RESPONSE, event_payload))
+                return _Sub()
+
+            async def send_anon_req(self, contact, req_type, min_timeout=0):
+                calls["sent"] = True
+                return _Event(mesh_mc.EventType.MSG_SENT, {})
+
+        mc = _Mc()
+        with mock.patch.dict(mesh_mc.mc_connections, self._contacts, clear=True):
+            names = asyncio.run(mesh_mc._mc_query_responder_regions("mc1", mc, FULL_KEY, timeout=timeout))
+        self.assertEqual(calls["event_type"], mesh_mc.EventType.BINARY_RESPONSE)
+        return names
+
+    def test_a_reply_is_parsed_and_recorded(self):
+        names = self._run_read({"data": b"si,si-dol\x00".hex()})
+        self.assertEqual(names, ["si", "si-dol"])
+        diag = mesh_mc._mc_regions_read_diag["mc1"]
+        self.assertTrue(diag["got_reply"])
+        self.assertFalse(diag["no_reply"])
+        self.assertEqual(diag["names"], ["si", "si-dol"])
+        self.assertEqual(diag["reply_bytes"], len(b"si,si-dol\x00"))
+
+    def test_a_silent_repeater_is_recorded_as_no_reply(self):
+        names = self._run_read(None)          # nothing ever arrives
+        self.assertEqual(names, [])
+        diag = mesh_mc._mc_regions_read_diag["mc1"]
+        self.assertTrue(diag["no_reply"])
+        self.assertFalse(diag["got_reply"])
+
+    def test_an_unparseable_reply_is_distinguishable_from_no_regions(self):
+        names = self._run_read({"data": b"\x01\x02\xff\xfe".hex()})
+        self.assertEqual(names, [])
+        diag = mesh_mc._mc_regions_read_diag["mc1"]
+        self.assertTrue(diag["got_reply"], "a reply did arrive")
+        self.assertEqual(diag["reply_bytes"], 4, "and its size is reported")
+        self.assertEqual(diag["names"], [])
+
+    def test_the_diagnosis_travels_with_the_answer(self):
+        with mock.patch.dict(mesh_mc.mc_connections, self._contacts, clear=True), \
+             mock.patch.object(mesh_mc, "_mc_query_responder_regions",
+                               new=mock.AsyncMock(return_value=["si"])):
+            out = asyncio.run(mesh_mc._remote_regions_async("mc1", FULL_KEY[:12]))
+        self.assertIn("diag", out, "the panel needs the diagnosis to explain an empty list")
+        self.assertIsInstance(out["diag"], dict)
+
+
 class RegionsEndpointTests(unittest.TestCase):
     def setUp(self):
         self.app = Flask(__name__)
@@ -213,6 +280,15 @@ class RegionsEndpointTests(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.get_json()["regions"], ["si", "*"])
         self.assertTrue(r.get_json()["ok"])
+
+    def test_bare_region_is_allowed_as_a_read_only_command(self):
+        """`region` with no argument prints the configured regions: read-only, and
+        it is the fallback when the fast 0-hop read gets no answer."""
+        self.assertEqual(mesh_mc._validate_remote_admin_command("region"), "region")
+        self.assertEqual(mesh_mc._validate_remote_admin_command("  REGION  "), "REGION")
+        # and the allowlist must still refuse anything dangerous
+        with self.assertRaises(ValueError):
+            mesh_mc._validate_remote_admin_command("region erase")
 
     def test_unknown_contact_is_a_400(self):
         with mock.patch.object(mc_routes, "remote_repeater_regions",
@@ -298,6 +374,48 @@ class RegionsPanelWiringTests(unittest.TestCase):
         self.assertIn("function mcRemoteReadRegionFact", self.src)
         self.assertIn("_mcRemoteRegionState.facts[kind]", self.src)
         self.assertIn("Default scope:", self.src)
+
+    def test_reply_strip_is_pinned_to_the_bottom_of_the_panel(self):
+        """His question was where it should go. The panel scrolls inside
+        #action-modal .modal-body, so a sticky last child stays visible while
+        scrolling instead of scrolling away with the section."""
+        self.assertIn('id="mc-remote-reply"', self.src)
+        self.assertIn("position:sticky;bottom:0", self.src)
+        self.assertIn("${_mcRemoteReplyStripHtml()}", self.src)
+
+    def test_command_replies_and_errors_are_reported(self):
+        self.assertIn("function mcRemoteReport", self.src)
+        self.assertIn("mcRemoteReport(d.command || command, answer", self.src)
+        self.assertIn("mcRemoteReport(command, e.message, 'error')", self.src)
+
+    def test_replies_linger_and_can_be_cleared(self):
+        self.assertIn("_MC_REMOTE_REPLY_MAX = 4", self.src)
+        self.assertIn('onclick="mcRemoteClearReplies()"', self.src)
+        self.assertIn("function mcRemoteClearReplies", self.src)
+
+    def test_field_refreshes_stay_out_of_the_reply_strip(self):
+        """A value that fills its own field would just be noise here."""
+        self.assertIn("{silentError: true, report: false}", self.src)
+
+    def test_regions_read_reports_why_it_is_empty(self):
+        for phrase in ("the RPTR did not answer the region request",
+                       "no region name could be read from it",
+                       "request could not be sent"):
+            self.assertIn(phrase, self.src, "the strip must explain an empty region list")
+        self.assertIn("mcRemoteReport('regions (read)', answer", self.src)
+        self.assertIn("mcRemoteReport('regions (read)', e.message, 'error')", self.src)
+
+    def test_regions_read_falls_back_to_the_rptr_own_region_command(self):
+        """The 0-hop request can go unanswered even when the RPTR has regions, so
+        the read asks the RPTR's own CLI as well and shows its words verbatim
+        (no parser for a format we have not seen yet)."""
+        self.assertIn("mcRemoteRunCommand('region', 'mc-remote-region-list'", self.src)
+        self.assertIn("no answer to the region command either", self.src)
+        self.assertIn("output is in the reply strip at the bottom", self.src)
+
+    def test_region_preset_transcript_no_longer_dumps_into_the_section(self):
+        self.assertNotIn("done.join(", self.src, "the transcript belongs in the reply strip now")
+        self.assertIn("replies below.", self.src)
 
 
 if __name__ == "__main__":

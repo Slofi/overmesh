@@ -410,6 +410,11 @@ def get_mc_scope_state(config_id):
 # concurrent op cannot steal it.
 _mc_region_discover_locks: dict = {}
 _mc_region_discover_serial_locks: dict = {}
+# What the last 0-hop regions read actually got, per radio: the Manage panel
+# shows it, because an empty list alone cannot say whether the repeater was
+# silent, answered nothing, or answered with something unparseable
+# (Filip, 2026-10-16: "No regions reported" while the RPTR had regions).
+_mc_regions_read_diag: dict = {}
 
 
 def _mc_region_discover_lock(config_id):
@@ -454,6 +459,29 @@ def _mc_parse_regions_reply(response_data_hex):
     return out
 
 
+def _mc_note_regions_read(config_id, full_key, names=None, raw=None, no_reply=False,
+                         send_failed=False, error=None):
+    """Remember what a 0-hop regions read got, for the Manage panel to show.
+
+    An empty list on its own cannot distinguish 'the repeater stayed silent'
+    from 'it answered something we could not parse' from 'it really has none'.
+    """
+    try:
+        size = len(bytes.fromhex(raw)) if isinstance(raw, str) else (len(raw) if raw else 0)
+    except (TypeError, ValueError):
+        size = 0
+    _mc_regions_read_diag[config_id] = {
+        "full_key": full_key,
+        "at": int(time.time()),
+        "got_reply": not (no_reply or send_failed),
+        "no_reply": bool(no_reply),
+        "send_failed": bool(send_failed),
+        "reply_bytes": size,
+        "names": list(names or []),
+        "error": error,
+    }
+
+
 async def _mc_query_responder_regions(config_id, mc, full_key, timeout=15):
     """Ask one 0-hop responder for its region list via ANON_REQ REGIONS.
 
@@ -480,9 +508,11 @@ async def _mc_query_responder_regions(config_id, mc, full_key, timeout=15):
                     contact, AnonReqType.REGIONS, min_timeout=timeout
                 )
                 if sent is None or sent.type == EventType.ERROR:
+                    _mc_note_regions_read(config_id, full_key, send_failed=True)
                     return []
             except Exception as e:
                 log.info(f"[MC:{config_id}] regions query to {full_key[:12]} failed to send: {e}")
+                _mc_note_regions_read(config_id, full_key, send_failed=True, error=str(e))
                 return []
             # Wait for the first BINARY_RESPONSE after Sent, then give the reply
             # a short grace window in case it lands just after we check.
@@ -490,13 +520,18 @@ async def _mc_query_responder_regions(config_id, mc, full_key, timeout=15):
             while time.monotonic() < deadline:
                 ev = reply_holder.get("ev")
                 if ev is not None:
-                    return _mc_parse_regions_reply((ev.payload or {}).get("data"))
+                    raw = (ev.payload or {}).get("data")
+                    names = _mc_parse_regions_reply(raw)
+                    _mc_note_regions_read(config_id, full_key, raw=raw, names=names)
+                    return names
                 await asyncio.sleep(0.25)
+            _mc_note_regions_read(config_id, full_key, no_reply=True)
             return []
 
         try:
             return await asyncio.wait_for(_send_and_wait(), timeout=timeout + 2)
         except asyncio.TimeoutError:
+            _mc_note_regions_read(config_id, full_key, no_reply=True)
             return []
         finally:
             sub.unsubscribe()
@@ -5137,6 +5172,7 @@ def _validate_remote_admin_command(command):
         "powersaving",
         "get channels",
         "get messages",
+        "region",
         "region save",
         "region home",
         "region default",
@@ -5455,7 +5491,10 @@ async def _remote_regions_async(config_id, pubkey_prefix, timeout=15):
         contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
     full_key, _contact = _resolve_mc_contact(contacts, pubkey_prefix)
     regions = await _mc_query_responder_regions(config_id, mc, full_key, timeout=timeout)
-    return {"full_key": full_key, "regions": regions}
+    # diag travels with the answer so the panel can say WHY a list is empty
+    # (silent repeater vs unparseable reply vs genuinely none).
+    return {"full_key": full_key, "regions": regions,
+            "diag": dict(_mc_regions_read_diag.get(config_id) or {})}
 
 
 def remote_repeater_regions(config_id, pubkey_prefix, timeout=20):

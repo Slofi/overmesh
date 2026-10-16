@@ -16116,7 +16116,8 @@ if (targetEl) {
       } else if (diag.send_failed) {
         answer = `request could not be sent${diag.error ? ': ' + diag.error : ''}`;
       } else if (diag.no_reply) {
-        answer = 'the RPTR did not answer the region request (it may be busy or out of range)';
+        answer = 'the RPTR did not answer the region request. It drops region requests that do not arrive '
+               + 'over a direct path, so press Read regions again; if it keeps failing the RPTR may be busy or out of range';
       } else if (diag.got_reply) {
         answer = `answered ${diag.reply_bytes} bytes, but no region name could be read from it`;
       } else {

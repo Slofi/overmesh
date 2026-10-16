@@ -1633,6 +1633,10 @@ class McFloodScopeTests(unittest.TestCase):
         self.assertNotIn("mc1", mesh_mc._mc_scope_unsupported)
 
 
+
+# Four header bytes, as the reader dispatches them (the tag echoed back).
+REGIONS_TAG = b"\x01\x02\x03\x04"
+
 class McRegionDiscoverTests(unittest.TestCase):
     """Region discovery: 0-hop sweep + raw ANON_REQ REGIONS per responder.
 
@@ -1647,32 +1651,59 @@ class McRegionDiscoverTests(unittest.TestCase):
         mesh_mc.mc_connections.clear()
 
     def _regions_data(self, *names):
-        """Reply body as the reader dispatches it: 'data' hex = comma-separated
-        ASCII names, NUL-terminated (the 4-byte clock prefix is stripped by the
-        reader before dispatch, so the parser must not expect it)."""
-        return (",".join(names) + "\0").encode("ascii").hex()
+        """Reply body as the reader dispatches it.
+
+        Layout per the library's own parser for this response
+        (commands/binary.py: `pbuf.read(4)` then decode): four header bytes (the
+        tag echoed back) followed by the comma-separated, NUL-terminated names.
+        This helper used to omit the header, which is what let the `;j*` residue
+        through on the live repeater.
+        """
+        return (REGIONS_TAG + (",".join(names) + "\0").encode("ascii")).hex()
 
     def test_parse_regions_reply(self):
         parse = mesh_mc._mc_parse_regions_reply
         # Standard comma list with wildcard + trailing NUL
         self.assertEqual(parse(self._regions_data("si", "europe", "*")), ["si", "europe", "*"])
         # Whitespace tolerated around commas
-        self.assertEqual(parse("si, eu ,".encode().hex()), ["si", "eu"])
+        self.assertEqual(parse((REGIONS_TAG + b"si, eu ,").hex()), ["si", "eu"])
         # Empty payload / garbage
         self.assertEqual(parse(""), [])
         self.assertEqual(parse("nothex!!"), [])
         # No trailing NUL (defensive)
-        self.assertEqual(parse("si".encode().hex()), ["si"])
+        self.assertEqual(parse((REGIONS_TAG + b"si").hex()), ["si"])
 
     def test_parse_regions_filters_high_bytes_tokens(self):
         # A stray non-regions binary payload (no commas) is one non-printable
         # token and must be dropped entirely — never rendered as a chip.
-        raw = b"\x01\x02si\xff\x03"  # control bytes, no comma delimiters
+        raw = REGIONS_TAG + b"\x01\x02si\xff\x03"  # control bytes, no comma delimiters
         self.assertEqual(mesh_mc._mc_parse_regions_reply(raw.hex()), [])
         # A comma-delimited list with one clean name and one garbage token
         # keeps the clean name and drops the garbage.
-        mixed = b"si,\x01\x02junk\xff\x03"
+        mixed = REGIONS_TAG + b"si,\x01\x02junk\xff\x03"
         self.assertEqual(mesh_mc._mc_parse_regions_reply(mixed.hex()), ["si"])
+
+    def test_parse_regions_reply_drops_the_four_byte_header(self):
+        """Filip's repeater, 2026-10-16: the read worked but the panel showed a
+        bogus first region `;j*`, because the 4 header bytes decoded to printable
+        `;j*,` and the fourth byte happened to be a comma."""
+        payload = b";j*," + b" si, si-not, si-gor, eu, europe\x00"
+        names = mesh_mc._mc_parse_regions_reply(payload.hex())
+        self.assertEqual(names, ["si", "si-not", "si-gor", "eu", "europe"])
+        self.assertNotIn(";j*", names)
+        self.assertNotIn(";j", names)
+
+    def test_parse_regions_reply_cannot_be_fooled_by_a_text_like_header(self):
+        """Header bytes that happen to look like names must not become regions."""
+        payload = b"ab,c" + b"si,eu\x00"
+        names = mesh_mc._mc_parse_regions_reply(payload.hex())
+        self.assertEqual(names, ["si", "eu"])
+        self.assertNotIn("ab", names)
+
+    def test_parse_regions_reply_ignores_a_short_or_empty_body(self):
+        parse = mesh_mc._mc_parse_regions_reply
+        self.assertEqual(parse(b";j*,".hex()), [])          # header only
+        self.assertEqual(parse(b"si".hex()), [])            # shorter than the header
 
     def _fake_mc(self):
         class _FakeCommands:

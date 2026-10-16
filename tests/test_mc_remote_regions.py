@@ -235,13 +235,16 @@ class RegionsReadDiagnosticsTests(_RemoteTestCase):
         return names
 
     def test_a_reply_is_parsed_and_recorded(self):
-        names = self._run_read({"data": b"si,si-dol\x00".hex()})
+        # 4 header bytes (the tag echoed back), then the NUL-terminated names.
+        payload = b"TG\x01\x02" + b"si,si-dol\x00"
+        names = self._run_read({"data": payload.hex()})
         self.assertEqual(names, ["si", "si-dol"])
         diag = mesh_mc._mc_regions_read_diag["mc1"]
         self.assertTrue(diag["got_reply"])
         self.assertFalse(diag["no_reply"])
         self.assertEqual(diag["names"], ["si", "si-dol"])
-        self.assertEqual(diag["reply_bytes"], len(b"si,si-dol\x00"))
+        self.assertEqual(diag["reply_bytes"], len(payload))
+        self.assertTrue(diag["reply_hex"].startswith("5447"), "the raw bytes are kept for diagnosis")
 
     def test_a_silent_repeater_is_recorded_as_no_reply(self):
         names = self._run_read(None)          # nothing ever arrives

@@ -410,6 +410,9 @@ def get_mc_scope_state(config_id):
 # concurrent op cannot steal it.
 _mc_region_discover_locks: dict = {}
 _mc_region_discover_serial_locks: dict = {}
+# What a region name may look like: MeshCore lowercases them and allows letters,
+# digits and hyphens; '*' is the wildcard/unscoped pseudo-region.
+_MC_REGION_NAME_RE = re.compile(r"(\*|[a-z0-9][a-z0-9-]{0,31})")
 # What the last 0-hop regions read actually got, per radio: the Manage panel
 # shows it, because an empty list alone cannot say whether the repeater was
 # silent, answered nothing, or answered with something unparseable
@@ -436,25 +439,36 @@ def _mc_region_discover_serial_lock(config_id):
 
 
 def _mc_parse_regions_reply(response_data_hex):
-    """Parse a REGIONS BinaryResponse payload: clock(4 LE) is stripped by the
-    reader into 'data'; the remaining body is NUL-terminated comma-separated
-    ASCII region names ('*' = wildcard/unscoped). Returns a list of clean names.
-    Defense-in-depth: only printable-ASCII tokens survive (a stray non-regions
-    binary payload would otherwise render garbage chips)."""
+    """Parse a REGIONS BinaryResponse payload into region names.
+
+    Layout, taken from the library's own parser for this same response
+    (`commands/binary.py`: `pbuf.read(4)` then decode the rest): the first 4
+    bytes are the tag echoed back, then a NUL-terminated, comma-separated ASCII
+    list of region names ('*' = wildcard/unscoped).
+
+    Skipping those 4 bytes is not cosmetic. On Filip's repeater (2026-10-16) the
+    tag decoded to printable `;j*,` and, because the fourth byte happened to be a
+    comma, the panel showed `;j*` as if it were the first region. Dropping the
+    header is the library's rule; the per-name filter below is the second line of
+    defence, so header bytes that happen to look like text cannot pose as a
+    region either.
+    """
     if not response_data_hex:
         return []
     try:
         raw = bytes.fromhex(response_data_hex)
     except (TypeError, ValueError):
         return []
-    end = raw.find(b"\0")
-    if end < 0:
-        end = len(raw)
-    body = raw[:end].decode("ascii", "ignore")
+    body = raw[4:] if len(raw) > 4 else b""
+    end = body.find(b"\0")
+    if end >= 0:
+        body = body[:end]
     out = []
-    for token in body.split(","):
-        token = token.strip()
-        if token and all(0x20 <= ord(c) <= 0x7E for c in token):
+    for token in body.decode("ascii", "ignore").split(","):
+        token = token.strip().lower()
+        if not _MC_REGION_NAME_RE.fullmatch(token):
+            continue
+        if token not in out:
             out.append(token)
     return out
 
@@ -477,6 +491,9 @@ def _mc_note_regions_read(config_id, full_key, names=None, raw=None, no_reply=Fa
         "no_reply": bool(no_reply),
         "send_failed": bool(send_failed),
         "reply_bytes": size,
+        # A short hex preview of the raw reply: the residue bug of 2026-10-16
+        # (`;j*`) was only explainable from the actual bytes.
+        "reply_hex": (raw[:64] if isinstance(raw, str) else ""),
         "names": list(names or []),
         "error": error,
     }

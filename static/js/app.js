@@ -11377,6 +11377,7 @@ if (targetEl) {
   let _mcScanTimer     = null;
   let _mcScanLastResults = null;      // last Scan/Probe result set, so the pop-up can be reopened
   let _mcScanLive      = null;        // { radioId, advert, window, remaining, entries: Map } while listening
+  let _mcScanHover     = false;       // pointer inside the panel: do not rebuild rows under it
 
   // -- Pills --
   function updateMcPills() {
@@ -17936,7 +17937,11 @@ if (targetEl) {
         + `${escHtml(payload.radioName || '')} &middot; ${payload.remaining}s left &middot; ${payload.results.length} heard`
         + `${payload.summary.answered ? ` &middot; ${payload.summary.answered} answered` : ''}</span>`;
     }
-    if (body && updateBody) body.innerHTML = _mcScanResultsHtml(payload, payload.newIds, {head: false, live: true});
+    // While the pointer is inside the panel a rebuild would redraw the row being
+    // hovered (and drop the marker highlight with it), so the rows wait until the
+    // pointer leaves; the heading above still ticks every second. This was the one
+    // thing Filip flagged as possibly feeling wrong about the live list (2026-10-16).
+    if (body && updateBody && !_mcScanHover) body.innerHTML = _mcScanResultsHtml(payload, payload.newIds, {head: false, live: true});
   }
 
   function _mcScanLiveShow() {
@@ -17948,6 +17953,16 @@ if (targetEl) {
     // The previous list is not this scan's result, so do not offer it mid-scan.
     const rb = document.getElementById('mc-scan-results-btn');
     if (rb) rb.style.display = 'none';
+    // Bound once: hovering the rows pauses their rebuild; leaving flushes what arrived.
+    const bodyEl = document.getElementById('mc-statusreq-body');
+    if (bodyEl && !bodyEl.dataset.scanHoverBound) {
+      bodyEl.dataset.scanHoverBound = '1';
+      bodyEl.addEventListener('mouseenter', () => { _mcScanHover = true; });
+      bodyEl.addEventListener('mouseleave', () => {
+        _mcScanHover = false;
+        if (_mcScanLive) _mcRenderScanLive(true);
+      });
+    }
     _mcRenderScanLive(true);
   }
 

@@ -208,6 +208,19 @@ class ScanResultsPanelWiringTests(unittest.TestCase):
         self.assertIn("if (_mcScanLive) { _mcScanLive.remaining = _mcScanRemaining; _mcRenderScanLive(false); }", self.src)
         self.assertIn("`${isProbe ? 'Probe' : 'Scan'} running ", self.src)
 
+    def test_the_row_list_does_not_rebuild_under_a_hovering_mouse(self):
+        """Filip flagged the one thing that could feel wrong about a live list: a row
+        being re-rendered under the pointer as replies arrive. The rows now wait for
+        the pointer to leave; the heading keeps ticking either way."""
+        self.assertIn("let _mcScanHover     = false;", self.src)
+        self.assertIn("if (body && updateBody && !_mcScanHover) body.innerHTML", self.src,
+                      "the body must not be rebuilt while the pointer is inside the panel")
+        self.assertIn("if (bodyEl && !bodyEl.dataset.scanHoverBound) {", self.src,
+                      "the hover listeners are bound once, not per render")
+        self.assertIn("bodyEl.addEventListener('mouseenter', () => { _mcScanHover = true; });", self.src)
+        self.assertIn("if (_mcScanLive) _mcRenderScanLive(true);", self.src,
+                      "leaving the panel must flush what arrived while hovering")
+
     def test_nothing_heard_yet_is_said_out_loud(self):
         self.assertIn("Nothing heard yet. Still listening", self.src)
         self.assertIn("{head: false, live: true}", self.src)

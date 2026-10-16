@@ -595,6 +595,134 @@ async def _mc_collect_responders(config_id, mc, sweep_s=8, retry=True):
     return [], True  # no responders after both attempts
 
 
+# ── Scan / Probe results (S453, Filip) ───────────────────────────────────────
+# A Scan or Probe window is 60 s. While it is open we note every repeater that
+# answers our DISCOVER_REQ (0x8e) — the active "heard you HERE" proof — and, at
+# the end, everything else the window heard, so the Manage-free pop-up can list
+# who responded. Kept module-level because the reply arrives on the serial
+# reader's thread and the answer is sent from the request thread.
+_scan_active_radios: set = set()
+_scan_discover_seen: dict = {}
+
+
+def mc_scan_begin(config_id):
+    """Open a Scan/Probe window for this radio (clears the previous results)."""
+    _scan_active_radios.add(config_id)
+    _scan_discover_seen[config_id] = {}
+
+
+def mc_scan_end(config_id):
+    """Close the window: replies after this are no longer scan results."""
+    _scan_active_radios.discard(config_id)
+
+
+def mc_scan_note_discover(config_id, payload):
+    """Record one DISCOVER_REQ reply for the running window (no-op outside one)."""
+    if config_id not in _scan_active_radios:
+        return
+    pubkey = ((payload or {}).get("pubkey") or "").strip()
+    if not pubkey:
+        return
+    # Read the contact only if the lock is free: this runs on the serial reader's
+    # thread, and blocking there can stall the reader (the lesson recorded in
+    # _touch_contact_seen). A miss is harmless — mc_scan_results() resolves names
+    # again when it builds the list.
+    contact = {}
+    if mc_connections_lock.acquire(blocking=False):
+        try:
+            state = mc_connections.get(config_id) or {}
+            contact = dict((state.get("contacts") or {}).get(pubkey) or {})
+        finally:
+            mc_connections_lock.release()
+    _scan_discover_seen.setdefault(config_id, {})[pubkey] = {
+        "full_key": pubkey,
+        "name": contact.get("adv_name") or contact.get("name") or pubkey[:8],
+        "rssi": (payload or {}).get("RSSI"),
+        "snr": (payload or {}).get("SNR"),
+        "snr_in": (payload or {}).get("SNR_in"),
+        "node_type": (payload or {}).get("node_type"),
+        "contact_type": contact.get("type"),
+        "out_path_len": contact.get("out_path_len"),
+        "ts": int(time.time()),
+    }
+
+
+def _mc_scan_kind(node_type, contact_type):
+    """RPTR / ROOM / node, from the node type or the stored contact type
+    (MeshCore: 0=client, 1=room, 2=repeater)."""
+    for value in (node_type, contact_type):
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            continue
+        if value == 2:
+            return "repeater"
+        if value == 1:
+            return "room"
+    return "node"
+
+
+def mc_scan_results(config_id, started_at, advert=True, discover=False):
+    """Everything one Scan/Probe window got an active reply from or heard.
+
+    Returns (results, summary). Active DISCOVER responders come first (they are
+    the point of the scan), then nodes merely heard in the same window — an
+    advert scan also learns about plain nodes. Each result is ready to render.
+    """
+    started_at = int(started_at or 0)
+    with mc_connections_lock:
+        contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}) or {})
+    seen = dict(_scan_discover_seen.get(config_id, {}) or {})
+
+    responders = []
+    for key, info in seen.items():
+        contact = contacts.get(key) or {}
+        responders.append({
+            "full_key": key,
+            "name": info.get("name") or contact.get("adv_name") or key[:8],
+            "kind": _mc_scan_kind(info.get("node_type"), info.get("contact_type", contact.get("type"))),
+            "answered": True,
+            "rssi": info.get("rssi"),
+            "snr": info.get("snr"),
+            "snr_in": info.get("snr_in"),
+            "hops": info.get("out_path_len", contact.get("out_path_len")),
+            "last_heard_ts": info.get("ts") or started_at,
+        })
+    responders.sort(key=lambda r: (-(r["rssi"] if isinstance(r["rssi"], (int, float)) else -999)))
+
+    heard = []
+    for key, contact in contacts.items():
+        if key in seen:
+            continue
+        heard_ts = contact.get("last_heard_ts") or contact.get("last_seen_ts") or 0
+        if heard_ts < started_at:
+            continue
+        heard.append({
+            "full_key": key,
+            "name": contact.get("adv_name") or contact.get("name") or key[:8],
+            "kind": _mc_scan_kind(contact.get("type"), contact.get("type")),
+            "answered": False,
+            "rssi": contact.get("rssi"),
+            "snr": contact.get("snr"),
+            "snr_in": None,
+            "hops": contact.get("out_path_len"),
+            "last_heard_ts": int(heard_ts),
+        })
+    heard.sort(key=lambda r: -int(r.get("last_heard_ts") or 0))
+
+    results = responders + heard
+    summary = {
+        "total": len(results),
+        "answered": len(responders),
+        "repeaters": sum(1 for r in results if r["kind"] == "repeater"),
+        "rooms": sum(1 for r in results if r["kind"] == "room"),
+        "advert": bool(advert),
+        "discover": bool(discover),
+        "window": int(time.time()) - started_at,
+    }
+    return results, summary
+
+
 async def _mc_discover_regions_async(config_id, sweep_s=8, per_query_timeout=15, max_responders=8):
     """Phone-app-style region discovery: 0-hop sweep of nearby repeaters/rooms,
     then query each for its region list. Returns:
@@ -3779,6 +3907,8 @@ def _subscribe_mc_events(mc, config_id, name):
             log.info(f"[MC:{name}] DISCOVER_RESPONSE {disp_name} ({pubkey[:12]}) "
                      f"rssi={rssi} snr={snr} snr_in={snr_in} "
                      f"node_type={p.get('node_type')} tag={p.get('tag')} — heard us")
+            # If a Scan/Probe window is open, this reply is one of its results.
+            mc_scan_note_discover(config_id, p)
             _push_mc_node({
                 "type":          "mc_node",
                 "radio_id":      config_id,

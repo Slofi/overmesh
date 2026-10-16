@@ -29,6 +29,7 @@ from mesh_mc import (MC_PAYLOAD_TYPE_NAMES, MC_ROUTE_TYPE_NAMES,
                      get_mc_contact_archive,
                      set_contact_path, reset_all_paths, remote_repeater_read,
                      remote_repeater_command, remote_repeater_regions, clear_mc_all_contacts,
+                     mc_scan_begin, mc_scan_end, mc_scan_results,
                      get_rc_collect_events, get_local_neighbors, get_mc_scope_state,
                      get_mc_auto_add_state,
                      store_mc_contact)
@@ -52,6 +53,33 @@ _scan_timers: dict = {}
 _scan_lock = threading.Lock()
 
 MC_SCAN_WINDOW = 60  # seconds
+
+
+def _scan_done_payload(radio_id, started_at, advert, discover):
+    """The mc_scan_done SSE payload, carrying the results the pop-up lists.
+
+    Filip (2026-10-16): "Make the response to those a new pop-up window with
+    results, so responded nodes/RPTRs are listed there." The list is built
+    server-side so it is complete even if a browser missed an SSE event mid-scan;
+    a failure here must never cost us the scan_done signal itself.
+    """
+    try:
+        results, summary = mc_scan_results(radio_id, started_at, advert=advert, discover=discover)
+    except Exception as e:
+        log.warning(f"[MC] scan results failed: {e}")
+        results, summary = [], {}
+    finally:
+        mc_scan_end(radio_id)
+    return {
+        "type": "mc_scan_done",
+        "radio_id": radio_id,
+        "window": MC_SCAN_WINDOW,
+        "advert": bool(advert),
+        "discover": bool(discover),
+        "started_at": int(started_at or 0),
+        "results": results,
+        "summary": summary,
+    }
 
 log = logging.getLogger(__name__)
 bp  = Blueprint("mc", __name__)
@@ -1416,6 +1444,10 @@ def api_mc_scan(radio_id):
         existing = _scan_timers.get(radio_id)
         if existing and existing.is_alive():
             return jsonify({"error": "Scan already in progress"}), 409
+        # Open the results window BEFORE anything goes out, so a fast repeater
+        # reply cannot land before we are listening for scan results.
+        started_at = time.time()
+        mc_scan_begin(radio_id)
         if advert:
             try:
                 send_advert(radio_id, flood=True)
@@ -1440,10 +1472,11 @@ def api_mc_scan(radio_id):
                                 "window": MC_SCAN_WINDOW,
                                 "advert": advert,
                                 "discover": discover_tag is not None}))
-        # Schedule scan_done after window
+        # Schedule scan_done after window — it carries the results
         def _scan_done():
             time.sleep(MC_SCAN_WINDOW)
-            push_to_sse(json.dumps({"type": "mc_scan_done", "radio_id": radio_id}))
+            push_to_sse(json.dumps(_scan_done_payload(radio_id, started_at, advert,
+                                                      discover_tag is not None)))
         t = threading.Thread(target=_scan_done, daemon=True)
         _scan_timers[radio_id] = t
         t.start()

@@ -11291,9 +11291,11 @@ if (targetEl) {
   let _mcScanActive    = false;
   let _mcScanRadioId   = null;
   let _mcScanNewCount  = 0;
+  let _mcScanNewIds    = new Set();   // contacts first seen during the window
   let _mcScanWindow    = 60;
   let _mcScanRemaining = 0;
   let _mcScanTimer     = null;
+  let _mcScanLastResults = null;      // last Scan/Probe result set, so the pop-up can be reopened
 
   // -- Pills --
   function updateMcPills() {
@@ -11381,11 +11383,14 @@ if (targetEl) {
     // Scan/Trace/Neighbors buttons live inside MC sense wrap — visible only when MC connected
     const btn = document.getElementById('mc-scan-btn');
     const probeBtn = document.getElementById('mc-probe-btn');
+    const resultsBtn = document.getElementById('mc-scan-results-btn');
     const st  = document.getElementById('mc-scan-status');
     const traceBtn = document.getElementById('mc-trace-btn');
     const neighborsBtn = document.getElementById('mc-neighbors-btn');
     if (btn) btn.style.display = mcConnected ? '' : 'none';
     if (probeBtn) probeBtn.style.display = mcConnected ? '' : 'none';
+    // Only offer the results button once a Scan or Probe has produced something.
+    if (resultsBtn) resultsBtn.style.display = (mcConnected && _mcScanLastResults) ? '' : 'none';
     if (st && !mcConnected) st.style.display = 'none';
     if (traceBtn) traceBtn.style.display = mcConnected ? '' : 'none';
     if (neighborsBtn) neighborsBtn.style.display = mcConnected ? '' : 'none';
@@ -11607,7 +11612,10 @@ if (targetEl) {
         }
       }
       _mcRefreshDmContactNames(data.radio_id);
-      if (_mcScanActive && data.radio_id === _mcScanRadioId && isNew) _mcScanNewCount++;
+      if (_mcScanActive && data.radio_id === _mcScanRadioId && isNew) {
+        _mcScanNewCount++;
+        _mcScanNewIds.add(data.id);
+      }
       if (currentTab === 'nodes') renderLive();
       renderMcMapMarkers();
       // MC Sense panel updates
@@ -11642,6 +11650,7 @@ if (targetEl) {
       _mcScanActive   = true;
       _mcScanRadioId  = data.radio_id;
       _mcScanNewCount = 0;
+      _mcScanNewIds   = new Set();
       _mcScanWindow   = data.window || 60;
       _mcScanRemaining = _mcScanWindow;
       const isProbe = data.advert === false;
@@ -11688,10 +11697,30 @@ if (targetEl) {
       const st  = document.getElementById('mc-scan-status');
       if (btn) { btn.textContent = 'Scan'; btn.disabled = false; }
       if (probeBtn) { probeBtn.textContent = 'Probe'; probeBtn.disabled = false; }
-      if (st)  {
-        st.textContent = `Done: ${_mcScanNewCount} new`;
-        setTimeout(() => { if (st) st.textContent = ''; }, 8000);
+      // The results pop-up (Filip, 2026-10-16): the window's answer, listed.
+      const resultsPayload = {
+        radioId: data.radio_id,
+        radioName: mcLastStatus[data.radio_id]?.name || data.radio_id,
+        advert: data.advert !== false,
+        window: data.window || _mcScanWindow || 60,
+        results: Array.isArray(data.results) ? data.results : [],
+        summary: data.summary || {},
+        newIds: [..._mcScanNewIds],
+        ts: Date.now(),
+      };
+      _mcScanLastResults = resultsPayload;
+      const rb = document.getElementById('mc-scan-results-btn');
+      if (rb) rb.style.display = '';
+      const answered = resultsPayload.summary.answered || 0;
+      if (st) {
+        st.textContent = `Done: ${resultsPayload.results.length} result${resultsPayload.results.length === 1 ? '' : 's'}`
+                       + `${answered ? ` · ${answered} answered` : ''}${_mcScanNewCount ? ` · ${_mcScanNewCount} new` : ''}`;
+        setTimeout(() => { if (st) st.textContent = ''; }, 15000);
       }
+      // Never clobber another modal the user has open: they get the Results
+      // button and the status line instead.
+      const modalOpen = document.getElementById('action-modal')?.classList.contains('open');
+      if (!modalOpen) showMcScanResults();
       // Refresh contacts from device to pick up any updated coords (e.g. GPS set via phone)
       const rid = _mcScanRadioId;
       if (rid) {
@@ -17660,6 +17689,79 @@ if (targetEl) {
     } finally {
       if (btn) { btn.textContent = 'Last Heard'; btn.disabled = false; }
     }
+  }
+
+  // ── Scan / Probe results pop-up ────────────────────────────────────────────
+  // Filip, 2026-10-16: "Make the response to those a new pop-up window with
+  // results, so responded nodes/RPTRs are listed there."
+  function _mcScanKindBadge(r) {
+    const kind = r.kind === 'repeater' ? 'RPTR' : (r.kind === 'room' ? 'ROOM' : 'node');
+    const colour = r.kind === 'repeater' ? '#22c55e' : (r.kind === 'room' ? '#38bdf8' : 'var(--muted)');
+    const bg = r.kind === 'repeater' ? 'rgba(34,197,94,0.15)'
+             : (r.kind === 'room' ? 'rgba(56,189,248,0.15)' : 'rgba(139,148,158,0.15)');
+    const title = r.answered ? 'answered our DISCOVER probe' : 'heard during the scan window';
+    return `<span title="${title}" style="color:${colour};font-size:9px;font-weight:600;background:${bg};`
+         + `border:1px solid ${colour};border-radius:3px;padding:0 3px;margin-right:5px">${kind}${r.answered ? ' ✓' : ''}</span>`;
+  }
+
+  function _mcScanSignalText(r) {
+    const bits = [];
+    if (r.rssi != null) bits.push(`${r.rssi}dBm`);
+    if (r.snr != null) bits.push(`SNR ${Number(r.snr).toFixed(1)}`);
+    if (r.snr_in != null) bits.push(`heard you ${Number(r.snr_in).toFixed(1)}dB`);
+    if (r.hops != null && Number(r.hops) >= 0) bits.push(`${Number(r.hops)} hop${Number(r.hops) === 1 ? '' : 's'}`);
+    return bits.join(' · ');
+  }
+
+  function _mcScanResultsHtml(payload, newIds = []) {
+    const results = Array.isArray(payload?.results) ? payload.results : [];
+    const summary = payload?.summary || {};
+    const isProbe = payload?.advert === false;
+    const windowS = payload?.window || 60;
+    const newSet = new Set(newIds);
+    const head = `<div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.5">
+        <b style="color:var(--text)">${isProbe ? 'Probe' : 'Scan'}</b> on ${escHtml(payload?.radioName || '?')},
+        ${windowS}s window${isProbe ? ' (no advert sent)' : ''}.`
+      + (results.length
+          ? ` ${results.length} result${results.length === 1 ? '' : 's'}`
+            + `${summary.answered ? ` · ${summary.answered} answered the probe` : ''}`
+            + `${summary.repeaters ? ` · ${summary.repeaters} RPTR` : ''}${summary.rooms ? ` · ${summary.rooms} room` : ''}.`
+          : '')
+      + `</div>`;
+    if (!results.length) {
+      return head + `<div style="font-size:12px;color:var(--muted);line-height:1.6">
+          Nothing answered and nothing was heard in the ${windowS}s window.<br>
+          ${isProbe
+            ? 'Probe only reaches repeaters and room servers in direct (0-hop) range.'
+            : 'The advert was sent, so an empty result means nobody was in earshot.'}
+          <br>Try again, or use Scan rather than Probe if you want the advert to go out.
+        </div>`;
+    }
+    const rows = results.map(r => {
+      const key = String(r.full_key || '');
+      const name = r.name || key.slice(0, 8);
+      const signal = _mcScanSignalText(r);
+      const isNew = newSet.has(key.slice(0, 12)) || newSet.has(key);
+      const when = r.last_heard_ts ? _formatAppTime(r.last_heard_ts, {seconds: true}) : '';
+      return `<div style="display:flex;align-items:baseline;gap:8px;padding:6px 2px;border-bottom:1px solid var(--border)">
+        <div style="min-width:0;flex:1">
+          <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+            ${_mcScanKindBadge(r)}${escHtml(name)}${isNew ? `<span style="margin-left:6px;color:#f59e0b;font-size:9px;font-weight:600;border:1px solid #f59e0b;border-radius:3px;padding:0 3px" title="first seen in this scan">NEW</span>` : ''}
+          </div>
+          <div style="font-size:10px;color:var(--muted);font-family:monospace">
+            ${escHtml(key.slice(0, 12))}${signal ? ` · ${escHtml(signal)}` : ''}
+          </div>
+        </div>
+        <div style="font-size:10px;color:var(--muted);white-space:nowrap">${escHtml(when)}</div>
+      </div>`;
+    }).join('');
+    return head + `<div style="max-height:52vh;overflow-y:auto">${rows}</div>`;
+  }
+
+  function showMcScanResults() {
+    const payload = _mcScanLastResults;
+    if (!payload) return;
+    openModal(`${payload.advert === false ? 'Probe' : 'Scan'} results`, _mcScanResultsHtml(payload, payload.newIds));
   }
 
   async function startMcScan(advert = true) {

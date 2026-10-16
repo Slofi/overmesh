@@ -21,6 +21,7 @@ os.environ.setdefault("OVERMESH_DATA_DIR", str(_DATA_DIR))
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
+import mesh_mc  # noqa: E402
 import routes.mc as mc_routes  # noqa: E402
 
 
@@ -72,6 +73,26 @@ class McScanProbeModeTests(unittest.TestCase):
         self.assertEqual(self.adverts, [], "Probe must not transmit an advert")
         self.assertEqual(self.discovers, ["mcA"], "Probe must still send DISCOVER_REQ")
         self.assertFalse(r.get_json()["advert"])
+
+    def test_a_reply_during_the_window_lands_in_the_done_event(self):
+        """The route must OPEN the results window (before it transmits), and a
+        repeater answering during it must appear in mc_scan_done — that is the
+        whole feature: the pop-up lists who responded (S453)."""
+        key = "86a8eedb744b5828821a2e36cd9112f983cfd5555e7dba2ce0ed509893d36dc6"
+        with mock.patch.object(mc_routes, "MC_SCAN_WINDOW", 0.15):
+            r = self._scan({"advert": False})
+            self.assertEqual(r.status_code, 200)
+            # the repeater answers our DISCOVER_REQ while the window is open
+            mesh_mc.mc_scan_note_discover("mcA", {"pubkey": key, "RSSI": -80, "node_type": 2})
+            mc_routes._scan_timers["mcA"].join(timeout=5)
+        done = [json.loads(call.args[0]) for call in self.push.call_args_list
+                if json.loads(call.args[0]).get("type") == "mc_scan_done"]
+        self.assertEqual(len(done), 1, "the scan must still end with mc_scan_done")
+        answered = [x for x in done[0]["results"] if x["answered"]]
+        self.assertEqual([x["full_key"] for x in answered], [key],
+                         "the reply must be in the done payload (the route must have opened the window)")
+        self.assertEqual(done[0]["summary"]["answered"], 1)
+        self.assertFalse(done[0]["advert"], "a Probe reports advert=False to the pop-up")
 
     def test_silent_mode_blocks_scan_before_any_tx(self):
         with mock.patch.object(mc_routes, "CONFIG", {**mc_routes.CONFIG, "silent_mode": True}):

@@ -28,7 +28,7 @@ from mesh_mc import (MC_PAYLOAD_TYPE_NAMES, MC_ROUTE_TYPE_NAMES,
                      send_trace_broadcast, send_discover_req, import_mc_contact, enable_mc_debug,
                      get_mc_contact_archive,
                      set_contact_path, reset_all_paths, remote_repeater_read,
-                     remote_repeater_command, clear_mc_all_contacts,
+                     remote_repeater_command, remote_repeater_regions, clear_mc_all_contacts,
                      get_rc_collect_events, get_local_neighbors, get_mc_scope_state,
                      get_mc_auto_add_state,
                      store_mc_contact)
@@ -942,6 +942,25 @@ def api_mc_remote_read(radio_id, node_id):
         return jsonify({"error": str(e)}), 503
     except Exception as e:
         log.warning(f"[MC] remote read failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/api/mc/<radio_id>/remote/<node_id>/regions", methods=["POST"])
+def api_mc_remote_regions(radio_id, node_id):
+    """Read a managed repeater's region list (0-hop, no admin login needed).
+
+    Separate from .../read because it answers in one anonymous round trip and
+    works logged out: the Manage panel's Regions section is a read the user does
+    often, not a 75 s admin sweep.
+    """
+    try:
+        return jsonify({"ok": True, **remote_repeater_regions(radio_id, node_id)})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 503
+    except Exception as e:
+        log.warning(f"[MC] remote regions read failed: {e}")
         return jsonify({"error": str(e)}), 500
 
 

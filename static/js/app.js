@@ -2243,7 +2243,8 @@
         ['Read settings', 'Best-effort read of current RPTR settings into the Quick settings fields using safe get commands.'],
         ['Map (Manage)', 'Pick a remote RPTR/room-server position from the map, then press Set in Manage to write lat/lon.'],
         ['Local advert', 'Ask the managed RPTR/room-server to send a local zero-hop advert.'],
-        ['Flood advert', 'Ask the managed RPTR/room-server to send a flood advert.']
+        ['Flood advert', 'Ask the managed RPTR/room-server to send a flood advert.'],
+        ['Read regions (↻ in Regions)', 'List the region names the RPTR itself has, over one 0-hop request — no admin login needed. Writes (Apply SI preset, Put/Allow/Home/Default/Save) are CLI commands and do need Admin Login.']
       ]
     },
     {
@@ -15642,6 +15643,19 @@ if (targetEl) {
     return `<pre style="white-space:pre-wrap;word-break:break-word;margin:0;font-size:11px;color:var(--text)">${escHtml(JSON.stringify(value, null, 2))}</pre>`;
   }
 
+  function _mcRemoteChipsHtml(names) {
+    // One home for the region-name chips: used by the Regions read and by the
+    // read-result section, so the two cannot drift apart.
+    return (Array.isArray(names) ? names : [])
+      .map(n => String(n == null ? '' : n).trim())
+      .filter(Boolean)
+      .map(n => {
+        const label = n === '*' ? '* (unscoped / wildcard)' : n;
+        return `<span style="display:inline-block;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:1px 7px;margin:2px 3px 0 0;font-family:monospace;font-size:11px">${escHtml(label)}</span>`;
+      })
+      .join('');
+  }
+
   function _mcRemoteSection(title, block) {
     if (!block) return '';
     if (!block.ok) {
@@ -15650,9 +15664,14 @@ if (targetEl) {
         <div style="margin-top:6px;color:var(--red);font-size:12px">${escHtml(block.error || 'Request failed')}</div>
       </details>`;
     }
+    // A list of region names reads far better as chips than as JSON (the Regions
+    // read returns exactly that since it uses the binary REGIONS request).
+    const body = Array.isArray(block.data) && block.data.length
+      ? _mcRemoteChipsHtml(block.data)
+      : _mcRemoteJson(block.data);
     return `<details open style="border-top:1px solid var(--border);padding-top:7px;margin-top:7px">
       <summary style="cursor:pointer;color:var(--muted)">${escHtml(title)}</summary>
-      <div style="margin-top:6px">${_mcRemoteJson(block.data)}</div>
+      <div style="margin-top:6px">${body}</div>
     </details>`;
   }
 
@@ -15687,6 +15706,7 @@ if (targetEl) {
         <div style="border-top:1px solid var(--border);padding-top:10px;margin-top:4px">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
             <h3 class="settings-subtitle" style="margin:0">Regions</h3>
+            <button class="btn" onclick="mcRemoteReadRegions(this)" title="Read this RPTR's region list (0-hop request, no admin login needed)" style="padding:0 9px;font-size:14px">↻</button>
             <button class="btn" onclick="mcRemoteRunCommand('region home', 'mc-remote-region-result')" title="Read home region">Home?</button>
             <button class="btn" onclick="mcRemoteRunCommand('region default', 'mc-remote-region-result')" title="Read default flood scope region">Default?</button>
           </div>
@@ -15694,6 +15714,7 @@ if (targetEl) {
             Slovenian presets create <code>si</code> plus the selected subregion, allow flood forwarding, set home/default to <code>si</code>, and save.
             Use the selected subregion as channel scope when a channel is local-only.
           </div>
+          <div id="mc-remote-region-list" style="font-size:12px;color:var(--muted);margin-bottom:8px"></div>
           <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
             <select id="mc-remote-region-preset" class="settings-select" style="width:180px">
               ${MC_SLO_REGION_PRESETS.map(r => `<option value="${r.code}">${r.code}: ${r.label}</option>`).join('')}
@@ -15926,6 +15947,43 @@ if (targetEl) {
     el.innerHTML = channels.map(ch =>
       `<div style="margin-bottom:2px"><b style="color:var(--fg)">${ch.idx}:</b> ${escHtml(ch.name)}</div>`
     ).join('');
+  }
+
+  function _mcRemoteRenderRegionList(regions) {
+    const out = document.getElementById('mc-remote-region-list');
+    if (!out) return;
+    const names = (Array.isArray(regions) ? regions : []).map(n => String(n || '').trim()).filter(Boolean);
+    if (!names.length) {
+      out.innerHTML = '<span style="color:var(--muted)">No regions reported by this RPTR. If the link is thin, press Advert once and read again.</span>';
+      return;
+    }
+    const chips = _mcRemoteChipsHtml(names);
+    out.innerHTML = `<span style="color:var(--green)">${names.length} region${names.length === 1 ? '' : 's'} on this RPTR:</span><div style="margin-top:2px">${chips}</div>`;
+  }
+
+  async function mcRemoteReadRegions(btn) {
+    // Dedicated read: the region list comes back in one 0-hop anonymous request
+    // (no admin login), so this is usable without a password and is much faster
+    // than the whole admin read. Writes are still CLI commands (region
+    // put/allowf/default/home/save) and do need the login.
+    if (!_mcRemoteManage) return;
+    const out = document.getElementById('mc-remote-region-list');
+    if (out) out.textContent = 'Reading regions from RPTR…';
+    if (btn) btn.disabled = true;
+    try {
+      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(_mcRemoteManage.radioId)}/remote/${encodeURIComponent(_mcRemoteManage.pubkeyPrefix)}/regions`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: '{}',
+      });
+      const d = await r.json();
+      if (!r.ok || d.ok === false) throw new Error(d.error || r.status);
+      _mcRemoteRenderRegionList(d.regions);
+    } catch (e) {
+      if (out) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   }
 
   async function mcRemoteReadChannels() {

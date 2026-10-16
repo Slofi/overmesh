@@ -29,7 +29,7 @@ import time
 
 from meshcore import MeshCore, EventType
 from meshcore.ble_cx import BLEConnection
-from meshcore.packets import AnonReqType, BinaryReqType
+from meshcore.packets import AdvType, AnonReqType, BinaryReqType
 from meshcore.serial_cx import SerialConnection
 from meshcore.tcp_cx import TCPConnection
 
@@ -3945,6 +3945,28 @@ def _resolve_mc_contact(contacts, pubkey_prefix):
     return full_key, contact
 
 
+def _remote_dst_type(contact):
+    """Destination type for meshcore's send_cmd().
+
+    send_cmd() accepts a hex string, but unless `dst_type` is passed explicitly
+    it reads `dst["type"]` — which on a string raises
+    `TypeError: string indices must be integers, not 'str'` BEFORE anything is
+    sent. That was every remote command on the live app: 2026-10-16, `POST
+    /api/mc/<radio>/remote/<node>/command` -> 500, while the read path (binary
+    requests, no send_cmd) kept working. So the whole Manage panel — Set
+    buttons, region presets, Home?/Default? — was dead.
+
+    Prefer the type the radio reported for this contact (a repeater vs a room
+    server decides whether the firmware parses the text as CLI data or a CLI
+    command); the library's own fallback is REPEATER.
+    """
+    try:
+        value = int((contact or {}).get("type"))
+    except (TypeError, ValueError):
+        return AdvType.REPEATER.value
+    return value
+
+
 async def _set_contact_path_async(config_id, pubkey_prefix, hop_prefixes=None, clear=False, path_hash_mode=None):
     mc, _ = _get_mc(config_id)
     with mc_connections_lock:
@@ -5041,9 +5063,14 @@ async def _remote_read_async(config_id, pubkey_prefix, password=None, do_login=F
             "owner",
             lambda: mc.commands.req_owner_sync(contact, min_timeout=8),
         )
+        # Regions: NOT the library's req_regions_sync — it waits on a tag the
+        # firmware never matches, so the read always came back empty/failed and
+        # the Manage panel's Regions section had nothing to show (Filip,
+        # 2026-10-16). The 0-hop ANON_REQ path below is the one the phone app
+        # uses and the one this module already trusts for region discovery.
         result["regions"] = await _remote_best_effort(
             "regions",
-            lambda: mc.commands.req_regions_sync(contact, min_timeout=8),
+            lambda: _mc_query_responder_regions(config_id, mc, full_key, timeout=8),
         )
         result["status"] = await _remote_best_effort(
             "status",
@@ -5168,7 +5195,13 @@ async def _remote_command_async(config_id, pubkey_prefix, command):
                 )
             )
         try:
-            sent = await mc.commands.send_cmd(full_key, cmd)
+            # dst_type is REQUIRED with a hex-string destination: without it the
+            # library evaluates dst["type"] and raises before sending (see
+            # _remote_dst_type).
+            dst_type = _remote_dst_type(_contact)
+            log.info(f"[MC:{config_id}] remote command {cmd!r} to {full_key[:12]} "
+                     f"(dst_type={dst_type})")
+            sent = await mc.commands.send_cmd(full_key, cmd, dst_type=dst_type)
             _raise_if_mc_error(sent, f"remote command {cmd}")
             reply = None
             if reply_task is not None:
@@ -5403,6 +5436,24 @@ def remote_repeater_read(config_id, pubkey_prefix, password=None, login=False, l
         ),
         timeout=timeout,
     )
+
+
+async def _remote_regions_async(config_id, pubkey_prefix, timeout=15):
+    """Read one remote repeater's region list (0-hop ANON_REQ REGIONS)."""
+    mc, _ = _get_mc(config_id)
+    with mc_connections_lock:
+        contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
+    full_key, _contact = _resolve_mc_contact(contacts, pubkey_prefix)
+    regions = await _mc_query_responder_regions(config_id, mc, full_key, timeout=timeout)
+    return {"full_key": full_key, "regions": regions}
+
+
+def remote_repeater_regions(config_id, pubkey_prefix, timeout=20):
+    """Read a managed repeater's regions. No admin login: this is an anonymous
+    0-hop request (the same one Scan/discovery uses), so it works while logged
+    out — which is what makes it usable as the Manage panel's Regions read."""
+    _ensure_mc_tx_allowed("MC remote regions read")
+    return run_mc(_remote_regions_async(config_id, pubkey_prefix), timeout=timeout)
 
 
 def remote_repeater_command(config_id, pubkey_prefix, command, timeout=25):

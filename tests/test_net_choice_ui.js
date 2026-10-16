@@ -76,6 +76,10 @@ const stubs = [
   'let allNodes = [];',
   'let _updateScanBtnVisibility = null;',
   'function _scheduleSignalHeatmapRefresh(){}',
+  'let _mtConnected = true, _mcConnected = true;',
+  'function hasConnectedMtRadios(){ return _mtConnected; }',
+  'function hasConnectedMcRadios(){ return _mcConnected; }',
+  'let _lastMtCount = 0, _lastMcCount = 0;',
 ];
 
 const code = [
@@ -86,7 +90,9 @@ const code = [
   "let _netChoice = 'mt';",
   ...stubs,
   extract('function setChatNetwork(', '\n  }'),
+  extract('function _setNetChoice(', '\n  }'),
   extract('function switchSenseNet(', '\n  }'),
+  extract('function _updateNetworkPillVisibility(', '\n  }'),
   `return {
      get mapShowMt() { return mapShowMt; },
      get mapShowMc() { return mapShowMc; },
@@ -94,6 +100,8 @@ const code = [
      get senseNet() { return _senseNet; },
      get netChoice() { return _netChoice; },
      setChatNetwork, switchSenseNet,
+     updatePillVisibility: _updateNetworkPillVisibility,
+     setConnected(mt, mc) { _mtConnected = mt; _mcConnected = mc; },
    };`,
 ].join('\n');
 
@@ -125,5 +133,18 @@ assert(api.mapShowMc === false && api.mapShowMt === true,
 api.setChatNetwork('mt');
 api.switchSenseNet('mt');
 assert(api.netChoice === 'mt' && api.chatNetwork === 'mt' && api.senseNet === 'mt', 'stable after repeats');
+
+// ── 5. a connectivity change moves BOTH pills ──────────────────────────────
+// Sweep finding (2026-10-16): this used to set _senseNet directly, so after the MT radio went away the Sense pill still
+// highlighted MT while the app was on MC — and Chat could disagree with both. The pairing has to hold here too.
+api.setConnected(false, true);      // MT radio gone, MC still there
+api.updatePillVisibility();
+assert(api.senseNet === 'mc', 'the Sense side follows the only connected network');
+assert(api.chatNetwork === 'mc', 'and so does Chat, or the two pills disagree again');
+assert(api.netChoice === 'mc', 'the shared choice moved with them');
+assert(store.getItem('senseNet') === 'mc' && store.getItem('chatNetwork') === 'mc', 'and it is remembered');
+assert(els['sense-net-mc']._cls.has('active'), 'the Sense pill highlight follows the choice');
+assert(!els['sense-net-mt']._cls.has('active'), 'the old Sense pill is not left highlighted');
+assert(els['chat-net-mc']._cls.has('active'), 'the Chat pill highlight follows too');
 
 console.log('ok: Chat and Sense pills share one remembered MT/MC choice; the ordinary Map filter is untouched');

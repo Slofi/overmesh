@@ -1,5 +1,11 @@
 # OverMesh Release Notes
 
+## 2026.10.16.15
+
+### Fixed
+
+- **Chat and Sense can no longer end up on different networks.** When a radio connects or disconnects, the MT/MC choice now moves *both* pills together. Before, the Sense side could switch on its own — leaving its pill highlighting a network the app was no longer on, and Chat disagreeing with it. Found in a bug sweep of everything shipped today.
+
 ## 2026.10.16.14
 
 ### Changed

@@ -22,6 +22,9 @@ class SerialCloseGuardTests(unittest.TestCase):
         fake = mock.Mock()
         fake.stream.close.side_effect = OSError(9, "Bad file descriptor")
         stream_interface.StreamInterface._disconnected(fake)   # must not raise
+        # ...and it must have ATTEMPTED the close: swallowing the error is the point,
+        # skipping the close would be a different bug that this test used to also pass on.
+        fake.stream.close.assert_called_once()
 
     def test_other_errors_still_propagate(self):
         from meshtastic import stream_interface

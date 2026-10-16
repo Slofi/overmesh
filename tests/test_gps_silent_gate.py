@@ -110,10 +110,21 @@ class GpsAutoPushSilentTests(_ConfigStub):
         thread_mock.assert_called_once()
 
     def test_push_helper_refuses_while_silent(self):
+        """Found in the 2026-10-16 sweep: this test only asserted "does not raise", so it
+        passed whether or not the push was actually refused — the failure it exists to
+        catch (a silent transmit) would have gone unnoticed. Now it asserts the refusal."""
         CONFIG["silent_mode"] = True
-        with mock.patch.object(gps_mod, "connections", {}), \
-             mock.patch.object(gps_mod, "push_to_sse"):
-            gps_mod._gps_push_to_nodes(46.05, 14.5, 300, 32)  # must not raise
+        iface = mock.Mock()
+        iface.myInfo.my_node_num = 1
+        iface.nodesByNum = {1: {"position": {}}}
+        with mock.patch.object(gps_mod, "connections", {"radio1": {"status": "connected", "iface": iface}}), \
+             mock.patch.object(gps_mod, "push_to_sse") as sse:
+            gps_mod._gps_push_to_nodes(46.05, 14.5, 300, 32)
+        iface.localNode._sendAdmin.assert_not_called()
+        iface.localNode.ensureSessionKey.assert_not_called()
+        sse.assert_not_called()
+        self.assertEqual(iface.nodesByNum[1]["position"], {},
+                         "the silent path must not even update the position cache")
 
     def test_suppression_logs_once_per_transition(self):
         CONFIG["silent_mode"] = True

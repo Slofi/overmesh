@@ -3472,8 +3472,11 @@ if (targetEl) {
     if (mcSense) mcSense.style.display = mcConnected ? '' : 'none';
     if (mapWrap) mapWrap.style.display = (!senseOpen && mtConnected && mcConnected) ? '' : 'none';
     if (senseWrap) senseWrap.style.display = (senseOpen && mtConnected && mcConnected) ? '' : 'none';
-    if (_senseNet === 'mt' && !mtConnected && mcConnected) _senseNet = 'mc';
-    if (_senseNet === 'mc' && !mcConnected && mtConnected) _senseNet = 'mt';
+    // A radio came or went, so the shared choice follows it — through the same path a pill click uses. This used to
+    // set _senseNet directly (found in the 2026-10-16 bug sweep), which left the Sense pill highlighting a network
+    // the app was no longer on and let Chat and Sense disagree.
+    if (_senseNet === 'mt' && !mtConnected && mcConnected) _setNetChoice('mc');
+    if (_senseNet === 'mc' && !mcConnected && mtConnected) _setNetChoice('mt');
   }
 
   function _updateMapNodeCount() {
@@ -13069,14 +13072,21 @@ if (targetEl) {
   // MC Sense
   // ---------------------------------------------------------------------------
 
-  function switchSenseNet(net, opts = {}) {
+  // The choice itself: state, storage, pill highlights, and keeping Chat in step. No panels, no map — so it is safe
+  // to call from bookkeeping code (a radio connecting/disconnecting) as well as from a pill click.
+  function _setNetChoice(net, opts = {}) {
     _senseNet = net;
     _netChoice = net;
     localStorage.setItem('senseNet', net);
     // One choice, so the Chat key is written too: whichever pill was used, a reload lands on the same network.
     localStorage.setItem('chatNetwork', net);
-    document.getElementById('sense-net-mt').classList.toggle('active', net === 'mt');
-    document.getElementById('sense-net-mc').classList.toggle('active', net === 'mc');
+    document.getElementById('sense-net-mt')?.classList.toggle('active', net === 'mt');
+    document.getElementById('sense-net-mc')?.classList.toggle('active', net === 'mc');
+    if (opts.syncChat !== false && net !== chatNetwork) setChatNetwork(net);
+  }
+
+  function switchSenseNet(net, opts = {}) {
+    _setNetChoice(net, opts);   // state, storage, pill highlights and Chat, all in the one shared place
     _updateNetworkPillVisibility();
     // Update toolbar counter immediately (without full re-render)
     _updateMapNodeCount();

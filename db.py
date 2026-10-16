@@ -417,15 +417,6 @@ def count_passive_obs_by_collector(radio_id):
         return {str(row[0] or "unknown"): row[1] for row in c.fetchall()}
 
 
-def CONFIG_APP_GET(key, default=None):
-    """Read CONFIG["app"][key] live (config can be saved while the app runs)."""
-    try:
-        from config import CONFIG
-        return (CONFIG.get("app") or {}).get(key, default)
-    except Exception:
-        return default
-
-
 def _mc_radio_ids() -> list:
     """Every MC radio we might hold logs for: those in the config, plus any already
     registered in a DB registry (a radio whose config entry was removed still has
@@ -488,7 +479,9 @@ def log_retention_loop():
     while True:
         time.sleep(90)
         try:
-            days = int(CONFIG_APP_GET("log_retention_days", 30) or 0)
+            # Read the live config each pass: the operator can change the window without a restart.
+            from config import CONFIG
+            days = int((CONFIG.get("app") or {}).get("log_retention_days", 30) or 0)
             if days <= 0:
                 log.info("[retention] disabled (log_retention_days=0) — nothing is pruned")
             else:

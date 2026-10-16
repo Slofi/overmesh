@@ -1,5 +1,11 @@
 # OverMesh Release Notes
 
+## 2026.10.16.8
+
+### Changed
+
+- Scan and Probe results now appear the moment you press the button, instead of a minute later. While the radio listens, the panel shows what it hears as it arrives and counts the seconds down. If nothing has been heard yet it says so, and if the whole 60 seconds pass without an answer it says that too.
+
 ## 2026.10.16.7
 
 ### Changed

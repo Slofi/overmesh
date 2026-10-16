@@ -1,5 +1,18 @@
 # OverMesh Release Notes
 
+## 2026.10.16.1
+
+### Changed
+
+- OverMesh no longer advertises on its own. Adverts are now manual only: the Advert button, Scan, and a managed repeater's own advert are the only ones that go out. If a ping to a node that has never heard us comes back empty, press Advert once and ping again. Pings are also 1 to 2 seconds faster, because the adverts they used to send first are gone.
+
+### Fixed
+
+- Remote Manage works again. Every command it sent was failing before it left the app, so Set buttons, the region presets and the Home/Default reads all did nothing. Name, position, radio settings, adverts and region commands now reach the repeater.
+- Regions can be read again. The Regions part of Remote Manage has a read button that lists the region names the repeater itself has, and it needs no admin password. Region changes (put, allow flood, deny flood, home, default, save) now actually reach the repeater.
+- Silent Running really stops transmissions now. It is enforced where the bytes leave, not only when you press the button, so a Scan or a Ping that was already under way can no longer put a packet on the air after you switch it on.
+- Silent Running also covers a radio that was away. Turning it on silences a radio that is unplugged or rebooting as soon as it comes back, and turning it off hands such a radio its own setting back instead of switching transmitting on for a radio Silent Running never touched.
+
 ## 2026.10.11.2
 
 ### Fixed

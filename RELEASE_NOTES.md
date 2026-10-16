@@ -1,5 +1,16 @@
 # OverMesh Release Notes
 
+## 2026.10.16.9
+
+### Added
+
+- Stadia Maps layers (Toner Lite, Toner Dark, Stamen Terrain, Stadia Outdoors) now have an API key field in Settings, like Thunderforest, MapTiler and CARTO. Stadia only allows keyless use from localhost, so an OverMesh reached through a domain or an IP address needs one.
+
+### Fixed
+
+- Layers that need a key now say so in the layer menu ("key needed"), and the star marker that Thunderforest and MapTiler layers carried is now on the CARTO and Stadia layers too, since they need a key as well.
+- The Thunderforest note in Settings named two of its four layers; it names all four now.
+
 ## 2026.10.16.8
 
 ### Changed

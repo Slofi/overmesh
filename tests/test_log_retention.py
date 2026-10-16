@@ -1,18 +1,20 @@
-"""Log retention (30 days, oldest first) and the Silent-Running suppression lines (S453).
+"""Log retention: count caps bound history, and the one uncapped store is age-pruned (S453).
 
-Filip, 2026-10-16: *"Sure, add those to the logs to, just to be consistant.. also, when are the logs erased/for how
-long are they retained? I would like something like kept for 30 days, than the oldest entry is deleted.. How is it
-done now?"*
+Filip, 2026-10-16: *"when are the logs erased/for how long are they retained? I would like something like kept for 30
+days, than the oldest entry is deleted.. How is it done now?"* — answered, built, and then revised by his follow-up:
+*"Ow, I see.. So maybe those 30 days are to short. We can stick with those 1000 entries; how large is that in kb/mb?"*
 
-How it was done before this: every log-ish table was bounded by **count**, never by age — MT messages kept the
-newest 1000, MC messages the newest 2000, traceroute history the newest 50, the in-app alert log the newest 150.
-That caps size but not age, so on a busy mesh yesterday's conversation could be evicted while an idle month kept
-everything for ever. Only passive observations had a time-based cleanup (30 days) and only when triggered by hand.
+What the measurement showed (VACUUMed copies of his live DBs): 416 bytes per MT message, 659 per MC message, 162 per
+passive observation — so 1000 messages is ~400 KB per radio, and age-pruning his history freed a few hundred kilobytes on
+a hub with 192 GB free. The COUNT caps were always the meaningful bound (they also bound what the UI renders).
 
-Now: an age-based prune runs on its own (shortly after boot, then every 6 hours) with a 30-day default, and it logs
-what it removed. These tests pin the behaviour, the opt-out, the one deliberate exception, and — because a loop that
-is never started is invisible, like the inert guard earlier the same day — that the loop is actually wired into the app.
-"""
+The rule now, and what these tests pin:
+  * messages (1000 MT / 2000 MC per radio), traceroute history (50) and the in-app alert log (150) — bounded by COUNT in
+    their own save paths; the age prune must NOT touch them, so a 30-day window cannot quietly delete history;
+  * passive observations — no count cap, so an age window (30 days by default, `app.log_retention_days`, 0 disables) runs
+    on its own, logging what it removed;
+  * `node_position_history` — 1-year window, map track data rather than a log, deliberately outside both rules."""
+
 import json
 import os
 import sys
@@ -67,9 +69,7 @@ class PruneLogsTests(unittest.TestCase):
         self.new = self.now - 1 * DAY      # inside the window
 
     def _connect_mt_radio(self, radio_id="mt_test"):
-        """MT message DBs hang off the live connection, so the fixture registers one —
-        which is also what makes the prune reachable at all (a radio that is not
-        connected has no open DB, and its old rows wait until it connects again)."""
+        """MT message DBs hang off the live connection, so the fixture registers one."""
         path = str(Path(_DATA_DIR) / f"{radio_id}_msgs.db")
         db.init_msgs_db(path)
         with db.connections_lock:
@@ -77,59 +77,76 @@ class PruneLogsTests(unittest.TestCase):
         self.addCleanup(lambda: db.connections.pop(radio_id, None))
         return path
 
-    def test_old_traceroutes_and_mt_messages_go_and_recent_stay(self):
+    def test_the_age_prune_does_not_touch_messages_or_traceroutes(self):
+        """His follow-up in one sentence: 30 days was too short, the entry cap is the rule.
+        The age prune must leave count-bounded stores alone — that is the whole change."""
         with db.get_prefs_db() as conn:
             _insert(conn, "traceroute_history", self.old, id=9001, node_id="n1")
-            _insert(conn, "traceroute_history", self.new, id=9002, node_id="n1")
         path = self._connect_mt_radio()
         conn = db._connect(path)
         _insert(conn, "messages", self.old, id="old-msg", text="old")
-        _insert(conn, "messages", self.new, id="new-msg", text="new")
         conn.commit()
         conn.close()
 
         removed = db.prune_logs(30)
 
-        self.assertEqual(removed.get("traceroutes"), 1, "exactly the one out-of-window traceroute")
-        self.assertEqual(removed.get("messages:mt_test"), 1, "exactly the one out-of-window message")
+        self.assertEqual(removed, {}, "messages and traceroutes are bounded by count, not age")
         with db.get_prefs_db() as conn:
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM traceroute_history WHERE id=9001").fetchone()[0], 0)
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM traceroute_history WHERE id=9002").fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM traceroute_history WHERE id=9001").fetchone()[0], 1)
         conn = db._connect(path)
-        self.assertEqual(conn.execute("SELECT COUNT(*) FROM messages WHERE id='old-msg'").fetchone()[0], 0)
-        self.assertEqual(conn.execute("SELECT COUNT(*) FROM messages WHERE id='new-msg'").fetchone()[0], 1,
-                         "the recent message must survive")
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM messages WHERE id='old-msg'").fetchone()[0], 1,
+                         "a 60-day-old message must survive: the 1000-entry cap is what bounds history")
         conn.close()
 
-    def test_mc_per_radio_logs_are_pruned_too(self):
-        # The prune discovers MC radios the way the app does: from the config (the
-        # registries are filled for configured radios at startup), so the fixture
-        # must configure the radio rather than only create its files.
+    def test_the_count_cap_is_what_bounds_message_history(self):
+        """The load-bearing bound, so it gets a real test: save more than the cap and
+        the oldest entries go while the newest stay."""
+        path = self._connect_mt_radio()
+        for i in range(1005):
+            db.save_message({"id": "m%04d" % i, "radio_id": "mt_test", "text": "x",
+                             "ts": self.now - (1005 - i), "channel": 0})
+        conn = db._connect(path)
+        rows = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+        self.assertEqual(rows, 1000, "the MT message cap is 1000 entries")
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM messages WHERE id='m0000'").fetchone()[0], 0,
+                         "the oldest entries are the ones dropped")
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM messages WHERE id='m1004'").fetchone()[0], 1,
+                         "the newest entry survives")
+        conn.close()
+
+    def test_mc_passive_observations_are_age_pruned(self):
+        """The one store with no count cap: it is what the age window is for."""
         patcher = mock.patch.dict(config.CONFIG, {"mc_nodes": [{"id": RADIO, "enabled": True}]})
         patcher.start()
         self.addCleanup(patcher.stop)
-        with db.get_mc_msgs_db(RADIO) as conn:
-            _insert(conn, "messages", self.old, id="mc-old", text="old")
-            _insert(conn, "messages", self.new, id="mc-new", text="new")
         with db.get_mc_passive_db(RADIO) as conn:
             _insert(conn, "passive_obs", self.old, pubkey_pre="aa", obs_type="rx")
             _insert(conn, "passive_obs", self.new, pubkey_pre="aa", obs_type="rx")
+        with db.get_mc_msgs_db(RADIO) as conn:
+            _insert(conn, "messages", self.old, id="mc-old", text="old")
 
         removed = db.prune_logs(30)
 
-        self.assertEqual(removed.get("messages:" + RADIO), 1)
         self.assertEqual(removed.get("passive_obs:" + RADIO), 1)
+        self.assertNotIn("messages:" + RADIO, removed, "MC messages are capped by count, not by age")
+        with db.get_mc_passive_db(RADIO) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM passive_obs WHERE ts = ?", (self.old,)).fetchone()[0], 0,
+                             "the out-of-window observation is gone")
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM passive_obs WHERE ts = ?", (self.new,)).fetchone()[0], 1,
+                             "the recent observation survives")
         with db.get_mc_msgs_db(RADIO) as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0], 1)
-        with db.get_mc_passive_db(RADIO) as conn:
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM passive_obs").fetchone()[0], 1)
 
     def test_zero_days_disables_the_prune(self):
-        with db.get_prefs_db() as conn:
-            _insert(conn, "traceroute_history", self.old, id=9003, node_id="n1")
+        patcher = mock.patch.dict(config.CONFIG, {"mc_nodes": [{"id": RADIO, "enabled": True}]})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        with db.get_mc_passive_db(RADIO) as conn:
+            _insert(conn, "passive_obs", self.old, pubkey_pre="aa", obs_type="rx")
         self.assertEqual(db.prune_logs(0), {}, "0 must mean keep everything")
-        with db.get_prefs_db() as conn:
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM traceroute_history WHERE id=9003").fetchone()[0], 1)
+        with db.get_mc_passive_db(RADIO) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM passive_obs WHERE ts = ?", (self.old,)).fetchone()[0], 1,
+                             "with the window disabled even an out-of-window row stays")
 
     def test_position_history_is_deliberately_excluded(self):
         """It is map track data with its own 1-year window, not a log. Excluded on
@@ -143,6 +160,11 @@ class PruneLogsTests(unittest.TestCase):
                              "a 400-day-old position must survive a 30-day log prune")
 
     def test_nothing_to_remove_returns_an_empty_dict(self):
+        patcher = mock.patch.dict(config.CONFIG, {"mc_nodes": [{"id": "mc_empty_radio", "enabled": True}]})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        with db.get_mc_passive_db("mc_empty_radio"):
+            pass          # create it, empty
         self.assertEqual(db.prune_logs(30), {}, "no old rows -> nothing reported, nothing logged")
 
 

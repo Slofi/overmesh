@@ -1,5 +1,16 @@
 # OverMesh Release Notes
 
+## 2026.10.16.14
+
+### Changed
+
+- **History is kept by entry count again, not by age.** 1000 messages per Meshtastic radio, 2000 per MeshCore radio, 50 traceroutes and 150 in-app alerts — the limits that were always there. The 30-day rule now applies only to MeshCore **passive observations**, the one store that had no limit at all, and `app.log_retention_days` in the config sets that window (`0` keeps everything).
+- Measured for the record: one Meshtastic message costs ~416 bytes and one MeshCore message ~659 bytes on disk, so the 1000-entry limit is about 400 KB per radio — the space was never the constraint.
+
+### Fixed
+
+- The first run of the 30-day rule this evening (VERSION 2026.10.16.13) deleted **931 Meshtastic messages** older than 30 days from the history. They are **not recoverable** — no backup of the message database exists — and this release makes sure the same rule can never touch message history again.
+
 ## 2026.10.16.13
 
 ### Added

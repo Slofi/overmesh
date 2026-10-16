@@ -448,64 +448,30 @@ def _mc_radio_ids() -> list:
     return out
 
 
-def _mt_radio_ids() -> list:
-    """MT radios worth pruning: the configured ones, plus any currently connected
-    (an MT message DB path is only known while the radio is connected)."""
-    ids = []
-    try:
-        from config import CONFIG
-        ids.extend(n.get("id") for n in CONFIG.get("nodes", []) if n.get("id"))
-    except Exception:
-        pass
-    with connections_lock:
-        ids.extend(rid for rid, st in connections.items() if st.get("msgs_db"))
-    seen, out = set(), []
-    for i in ids:
-        if i and i not in seen:
-            seen.add(i)
-            out.append(i)
-    return out
-
-
 def prune_logs(retention_days: int = 30) -> dict:
-    """Delete log/history rows older than retention_days — oldest first.
+    """Delete UNBOUNDED log rows older than retention_days — oldest first.
 
-    These tables used to be bounded by COUNT only (1000 MT / 2000 MC messages, 50
-    traceroutes), which caps total size but not age: on a busy mesh, yesterday's
-    conversation could be evicted while an idle month kept everything for ever.
-    Filip, 2026-10-16: *"I would like something like kept for 30 days, than the
-    oldest entry is deleted"*. `retention_days <= 0` disables the prune entirely.
+    Scope revisited with Filip on 2026-10-16, after the first run deleted 931 MT
+    messages from his history and he asked how much space that actually saved:
 
-    Stores touched, in the layout the app really uses: `traceroute_history` in the
-    prefs DB; `messages` per radio for **both** networks (MT keeps its message DB
-    path on the live connection, MC in `get_mc_msgs_db`); and MC passive
-    observations per radio. Deliberately NOT included: `node_position_history`,
-    which keeps its own 1-year window because it feeds map tracks rather than being
-    a log (pinned by a test so the omission is a decision a reader can see).
-    Returns counts, empty when nothing was removed.
+      * messages (1000 per MT radio / 2000 per MC radio), traceroute history (50)
+        and the in-app alert log (150) are bounded by COUNT in their own save
+        paths, and that bound is the rule — it also bounds what the UI renders.
+        Measured: ~416 bytes per MT message and ~659 per MC message after VACUUM,
+        i.e. ~400 KB per radio at 1000, on a hub with 192 GB free. Age-pruning
+        them freed nothing worth losing the history for.
+      * passive observations have no count cap, so they are the one store that
+        really grows without bound: they keep the 30-day window here
+        (`retention_days`; 0 disables).
+
+    Deliberately NOT included: `node_position_history` (1-year window, map track
+    data rather than a log). Returns counts, empty when nothing was removed.
     """
     if retention_days <= 0:
         return {}
-    cutoff = int(time.time()) - int(retention_days) * 86400
     removed = {}
-    with get_prefs_db() as conn:
-        cur = conn.cursor()
-        cur.execute("DELETE FROM traceroute_history WHERE ts < ?", (cutoff,))
-        removed["traceroutes"] = cur.rowcount
-    for radio_id in _mt_radio_ids():
-        try:
-            with get_msgs_db(radio_id) as conn:
-                cur = conn.cursor()
-                cur.execute("DELETE FROM messages WHERE ts < ?", (cutoff,))
-                removed["messages:" + radio_id] = cur.rowcount
-        except RuntimeError:
-            continue                     # not connected right now — nothing to open
     for radio_id in _mc_radio_ids():
         try:
-            with get_mc_msgs_db(radio_id) as conn:
-                cur = conn.cursor()
-                cur.execute("DELETE FROM messages WHERE ts < ?", (cutoff,))
-                removed["messages:" + radio_id] = cur.rowcount
             removed["passive_obs:" + radio_id] = cleanup_passive_obs(radio_id, ttl_days=retention_days)
         except Exception as e:
             log.warning(f"[retention] {radio_id} skipped: {e}")
@@ -529,7 +495,7 @@ def log_retention_loop():
                 removed = prune_logs(days)
                 if removed:
                     detail = ", ".join(f"{k}={v}" for k, v in removed.items())
-                    log.info(f"[retention] removed {sum(removed.values())} log row(s) older than {days} days ({detail})")
+                    log.info(f"[retention] removed {sum(removed.values())} passive observation(s) older than {days} days ({detail})")
         except Exception as e:
             log.warning(f"[retention] loop error: {e}")
         time.sleep(6 * 3600)

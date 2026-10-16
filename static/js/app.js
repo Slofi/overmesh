@@ -172,17 +172,14 @@
   // ── Alert log (persistent, localStorage-backed) ───────────────────────────
   const _ALERTS_KEY = 'om_alerts';
   const _ALERTS_MAX = 150;
-  const _ALERTS_MAX_AGE_MS = 30 * 86400 * 1000;   // keep 30 days of alerts
 
   function _alertsLoad() {
     try { return JSON.parse(localStorage.getItem(_ALERTS_KEY) || '[]'); } catch(e) { return []; }
   }
   function _alertsSave(arr) {
-    // Same retention rule as the server-side logs (Filip, 2026-10-16): entries older than 30 days go, oldest
-    // first. The count cap stays as a burst guard so a busy minute cannot fill the quota.
-    const cutoff = Date.now() - _ALERTS_MAX_AGE_MS;
-    const keep = arr.filter(a => !a.ts || a.ts >= cutoff).slice(0, _ALERTS_MAX);
-    try { localStorage.setItem(_ALERTS_KEY, JSON.stringify(keep)); } catch(e) {}
+    // Count cap only, like the server-side logs (Filip, 2026-10-16: 30 days was too short a window): 150 newest
+    // entries, oldest dropped first.
+    try { localStorage.setItem(_ALERTS_KEY, JSON.stringify(arr.slice(0, _ALERTS_MAX))); } catch(e) {}
   }
   function _alertNodePopup(evt, alertId) {
     if (evt && evt.stopPropagation) evt.stopPropagation();

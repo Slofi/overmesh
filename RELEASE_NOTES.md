@@ -1,5 +1,17 @@
 # OverMesh Release Notes
 
+## 2026.10.16.10
+
+### Changed
+
+- The map layer menu is grouped and ordered: the free maps first (OpenStreetMap, Esri Topo, Esri Streets, Esri Satellite, Esri Dark Gray, Esri Hillshade, OpenTopoMap), then the providers that need an API key, each under its own heading — Thunderforest, MapTiler, CARTO, Stadia Maps.
+- **Esri Topo is the new default layer.** It needs no API key. A layer you chose yourself is kept as it is.
+
+### Fixed
+
+- Your Stadia Maps key is now part of the stored tile identity, as it already was for the other three providers. Before this, tiles cached while no key was set could keep showing after you pasted one, and two different keys would have shared cached tiles.
+- The lite view defaulted to a CARTO layer that needs a key, and lite has no settings to enter one. It now defaults to Esri Topo as well, which is also available in its layer list.
+
 ## 2026.10.16.9
 
 ### Added

@@ -1,5 +1,13 @@
 # OverMesh Release Notes
 
+## 2026.10.16.7
+
+### Changed
+
+- Scan and Probe results now open in the same floating panel as the Last Heard list, at the bottom right. It stays open while you scroll the map, change tabs and use the rest of the app, and it can be scrolled itself.
+- Clicking a name in the results opens the same node pop-up you get by clicking that node on the map, so DM, Ping, Manage, Map, Log and Note are one click away.
+- Hovering a row pops its dot on the map and highlights the row, the same way hovering the node list on the Map/Sense tab does.
+
 ## 2026.10.16.6
 
 ### Added

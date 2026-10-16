@@ -1,5 +1,11 @@
 # OverMesh Release Notes
 
+## 2026.10.16.5
+
+### Changed
+
+- The reply strip at the bottom of Remote Manage now has an outline, a lighter background and a shadow, so it stands out from the panel behind it instead of blending into it.
+
 ## 2026.10.16.4
 
 ### Fixed

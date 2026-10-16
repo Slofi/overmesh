@@ -1,5 +1,16 @@
 # OverMesh Release Notes
 
+## 2026.10.16.6
+
+### Added
+
+- Scan and Probe now show what they found. When the 60 second window ends, a window opens listing every repeater and room server that answered the probe, then anything else heard during the scan. Each entry shows the signal we heard it on, how well it heard us, the hop count, and marks contacts that were seen for the first time in that scan.
+- A Results button next to Scan and Probe reopens the last set of results, so the list can be read after the moment has passed.
+
+### Changed
+
+- The scan status line now reports the outcome, for example "Done: 3 results, 1 answered, 2 new", instead of only how many contacts were new.
+
 ## 2026.10.16.5
 
 ### Changed

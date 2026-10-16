@@ -1,5 +1,17 @@
 # OverMesh Release Notes
 
+## 2026.10.16.13
+
+### Added
+
+- **Chat and the Sense panel now share one MT/MC choice.** Pick a network in either place and both follow, and the choice is remembered next time. The ordinary Map filter is deliberately left alone, so both networks can still be shown on the map at once.
+- **History is now kept for 30 days and pruned automatically**, oldest first: messages (both networks), traceroute history, MeshCore passive observations, and the in-app alert log. Every prune is written to the log with what it removed. Position history keeps its own 1-year window because it feeds map tracks. Setting `log_retention_days` to `0` in `config.json` under `app` keeps everything for ever.
+- **Silent Running now logs the bot commands it ignores** ("no reply sent"), so a silent bot is visible in the log instead of having to be inferred from the absence of a reply.
+
+### Changed
+
+- Log tables were previously bounded by count only (1000 MT / 2000 MC messages, 50 traceroutes, 150 in-app alerts), which capped size but not age.
+
 ## 2026.10.16.12
 
 ### Fixed

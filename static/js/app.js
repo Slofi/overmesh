@@ -172,12 +172,17 @@
   // ── Alert log (persistent, localStorage-backed) ───────────────────────────
   const _ALERTS_KEY = 'om_alerts';
   const _ALERTS_MAX = 150;
+  const _ALERTS_MAX_AGE_MS = 30 * 86400 * 1000;   // keep 30 days of alerts
 
   function _alertsLoad() {
     try { return JSON.parse(localStorage.getItem(_ALERTS_KEY) || '[]'); } catch(e) { return []; }
   }
   function _alertsSave(arr) {
-    try { localStorage.setItem(_ALERTS_KEY, JSON.stringify(arr.slice(0, _ALERTS_MAX))); } catch(e) {}
+    // Same retention rule as the server-side logs (Filip, 2026-10-16): entries older than 30 days go, oldest
+    // first. The count cap stays as a burst guard so a busy minute cannot fill the quota.
+    const cutoff = Date.now() - _ALERTS_MAX_AGE_MS;
+    const keep = arr.filter(a => !a.ts || a.ts >= cutoff).slice(0, _ALERTS_MAX);
+    try { localStorage.setItem(_ALERTS_KEY, JSON.stringify(keep)); } catch(e) {}
   }
   function _alertNodePopup(evt, alertId) {
     if (evt && evt.stopPropagation) evt.stopPropagation();
@@ -1029,6 +1034,9 @@
   let unreadChannels      = new Set();
   let currentTab          = 'nodes';
   let chatNetwork         = localStorage.getItem('chatNetwork') || 'mt';
+  // One MT/MC choice shared by the Chat pill and the Sense pill — they "stick" (Filip, 2026-10-16). The ordinary
+  // Map MT/MC filter is deliberately NOT part of this: it stays independent so both networks can be visible at once.
+  let _netChoice          = localStorage.getItem('chatNetwork') || localStorage.getItem('senseNet') || 'mt';
   let activeRadioId                = localStorage.getItem('activeRadioId') || null;
   let selectedRadioIds             = new Set(JSON.parse(localStorage.getItem('selectedRadioIds') || 'null') || (activeRadioId ? [activeRadioId] : []));
   let lastStatus                   = {};
@@ -1353,6 +1361,7 @@
   function setChatNetwork(net) {
     net = normalizeChatNetwork(net);
     chatNetwork = net;
+    _netChoice = net;
     localStorage.setItem('chatNetwork', net);
     const isMt = net === 'mt';
     const mtPane = document.getElementById('chat-mt-pane');
@@ -1373,6 +1382,9 @@
     if (btnMc) btnMc.classList.toggle('active', !isMt);
     if (!isMt) { _updateMcChatRadioLabel(); renderMcMessages(); _updateMcInput(); }
     else { _updateMtInput(); }
+    // Keep the paired Sense pill in step — WITHOUT the map-focus part, because the ordinary Map filter must keep its
+    // own independent MT/MC state (his 2026-10-16 note: both networks can stay selected there).
+    if (_senseNet !== net) switchSenseNet(net, { focusMap: false, syncChat: false });
   }
 
   function initChat() {
@@ -11222,7 +11234,7 @@ if (targetEl) {
   let mcLastStatus  = {};      // {config_id: {name, status, node_id, ...}}
   let mcContacts    = {};      // {config_id: {contact_id: contact, ...}}
   let mcMapMarkerById = {};    // contact_id → Leaflet marker (for MC Sense hover)
-  let _senseNet     = localStorage.getItem('senseNet') || 'mt';
+  let _senseNet     = _netChoice;   // paired with the Chat pill: one remembered choice, not two
   let _mcPathLines  = [];      // L.polyline objects for MC path lines
   let _mcHoverLines = [];      // temporary hover highlight polylines
   let _mcActiveHoverPath = null;
@@ -13060,9 +13072,12 @@ if (targetEl) {
   // MC Sense
   // ---------------------------------------------------------------------------
 
-  function switchSenseNet(net) {
+  function switchSenseNet(net, opts = {}) {
     _senseNet = net;
+    _netChoice = net;
     localStorage.setItem('senseNet', net);
+    // One choice, so the Chat key is written too: whichever pill was used, a reload lands on the same network.
+    localStorage.setItem('chatNetwork', net);
     document.getElementById('sense-net-mt').classList.toggle('active', net === 'mt');
     document.getElementById('sense-net-mc').classList.toggle('active', net === 'mc');
     _updateNetworkPillVisibility();
@@ -13079,12 +13094,12 @@ if (targetEl) {
       _activeMtRouteEntryKey = null;
       _mtRefreshSenseRouteSelection();
       // Show MC markers, hide MT node markers
-      if (!mapShowMc) {
+      if (opts.focusMap !== false && !mapShowMc) {
         mapShowMc = true;
         document.getElementById('map-mc-pill')?.classList.add('active');
         document.getElementById('nodes-mc-pill')?.classList.add('active');
       }
-      if (mapShowMt) {
+      if (opts.focusMap !== false && mapShowMt) {
         mapShowMt = false;
         document.getElementById('map-mt-pill')?.classList.remove('active');
         document.getElementById('nodes-mt-pill')?.classList.remove('active');
@@ -13100,13 +13115,13 @@ if (targetEl) {
       _clearMcRxLines();   // overheard MC paths must not linger over the MT view
       _mcHoverLines.forEach(l => leafletMap && leafletMap.removeLayer(l));
       _mcHoverLines = [];
-      if (!mapShowMt) {
+      if (opts.focusMap !== false && !mapShowMt) {
         mapShowMt = true;
         document.getElementById('map-mt-pill')?.classList.add('active');
         document.getElementById('nodes-mt-pill')?.classList.add('active');
         updateMapMarkers(allNodes);
       }
-      if (mapShowMc) {
+      if (opts.focusMap !== false && mapShowMc) {
         mapShowMc = false;
         document.getElementById('map-mc-pill')?.classList.remove('active');
         document.getElementById('nodes-mc-pill')?.classList.remove('active');
@@ -13116,6 +13131,9 @@ if (targetEl) {
       _updateMapLegend();
     }
     _scheduleSignalHeatmapRefresh(0);
+    // Pair back to Chat when the Sense pill was the one clicked (a caller may pass syncChat:false to
+    // avoid a loop). Same choice either way, so both pills always agree.
+    if (opts.syncChat !== false && net !== chatNetwork) setChatNetwork(net);
   }
 
   // MeshCore CONTACT_TYPENAMES: 0=NONE, 1=CLI, 2=REP, 3=ROOM, 4=SENS

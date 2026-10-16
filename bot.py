@@ -359,7 +359,12 @@ def handle_bot_command(packet, interface):
     try:
         radio_id = _radio_id_for_iface(interface)
         cfg = load_bot_config(radio_id)
-        if not cfg.get("enabled") or CONFIG.get("silent_mode"):
+        if not cfg.get("enabled"):
+            return
+        # Silent Running: the command is ignored on purpose and it is LOGGED. A suppression nobody can see is
+        # indistinguishable from a broken bot — Filip proved the silence live and asked for the line (2026-10-16).
+        if CONFIG.get("silent_mode"):
+            log.info(f"[bot] Silent Running active — MT bot command from {packet.get('fromId', '?')} ignored, no reply sent")
             return
 
         prefix  = f"[{cfg.get('bot_label', 'OM Bot')}]"
@@ -807,7 +812,13 @@ def handle_mc_bot_command(msg, config_id, subtype):
     """Handle a bot command arriving on an MC channel or DM."""
     try:
         cfg = load_bot_config(config_id)
-        if not cfg.get("enabled") or CONFIG.get("silent_mode"):
+        if not cfg.get("enabled"):
+            return
+        # Same reasoning as the MT side: say it out loud, so "no reply" in the log is never ambiguous
+        # (Filip, 2026-10-16).
+        if CONFIG.get("silent_mode"):
+            who = msg.get("pubkey_prefix") or msg.get("pubkey_pre") or "?"
+            log.info(f"[bot] Silent Running active — MC bot command from {who} on {config_id} ({subtype}) ignored, no reply sent")
             return
 
         prefix  = f"[{cfg.get('bot_label', 'OM Bot')}]"

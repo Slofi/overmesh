@@ -299,6 +299,10 @@ def startup():
     threading.Thread(target=mc_watchdog_loop, daemon=True).start()
     from routes.nodes import mt_auto_cleanup_loop
     threading.Thread(target=mt_auto_cleanup_loop, daemon=True).start()
+    # Log retention (30 days by default, oldest first) — Filip asked for age-based retention rather than the
+    # count caps that were the only bound before (2026-10-16).
+    from db import log_retention_loop
+    threading.Thread(target=log_retention_loop, daemon=True).start()
     # Notice a newer OverMesh shortly after start (and every few hours) so the UI
     # can offer it without anyone opening Settings.
     from routes.settings import update_check_loop

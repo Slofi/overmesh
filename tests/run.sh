@@ -23,6 +23,7 @@ node tests/test_waypoint_dialog.js
 node tests/test_message_notif_layout.js
 node tests/test_mc_scan_results_ui.js
 node tests/test_map_keys_ui.js
+node tests/test_net_choice_ui.js
 
 # JS lint (no-undef) — the only check that sees client-side ReferenceErrors,
 # which never reach the server journal. It MUST run with the repo as the base

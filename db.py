@@ -417,6 +417,124 @@ def count_passive_obs_by_collector(radio_id):
         return {str(row[0] or "unknown"): row[1] for row in c.fetchall()}
 
 
+def CONFIG_APP_GET(key, default=None):
+    """Read CONFIG["app"][key] live (config can be saved while the app runs)."""
+    try:
+        from config import CONFIG
+        return (CONFIG.get("app") or {}).get(key, default)
+    except Exception:
+        return default
+
+
+def _mc_radio_ids() -> list:
+    """Every MC radio we might hold logs for: those in the config, plus any already
+    registered in a DB registry (a radio whose config entry was removed still has
+    files, and their old rows should not be immortal)."""
+    ids = []
+    try:
+        from config import CONFIG
+        ids.extend(n.get("id") for n in CONFIG.get("mc_nodes", []) if n.get("id"))
+    except Exception:
+        pass
+    with _mc_msgs_db_registry_lock:
+        ids.extend(_mc_msgs_db_registry.keys())
+    with _mc_passive_db_registry_lock:
+        ids.extend(_mc_passive_db_registry.keys())
+    seen, out = set(), []
+    for i in ids:
+        if i and i not in seen:
+            seen.add(i)
+            out.append(i)
+    return out
+
+
+def _mt_radio_ids() -> list:
+    """MT radios worth pruning: the configured ones, plus any currently connected
+    (an MT message DB path is only known while the radio is connected)."""
+    ids = []
+    try:
+        from config import CONFIG
+        ids.extend(n.get("id") for n in CONFIG.get("nodes", []) if n.get("id"))
+    except Exception:
+        pass
+    with connections_lock:
+        ids.extend(rid for rid, st in connections.items() if st.get("msgs_db"))
+    seen, out = set(), []
+    for i in ids:
+        if i and i not in seen:
+            seen.add(i)
+            out.append(i)
+    return out
+
+
+def prune_logs(retention_days: int = 30) -> dict:
+    """Delete log/history rows older than retention_days — oldest first.
+
+    These tables used to be bounded by COUNT only (1000 MT / 2000 MC messages, 50
+    traceroutes), which caps total size but not age: on a busy mesh, yesterday's
+    conversation could be evicted while an idle month kept everything for ever.
+    Filip, 2026-10-16: *"I would like something like kept for 30 days, than the
+    oldest entry is deleted"*. `retention_days <= 0` disables the prune entirely.
+
+    Stores touched, in the layout the app really uses: `traceroute_history` in the
+    prefs DB; `messages` per radio for **both** networks (MT keeps its message DB
+    path on the live connection, MC in `get_mc_msgs_db`); and MC passive
+    observations per radio. Deliberately NOT included: `node_position_history`,
+    which keeps its own 1-year window because it feeds map tracks rather than being
+    a log (pinned by a test so the omission is a decision a reader can see).
+    Returns counts, empty when nothing was removed.
+    """
+    if retention_days <= 0:
+        return {}
+    cutoff = int(time.time()) - int(retention_days) * 86400
+    removed = {}
+    with get_prefs_db() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM traceroute_history WHERE ts < ?", (cutoff,))
+        removed["traceroutes"] = cur.rowcount
+    for radio_id in _mt_radio_ids():
+        try:
+            with get_msgs_db(radio_id) as conn:
+                cur = conn.cursor()
+                cur.execute("DELETE FROM messages WHERE ts < ?", (cutoff,))
+                removed["messages:" + radio_id] = cur.rowcount
+        except RuntimeError:
+            continue                     # not connected right now — nothing to open
+    for radio_id in _mc_radio_ids():
+        try:
+            with get_mc_msgs_db(radio_id) as conn:
+                cur = conn.cursor()
+                cur.execute("DELETE FROM messages WHERE ts < ?", (cutoff,))
+                removed["messages:" + radio_id] = cur.rowcount
+            removed["passive_obs:" + radio_id] = cleanup_passive_obs(radio_id, ttl_days=retention_days)
+        except Exception as e:
+            log.warning(f"[retention] {radio_id} skipped: {e}")
+    return {k: v for k, v in removed.items() if v}
+
+
+def log_retention_loop():
+    """Housekeeping: prune old log rows shortly after boot, then every 6 hours.
+
+    Same shape as the other periodic loops (mt_auto_cleanup_loop) so the timing is
+    predictable, and it always LOGS what it removed — a silent prune would be as
+    indistinguishable as the silent suppressions above.
+    """
+    while True:
+        time.sleep(90)
+        try:
+            days = int(CONFIG_APP_GET("log_retention_days", 30) or 0)
+            if days <= 0:
+                log.info("[retention] disabled (log_retention_days=0) — nothing is pruned")
+            else:
+                removed = prune_logs(days)
+                if removed:
+                    detail = ", ".join(f"{k}={v}" for k, v in removed.items())
+                    log.info(f"[retention] removed {sum(removed.values())} log row(s) older than {days} days ({detail})")
+        except Exception as e:
+            log.warning(f"[retention] loop error: {e}")
+        time.sleep(6 * 3600)
+
+
 def cleanup_passive_obs(radio_id, ttl_days=30):
     cutoff = int(time.time()) - ttl_days * 86400
     with get_mc_passive_db(radio_id) as conn:

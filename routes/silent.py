@@ -4,7 +4,7 @@ from flask import Blueprint, jsonify, request
 
 from config import CONFIG, CONFIG_LOCK, save_config
 from helpers import _as_bool, push_to_sse
-from mesh import get_iface_by_radio
+from mesh import get_iface_by_radio, restore_mt_radio, silence_mt_radio
 import sense as _sense_mod
 from sense import _active_auto_event, _active_auto_running_lock, _sense_lock, _sense_state
 
@@ -13,66 +13,76 @@ bp = Blueprint("silent", __name__)
 
 
 def _silent_enable():
-    """Push lora.tx_enabled=False to all connected MT radios and save snapshot."""
+    """Silence every MT radio; snapshot the ones that answer for the restore.
+
+    Order matters: the flag is set FIRST, so a radio that connects while this
+    loop is still running matches the new state (sync_silent_running_on_mt_connect
+    is what handles it), and a radio that is away right now is silenced the moment
+    it appears instead of being missed altogether.
+    """
     with _sense_lock:
         _sense_state["active_auto"] = False
     _active_auto_event.set()
     with _active_auto_running_lock:
         _sense_mod._active_auto_running = False
-    snapshot = {}
+    with CONFIG_LOCK:
+        CONFIG["silent_mode"] = True
+        CONFIG["sense_active_auto"] = False
+        save_config()
+    silenced, awaiting = [], []
     for node_cfg in CONFIG.get("nodes", []):
         if not node_cfg.get("enabled", True):
             continue
         radio_id = node_cfg["id"]
         iface = get_iface_by_radio(radio_id)
         if not iface:
+            awaiting.append(radio_id)      # silenced by the MT connect path
             continue
-        try:
-            lc = iface.localNode.localConfig
-            tx_enabled = bool(getattr(lc.lora, "tx_enabled", True))
-            role = int(getattr(lc.device, "role", 0))
-            snapshot[radio_id] = {"tx_enabled": tx_enabled, "role": role}
-            lc.lora.tx_enabled = False
-            iface.localNode.writeConfig("lora")
-            log.info(f"[silent] MT {radio_id}: tx_enabled → False (was {tx_enabled})")
-        except Exception as e:
-            log.warning(f"[silent] MT {radio_id} enable failed: {e}")
+        if silence_mt_radio(iface, radio_id):
+            silenced.append(radio_id)
     # MC companion nodes have no firmware-side auto-advert, and since 2026-10-16 (S453)
     # OM sends an advert only on an explicit request — so the app-layer gate in
-    # mesh_mc.py (send_advert / _send_advert_async) covers what remains.
-    with CONFIG_LOCK:
-        CONFIG["silent_mode"] = True
-        CONFIG["silent_snapshot"] = snapshot
-        CONFIG["sense_active_auto"] = False
-        save_config()
+    # mesh_mc.py (send_advert / _send_advert_async) covers what remains. Since the
+    # same date the MC guarantee lives at the radio boundary, not at the callers:
+    # install_silent_tx_guard() refuses any transmitting command while silent.
     push_to_sse({"type": "silent_mode", "active": True})
-    log.info("[silent] Silent Running enabled")
+    log.info(f"[silent] Silent Running enabled — silenced {len(silenced)}, "
+             f"awaiting connect {len(awaiting)}: {awaiting}")
 
 
 def _silent_disable():
-    """Restore MT radios from snapshot and clear silent state."""
-    snapshot = CONFIG.get("silent_snapshot", {})
+    """Restore the MT radios the snapshot holds and clear the silent state.
+
+    A radio that was silenced but is away keeps its snapshot entry: the connect
+    path hands its own tx_enabled back when it returns. A radio that is NOT in
+    the snapshot is left completely alone — writing tx_enabled=True for it would
+    *enable* transmitting on a radio Silent Running never silenced.
+    """
+    with CONFIG_LOCK:
+        CONFIG["silent_mode"] = False      # first, so a connect in flight syncs to OFF
+        save_config()
+    snapshot = CONFIG.get("silent_snapshot", {}) or {}
+    restored, awaiting = [], []
     for node_cfg in CONFIG.get("nodes", []):
         if not node_cfg.get("enabled", True):
             continue
         radio_id = node_cfg["id"]
+        saved = snapshot.get(radio_id)
+        if not saved:
+            continue
         iface = get_iface_by_radio(radio_id)
         if not iface:
+            awaiting.append(radio_id)      # restored by the connect path
             continue
-        try:
-            saved = snapshot.get(radio_id, {})
-            restored = bool(saved.get("tx_enabled", True))
-            lc = iface.localNode.localConfig
-            lc.lora.tx_enabled = restored
-            iface.localNode.writeConfig("lora")
-            log.info(f"[silent] MT {radio_id}: tx_enabled → {restored}")
-        except Exception as e:
-            log.warning(f"[silent] MT {radio_id} restore failed: {e}")
+        if restore_mt_radio(iface, radio_id, bool(saved.get("tx_enabled", True))):
+            restored.append(radio_id)
     with CONFIG_LOCK:
-        CONFIG["silent_mode"] = False
-        CONFIG.pop("silent_snapshot", None)
+        if not CONFIG.get("silent_snapshot"):
+            CONFIG.pop("silent_snapshot", None)
         save_config()
     push_to_sse({"type": "silent_mode", "active": False})
+    log.info(f"[silent] Silent Running disabled — restored {len(restored)}, "
+             f"awaiting connect {len(awaiting)}: {awaiting}")
     log.info("[silent] Silent Running disabled")
 
 

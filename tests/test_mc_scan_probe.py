@@ -115,5 +115,58 @@ class McScanProbeButtonLabelTests(unittest.TestCase):
         self.assertIn("Scanning", expr, "the immediate Scan feedback must say Scanning…")
 
 
+class McRegionsDiscoverSilentTests(unittest.TestCase):
+    """Settings → MC radio → *Discover regions* transmits too.
+
+    Its docstring says so itself ("the same RF class as the Scan button"), but
+    unlike Scan it had no silent gate of its own: the sweep's entry gate raised
+    mid-flight and the UI got a 500 "Region discovery failed: Silent Running
+    active…" instead of the clean 409 the Scan button returns. Found 2026-10-16
+    (S453) while answering "and Probe?" — the sweep behind this route is also
+    the one whose retry transmitted 8 s after its check.
+    """
+
+    def setUp(self):
+        import routes.settings as settings_routes
+        self.settings_routes = settings_routes
+        self.app = Flask(__name__)
+        self.app.register_blueprint(settings_routes.bp)
+        self.client = self.app.test_client()
+        self._backup = json.loads(json.dumps(settings_routes.CONFIG))
+        settings_routes.CONFIG["mc_nodes"] = [{"id": "mcA"}]
+        settings_routes.CONFIG["silent_mode"] = False
+        self.calls = []
+
+        def _fake(radio_id, **kw):
+            self.calls.append(radio_id)
+            return {"regions": [], "perRepeater": [], "noZeroHopRepeaters": True, "warning": None}
+
+        patcher = mock.patch("mesh_mc.discover_mc_regions", side_effect=_fake)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(self._cleanup)
+
+    def _cleanup(self):
+        self.settings_routes.CONFIG.clear()
+        self.settings_routes.CONFIG.update(self._backup)
+
+    def _post(self):
+        return self.client.post("/api/settings/mc_nodes/mcA/regions/discover")
+
+    def test_silent_refuses_with_409_before_any_transmission(self):
+        self.settings_routes.CONFIG["silent_mode"] = True
+        r = self._post()
+        self.assertEqual(r.status_code, 409)
+        self.assertIn("Silent Running", r.get_json()["error"])
+        self.assertEqual(self.calls, [], "no sweep may be started while silent")
+
+    def test_not_silent_runs_the_sweep(self):
+        """Positive control: the 409 above must not be 'this endpoint always fails'."""
+        self.settings_routes.CONFIG["silent_mode"] = False
+        r = self._post()
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.calls, ["mcA"])
+
+
 if __name__ == "__main__":
     unittest.main()

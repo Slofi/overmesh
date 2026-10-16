@@ -675,6 +675,11 @@ def connect_node(node_cfg):
                     node_cfg_live["msgs_db"] = msgs_db
                     save_config()
         log.info(f"[{node_id}] Connected.")
+        # A radio that appears must match the current Silent Running state: it is
+        # silenced if Silent Running is on (it may well have been away when it was
+        # switched on), and handed its own tx_enabled back if it was silenced
+        # while it was away. See sync_silent_running_on_mt_connect().
+        sync_silent_running_on_mt_connect(iface, node_id)
         if msgs_db:
             try:
                 loaded = load_messages(node_id)
@@ -838,6 +843,89 @@ def get_iface_by_radio(radio_id):
         if state and state.get("status") == "connected":
             return state.get("iface")
     return None
+
+
+# --------------------------------------------------------------- Silent Running
+# MT is silenced at the FIRMWARE level (lora.tx_enabled = False), unlike MC where
+# the gate lives in this app. That makes the flag state on the DEVICE, so it has
+# to be reconciled every time a radio appears — which is what these three helpers
+# are for. Until 2026-10-16 (S453) the enable path only walked radios that were
+# connected at that instant, so a radio that was unplugged or rebooting was never
+# silenced, was not in the snapshot, and came back transmitting; and a snapshotted
+# radio that was away when Silent Running was switched off kept tx_enabled=False
+# for good. Both directions now reconcile on connect.
+def _mt_silent_snapshot_read():
+    return CONFIG.get("silent_snapshot") or {}
+
+
+def silence_mt_radio(iface, radio_id):
+    """Write tx_enabled=False to one MT radio, remembering its own value first.
+
+    The FIRST value seen is kept: on a reconnect the radio already carries the
+    False we wrote, and that must not overwrite the value to restore later.
+    Returns True when the radio is silenced.
+    """
+    try:
+        lc = iface.localNode.localConfig
+        tx_enabled = bool(getattr(lc.lora, "tx_enabled", True))
+        role = int(getattr(lc.device, "role", 0))
+    except Exception as e:
+        log.warning(f"[silent] MT {radio_id}: cannot read config: {e}")
+        return False
+    with CONFIG_LOCK:
+        snap = CONFIG.setdefault("silent_snapshot", {})
+        entry = snap.setdefault(radio_id, {})
+        if "tx_enabled" not in entry:
+            entry["tx_enabled"] = tx_enabled
+            entry["role"] = role        # recorded for diagnosis only, never restored
+            save_config()
+    if not tx_enabled:
+        log.info(f"[silent] MT {radio_id}: already silent (tx_enabled=False)")
+        return True
+    try:
+        lc.lora.tx_enabled = False
+        iface.localNode.writeConfig("lora")
+    except Exception as e:
+        log.warning(f"[silent] MT {radio_id}: silence failed: {e}")
+        return False
+    log.info(f"[silent] MT {radio_id}: tx_enabled → False (was {entry['tx_enabled']})")
+    return True
+
+
+def restore_mt_radio(iface, radio_id, tx_enabled):
+    """Hand a radio its own tx_enabled back and drop it from the snapshot."""
+    try:
+        lc = iface.localNode.localConfig
+        lc.lora.tx_enabled = bool(tx_enabled)
+        iface.localNode.writeConfig("lora")
+    except Exception as e:
+        log.warning(f"[silent] MT {radio_id}: restore failed: {e}")
+        return False
+    with CONFIG_LOCK:
+        snap = CONFIG.get("silent_snapshot") or {}
+        snap.pop(radio_id, None)
+        if not snap:
+            CONFIG.pop("silent_snapshot", None)
+        save_config()
+    log.info(f"[silent] MT {radio_id}: tx_enabled → {bool(tx_enabled)} (restored)")
+    return True
+
+
+def sync_silent_running_on_mt_connect(iface, radio_id):
+    """Make a freshly connected MT radio match the current Silent Running state.
+
+    Called from connect_node for every successful MT connection:
+      * Silent Running ON  → silence it now (covers the radio that was away when
+        it was switched on, and every reconnect);
+      * Silent Running OFF but the radio is in the snapshot → it was silenced
+        while it was away and missed the restore, so put its own value back.
+    """
+    if CONFIG.get("silent_mode"):
+        return silence_mt_radio(iface, radio_id)
+    saved = _mt_silent_snapshot_read().get(radio_id)
+    if not saved:
+        return False
+    return restore_mt_radio(iface, radio_id, bool(saved.get("tx_enabled", True)))
 
 
 def resolve_node_name(num):

@@ -1392,6 +1392,11 @@ def api_settings_mc_nodes_regions_discover(node_id):
 
     if not any(n.get("id") == node_id for n in CONFIG.get("mc_nodes", [])):
         return jsonify({"error": "MC node not found"}), 404
+    # Same refusal as the Scan button, and BEFORE any TX: the sweep's own entry
+    # gate would raise mid-flight instead, which reached the UI as a 500
+    # "Region discovery failed: Silent Running active…" (found 2026-10-16, S453).
+    if CONFIG.get("silent_mode"):
+        return jsonify({"error": "Silent Running active: transmissions are blocked"}), 409
     try:
         result = discover_mc_regions(node_id, sweep_s=8, per_query_timeout=15, timeout=120)
         return jsonify({"ok": True, **result})

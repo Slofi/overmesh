@@ -10,7 +10,9 @@ import atexit
 import copy
 import concurrent.futures
 import datetime
+import functools
 import hashlib
+import inspect
 import json
 import logging
 import os
@@ -1063,6 +1065,10 @@ async def _create_meshcore(connection, *, default_timeout=75.0):
         auto_reconnect=False,
         max_reconnect_attempts=3,
     )
+    # Silent Running is enforced at the radio boundary, from the very first byte
+    # (the handshake commands are on the local allowlist, so connect still works
+    # while silenced). Every connect path builds its MeshCore here.
+    install_silent_tx_guard(mc)
     try:
         res = await mc.connect()
         if res is None:
@@ -1527,7 +1533,111 @@ async def _force_contact_flood_if_configured(mc, config_id, full_key, contact, r
     return True
 
 
+# --------------------------------------------------------------- Silent Running
+# The radio boundary. Until 2026-10-16 (S453) Silent Running was enforced at the
+# ~12 API entry points that call a transmit — a convention, not a guarantee, and
+# it leaked twice, both reproduced on that date:
+#   * the Scan sweep checks once and then transmits again after sleep(8);
+#   * the Ping path schedules a detached task that transmits, re-checking nothing
+#     (the advert path re-checks itself for exactly this reason).
+# The gate now sits where the bytes leave: the per-connection commands object is
+# wrapped once at creation, so a transmission is refused AT THE MOMENT OF
+# TRANSMISSION, whoever asks for it — including a call site added later, and
+# including a method this app has never called.
+#
+# Policy is default-deny while Silent Running is on: only commands that cannot
+# put bytes on the air get through (reads, local device/contact writes, the
+# serial handshake). With Silent Running OFF the object is not wrapped at all,
+# so a library update cannot change or break normal behaviour — the worst a new
+# unknown method can suffer is being refused while the user has silenced the rig,
+# which is the side to fail on.
+_SILENT_SAFE_PREFIXES = ("get_", "set_", "reset_", "sign", "import_", "export_", "change_contact_")
+_SILENT_SAFE_COMMANDS = frozenset({
+    "add_contact", "remove_contact", "update_contact", "reboot",
+    "request_factory_reset", "confirm_factory_reset",
+    "send_appstart", "send_device_query",   # serial handshake — no RF
+    "has_connection", "wait_for_events",
+})
+
+
+class SilentRunningBlocked(RuntimeError):
+    """Raised at the radio boundary when Silent Running refuses a transmission."""
+
+
+def _silent_command_is_local(name):
+    """True for a commands-namespace call that cannot transmit."""
+    return name in _SILENT_SAFE_COMMANDS or name.startswith(_SILENT_SAFE_PREFIXES)
+
+
+def _refuse_if_silent(name):
+    if not CONFIG.get("silent_mode"):
+        return
+    log.warning(f"[MC] Silent Running: commands.{name}() refused at the radio boundary")
+    raise SilentRunningBlocked(f"Silent Running active: commands.{name}() refused")
+
+
+class _SilentGuardedCommands:
+    """Proxy over meshcore's command handler: refusals happen at the radio.
+
+    Attribute reads pass through, so `commands.dispatcher` and
+    `commands.default_timeout` keep working, and writes are forwarded (the
+    library sets `commands.default_timeout` itself).
+    """
+
+    def __init__(self, inner):
+        object.__setattr__(self, "_inner", inner)
+
+    def __getattr__(self, name):
+        inner = object.__getattribute__(self, "_inner")
+        attr = getattr(inner, name)
+        if _silent_command_is_local(name) or not callable(attr):
+            return attr
+        if getattr(attr, "__self__", None) is not inner:
+            # A stored callable (a callback the library keeps as an attribute),
+            # not one of its commands: never ours to refuse, and identity matters
+            # to whoever stored it. Only real command methods are guarded.
+            return attr
+        if inspect.iscoroutinefunction(attr):
+            @functools.wraps(attr)
+            async def _guarded_async(*args, **kwargs):
+                _refuse_if_silent(name)
+                return await attr(*args, **kwargs)
+            return _guarded_async
+
+        @functools.wraps(attr)
+        def _guarded_sync(*args, **kwargs):
+            _refuse_if_silent(name)
+            return attr(*args, **kwargs)
+        return _guarded_sync
+
+    def __setattr__(self, name, value):
+        setattr(object.__getattribute__(self, "_inner"), name, value)
+
+    def __repr__(self):
+        return f"<_SilentGuardedCommands over {object.__getattribute__(self, '_inner')!r}>"
+
+
+def install_silent_tx_guard(mc):
+    """Wrap mc.commands so Silent Running is enforced at the radio boundary.
+
+    Idempotent — every connect path goes through _create_meshcore, and this is
+    called there, so a reconnect cannot double-wrap.
+    """
+    cmds = getattr(mc, "commands", None)
+    if cmds is None or isinstance(cmds, _SilentGuardedCommands):
+        return mc
+    mc.commands = _SilentGuardedCommands(cmds)
+    return mc
+
+
 def _ensure_mc_tx_allowed(action="MC transmission"):
+    """Entry-point gate: refuse before doing any work, with a user-facing message.
+
+    Kept alongside the radio-boundary guard — this one fails fast at the API for
+    a normal request (the routes turn it into a 4xx), while
+    install_silent_tx_guard() is what makes the guarantee hold for transmissions
+    that happen later than their check.
+    """
     if CONFIG.get("silent_mode"):
         raise RuntimeError(f"Silent Running active: {action} blocked")
 

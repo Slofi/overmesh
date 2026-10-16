@@ -378,6 +378,25 @@ class RegionsPanelWiringTests(unittest.TestCase):
         self.assertIn("_mcRemoteRegionState.facts[kind]", self.src)
         self.assertIn("Default scope:", self.src)
 
+    def test_reply_strip_is_visually_separated_from_the_panel(self):
+        """Filip, 2026-10-16: "the bottom part of the window is kinda hard to make
+        out from the background". The panel's own background is var(--bg2), so the
+        strip must be an outlined card one step lighter, with a lift shadow."""
+        start = self.src.index('id="mc-remote-reply"')
+        strip = self.src[start:start + 400]
+        self.assertIn("background:var(--bg3)", strip, "must not reuse the panel's own background")
+        self.assertIn("border:1px solid var(--border)", strip, "needs a visible outline")
+        self.assertIn("border-radius:10px", strip)
+        self.assertIn("box-shadow:${_MC_REMOTE_REPLY_SHADOW}", strip)
+        self.assertNotIn("background:var(--bg2)", strip)
+
+    def test_the_new_reply_glow_restores_the_strips_shadow(self):
+        """The glow overwrites box-shadow, so clearing it blindly would drop the
+        outline's lift after the first reply."""
+        self.assertIn("const _MC_REMOTE_REPLY_SHADOW = ", self.src)
+        self.assertIn("setTimeout(() => { strip.style.boxShadow = _MC_REMOTE_REPLY_SHADOW; }, 700);", self.src)
+        self.assertNotIn("strip.style.boxShadow = '';", self.src)
+
     def test_reply_strip_is_pinned_to_the_bottom_of_the_panel(self):
         """His question was where it should go. The panel scrolls inside
         #action-modal .modal-body, so a sticky last child stays visible while

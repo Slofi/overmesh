@@ -15975,11 +15975,16 @@ if (targetEl) {
   // last few exchanges until the user clears them. Actions that already fill a
   // field of their own pass {report:false} so this stays a reply log, not noise.
   const _MC_REMOTE_REPLY_MAX = 4;
+  // The Manage panel's own background is var(--bg2), so the strip uses --bg3 with
+  // a border and a lift shadow: an outlined card at the bottom edge, instead of a
+  // faint line that was hard to tell apart from the panel behind it
+  // (Filip, 2026-10-16). Kept in one place because the new-reply glow restores it.
+  const _MC_REMOTE_REPLY_SHADOW = '0 -6px 18px rgba(0,0,0,0.35)';
   const _mcRemoteReplies = [];
 
   function _mcRemoteReplyStripHtml() {
     return `
-      <div id="mc-remote-reply" style="position:sticky;bottom:0;z-index:5;background:var(--bg2);border-top:1px solid var(--border);margin:16px -16px -16px;padding:8px 16px 10px;transition:box-shadow 0.25s ease">
+      <div id="mc-remote-reply" style="position:sticky;bottom:0;z-index:5;background:var(--bg3);border:1px solid var(--border);border-radius:10px;margin:14px 0 0;padding:8px 12px 10px;box-shadow:${_MC_REMOTE_REPLY_SHADOW};transition:box-shadow 0.25s ease">
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.04em">RPTR reply</span>
           <span style="font-size:11px;color:var(--muted)">last ${_MC_REMOTE_REPLY_MAX} kept</span>
@@ -16024,8 +16029,8 @@ if (targetEl) {
     // A short glow so a new answer is noticed without stealing focus.
     const strip = document.getElementById('mc-remote-reply');
     if (strip) {
-      strip.style.boxShadow = '0 0 0 2px var(--accent)';
-      setTimeout(() => { strip.style.boxShadow = ''; }, 700);
+      strip.style.boxShadow = '0 0 0 2px var(--accent), ' + _MC_REMOTE_REPLY_SHADOW;
+      setTimeout(() => { strip.style.boxShadow = _MC_REMOTE_REPLY_SHADOW; }, 700);
     }
   }
 

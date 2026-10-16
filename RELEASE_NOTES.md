@@ -1,5 +1,18 @@
 # OverMesh Release Notes
 
+## 2026.10.16.2
+
+### Changed
+
+- Remote Manage, Regions, is rearranged so it reads in the order you ask things. The region list, home region and default scope come first, the Slovenia preset sits under them with a line saying exactly what it does, unscoped flood traffic gets its own allow and deny pair, and editing a single region moved into an advanced group you open only when you need it.
+- The buttons say what they do: Put is now Add or update, Save is Save to RPTR, Home and Default are Set as home and Set as default, and the bare refresh arrow is Read regions.
+- Reading the home region and the default scope shows the answer (Home: si, Default scope: si) next to the region list, instead of leaving it in the reply box.
+
+### Fixed
+
+- Deny flood and Remove region can now be used from Remote Manage. Both were accepted by the server but had no button anywhere, so they could not be reached at all. Remove asks for confirmation first.
+- Remote Manage no longer writes "Can't determine destination type ... Assuming it's a repeater" on every command. The destination is described fully now, so a room server is addressed as a room server rather than as a repeater.
+
 ## 2026.10.16.1
 
 ### Changed

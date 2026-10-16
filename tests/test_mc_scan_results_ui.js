@@ -91,6 +91,12 @@ const headless = render(payload, [], { head: false });
 assert(!headless.includes('60s window'), 'head:false must suppress the body headline');
 assert(headless.includes('SI-LJ-Trnovo II'), 'head:false must still render the rows');
 
+// While the scan is still running the panel says so rather than showing nothing.
+const listening = render({ radioName: 'r', advert: false, window: 60, remaining: 42, results: [], summary: {} }, [], { live: true });
+assert(listening.includes('Nothing heard yet. Still listening'), 'a running scan must say nothing is heard yet');
+assert(listening.includes('42s'), 'and how long is left');
+assert(listening.includes('direct range only'), 'a Probe should explain its reach while listening');
+
 // An empty window explains itself rather than showing a blank box.
 const empty = render({ radioName: 'r', advert: true, window: 60, results: [], summary: {} }, []);
 assert(empty.includes('Nothing answered and nothing was heard'), 'empty results must explain themselves');

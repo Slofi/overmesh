@@ -11296,6 +11296,7 @@ if (targetEl) {
   let _mcScanRemaining = 0;
   let _mcScanTimer     = null;
   let _mcScanLastResults = null;      // last Scan/Probe result set, so the pop-up can be reopened
+  let _mcScanLive      = null;        // { radioId, advert, window, remaining, entries: Map } while listening
 
   // -- Pills --
   function updateMcPills() {
@@ -11612,9 +11613,12 @@ if (targetEl) {
         }
       }
       _mcRefreshDmContactNames(data.radio_id);
-      if (_mcScanActive && data.radio_id === _mcScanRadioId && isNew) {
-        _mcScanNewCount++;
-        _mcScanNewIds.add(data.id);
+      if (_mcScanActive && data.radio_id === _mcScanRadioId) {
+        if (isNew) {
+          _mcScanNewCount++;
+          _mcScanNewIds.add(data.id);
+        }
+        _mcScanLiveAdd(data);          // list it in the panel while the scan runs
       }
       if (currentTab === 'nodes') renderLive();
       renderMcMapMarkers();
@@ -11653,6 +11657,16 @@ if (targetEl) {
       _mcScanNewIds   = new Set();
       _mcScanWindow   = data.window || 60;
       _mcScanRemaining = _mcScanWindow;
+      // Filip (2026-10-16): the panel must be up the moment Scan/Probe is pressed,
+      // listing what is heard as it arrives, or saying that nothing is heard yet.
+      _mcScanLive = {
+        radioId: data.radio_id,
+        advert: data.advert !== false,
+        window: _mcScanWindow,
+        remaining: _mcScanRemaining,
+        entries: new Map(),
+      };
+      _mcScanLiveShow();
       const isProbe = data.advert === false;
       const btn = document.getElementById(isProbe ? 'mc-probe-btn' : 'mc-scan-btn');
       const otherBtn = document.getElementById(isProbe ? 'mc-scan-btn' : 'mc-probe-btn');
@@ -11673,6 +11687,7 @@ if (targetEl) {
       _mcScanTimer = setInterval(() => {
         _mcScanRemaining--;
         if (st) st.textContent = `${_mcScanRemaining}s`;
+        if (_mcScanLive) { _mcScanLive.remaining = _mcScanRemaining; _mcRenderScanLive(false); }
         if (_mcScanRemaining <= 0) { clearInterval(_mcScanTimer); _mcScanTimer = null; }
       }, 1000);
       // Safety timeout: force-reset scan state if mc_scan_done never arrives (SSE drop etc.)
@@ -11686,6 +11701,22 @@ if (targetEl) {
         if (b) { b.textContent = 'Scan'; b.disabled = false; }
         if (pb) { pb.textContent = 'Probe'; pb.disabled = false; }
         if (s) s.textContent = '';
+        // No mc_scan_done arrived (SSE gap): stop claiming to listen, keep what
+        // was heard.
+        if (_mcScanLive) {
+          _mcScanLive.remaining = 0;
+          const payload = _mcScanLivePayload();
+          _mcScanLastResults = payload;
+          _mcScanLive = null;
+          const panel = document.getElementById('mc-statusreq-panel');
+          if (panel && panel.dataset.detailKind === 'mc-scan-live') {
+            panel.dataset.detailKind = 'mc-scan-results';
+            const title = document.getElementById('mc-statusreq-title');
+            const body = document.getElementById('mc-statusreq-body');
+            if (title) title.innerHTML = _mcScanResultsTitle(payload, payload.results, payload.summary);
+            if (body) body.innerHTML = _mcScanResultsHtml(payload, payload.newIds, {head: false});
+          }
+        }
       }, (_mcScanWindow + 10) * 1000);
       return;
     }
@@ -11717,12 +11748,14 @@ if (targetEl) {
                        + `${answered ? ` · ${answered} answered` : ''}${_mcScanNewCount ? ` · ${_mcScanNewCount} new` : ''}`;
         setTimeout(() => { if (st) st.textContent = ''; }, 15000);
       }
-      // Never overwrite a panel the user is already reading (a ping detail, the
-      // Last Heard list): the Results button and the status line carry it instead.
+      // Take the panel only if it still shows OUR list; if the user opened a ping
+      // detail or the Last Heard list mid-scan, that content stays and the Results
+      // button carries the news instead.
+      _mcScanLive = null;
       const panelEl = document.getElementById('mc-statusreq-panel');
-      const panelBusy = !!panelEl && panelEl.style.display !== 'none'
-                        && panelEl.dataset.detailKind !== 'mc-scan-results';
-      if (!panelBusy) showMcScanResults();
+      const ours = !panelEl || panelEl.style.display === 'none'
+                   || (panelEl.dataset.detailKind || '').startsWith('mc-scan-');
+      if (ours) showMcScanResults();
       // Refresh contacts from device to pick up any updated coords (e.g. GPS set via phone)
       const rid = _mcScanRadioId;
       if (rid) {
@@ -17732,6 +17765,12 @@ if (targetEl) {
             + `${summary.repeaters ? ` · ${summary.repeaters} RPTR` : ''}${summary.rooms ? ` · ${summary.rooms} room` : ''}.`
           : '')
       + `</div>`;
+    if (!results.length && opts.live) {
+      // Listening right now: say so, so the panel is never an empty box.
+      return head + `<div style="font-size:12px;color:var(--muted);line-height:1.6">
+          Nothing heard yet. Still listening${payload?.remaining != null ? ` for ${payload.remaining}s` : ''}${isProbe ? ' (Probe: repeaters and room servers in direct range only)' : ''}...
+        </div>`;
+    }
     if (!results.length) {
       return head + `<div style="font-size:12px;color:var(--muted);line-height:1.6">
           Nothing answered and nothing was heard in the ${windowS}s window.<br>
@@ -17765,6 +17804,90 @@ if (targetEl) {
       </div>`;
     }).join('');
     return head + `<div style="max-height:52vh;overflow-y:auto">${rows}</div>`;
+  }
+
+  function _mcScanKindFromType(nodeType) {
+    return nodeType === 2 ? 'repeater' : (nodeType === 1 ? 'room' : 'node');
+  }
+
+  function _mcScanSortResults(entries) {
+    // Active replies first (that is what a scan is for), best signal first, then
+    // whatever else was heard, most recent first — the same order the server uses.
+    const answered = entries.filter(r => r.answered)
+      .sort((a, b) => ((b.rssi ?? -999) - (a.rssi ?? -999)));
+    const heard = entries.filter(r => !r.answered)
+      .sort((a, b) => ((b.last_heard_ts || 0) - (a.last_heard_ts || 0)));
+    return answered.concat(heard);
+  }
+
+  function _mcScanLivePayload() {
+    const live = _mcScanLive;
+    if (!live) return null;
+    const results = _mcScanSortResults([...live.entries.values()]);
+    return {
+      radioId: live.radioId,
+      radioName: mcLastStatus[live.radioId]?.name || live.radioId,
+      advert: live.advert,
+      window: live.window,
+      remaining: Math.max(0, live.remaining | 0),
+      results,
+      summary: {
+        total: results.length,
+        answered: results.filter(r => r.answered).length,
+        repeaters: results.filter(r => r.kind === 'repeater').length,
+        rooms: results.filter(r => r.kind === 'room').length,
+      },
+      newIds: [..._mcScanNewIds],
+    };
+  }
+
+  function _mcRenderScanLive(updateBody) {
+    // Only ever touches the panel while it is still ours: if the user opened a
+    // ping detail or the Last Heard list mid-scan, their content stays put.
+    const panel = document.getElementById('mc-statusreq-panel');
+    if (!panel || panel.style.display === 'none' || panel.dataset.detailKind !== 'mc-scan-live') return;
+    const payload = _mcScanLivePayload();
+    if (!payload) return;
+    const title = document.getElementById('mc-statusreq-title');
+    const body  = document.getElementById('mc-statusreq-body');
+    const isProbe = payload.advert === false;
+    if (title) {
+      title.innerHTML = `${isProbe ? 'Probe' : 'Scan'} running <span style="font-size:11px;font-weight:normal;color:var(--muted)">`
+        + `${escHtml(payload.radioName || '')} &middot; ${payload.remaining}s left &middot; ${payload.results.length} heard`
+        + `${payload.summary.answered ? ` &middot; ${payload.summary.answered} answered` : ''}</span>`;
+    }
+    if (body && updateBody) body.innerHTML = _mcScanResultsHtml(payload, payload.newIds, {head: false, live: true});
+  }
+
+  function _mcScanLiveShow() {
+    // Called the moment Scan/Probe is pressed: panel up, listening, nothing yet.
+    const panel = document.getElementById('mc-statusreq-panel');
+    if (!panel) return;
+    panel.dataset.detailKind = 'mc-scan-live';
+    panel.style.display = '';
+    // The previous list is not this scan's result, so do not offer it mid-scan.
+    const rb = document.getElementById('mc-scan-results-btn');
+    if (rb) rb.style.display = 'none';
+    _mcRenderScanLive(true);
+  }
+
+  function _mcScanLiveAdd(data) {
+    if (!_mcScanLive || data.radio_id !== _mcScanLive.radioId) return;
+    const key = data.full_key || data.id || '';
+    if (!key) return;
+    const isNewEntry = !_mcScanLive.entries.has(key);
+    _mcScanLive.entries.set(key, {
+      full_key: key,
+      name: data.long_name || data.short_name || key.slice(0, 8),
+      kind: _mcScanKindFromType(data.contact_type ?? data.node_type ?? data.type),
+      answered: data.via === 'discover',
+      rssi: data.rssi ?? null,
+      snr: data.snr ?? null,
+      snr_in: data.snr_in ?? null,
+      hops: null,                     // live events carry no hop count; the final list does
+      last_heard_ts: data.last_heard_ts || Math.floor(Date.now() / 1000),
+    });
+    if (isNewEntry) _mcRenderScanLive(true);
   }
 
   function _mcScanResultsTitle(payload, results, summary) {

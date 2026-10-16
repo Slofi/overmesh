@@ -184,12 +184,50 @@ class ScanResultsPanelWiringTests(unittest.TestCase):
                       "the panel's own title carries the headline")
         self.assertIn("openModal(", body, "the modal stays as a fallback only")
 
-    def test_a_finished_scan_does_not_overwrite_a_panel_being_read(self):
-        """The panel is shared with ping details and the Last Heard list, so an
-        automatic reveal must not wipe what the user is reading."""
-        self.assertIn("const panelBusy = !!panelEl && panelEl.style.display !== 'none'", self.src)
-        self.assertIn("&& panelEl.dataset.detailKind !== 'mc-scan-results';", self.src)
-        self.assertIn("if (!panelBusy) showMcScanResults();", self.src)
+    def test_the_panel_is_up_the_moment_scan_is_pressed(self):
+        """Filip, 2026-10-16: "make the pop-up visible as soon as I press the
+        Scan/Probe buttons, displaying heard nodes/RPTRs, if non heard, says so"."""
+        start = self.src.index("if (data.type === 'mc_scan_started')")
+        block = self.src[start:start + 1600]
+        self.assertIn("_mcScanLive = {", block)
+        self.assertIn("_mcScanLiveShow();", block)
+        live = self.src[self.src.index("function _mcScanLiveShow()"):]
+        self.assertIn("panel.dataset.detailKind = 'mc-scan-live';", live[:400])
+        self.assertIn("panel.style.display = '';", live[:400])
+        self.assertIn("rb.style.display = 'none';", live[:600],
+                      "the previous list must not be offered as this scan's result")
+
+    def test_heard_nodes_appear_while_the_scan_runs(self):
+        self.assertIn("_mcScanLiveAdd(data);", self.src)
+        add = self.src[self.src.index("function _mcScanLiveAdd("):]
+        self.assertIn("answered: data.via === 'discover'", add[:900],
+                      "a DISCOVER reply is an active answer, everything else is only heard")
+        self.assertIn("if (isNewEntry) _mcRenderScanLive(true);", add[:1400])
+
+    def test_the_countdown_keeps_the_heading_honest(self):
+        self.assertIn("if (_mcScanLive) { _mcScanLive.remaining = _mcScanRemaining; _mcRenderScanLive(false); }", self.src)
+        self.assertIn("`${isProbe ? 'Probe' : 'Scan'} running ", self.src)
+
+    def test_nothing_heard_yet_is_said_out_loud(self):
+        self.assertIn("Nothing heard yet. Still listening", self.src)
+        self.assertIn("{head: false, live: true}", self.src)
+
+    def test_an_sse_gap_does_not_leave_it_claiming_to_listen(self):
+        """The safety timeout (no mc_scan_done) must stop the countdown and keep
+        whatever was heard."""
+        start = self.src.index("// No mc_scan_done arrived (SSE gap)")
+        block = self.src[start:start + 900]
+        self.assertIn("_mcScanLive.remaining = 0;", block)
+        self.assertIn("panel.dataset.detailKind = 'mc-scan-results';", block)
+
+    def test_a_finished_scan_only_claims_its_own_panel(self):
+        """The panel is shared with ping details and the Last Heard list: if the
+        user opened one of those mid-scan, their content must stay."""
+        start = self.src.index("// Take the panel only if it still shows OUR list")
+        block = self.src[start:start + 500]
+        self.assertIn("_mcScanLive = null;", block)
+        self.assertIn("(panelEl.dataset.detailKind || '').startsWith('mc-scan-')", block)
+        self.assertIn("if (ours) showMcScanResults();", block)
 
     def test_entries_are_clickable_like_the_map_and_pop_the_marker(self):
         """Clicking a name must open the same pop-up as clicking the node on the

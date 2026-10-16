@@ -1,5 +1,12 @@
 # OverMesh Release Notes
 
+## 2026.10.16.12
+
+### Fixed
+
+- On the Meshtastic side, **Sense Mesh** and **Active** now say why they do not work while Silent Running is on, with the same pop-up the MeshCore side uses ("Silent Running active…"), instead of doing nothing at all when clicked.
+- **Passive** sensing is deliberately left working while silent — it only listens. Switching **Active** off is also always allowed, so Silent Running cannot trap a radio in the mode that keeps broadcasting.
+
 ## 2026.10.16.11
 
 ### Fixed

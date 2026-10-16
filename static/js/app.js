@@ -19426,22 +19426,43 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   }
 
   function toggleSensePassive() {
-    fetch(BASE_PATH + '/api/mesh/sense/passive', {method: 'POST'}).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
-      document.getElementById('sense-passive-btn').classList.toggle('active', d.passive);
-      localStorage.setItem('sensePassive', d.passive ? '1' : '0');
-      const status = document.getElementById('sense-status');
-      if (d.passive) status.textContent = 'Passive listening…';
-      else if (!document.getElementById('sense-active-btn').classList.contains('active')) status.textContent = '';
+    fetch(BASE_PATH + '/api/mesh/sense/passive', {method: 'POST'})
+      .then(async r => {
+        // Read the body even on failure so a refusal can be SHOWN rather than
+        // swallowed into the console (Filip, 2026-10-16). Passive sensing is
+        // receive-only, so Silent Running does not gate it — but if it ever does,
+        // the reason appears in the same pop-up the MC side uses.
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { showAlert(d.error || `Passive sensing failed (HTTP ${r.status}).`); return null; }
+        return d;
+      })
+      .then(d => {
+        if (!d) return;
+        document.getElementById('sense-passive-btn').classList.toggle('active', d.passive);
+        localStorage.setItem('sensePassive', d.passive ? '1' : '0');
+        const status = document.getElementById('sense-status');
+        if (d.passive) status.textContent = 'Passive listening…';
+        else if (!document.getElementById('sense-active-btn').classList.contains('active')) status.textContent = '';
     }).catch(e => console.error('toggleSensePassive failed:', e));
   }
 
   function toggleSenseActive() {
-    fetch(BASE_PATH + '/api/mesh/sense/active_auto', {method: 'POST'}).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
-      document.getElementById('sense-active-btn').classList.toggle('active', d.active_auto);
-      localStorage.setItem('senseActiveAuto', d.active_auto ? '1' : '0');
-      const status = document.getElementById('sense-status');
-      if (d.active_auto) status.textContent = 'Active scanning…';
-      else if (!document.getElementById('sense-passive-btn').classList.contains('active')) status.textContent = '';
+    fetch(BASE_PATH + '/api/mesh/sense/active_auto', {method: 'POST'})
+      .then(async r => {
+        // The server refuses only when switching Active ON during Silent Running
+        // (switching it OFF must always work), and it says so in its own words —
+        // show that instead of dropping it in the console (Filip, 2026-10-16).
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { showAlert(d.error || `Active scanning failed (HTTP ${r.status}).`); return null; }
+        return d;
+      })
+      .then(d => {
+        if (!d) return;
+        document.getElementById('sense-active-btn').classList.toggle('active', d.active_auto);
+        localStorage.setItem('senseActiveAuto', d.active_auto ? '1' : '0');
+        const status = document.getElementById('sense-status');
+        if (d.active_auto) status.textContent = 'Active scanning…';
+        else if (!document.getElementById('sense-passive-btn').classList.contains('active')) status.textContent = '';
     }).catch(e => console.error('toggleSenseActive failed:', e));
   }
 
@@ -19517,7 +19538,16 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         senseCooldownTick(d.cooldown_remaining);
         return null;
       }
-      if (!r.ok) throw new Error(d.error || r.status);
+      if (!r.ok) {
+        // Say WHY, in the server's own words: in Silent Running the broadcast is
+        // refused with a 409, and until now that message went to the console only,
+        // so the button looked dead (Filip, 2026-10-16). Same pop-up as the MC side.
+        _senseRunId = _prevRunId;
+        const err = document.getElementById('sense-status');
+        if (err) { err.textContent = ''; }
+        showAlert(d.error || `Sense Mesh failed (HTTP ${r.status}).`);
+        return null;
+      }
       return d;
     }).then(d => {
       if (!d) return;                     // cooldown / handled above

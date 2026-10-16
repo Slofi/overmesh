@@ -1,5 +1,12 @@
 # OverMesh Release Notes
 
+## 2026.10.16.4
+
+### Fixed
+
+- The region list no longer shows a junk first entry. Every reply from the repeater starts with four header bytes, and those were being read as if they were a region name, which on this repeater appeared as ";j*". They are skipped now, and only real region names are kept.
+- When the repeater does not answer a region request, the reply says why and what to do. It ignores region requests that do not arrive over a direct path, so trying once more usually works.
+
 ## 2026.10.16.3
 
 ### Changed

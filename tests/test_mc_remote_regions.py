@@ -64,11 +64,22 @@ class _StrictCommands:
     def __init__(self):
         self.calls = []
         self.req_regions_calls = 0
+        self.forced_repeater_warning = False
 
     async def send_cmd(self, dst, cmd, timestamp=None, dst_type=None):
+        """meshcore's MessagingCommands.send_cmd, branch for branch.
+
+        dst_type given -> the library WARNS and forces REPEATER, ignoring the
+        value (seen live in gandalf's journal when we passed dst_type=). A dict
+        destination -> the contact's own type is used, no warning.
+        """
         if dst_type is None:
-            _ = dst["type"]          # <- meshcore's line 75; raises on a str
-        self.calls.append({"dst": dst, "cmd": cmd, "dst_type": dst_type})
+            resolved = dst["type"]           # raises on a hex string: the live bug
+        else:
+            self.forced_repeater_warning = True
+            resolved = 2
+        self.calls.append({"dst": dst, "cmd": cmd, "dst_type": resolved,
+                           "passed_dst_type": dst_type})
         return _Event(mesh_mc.EventType.MSG_SENT, {"suggested_timeout": 4000})
 
     # the read's other sections
@@ -120,19 +131,32 @@ class RemoteCommandDestinationTests(_RemoteTestCase):
         with mock.patch.dict(mesh_mc.mc_connections, self._contacts, clear=True):
             return asyncio.run(mesh_mc._remote_command_async("mc1", FULL_KEY[:12], command))
 
-    def test_command_is_sent_with_the_destination_type(self):
-        """Without dst_type the library raises TypeError and nothing is sent."""
-        result = self._run_command("region home")
+    def test_command_is_sent_with_the_contact_dict_destination(self):
+        """A hex-string destination makes the library raise TypeError before
+        sending; the fix passes the contact dict so dst["type"] resolves."""
+        self._run_command("region home")
         self.assertEqual(len(self.commands.calls), 1, "the command must actually reach send_cmd")
-        self.assertEqual(self.commands.calls[0]["cmd"], "region home")
-        self.assertEqual(self.commands.calls[0]["dst_type"], 2, "a repeater contact reports type 2")
+        call = self.commands.calls[0]
+        self.assertEqual(call["cmd"], "region home")
+        self.assertIsInstance(call["dst"], dict, "the destination must be the contact dict")
+        self.assertEqual(call["dst"]["public_key"], FULL_KEY)
+        self.assertEqual(call["dst_type"], 2, "a repeater contact reports type 2")
 
-    def test_room_server_type_is_passed_through_not_forced_to_repeater(self):
+    def test_no_dst_type_is_passed_which_would_force_repeater_and_warn(self):
+        """The library's `dst_type=` else-branch warns and OVERRIDES the value
+        with REPEATER (seen live in gandalf's journal), so we must not use it."""
+        self._run_command("get name")
+        self.assertIsNone(self.commands.calls[0]["passed_dst_type"])
+        self.assertFalse(self.commands.forced_repeater_warning,
+                         "passing dst_type= would make the library warn and assume repeater")
+
+    def test_room_server_type_is_honoured_not_forced_to_repeater(self):
         """The firmware parses the text differently per type, so use what the
         radio reported (room server = 3) instead of assuming repeater."""
         self._contacts["mc1"]["contacts"][FULL_KEY]["type"] = 3
         self._run_command("get name")
         self.assertEqual(self.commands.calls[0]["dst_type"], 3)
+        self.assertEqual(self.commands.calls[0]["dst"]["type"], 3)
 
     def test_contact_without_a_type_falls_back_to_repeater(self):
         del self._contacts["mc1"]["contacts"][FULL_KEY]["type"]
@@ -226,6 +250,54 @@ class RegionsPanelWiringTests(unittest.TestCase):
 
     def test_region_list_has_its_own_output_element(self):
         self.assertIn('id="mc-remote-region-list"', self.src)
+
+    def test_section_is_grouped_read_then_preset_then_policy_then_advanced(self):
+        """Filip, 2026-10-16: the section was cluttered and not intuitive. The
+        layout must keep the questions in order: what the RPTR has, the common
+        one-click preset, the network policy, then the rare per-region editing."""
+        for label in ("Read regions", "Read home", "Read default",
+                      "Slovenia preset", "Apply preset", "Make selected the default",
+                      "Unscoped flood traffic", "One region at a time (advanced)",
+                      "Add or update", "Save to RPTR"):
+            self.assertIn(label, self.src, f"the Regions section must offer '{label}'")
+
+    def test_per_region_editing_is_collapsed_by_default(self):
+        self.assertIn('<summary style="cursor:pointer;font-size:12px;color:var(--muted)">One region at a time (advanced)</summary>',
+                      self.src, "the advanced row must be a collapsed <details>")
+        idx = self.src.index("One region at a time (advanced)")
+        tail = self.src[idx:idx + 2000]
+        self.assertIn('id="mc-remote-region-custom"', tail, "the region input belongs to the advanced group")
+        self.assertIn('id="mc-remote-region-parent"', tail)
+
+    def _regions_block(self):
+        """Only the Regions part of the Manage panel — the app has other Save and
+        Default buttons, so a whole-file check would be meaningless."""
+        start = self.src.index(">Regions</h3>")
+        end = self.src.index(">Channels</h3>", start)
+        return self.src[start:end]
+
+    def test_the_cryptic_labels_are_gone(self):
+        """Put / Save / Home / Default / Allow * / Deny * and the bare ↻ told the
+        user nothing. A guard so the section cannot drift back."""
+        block = self._regions_block()
+        for old in (">Put</button>", ">Save</button>", ">Home?</button>",
+                    ">Default?</button>", ">Allow *</button>", ">Deny *</button>",
+                    ">Apply SI preset</button>", ">Default selected</button>"):
+            self.assertNotIn(old, block, f"{old} must not come back to the Regions section")
+
+    def test_writes_that_only_existed_in_the_allowlist_are_now_reachable(self):
+        """`region denyf` and `region remove` were allowed by the backend but had
+        no button, so they could not be used at all."""
+        self.assertIn("'custom-deny'", self.src)
+        self.assertIn("region denyf ${custom}", self.src)
+        self.assertIn("'custom-remove'", self.src)
+        self.assertIn("region remove ${custom}", self.src)
+        self.assertIn("window.confirm", self.src, "removing a region must ask first")
+
+    def test_home_and_default_reads_show_what_they_found(self):
+        self.assertIn("function mcRemoteReadRegionFact", self.src)
+        self.assertIn("_mcRemoteRegionState.facts[kind]", self.src)
+        self.assertIn("Default scope:", self.src)
 
 
 if __name__ == "__main__":

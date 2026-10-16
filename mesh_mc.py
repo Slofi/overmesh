@@ -3948,17 +3948,20 @@ def _resolve_mc_contact(contacts, pubkey_prefix):
 def _remote_dst_type(contact):
     """Destination type for meshcore's send_cmd().
 
-    send_cmd() accepts a hex string, but unless `dst_type` is passed explicitly
-    it reads `dst["type"]` — which on a string raises
-    `TypeError: string indices must be integers, not 'str'` BEFORE anything is
-    sent. That was every remote command on the live app: 2026-10-16, `POST
-    /api/mc/<radio>/remote/<node>/command` -> 500, while the read path (binary
-    requests, no send_cmd) kept working. So the whole Manage panel — Set
-    buttons, region presets, Home?/Default? — was dead.
+    send_cmd() reads `dst["type"]` whenever `dst_type` is not given; on a bare
+    hex string that raised `TypeError: string indices must be integers, not
+    'str'` BEFORE anything was sent. That was every remote command on the live
+    app: 2026-10-16, `POST /api/mc/<radio>/remote/<node>/command` -> 500, while
+    the read path (binary requests, no send_cmd) kept working. So the whole
+    Manage panel — Set buttons, region presets, Home?/Default? — was dead.
 
-    Prefer the type the radio reported for this contact (a repeater vs a room
-    server decides whether the firmware parses the text as CLI data or a CLI
-    command); the library's own fallback is REPEATER.
+    The destination is therefore built as a contact dict in
+    _remote_command_async (which is also what stops the library from taking its
+    `dst_type=` else-branch: that branch warns and forces REPEATER, ignoring the
+    value given). This helper supplies the `type` for that dict: prefer the type
+    the radio reported (a repeater vs a room server decides whether the firmware
+    parses the text as CLI data or a CLI command) and fall back to REPEATER,
+    which is the library's own default.
     """
     try:
         value = int((contact or {}).get("type"))
@@ -5195,13 +5198,20 @@ async def _remote_command_async(config_id, pubkey_prefix, command):
                 )
             )
         try:
-            # dst_type is REQUIRED with a hex-string destination: without it the
-            # library evaluates dst["type"] and raises before sending (see
-            # _remote_dst_type).
-            dst_type = _remote_dst_type(_contact)
+            # The destination must be the CONTACT DICT, not a bare hex string:
+            # send_cmd reads dst["type"] whenever dst_type is not given, which on
+            # a string raised before anything was sent (every remote command
+            # 500'd until 2026-10-16). Passing dst_type= instead is the wrong
+            # route — the library's else-branch warns and forces REPEATER,
+            # ignoring the value (seen live in gandalf's journal), so a room
+            # server would be addressed as a repeater. Supplying the dict honours
+            # the contact's own type and keeps the log clean.
+            dst = dict(_contact or {})
+            dst["public_key"] = full_key
+            dst.setdefault("type", _remote_dst_type(_contact))
             log.info(f"[MC:{config_id}] remote command {cmd!r} to {full_key[:12]} "
-                     f"(dst_type={dst_type})")
-            sent = await mc.commands.send_cmd(full_key, cmd, dst_type=dst_type)
+                     f"(dst_type={dst['type']})")
+            sent = await mc.commands.send_cmd(dst, cmd)
             _raise_if_mc_error(sent, f"remote command {cmd}")
             reply = None
             if reply_task is not None:

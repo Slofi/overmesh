@@ -15704,35 +15704,55 @@ if (targetEl) {
         ${row('Advert timers', `${input('mc-remote-set-advert-int', 96, 'zero-hop min', 'type="number" min="0" step="2"')} ${input('mc-remote-set-flood-advert-int', 96, 'flood hrs', 'type="number" min="0" step="1"')}`, "mcRemoteApplySetting('adverts')", 'get advert.interval')}
         ${row('Flood max', input('mc-remote-set-flood-max', 82, '0-64', 'type="number" min="0" max="64" step="1"'), "mcRemoteApplySetting('flood_max')", 'get flood.max')}
         <div style="border-top:1px solid var(--border);padding-top:10px;margin-top:4px">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
             <h3 class="settings-subtitle" style="margin:0">Regions</h3>
-            <button class="btn" onclick="mcRemoteReadRegions(this)" title="Read this RPTR's region list (0-hop request, no admin login needed)" style="padding:0 9px;font-size:14px">↻</button>
-            <button class="btn" onclick="mcRemoteRunCommand('region home', 'mc-remote-region-result')" title="Read home region">Home?</button>
-            <button class="btn" onclick="mcRemoteRunCommand('region default', 'mc-remote-region-result')" title="Read default flood scope region">Default?</button>
+            <button class="btn" onclick="mcRemoteReadRegions(this)" title="Read the region list from this RPTR, no admin login needed">Read regions</button>
+            <button class="btn" onclick="mcRemoteReadRegionFact('home')" title="Ask the RPTR which region is its home region">Read home</button>
+            <button class="btn" onclick="mcRemoteReadRegionFact('default')" title="Ask the RPTR which region is its default flood scope">Read default</button>
           </div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:8px;max-width:620px">
-            Slovenian presets create <code>si</code> plus the selected subregion, allow flood forwarding, set home/default to <code>si</code>, and save.
-            Use the selected subregion as channel scope when a channel is local-only.
-          </div>
-          <div id="mc-remote-region-list" style="font-size:12px;color:var(--muted);margin-bottom:8px"></div>
-          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+          <div id="mc-remote-region-list" style="font-size:12px;color:var(--muted);margin-bottom:10px"></div>
+
+          <div style="font-size:12px;font-weight:600;margin-bottom:4px">Slovenia preset</div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:4px">
             <select id="mc-remote-region-preset" class="settings-select" style="width:180px">
               ${MC_SLO_REGION_PRESETS.map(r => `<option value="${r.code}">${r.code}: ${r.label}</option>`).join('')}
             </select>
-            <button class="btn" onclick="mcRemoteApplyRegionPreset('slovenia')">Apply SI preset</button>
-            <button class="btn" onclick="mcRemoteApplyRegionPreset('default-selected')" title="Set default scope to the selected region">Default selected</button>
-            <button class="btn" onclick="mcRemoteApplyRegionPreset('legacy-allow')" title="Allow unscoped legacy flood traffic">Allow *</button>
-            <button class="btn" onclick="mcRemoteApplyRegionPreset('legacy-deny')" title="Deny unscoped legacy flood traffic">Deny *</button>
+            <button class="btn" onclick="mcRemoteApplyRegionPreset('slovenia')" title="Create si plus the subregion, allow flood on both, set home and default to si, and save">Apply preset</button>
+            <button class="btn" onclick="mcRemoteApplyRegionPreset('default-selected')" title="Make the selected region this RPTR's default flood scope">Make selected the default</button>
           </div>
-          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-            <input id="mc-remote-region-custom" class="settings-input" style="width:120px" placeholder="region code">
-            <input id="mc-remote-region-parent" class="settings-input" style="width:100px" placeholder="parent">
-            <button class="btn" onclick="mcRemoteApplyRegionPreset('custom-put')">Put</button>
-            <button class="btn" onclick="mcRemoteApplyRegionPreset('custom-allow')">Allow flood</button>
-            <button class="btn" onclick="mcRemoteApplyRegionPreset('custom-home')">Home</button>
-            <button class="btn" onclick="mcRemoteApplyRegionPreset('custom-default')">Default</button>
-            <button class="btn" onclick="mcRemoteApplyRegionPreset('save')">Save</button>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:10px;max-width:640px">
+            Apply preset creates <code>si</code> plus the subregion above, allows flood forwarding on it, sets home and default scope to <code>si</code>, and saves. Use the subregion as the channel scope when a channel should stay local.
           </div>
+
+          <div style="font-size:12px;font-weight:600;margin-bottom:4px">Unscoped flood traffic (<code>*</code>)</div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:4px">
+            <button class="btn" onclick="mcRemoteApplyRegionPreset('legacy-allow')" title="Forward flood packets that carry no region scope">Allow</button>
+            <button class="btn" onclick="mcRemoteApplyRegionPreset('legacy-deny')" title="Stop forwarding flood packets that carry no region scope">Deny</button>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:10px;max-width:640px">
+            Packets from companions that set no scope. Deny only once every repeater near you can carry a scope.
+          </div>
+
+          <details style="margin-bottom:6px">
+            <summary style="cursor:pointer;font-size:12px;color:var(--muted)">One region at a time (advanced)</summary>
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:6px 0 4px">
+              <input id="mc-remote-region-custom" class="settings-input" style="width:120px" placeholder="region">
+              <span style="font-size:11px;color:var(--muted)">under</span>
+              <input id="mc-remote-region-parent" class="settings-input" style="width:100px" placeholder="parent">
+              <button class="btn" onclick="mcRemoteApplyRegionPreset('custom-put')" title="Create this region, or update it if it exists (parent optional)">Add or update</button>
+              <button class="btn" onclick="mcRemoteApplyRegionPreset('custom-remove')" title="Delete this region from the RPTR (it must have no subregions)">Remove</button>
+            </div>
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:4px">
+              <button class="btn" onclick="mcRemoteApplyRegionPreset('custom-allow')" title="Allow flood forwarding for this region">Allow flood</button>
+              <button class="btn" onclick="mcRemoteApplyRegionPreset('custom-deny')" title="Deny flood forwarding for this region">Deny flood</button>
+              <button class="btn" onclick="mcRemoteApplyRegionPreset('custom-home')" title="Set this region as the RPTR's home region">Set as home</button>
+              <button class="btn" onclick="mcRemoteApplyRegionPreset('custom-default')" title="Set this region as the default flood scope (needs firmware 1.15+, saves by itself)">Set as default</button>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <button class="btn" onclick="mcRemoteApplyRegionPreset('save')" title="Write the region configuration to the RPTR's flash">Save to RPTR</button>
+              <span style="font-size:11px;color:var(--muted)">Add, update, remove, allow and deny need Save. Set as default saves by itself.</span>
+            </div>
+          </details>
           <div id="mc-remote-region-result" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
         </div>
         <div style="border-top:1px solid var(--border);padding-top:10px;margin-top:4px">
@@ -15949,16 +15969,60 @@ if (targetEl) {
     ).join('');
   }
 
+  const _mcRemoteRegionState = {names: [], facts: {}};
+
+  function _mcRemoteRegionFactsHtml() {
+    // Home and default scope come from two CLI reads, not from the region list,
+    // so they are shown only once asked for rather than guessed.
+    const entries = [];
+    if (_mcRemoteRegionState.facts.home !== undefined) {
+      entries.push(`Home: <b style="color:var(--fg)">${escHtml(_mcRemoteRegionState.facts.home || 'not set')}</b>`);
+    }
+    if (_mcRemoteRegionState.facts.default !== undefined) {
+      entries.push(`Default scope: <b style="color:var(--fg)">${escHtml(_mcRemoteRegionState.facts.default || 'not set')}</b>`);
+    }
+    return entries.length ? `<div style="margin-top:4px">${entries.join(' &middot; ')}</div>` : '';
+  }
+
   function _mcRemoteRenderRegionList(regions) {
     const out = document.getElementById('mc-remote-region-list');
+    _mcRemoteRegionState.names = (Array.isArray(regions) ? regions : [])
+      .map(n => String(n || '').trim()).filter(Boolean);
     if (!out) return;
-    const names = (Array.isArray(regions) ? regions : []).map(n => String(n || '').trim()).filter(Boolean);
+    const names = _mcRemoteRegionState.names;
+    const facts = _mcRemoteRegionFactsHtml();
     if (!names.length) {
-      out.innerHTML = '<span style="color:var(--muted)">No regions reported by this RPTR. If the link is thin, press Advert once and read again.</span>';
+      out.innerHTML = '<span style="color:var(--muted)">No regions reported by this RPTR. If the link is thin, press Advert once and read again.</span>' + facts;
       return;
     }
     const chips = _mcRemoteChipsHtml(names);
-    out.innerHTML = `<span style="color:var(--green)">${names.length} region${names.length === 1 ? '' : 's'} on this RPTR:</span><div style="margin-top:2px">${chips}</div>`;
+    out.innerHTML = `<span style="color:var(--green)">${names.length} region${names.length === 1 ? '' : 's'} on this RPTR:</span><div style="margin-top:2px">${chips}</div>${facts}`;
+  }
+
+  function _mcRemoteParseRegionFact(text) {
+    const clean = String(text || '').trim();
+    if (!clean) return '';
+    const firstLine = clean.split('\n')[0].trim();
+    const match = firstLine.match(/([a-z0-9][a-z0-9-]*|\*|<null>)\s*$/i);
+    return (match ? match[1] : firstLine.slice(0, 40)).toLowerCase();
+  }
+
+  async function mcRemoteReadRegionFact(kind) {
+    // `region home` and `region default` with no argument are reads, but they are
+    // still CLI commands and so need Admin Login. The region LIST does not: it
+    // comes back over the 0-hop binary request with no password.
+    if (!_mcRemoteManage) return;
+    const cmd = kind === 'default' ? 'region default' : 'region home';
+    const label = kind === 'default' ? 'default scope' : 'home region';
+    try {
+      const d = await mcRemoteRunCommand(cmd, 'mc-remote-region-result', {silentError: true});
+      if (!d) return;
+      _mcRemoteRegionState.facts[kind] = _mcRemoteParseRegionFact(_mcRemoteReplyText(d));
+      _mcRemoteRenderRegionList(_mcRemoteRegionState.names);
+    } catch (e) {
+      const out = document.getElementById('mc-remote-region-list');
+      if (out) out.innerHTML = `<span style="color:var(--red)">Could not read the ${label}: ${escHtml(e.message)}</span>`;
+    }
   }
 
   async function mcRemoteReadRegions(btn) {
@@ -16438,6 +16502,15 @@ if (targetEl) {
         if (!custom) throw new Error('Enter a region code first.');
         commands = [`region allowf ${custom}`];
         label = `Flood allowed for ${custom}`;
+      } else if (kind === 'custom-deny') {
+        if (!custom) throw new Error('Enter a region code first.');
+        commands = [`region denyf ${custom}`];
+        label = `Flood denied for ${custom}`;
+      } else if (kind === 'custom-remove') {
+        if (!custom || custom === '*') throw new Error('Enter a named region code first.');
+        if (!window.confirm(`Remove region ${custom} from this RPTR?`)) return;
+        commands = [`region remove ${custom}`, 'region save'];
+        label = `Region ${custom} removed`;
       } else if (kind === 'custom-home') {
         if (!custom || custom === '*') throw new Error('Enter a named region code first.');
         commands = [`region home ${custom}`];

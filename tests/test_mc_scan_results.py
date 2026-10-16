@@ -168,13 +168,36 @@ class ScanResultsPanelWiringTests(unittest.TestCase):
     def test_the_scan_done_event_keeps_and_shows_the_results(self):
         self.assertIn("_mcScanLastResults = resultsPayload;", self.src)
         self.assertIn("function showMcScanResults()", self.src)
-        self.assertIn("openModal(`${payload.advert === false ? 'Probe' : 'Scan'} results`", self.src)
 
-    def test_a_scan_does_not_clobber_an_open_modal(self):
-        """The pop-up shares the app's one action modal; a scan that finishes
-        while the user is inside another panel must not overwrite it."""
-        self.assertIn("const modalOpen = document.getElementById('action-modal')?.classList.contains('open');", self.src)
-        self.assertIn("if (!modalOpen) showMcScanResults();", self.src)
+    def test_results_use_the_last_heard_panel_not_the_modal(self):
+        """Filip, 2026-10-16: "change the pop-up so it is in style of the 'Last
+        Heard' pop-up, so that it stays up and I can scroll around the rest of
+        the app" — that is the floating mc-statusreq-panel, outside the tabs."""
+        start = self.src.index("function showMcScanResults()")
+        body = self.src[start:start + 1200]
+        self.assertIn("mc-statusreq-panel", body)
+        self.assertIn("mc-statusreq-title", body)
+        self.assertIn("mc-statusreq-body", body)
+        self.assertIn("panel.dataset.detailKind = 'mc-scan-results';", body)
+        self.assertIn("panel.style.display = '';", body)
+        self.assertIn("_mcScanResultsHtml(payload, payload.newIds, {head: false})", body,
+                      "the panel's own title carries the headline")
+        self.assertIn("openModal(", body, "the modal stays as a fallback only")
+
+    def test_a_finished_scan_does_not_overwrite_a_panel_being_read(self):
+        """The panel is shared with ping details and the Last Heard list, so an
+        automatic reveal must not wipe what the user is reading."""
+        self.assertIn("const panelBusy = !!panelEl && panelEl.style.display !== 'none'", self.src)
+        self.assertIn("&& panelEl.dataset.detailKind !== 'mc-scan-results';", self.src)
+        self.assertIn("if (!panelBusy) showMcScanResults();", self.src)
+
+    def test_entries_are_clickable_like_the_map_and_pop_the_marker(self):
+        """Clicking a name must open the same pop-up as clicking the node on the
+        map, and hovering a row must pop its dot like hovering the node list."""
+        self.assertIn("showMcContactPopup(event,", self.src)
+        self.assertIn("onmouseenter=\"highlightMcContact('${jsSafe(id)}', true); this.style.background='var(--bg3)';\"", self.src)
+        self.assertIn("onmouseleave=\"highlightMcContact('${jsSafe(id)}', false); this.style.background='';\"", self.src)
+        self.assertIn("cursor:pointer;border-bottom:1px dotted var(--border)", self.src)
 
     def test_results_button_exists_and_is_toggled(self):
         self.assertIn('id="mc-scan-results-btn"', self.html)

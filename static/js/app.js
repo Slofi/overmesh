@@ -11717,10 +11717,12 @@ if (targetEl) {
                        + `${answered ? ` · ${answered} answered` : ''}${_mcScanNewCount ? ` · ${_mcScanNewCount} new` : ''}`;
         setTimeout(() => { if (st) st.textContent = ''; }, 15000);
       }
-      // Never clobber another modal the user has open: they get the Results
-      // button and the status line instead.
-      const modalOpen = document.getElementById('action-modal')?.classList.contains('open');
-      if (!modalOpen) showMcScanResults();
+      // Never overwrite a panel the user is already reading (a ping detail, the
+      // Last Heard list): the Results button and the status line carry it instead.
+      const panelEl = document.getElementById('mc-statusreq-panel');
+      const panelBusy = !!panelEl && panelEl.style.display !== 'none'
+                        && panelEl.dataset.detailKind !== 'mc-scan-results';
+      if (!panelBusy) showMcScanResults();
       // Refresh contacts from device to pick up any updated coords (e.g. GPS set via phone)
       const rid = _mcScanRadioId;
       if (rid) {
@@ -17713,13 +17715,15 @@ if (targetEl) {
     return bits.join(' · ');
   }
 
-  function _mcScanResultsHtml(payload, newIds = []) {
+  function _mcScanResultsHtml(payload, newIds = [], opts = {}) {
     const results = Array.isArray(payload?.results) ? payload.results : [];
     const summary = payload?.summary || {};
     const isProbe = payload?.advert === false;
     const windowS = payload?.window || 60;
     const newSet = new Set(newIds);
-    const head = `<div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.5">
+    // The Last Heard panel already carries the headline in its title, so the
+    // body can be rows only when it hosts this list.
+    const head = opts.head === false ? '' : `<div style="font-size:12px;color:var(--muted);margin-bottom:10px;line-height:1.5">
         <b style="color:var(--text)">${isProbe ? 'Probe' : 'Scan'}</b> on ${escHtml(payload?.radioName || '?')},
         ${windowS}s window${isProbe ? ' (no advert sent)' : ''}.`
       + (results.length
@@ -17737,16 +17741,21 @@ if (targetEl) {
           <br>Try again, or use Scan rather than Probe if you want the advert to go out.
         </div>`;
     }
+    const radioId = jsSafe(payload?.radioId || '');
     const rows = results.map(r => {
       const key = String(r.full_key || '');
+      const id = key.slice(0, 12);              // the same id the map + node list use
       const name = r.name || key.slice(0, 8);
       const signal = _mcScanSignalText(r);
-      const isNew = newSet.has(key.slice(0, 12)) || newSet.has(key);
+      const isNew = newSet.has(id) || newSet.has(key);
       const when = r.last_heard_ts ? _formatAppTime(r.last_heard_ts, {seconds: true}) : '';
-      return `<div style="display:flex;align-items:baseline;gap:8px;padding:6px 2px;border-bottom:1px solid var(--border)">
+      const reveal = `showMcContactPopup(event, '${jsSafe(id)}', '${radioId}', '${jsSafe(name)}')`;
+      return `<div style="display:flex;align-items:baseline;gap:8px;padding:6px 2px;border-bottom:1px solid var(--border);border-radius:4px"
+          onmouseenter="highlightMcContact('${jsSafe(id)}', true); this.style.background='var(--bg3)';"
+          onmouseleave="highlightMcContact('${jsSafe(id)}', false); this.style.background='';">
         <div style="min-width:0;flex:1">
           <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-            ${_mcScanKindBadge(r)}${escHtml(name)}${isNew ? `<span style="margin-left:6px;color:#f59e0b;font-size:9px;font-weight:600;border:1px solid #f59e0b;border-radius:3px;padding:0 3px" title="first seen in this scan">NEW</span>` : ''}
+            ${_mcScanKindBadge(r)}<span onclick="${reveal}" title="Open the same pop-up as clicking this node on the map" style="cursor:pointer;border-bottom:1px dotted var(--border)">${escHtml(name)}</span>${isNew ? `<span style="margin-left:6px;color:#f59e0b;font-size:9px;font-weight:600;border:1px solid #f59e0b;border-radius:3px;padding:0 3px" title="first seen in this scan">NEW</span>` : ''}
           </div>
           <div style="font-size:10px;color:var(--muted);font-family:monospace">
             ${escHtml(key.slice(0, 12))}${signal ? ` · ${escHtml(signal)}` : ''}
@@ -17758,10 +17767,34 @@ if (targetEl) {
     return head + `<div style="max-height:52vh;overflow-y:auto">${rows}</div>`;
   }
 
+  function _mcScanResultsTitle(payload, results, summary) {
+    const isProbe = payload?.advert === false;
+    const counts = `${results.length} result${results.length === 1 ? '' : 's'}`
+      + (summary.answered ? ` &middot; ${summary.answered} answered` : '')
+      + (summary.repeaters ? ` &middot; ${summary.repeaters} RPTR` : '')
+      + (summary.rooms ? ` &middot; ${summary.rooms} room` : '');
+    return `${isProbe ? 'Probe' : 'Scan'} results <span style="font-size:11px;font-weight:normal;color:var(--muted)">`
+      + `${escHtml(payload?.radioName || '')} &middot; ${payload?.window || 60}s &middot; ${counts}</span>`;
+  }
+
   function showMcScanResults() {
+    // Same floating panel as the Last Heard list (Filip, 2026-10-16): it stays
+    // up while the rest of the app is used, is scrollable, and lives outside the
+    // tabs. The modal remains only as a fallback if the panel is missing.
     const payload = _mcScanLastResults;
     if (!payload) return;
-    openModal(`${payload.advert === false ? 'Probe' : 'Scan'} results`, _mcScanResultsHtml(payload, payload.newIds));
+    const panel = document.getElementById('mc-statusreq-panel');
+    const title = document.getElementById('mc-statusreq-title');
+    const body  = document.getElementById('mc-statusreq-body');
+    if (!panel || !title || !body) {
+      openModal(`${payload.advert === false ? 'Probe' : 'Scan'} results`, _mcScanResultsHtml(payload, payload.newIds));
+      return;
+    }
+    const results = Array.isArray(payload.results) ? payload.results : [];
+    panel.dataset.detailKind = 'mc-scan-results';
+    title.innerHTML = _mcScanResultsTitle(payload, results, payload.summary || {});
+    body.innerHTML = _mcScanResultsHtml(payload, payload.newIds, {head: false});
+    panel.style.display = '';
   }
 
   async function startMcScan(advert = true) {

@@ -1,5 +1,16 @@
 # OverMesh Release Notes
 
+## 2026.10.16.3
+
+### Changed
+
+- Remote Manage now keeps the RPTR's answers in one place: a strip pinned to the bottom of the window. It shows the last four exchanges with the command and the time, the newest highlighted, and holds them until you press Clear. Field refreshes stay out of it, because those already fill a field of their own.
+- The Regions section no longer prints a transcript of the commands it sent at the bottom. That moved into the reply strip, so the section reads shorter.
+
+### Fixed
+
+- An empty region read now explains itself. If the repeater does not answer the fast region request, the strip says whether it stayed silent, answered something unreadable, or could not be asked at all, and the read also asks the repeater's own region command and shows its answer word for word.
+
 ## 2026.10.16.2
 
 ### Changed

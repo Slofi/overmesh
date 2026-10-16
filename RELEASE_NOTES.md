@@ -1,5 +1,15 @@
 # OverMesh Release Notes
 
+## 2026.10.16.11
+
+### Fixed
+
+- The live Scan and Probe list no longer redraws rows under your mouse while it fills in. Hovering the panel pauses the list until you move away, and it catches up on everything that arrived; the countdown and counters keep ticking.
+
+### Added
+
+- A guard in the test suite itself: a test file that would never actually run now fails the build. One existing guard had been sitting there inert since it was written, which is why this exists.
+
 ## 2026.10.16.10
 
 ### Changed

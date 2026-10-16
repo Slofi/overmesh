@@ -2243,7 +2243,7 @@
     <!-- Map API Keys -->
     <div class="settings-section">
       <h2 class="settings-title">Map API Keys</h2>
-      <p style="color:var(--muted);font-size:12px;margin:0 0 10px 0">Required for Thunderforest layers (TF Landscape ★, TF Outdoors ★). Free API key at <a href="https://www.thunderforest.com/docs/apikeys/" target="_blank" style="color:var(--accent)">thunderforest.com</a>.</p>
+      <p style="color:var(--muted);font-size:12px;margin:0 0 10px 0">Required for all four Thunderforest layers (TF Landscape ★, TF Outdoors ★, TF Pioneer ★, TF Atlas ★). Free API key at <a href="https://www.thunderforest.com/docs/apikeys/" target="_blank" style="color:var(--accent)">thunderforest.com</a>.</p>
       <div class="settings-row" style="align-items:flex-end;gap:8px;max-width:480px">
         <div style="flex:1">
           <label class="settings-label" for="tf-api-key-input">Thunderforest API key</label>
@@ -2270,6 +2270,15 @@
         <button class="btn-primary" onclick="saveCartoKey()">Save</button>
       </div>
       <div id="carto-key-status" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>
+      <p style="color:var(--muted);font-size:12px;margin:16px 0 10px 0">Required for Stadia Maps layers (Toner Lite ★, Toner Dark ★, Stamen Terrain ★, Stadia Outdoors ★). Stadia allows keyless use from localhost only, so an OverMesh reached through a domain or an IP address needs a key (or domain auth on your Stadia account). Free API key at <a href="https://client.stadiamaps.com/" target="_blank" style="color:var(--accent)">client.stadiamaps.com</a>.</p>
+      <div class="settings-row" style="align-items:flex-end;gap:8px;max-width:480px">
+        <div style="flex:1">
+          <label class="settings-label" for="stadia-api-key-input">Stadia Maps API key</label>
+          <input id="stadia-api-key-input" class="settings-input" type="text" placeholder="Enter API key..." maxlength="64" style="font-family:monospace">
+        </div>
+        <button class="btn-primary" onclick="saveStadiaKey()">Save</button>
+      </div>
+      <div id="stadia-key-status" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>
     </div>
 
     <!-- Offline maps -->

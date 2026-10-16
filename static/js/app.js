@@ -5452,20 +5452,20 @@ if (targetEl) {
 
   const TILE_LAYERS = {
     osm:              { label: 'OpenStreetMap',   url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 19 },
-    voyager:          { label: 'Voyager',         url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key={cartokey}', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
-    voyager_nolabels: { label: 'Voyager No Labels', url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png?key={cartokey}', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
-    positron:         { label: 'Positron',        url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key={cartokey}', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
-    dark_matter:      { label: 'Dark Matter',     url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key={cartokey}', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
-    dark_nolabels:    { label: 'Dark No Labels',  url: 'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png?key={cartokey}', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
+    voyager:          { label: 'Voyager ★',         url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key={cartokey}', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
+    voyager_nolabels: { label: 'Voyager No Labels ★', url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png?key={cartokey}', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
+    positron:         { label: 'Positron ★',        url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key={cartokey}', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
+    dark_matter:      { label: 'Dark Matter ★',     url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key={cartokey}', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
+    dark_nolabels:    { label: 'Dark No Labels ★',  url: 'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png?key={cartokey}', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
     esri_gray_dark:   { label: 'Esri Dark Gray',  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles © Esri, HERE, Garmin, © OpenStreetMap contributors, and the GIS User Community', maxZoom: 16 },
-    stamen_toner_lite:{ label: 'Toner Lite',      url: 'https://tiles.stadiamaps.com/tiles/stamen_toner_lite/{z}/{x}/{y}{r}.png', attribution: '© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://stamen.com/">Stamen Design</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', maxZoom: 20 },
-    stamen_toner_dark:{ label: 'Toner Dark',      url: 'https://tiles.stadiamaps.com/tiles/stamen_toner_dark/{z}/{x}/{y}{r}.png', attribution: '© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://stamen.com/">Stamen Design</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', maxZoom: 20 },
-    stamen_terrain:   { label: 'Stamen Terrain',  url: 'https://tiles.stadiamaps.com/tiles/stamen_terrain/{z}/{x}/{y}{r}.png', attribution: '© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://stamen.com/">Stamen Design</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', maxZoom: 20 },
+    stamen_toner_lite:{ label: 'Toner Lite ★',      url: 'https://tiles.stadiamaps.com/tiles/stamen_toner_lite/{z}/{x}/{y}{r}.png?api_key={stadiakey}', attribution: '© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://stamen.com/">Stamen Design</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', maxZoom: 20 },
+    stamen_toner_dark:{ label: 'Toner Dark ★',      url: 'https://tiles.stadiamaps.com/tiles/stamen_toner_dark/{z}/{x}/{y}{r}.png?api_key={stadiakey}', attribution: '© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://stamen.com/">Stamen Design</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', maxZoom: 20 },
+    stamen_terrain:   { label: 'Stamen Terrain ★',  url: 'https://tiles.stadiamaps.com/tiles/stamen_terrain/{z}/{x}/{y}{r}.png?api_key={stadiakey}', attribution: '© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://stamen.com/">Stamen Design</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', maxZoom: 20 },
     esri_sat:         { label: 'Esri Satellite',  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles © Esri', maxZoom: 18 },
     esri_streets:     { label: 'Esri Streets',    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles © Esri, DeLorme, NAVTEQ, USGS, Intermap, NRCAN', maxZoom: 19 },
     esri_topo:        { label: 'Esri Topo',       url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles © Esri', maxZoom: 18 },
     topo:             { label: 'OpenTopoMap',     url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, © <a href="https://opentopomap.org">OpenTopoMap</a>', maxZoom: 17 },
-    stadia_outdoors:  { label: 'Stadia Outdoors', url: 'https://tiles.stadiamaps.com/tiles/outdoors/{z}/{x}/{y}{r}.png', attribution: '© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', maxZoom: 20 },
+    stadia_outdoors:  { label: 'Stadia Outdoors ★', url: 'https://tiles.stadiamaps.com/tiles/outdoors/{z}/{x}/{y}{r}.png?api_key={stadiakey}', attribution: '© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', maxZoom: 20 },
     esri_hillshade:   { label: 'Esri Hillshade',  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles © Esri, Airbus DS, USGS, NGA, NASA, CGIAR', maxZoom: 16 },
     tf_landscape:     { label: 'TF Landscape ★',  url: 'https://tile.thunderforest.com/landscape/{z}/{x}/{y}.png?apikey={apikey}', attribution: 'Maps © <a href="https://www.thunderforest.com/">Thunderforest</a>, Data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 22 },
     tf_outdoors:      { label: 'TF Outdoors ★',   url: 'https://tile.thunderforest.com/outdoors/{z}/{x}/{y}.png?apikey={apikey}', attribution: 'Maps © <a href="https://www.thunderforest.com/">Thunderforest</a>, Data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 22 },
@@ -6183,6 +6183,15 @@ if (targetEl) {
       if (!key) showToast('API key required', 'Set your MapTiler API key in Settings → Map', 'warning', 'mt-no-key');
       url = url.replace('{mtapikey}', key);
     }
+    if (url.includes('{stadiakey}')) {
+      // Stadia Maps (2026-10-16): keyless works from localhost only, so an instance reached through a domain or
+      // IP needs a key (or domain auth on the Stadia account). With no key the parameter is DROPPED rather than
+      // left empty — an empty ?api_key= is a distinct request shape that a CDN cache may store and rate-limit,
+      // while a keyless request is simply the documented localhost case.
+      const key = localStorage.getItem('stadiaApiKey') || '';
+      if (!key) showToast('API key required', 'Set your Stadia Maps API key in Settings → Map', 'warning', 'stadia-no-key');
+      url = key ? url.replace('{stadiakey}', encodeURIComponent(key)) : url.replace('?api_key={stadiakey}', '');
+    }
     if (url.includes('{cartokey}')) {
       // The app ships NO CARTO key (2026-09-25): the old shared one was rotated at CARTO and now answers
       // HTTP 403, which is exactly what these five layers were doing. Each user brings their own.
@@ -6203,6 +6212,7 @@ if (targetEl) {
     if (u.includes('{apikey}'))   return !(localStorage.getItem('thunderforestApiKey') || '').trim();
     if (u.includes('{mtapikey}')) return !(localStorage.getItem('mapTilerApiKey') || '').trim();
     if (u.includes('{cartokey}')) return !(localStorage.getItem('cartoApiKey') || '').trim();
+    if (u.includes('{stadiakey}')) return !(localStorage.getItem('stadiaApiKey') || '').trim();
     return false;
   }
 
@@ -6291,6 +6301,15 @@ if (targetEl) {
     const key = input.value.trim();
     localStorage.setItem('cartoApiKey', key);
     if (status) { status.textContent = key ? 'Saved. Select Voyager, Positron or Dark Matter on the map to apply.' : 'Key cleared.'; status.style.color = 'var(--accent)'; setTimeout(() => { if (status) status.textContent = ''; }, 3000); }
+  }
+
+  function saveStadiaKey() {
+    const input = document.getElementById('stadia-api-key-input');
+    const status = document.getElementById('stadia-key-status');
+    if (!input) return;
+    const key = input.value.trim();
+    localStorage.setItem('stadiaApiKey', key);
+    if (status) { status.textContent = key ? 'Saved. Select Toner, Stamen Terrain or Stadia Outdoors on the map to apply.' : 'Key cleared.'; status.style.color = 'var(--accent)'; setTimeout(() => { if (status) status.textContent = ''; }, 3000); }
   }
 
   // ---- Offline Tile Cache (IndexedDB, no external deps) ----
@@ -6965,6 +6984,14 @@ if (targetEl) {
       const opt = L.DomUtil.create('div', 'map-layer-opt', _baseLayerMenuPanel);
       opt.textContent  = def.label;
       opt.dataset.layer = key;
+      // Say so in the menu when a keyed layer has no key of its own: previously the only cue was the ★ in the
+      // label, and a keyless keyed layer fails quietly (watermark or error tile) rather than reporting anything.
+      if (_layerKeyMissing(key)) {
+        const need = L.DomUtil.create('span', '', opt);
+        need.textContent = '\u00a0key needed';
+        need.style.cssText = 'font-size:10px;color:#f59e0b';
+        opt.title = 'This layer needs your own API key. Set it in Settings \u2192 Map.';
+      }
       if (def.sharedTileServer) opt.title = 'Stored locally by OPS-TOC and available without internet when the shared tile server is running.';
       if (key === saved) opt.classList.add('active');
       L.DomEvent.on(opt, 'click', (e) => {
@@ -10736,6 +10763,8 @@ if (targetEl) {
     if (mtInput) mtInput.value = localStorage.getItem('mapTilerApiKey') || '';
     const cartoInput = document.getElementById('carto-api-key-input');
     if (cartoInput) cartoInput.value = localStorage.getItem('cartoApiKey') || '';
+    const stadiaInput = document.getElementById('stadia-api-key-input');
+    if (stadiaInput) stadiaInput.value = localStorage.getItem('stadiaApiKey') || '';
     document.getElementById('tile-autocache-toggle').checked = _autoCacheTiles;
     refreshTileCacheInfo();
     updateTileEstimate();

@@ -123,12 +123,12 @@ let map, activeLayer;
 let _mcPosPickRadio = null;
 
 const LAYERS = {
-  voyager: { label: 'Voyager',          url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key={cartokey}', attr: '© OSM © CARTO', maxZoom: 19 },
-  dark:    { label: 'Dark Matter',      url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key={cartokey}', attr: '© OSM © CARTO', maxZoom: 19 },
+  voyager: { label: 'Voyager ★',          url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key={cartokey}', attr: '© OSM © CARTO', maxZoom: 19 },
+  dark:    { label: 'Dark Matter ★',      url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key={cartokey}', attr: '© OSM © CARTO', maxZoom: 19 },
   osm:     { label: 'OpenStreetMap',    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attr: '© OSM', maxZoom: 19 },
   topo:    { label: 'OpenTopoMap',      url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', attr: '© OSM © OpenTopoMap', maxZoom: 17 },
   sat:     { label: 'Esri Satellite',   url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attr: '© Esri', maxZoom: 18 },
-  terrain: { label: 'Stadia Outdoors',  url: 'https://tiles.stadiamaps.com/tiles/outdoors/{z}/{x}/{y}{r}.png', attr: '© Stadia © OSM', maxZoom: 20 },
+  terrain: { label: 'Stadia Outdoors ★', url: 'https://tiles.stadiamaps.com/tiles/outdoors/{z}/{x}/{y}{r}.png?api_key={stadiakey}', attr: '© Stadia © OSM', maxZoom: 20 },
 };
 
 // Dismiss the exposed-no-auth warning banner persistently (server-stored, so it
@@ -351,6 +351,12 @@ function applyLayer(key) {
   if (url.includes('{cartokey}')) {
     const k = localStorage.getItem('cartoApiKey') || '';
     url = k ? url.replace('{cartokey}', encodeURIComponent(k)) : url.replace('?key={cartokey}', '');
+  }
+  // Stadia Maps (2026-10-16) rides the same setting as the main app: keyless works from localhost only, so an
+  // instance served over a domain or IP needs one. No key -> drop the parameter rather than send it empty.
+  if (url.includes('{stadiakey}')) {
+    const ks = localStorage.getItem('stadiaApiKey') || '';
+    url = ks ? url.replace('{stadiakey}', encodeURIComponent(ks)) : url.replace('?api_key={stadiakey}', '');
   }
   activeLayer = L.tileLayer(url, { attribution: def.attr, maxZoom: def.maxZoom }).addTo(map);
   localStorage.setItem('lm_layer', LAYERS[key] ? key : 'voyager');

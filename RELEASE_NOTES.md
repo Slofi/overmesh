@@ -1,5 +1,12 @@
 # OverMesh Release Notes
 
+## 2026.10.16.16
+
+### Fixed
+
+- **Your MT/MC choice now survives a page reload.** Picking MeshCore in Chat and refreshing used to land back on Meshtastic. The cause was an internal guess: while one radio's status had not arrived yet, the app treated the other network as "not connected" and **saved** that guess over your choice — so every refresh went the same way. It now only reacts to a network that is confirmed absent, and never overwrites your choice with it. The Sense pill also shows the remembered network at load instead of always starting on MT.
+- **Tile downloads now say why they fail**, instead of only how many failed. One probe tile per download reports the actual reason: the provider rejected the key, it is rate-limiting you, or it blocks browser downloads (no CORS header) — the last one matters because such a layer still *displays* fine on the map while every download fails. Mid-download failures report the first reason too.
+
 ## 2026.10.16.15
 
 ### Fixed

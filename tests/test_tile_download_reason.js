@@ -1,0 +1,67 @@
+// Tile downloads must explain themselves: a rejected key, a provider that blocks browser downloads (no CORS) and a dead
+// network all used to look like "N failed".
+//
+// Found while checking the tile cache downloads for Filip (2026-10-16). The message matters because a CORS-blocked
+// provider still renders fine as an <img> on the map — so the user sees a working layer and a download that "fails",
+// with nothing to act on.
+const fs = require('fs');
+const path = require('path');
+const REPO = path.join(__dirname, '..');
+const src = fs.readFileSync(path.join(REPO, 'static/js/app.js'), 'utf8');
+
+function assert(cond, msg) {
+  if (!cond) { console.error('FAIL: ' + msg); process.exit(1); }
+}
+
+function extract(startMarker, endMarker) {
+  const start = src.indexOf(startMarker);
+  assert(start >= 0, `${startMarker} not found`);
+  const end = src.indexOf(endMarker, start);
+  return src.slice(start, end + endMarker.length);
+}
+
+function makeReasonFn(fetchImpl) {
+  const code = [
+    'function _tileUrlForLayer(layerKey, z, x, y) { return `https://example.test/${layerKey}/${z}/${x}/${y}.png`; }',
+    extract('async function _tileDownloadReason(', '\n  }'),
+    'return _tileDownloadReason;',
+  ].join('\n');
+  return new Function('fetch', code)(fetchImpl);
+}
+
+function respond(status) {
+  return async () => ({ ok: status >= 200 && status < 300, status });
+}
+
+(async () => {
+  // a healthy layer downloads: the probe must not get in the way
+  assert(await makeReasonFn(respond(200))('esri_topo') === null, 'HTTP 200 must mean "go ahead"');
+
+  const rejected = await makeReasonFn(respond(401))('tf_landscape');
+  assert(/rejected the key/.test(rejected) && /401/.test(rejected), `401 must name the key: got ${rejected}`);
+  const forbidden = await makeReasonFn(respond(403))('mt_topo');
+  assert(/rejected the key/.test(forbidden), `403 must name the key: got ${forbidden}`);
+
+  const limited = await makeReasonFn(respond(429))('osm');
+  assert(/rate-limiting/.test(limited), `429 must name rate limiting: got ${limited}`);
+
+  const odd = await makeReasonFn(respond(500))('osm');
+  assert(/HTTP 500/.test(odd), `other statuses must be passed through: got ${odd}`);
+
+  // fetch() throwing is what a missing CORS header looks like, and it is the case the user could not diagnose
+  const blocked = await makeReasonFn(async () => { throw new TypeError('Failed to fetch'); })('tf_outdoors');
+  assert(/CORS|offline/.test(blocked), `a thrown fetch must explain CORS/offline: got ${blocked}`);
+
+  // ── and both download paths must use it, before burning requests on a hopeless area ──
+  for (const fn of ['saveTilesCurrentView', 'downloadSelectedRegion']) {
+    const start = src.indexOf('function ' + fn + '(');
+    assert(start >= 0, `${fn} not found`);
+    const body = src.slice(start, start + 4000);
+    assert(body.includes('_tileDownloadReason'),
+      `${fn} must probe the layer before downloading (otherwise the user gets "N failed" and no reason)`);
+    assert(/firstFailure/.test(body),
+      `${fn} must report the first failure reason, not just the count`);
+  }
+
+  console.log('ok: tile downloads explain a rejected key, a rate limit, a CORS/offline failure — and both paths ask first');
+})();

@@ -1240,7 +1240,8 @@
           mtCount.textContent = 'No radios connected';
         }
       }
-      if (chatNetwork === 'mt' && hasConnectedMcRadios()) setChatNetwork('mc');
+      // Also a forced default rather than a decision: don't let it overwrite the stored preference.
+      if (chatNetwork === 'mt' && hasConnectedMcRadios()) setChatNetwork('mc', { remember: false });
       if (botNetwork === 'mt' && hasConnectedMcRadios()) setBotNetwork('mc');
       _updateNetworkPillVisibility();
       return;
@@ -1355,11 +1356,11 @@
   // Legacy alias (kept in case any internal callers use the old name)
   function switchRadio(id) { toggleRadioSelection(id); }
 
-  function setChatNetwork(net) {
+  function setChatNetwork(net, opts = {}) {
     net = normalizeChatNetwork(net);
     chatNetwork = net;
     _netChoice = net;
-    localStorage.setItem('chatNetwork', net);
+    if (opts.remember !== false) localStorage.setItem('chatNetwork', net);
     const isMt = net === 'mt';
     const mtPane = document.getElementById('chat-mt-pane');
     const mcPane = document.getElementById('chat-mc-pane');
@@ -1381,11 +1382,15 @@
     else { _updateMtInput(); }
     // Keep the paired Sense pill in step — WITHOUT the map-focus part, because the ordinary Map filter must keep its
     // own independent MT/MC state (his 2026-10-16 note: both networks can stay selected there).
-    if (_senseNet !== net) switchSenseNet(net, { focusMap: false, syncChat: false });
+    if (_senseNet !== net) switchSenseNet(net, { focusMap: false, syncChat: false, remember: opts.remember !== false });
   }
 
   function initChat() {
     setChatNetwork(chatNetwork);  // apply MT/MC toggle state
+    // …and the Sense pills, which the markup defaults to MT and which setChatNetwork only touches when the value
+    // CHANGES — so without this a reload with MC stored showed an MT-highlighted Sense pill beside MC content
+    // (found by Filip's browser test, 2026-10-16: "after the refresh it went to MT").
+    _setNetChoice(_netChoice, { remember: false, syncChat: false });
     if (chatNetwork === 'mt') {
       const chRadioParam = activeRadioId ? `?radio_id=${encodeURIComponent(activeRadioId)}` : '';
       const tabAtFetchTime = currentTab;
@@ -3472,11 +3477,18 @@ if (targetEl) {
     if (mcSense) mcSense.style.display = mcConnected ? '' : 'none';
     if (mapWrap) mapWrap.style.display = (!senseOpen && mtConnected && mcConnected) ? '' : 'none';
     if (senseWrap) senseWrap.style.display = (senseOpen && mtConnected && mcConnected) ? '' : 'none';
-    // A radio came or went, so the shared choice follows it — through the same path a pill click uses. This used to
-    // set _senseNet directly (found in the 2026-10-16 bug sweep), which left the Sense pill highlighting a network
-    // the app was no longer on and let Chat and Sense disagree.
-    if (_senseNet === 'mt' && !mtConnected && mcConnected) _setNetChoice('mc');
-    if (_senseNet === 'mc' && !mcConnected && mtConnected) _setNetChoice('mt');
+    // A radio came or went, so the shared choice follows it — through the same path a pill click uses, so the two pills
+    // can never disagree. Two guards on purpose:
+    //   * only act on CONFIRMED absence: an empty snapshot means the status has not arrived yet (MT and MC status come
+    //     from different payloads, so at boot one of them is always still missing), and acting on that is what made his
+    //     reload land on MT;
+    //   * a forced move does not overwrite the remembered choice (`remember: false`), so his own pick comes back.
+    const mtKnown = Object.keys(lastStatus).length > 0;
+    const mcKnown = Object.keys(mcLastStatus).length > 0;
+    if (mtKnown && mcKnown) {
+      if (_senseNet === 'mt' && !mtConnected && mcConnected) _setNetChoice('mc', { remember: false });
+      if (_senseNet === 'mc' && !mcConnected && mtConnected) _setNetChoice('mt', { remember: false });
+    }
   }
 
   function _updateMapNodeCount() {
@@ -6245,6 +6257,24 @@ if (targetEl) {
     return false;
   }
 
+  // Why did a tile download fail? A bare "N failed" cannot be acted on: a rejected key, a provider that blocks
+  // browser downloads (no CORS header — the tile still shows as an <img>, so the map looks fine) and a dead network
+  // all look identical. One probe tile before the loop tells the user which it is (2026-10-16).
+  async function _tileDownloadReason(layerKey) {
+    const url = _tileUrlForLayer(layerKey, 1, 0, 0);
+    let r;
+    try {
+      r = await fetch(url, { method: 'GET' });
+    } catch (e) {
+      // A CORS refusal and a dead network both surface as a TypeError; the browser console has the difference.
+      return 'the provider blocks downloads from a browser (no CORS header), or you are offline';
+    }
+    if (r.ok) return null;
+    if (r.status === 401 || r.status === 403) return `the provider rejected the key (HTTP ${r.status})`;
+    if (r.status === 429) return 'the provider is rate-limiting you (HTTP 429) — try a smaller area or later';
+    return `the provider answered HTTP ${r.status}`;
+  }
+
   // The user's key is part of a cached tile's IDENTITY (2026-09-25). Without this tag, tiles cached before a key
   // was entered were served afterwards for ever - the user pastes their key and the map stays watermarked - and
   // two operators on one device shared each other's tiles. Layer identity (region metadata, the download
@@ -6479,6 +6509,14 @@ if (targetEl) {
       if (btn) { btn.disabled = false; btn.textContent = 'Key needed'; }
       return;
     }
+    const reason = await _tileDownloadReason(_layerKey);
+    if (reason) {
+      txt.textContent = `Cannot save tiles: ${reason}.`;
+      if (btn) { btn.disabled = false; btn.textContent = 'Save tiles'; }
+      _savingTiles = false;
+      return;
+    }
+    let firstFailure = '';
     const BATCH = 4;
     try {
     for (let i = 0; i < tiles.length; i += BATCH) {
@@ -6491,12 +6529,13 @@ if (targetEl) {
             : `https://a.tile.openstreetmap.org/${z}/${x}/${y}.png`;
           const r = await fetch(tileUrl);
           if (r.ok) { await tilePut(key, await r.blob()); saved++; }
-          else failed++;
-        } catch { failed++; }
+          else { failed++; if (!firstFailure) firstFailure = `HTTP ${r.status}`; }
+        } catch { failed++; if (!firstFailure) firstFailure = 'blocked by the provider or offline'; }
       }));
       const done = saved + skipped + failed;
       bar.style.width = (done / tiles.length * 100).toFixed(1) + '%';
-      txt.textContent = `${done}/${tiles.length}: ${saved} saved, ${skipped} cached, ${failed} failed`;
+      txt.textContent = `${done}/${tiles.length}: ${saved} saved, ${skipped} cached, ${failed} failed`
+        + (firstFailure ? ` (first: ${firstFailure})` : '');
       await new Promise(r => setTimeout(r, 10));
     }
 
@@ -6710,7 +6749,14 @@ if (targetEl) {
       btn.disabled = false;
       return;
     }
-    let saved = 0, skipped = 0, failed = 0;
+    const reason = await _tileDownloadReason(layerKey);
+    if (reason) {
+      txt.textContent = `Cannot download '${layerLabel}': ${reason}.`;
+      btn.disabled = false;
+      _downloadingRegion = false;
+      return;
+    }
+    let saved = 0, skipped = 0, failed = 0, firstFailure = '';
     const BATCH = 4;
     try {
     for (let i = 0; i < tiles.length; i += BATCH) {
@@ -6720,12 +6766,13 @@ if (targetEl) {
         try {
           const r = await fetch(_tileUrlForLayer(layerKey, z, x, y));
           if (r.ok) { await tilePut(key, await r.blob()); saved++; }
-          else failed++;
-        } catch { failed++; }
+          else { failed++; if (!firstFailure) firstFailure = `HTTP ${r.status}`; }
+        } catch { failed++; if (!firstFailure) firstFailure = 'blocked by the provider or offline'; }
       }));
       const done = saved + skipped + failed;
       bar.style.width = (done / tiles.length * 100).toFixed(1) + '%';
-      txt.textContent = `${done}/${tiles.length}: ${saved} saved, ${skipped} cached`;
+      txt.textContent = `${done}/${tiles.length}: ${saved} saved, ${skipped} cached, ${failed} failed`
+        + (firstFailure ? ` (first: ${firstFailure})` : '');
       await new Promise(r => setTimeout(r, 10));
     }
 
@@ -13077,12 +13124,15 @@ if (targetEl) {
   function _setNetChoice(net, opts = {}) {
     _senseNet = net;
     _netChoice = net;
-    localStorage.setItem('senseNet', net);
-    // One choice, so the Chat key is written too: whichever pill was used, a reload lands on the same network.
-    localStorage.setItem('chatNetwork', net);
+    // One choice, so the Chat key is written too: whichever pill was used, a reload lands on the same network. A FORCED
+    // move (connectivity) passes remember:false and leaves the operator's stored choice alone.
+    if (opts.remember !== false) {
+      localStorage.setItem('senseNet', net);
+      localStorage.setItem('chatNetwork', net);
+    }
     document.getElementById('sense-net-mt')?.classList.toggle('active', net === 'mt');
     document.getElementById('sense-net-mc')?.classList.toggle('active', net === 'mc');
-    if (opts.syncChat !== false && net !== chatNetwork) setChatNetwork(net);
+    if (opts.syncChat !== false && net !== chatNetwork) setChatNetwork(net, { remember: opts.remember !== false });
   }
 
   function switchSenseNet(net, opts = {}) {
@@ -13140,7 +13190,7 @@ if (targetEl) {
     _scheduleSignalHeatmapRefresh(0);
     // Pair back to Chat when the Sense pill was the one clicked (a caller may pass syncChat:false to
     // avoid a loop). Same choice either way, so both pills always agree.
-    if (opts.syncChat !== false && net !== chatNetwork) setChatNetwork(net);
+    if (opts.syncChat !== false && net !== chatNetwork) setChatNetwork(net, { remember: opts.remember !== false });
   }
 
   // MeshCore CONTACT_TYPENAMES: 0=NONE, 1=CLI, 2=REP, 3=ROOM, 4=SENS

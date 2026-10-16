@@ -122,12 +122,17 @@ const S = {
 let map, activeLayer;
 let _mcPosPickRadio = null;
 
+// The default is key-free on purpose: lite has no settings UI, so a keyed default (Voyager used to be
+// one) would greet a fresh browser with watermarked CARTO tiles and no way to fix it from here.
+const DEFAULT_LAYER = 'esri_topo';
+
 const LAYERS = {
-  voyager: { label: 'Voyager ★',          url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key={cartokey}', attr: '© OSM © CARTO', maxZoom: 19 },
-  dark:    { label: 'Dark Matter ★',      url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key={cartokey}', attr: '© OSM © CARTO', maxZoom: 19 },
   osm:     { label: 'OpenStreetMap',    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attr: '© OSM', maxZoom: 19 },
   topo:    { label: 'OpenTopoMap',      url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', attr: '© OSM © OpenTopoMap', maxZoom: 17 },
   sat:     { label: 'Esri Satellite',   url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attr: '© Esri', maxZoom: 18 },
+  esri_topo: { label: 'Esri Topo',       url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', attr: '\u00a9 Esri', maxZoom: 18 },
+  voyager: { label: 'Voyager ★',          url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key={cartokey}', attr: '© OSM © CARTO', maxZoom: 19 },
+  dark:    { label: 'Dark Matter ★',      url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key={cartokey}', attr: '© OSM © CARTO', maxZoom: 19 },
   terrain: { label: 'Stadia Outdoors ★', url: 'https://tiles.stadiamaps.com/tiles/outdoors/{z}/{x}/{y}{r}.png?api_key={stadiakey}', attr: '© Stadia © OSM', maxZoom: 20 },
 };
 
@@ -214,7 +219,7 @@ function initMap() {
   }).setView([46.1, 14.8], 10);
   map.zoomControl.setPosition('bottomleft');
   const savedKey = localStorage.getItem('lm_layer');
-  const saved = LAYERS[savedKey] ? savedKey : 'voyager';
+  const saved = LAYERS[savedKey] ? savedKey : DEFAULT_LAYER;
   applyLayer(saved);
   renderLayerPanel();
   map.on('click', (e) => {
@@ -341,7 +346,7 @@ function installTouchPanFallback() {
 }
 
 function applyLayer(key) {
-  const def = LAYERS[key] || LAYERS.voyager;
+  const def = LAYERS[key] || LAYERS[DEFAULT_LAYER];
   if (activeLayer) map.removeLayer(activeLayer);
   // CARTO layers take the user's OWN key — the same one the main app's Settings field stores (same origin),
   // so entering it once covers Lite too. With no key the parameter is dropped rather than left empty: a keyless
@@ -359,14 +364,14 @@ function applyLayer(key) {
     url = ks ? url.replace('{stadiakey}', encodeURIComponent(ks)) : url.replace('?api_key={stadiakey}', '');
   }
   activeLayer = L.tileLayer(url, { attribution: def.attr, maxZoom: def.maxZoom }).addTo(map);
-  localStorage.setItem('lm_layer', LAYERS[key] ? key : 'voyager');
+  localStorage.setItem('lm_layer', LAYERS[key] ? key : DEFAULT_LAYER);
   document.querySelectorAll('.layer-item').forEach(el =>
     el.classList.toggle('active', el.dataset.key === key));
 }
 
 function renderLayerPanel() {
   const el = document.getElementById('layer-panel');
-  const activeKey = LAYERS[localStorage.getItem('lm_layer')] ? localStorage.getItem('lm_layer') : 'voyager';
+  const activeKey = LAYERS[localStorage.getItem('lm_layer')] ? localStorage.getItem('lm_layer') : DEFAULT_LAYER;
   el.innerHTML = Object.entries(LAYERS).map(([k, d]) =>
     `<div class="layer-item${activeKey===k?' active':''}"
       data-key="${k}" onclick="applyLayer('${k}');closeLayerPanel()">${d.label}</div>`

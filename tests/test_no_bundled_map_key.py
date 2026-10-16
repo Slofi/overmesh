@@ -111,6 +111,59 @@ class MapKeyProviderWiringTests(unittest.TestCase):
         for layer in ("TF Landscape", "TF Outdoors", "TF Pioneer", "TF Atlas"):
             self.assertIn(layer, hint, f"the Thunderforest hint does not mention {layer}")
 
+    def test_the_cached_tile_identity_covers_every_key(self) -> None:
+        """_keyTag() makes a cached tile's identity depend on the user's key, so a
+        keyed layer must never be tagged ':nokey' for ever. Missed for Stadia when
+        the key was added (2026-10-16): the guard, the resolver, the settings field
+        and the prefill were all checked, the tag was not."""
+        body = self.app[self.app.index("function _keyTag("):]
+        body = body[:body.index("\n  }")]
+        for placeholder, _storage, _input_id, _save_fn in PROVIDERS:
+            with self.subTest(provider=placeholder):
+                self.assertIn("{" + placeholder + "}", body, f"_keyTag ignores {{{placeholder}}}")
+        self.assertIn("return ''", body, "a layer with no key needs no tag")
+
+    def test_the_default_layer_is_key_free(self) -> None:
+        """A keyed default would greet a fresh browser with watermarks and ask for
+        a key before the map works at all (and lite has no settings UI to give it
+        one). Filip also asked for Esri Topo over the plain OSM default."""
+        default = re.search(r"const DEFAULT_TILE_LAYER = '([a-z_]+)'", self.app)
+        self.assertIsNotNone(default, "app.js must name the default layer once")
+        name = default.group(1)
+        self.assertEqual(name, "esri_topo", "the default is Filip's pick")
+        line = next(ln for ln in self.app.splitlines() if ln.strip().startswith(name + ":"))
+        self.assertNotIn("key}", line, "the default layer must not need an API key")
+        self.assertNotIn("openstreetmap.org", line, "he asked for something other than plain OSM")
+        # lite has no key fields at all, so its default must be key-free too
+        lite_default = re.search(r"const DEFAULT_LAYER = '([a-z_]+)'", self.lite)
+        self.assertIsNotNone(lite_default, "lite.js must name its default too")
+        lite_line = next(ln for ln in self.lite.splitlines() if ln.strip().startswith(lite_default.group(1) + ":"))
+        self.assertNotIn("key}", lite_line, "lite cannot ask for a key, so its default must be key-free")
+
+    def test_the_layer_order_is_free_first_then_grouped_by_provider(self) -> None:
+        """Filip, 2026-10-16: "rearrange the order in the layer selection menu —
+        free maps first, than API layers, grouped by the provider." """
+        block = self.app[self.app.index("const TILE_LAYERS = {"):]
+        block = block[:block.index("\n  };")]
+        ordered = [m.group(1) for m in re.finditer(r"^    ([a-z_]+):\s*\{", block, re.M)]
+        keyed = [k for k in ordered if re.search(r"\{[a-z]+key\}", next(
+            ln for ln in block.splitlines() if ln.strip().startswith(k + ":")))]
+        self.assertTrue(keyed, "the table still has keyed layers")
+        first_keyed = ordered.index(keyed[0])
+        self.assertFalse([k for k in ordered[first_keyed:] if k not in keyed],
+                         "no free layer may come after a keyed one")
+        # each provider forms one contiguous block, in the order the menu shows
+        groups, seen = [], []
+        for k in ordered:
+            line = next(ln for ln in block.splitlines() if ln.strip().startswith(k + ":"))
+            ph = next((ph for ph in ("{apikey}", "{mtapikey}", "{cartokey}", "{stadiakey}")
+                       if ph in line), "free")
+            if not seen or seen[-1] != ph:
+                self.assertNotIn(ph, seen, f"{ph} appears in two separate blocks")
+                seen.append(ph)
+        self.assertEqual(seen, ["free", "{apikey}", "{mtapikey}", "{cartokey}", "{stadiakey}"],
+                         f"expected free, Thunderforest, MapTiler, CARTO, Stadia — saw {seen}")
+
     def test_the_menu_says_when_a_keyed_layer_has_no_key(self) -> None:
         self.assertTrue("if (_layerKeyMissing(key)) {" in self.app,
                         "the layer menu must mark layers that still need a key")

@@ -27,11 +27,14 @@ function sandbox(store) {
   const toasts = [];
   const code = [
     'let _mapAppTileLayers = {};',
+    extractFrom('const DEFAULT_TILE_LAYER =', ';'),
+    extractFrom('const KEY_PROVIDER_GROUPS = {', '\n  };'),
     extractFrom('const TILE_LAYERS = {', '\n  };'),
     extractFrom('function allTileLayers()', '\n  }'),
     extractFrom('function _layerKeyMissing(layerKey)', '\n  }'),
+    extractFrom('function _keyTag(layerKey)', '\n  }'),
     extractFrom('function _resolveTileUrl(url)', '\n  }'),
-    'return { TILE_LAYERS, allTileLayers, _layerKeyMissing, _resolveTileUrl };',
+    'return { DEFAULT_TILE_LAYER, KEY_PROVIDER_GROUPS, TILE_LAYERS, allTileLayers, _layerKeyMissing, _keyTag, _resolveTileUrl };',
   ].join('\n');
   const api = new Function('localStorage', 'showToast', code)(store, (t, b, k, tag) => toasts.push(tag));
   return { ...api, toasts };
@@ -52,7 +55,7 @@ const KEYED = {
   stadiakey:  'stadiaApiKey',
 };
 
-const { TILE_LAYERS, _layerKeyMissing, _resolveTileUrl } = sandbox(store);
+const { DEFAULT_TILE_LAYER, KEY_PROVIDER_GROUPS, TILE_LAYERS, _layerKeyMissing, _keyTag, _resolveTileUrl } = sandbox(store);
 const layers = Object.entries(TILE_LAYERS);
 
 // ── no provider may keep a placeholder nobody resolves ─────────────────────
@@ -118,4 +121,69 @@ for (const name of ['voyager', 'voyager_nolabels', 'positron', 'dark_matter', 'd
   assert(TILE_LAYERS[name].label.includes('★'), `${name} needs the ★ key marker like TF/MT layers`);
 }
 
-console.log('ok: map layer keys resolve, guard and warn per provider (17 keyed layers)');
+
+// ── the default must be a key-free layer (and not the plain OSM one) ───────
+store._v = {};
+assert(DEFAULT_TILE_LAYER === 'esri_topo', `Filip picked Esri Topo as the default, saw ${DEFAULT_TILE_LAYER}`);
+assert(Object.prototype.hasOwnProperty.call(TILE_LAYERS, DEFAULT_TILE_LAYER), 'the default must exist in the table');
+assert(TILE_LAYERS[DEFAULT_TILE_LAYER].url.includes('arcgisonline.com'), 'Esri Topo comes from the public Esri service');
+assert(_layerKeyMissing(DEFAULT_TILE_LAYER) === false,
+  'the DEFAULT LAYER MUST NEVER NEED A KEY: a keyed default greets a fresh install with watermarks');
+
+// ── menu order: free maps first, then each provider as one contiguous group ─
+const order = Object.keys(TILE_LAYERS);
+const isKeyed = k => /\{[a-z]+key\}/.test(TILE_LAYERS[k].url);
+const firstKeyed = order.findIndex(isKeyed);
+assert(firstKeyed > 0, 'there must be free layers, and they must come first');
+assert(!order.slice(firstKeyed).some(k => !isKeyed(k)),
+  'no free layer may appear after a keyed one — free maps first');
+const providerOf = k => {
+  const ph = Object.keys(KEY_PROVIDER_GROUPS).find(ph => TILE_LAYERS[k].url.includes(ph));
+  return ph || 'free';
+};
+const seen = [];
+for (const k of order) {
+  const p = providerOf(k);
+  if (seen[seen.length - 1] !== p) {
+    assert(!seen.includes(p), `${k} starts a second ${p} block — each provider must be one group`);
+    seen.push(p);
+  }
+}
+assert(seen.join(',') === 'free,{apikey},{mtapikey},{cartokey},{stadiakey}',
+  `expected free then TF, MT, CARTO, Stadia — saw ${seen.join(',')}`);
+
+// ── the cached-tile identity must include EVERY key, Stadia included ───────
+for (const [name, def] of layers) {
+  const ph = (def.url.match(/\{([a-z]+key)\}/) || [])[1];
+  if (!ph) continue;
+  const storage = KEYED[ph];
+  store._v = {};
+  const tagless = _keyTag(name);
+  assert(tagless && tagless !== '', `${name}: a keyed layer must carry a cache tag (else keyless tiles are reused for ever)`);
+  assert(tagless === ':nokey', `${name}: no key should tag as :nokey, saw ${tagless}`);
+  store._v = { [storage]: 'key-one' };
+  const tagOne = _keyTag(name);
+  assert(tagOne !== ':nokey' && tagOne !== '', `${name}: the tag must reflect a configured key`);
+  store._v = { [storage]: 'key-two' };
+  const tagTwo = _keyTag(name);
+  assert(tagOne !== tagTwo, `${name}: two different keys must not share a cache identity`);
+  assert(!tagOne.includes('key-one') && !tagOne.includes('key-two'),
+    `${name}: the tag is a hash — the key itself must never travel in a cache key`);
+}
+store._v = {};
+assert(_keyTag('osm') === '', 'a free layer needs no cache tag');
+
+// ── lite has no settings UI, so its default must be key-free too ──────────
+const liteSrc = fs.readFileSync(path.join(REPO, 'static/js/lite.js'), 'utf8');
+const liteDefault = (liteSrc.match(/const DEFAULT_LAYER = '([a-z_]+)'/) || [])[1];
+assert(liteDefault, 'lite must name a default layer');
+const liteBlock = liteSrc.slice(liteSrc.indexOf('const LAYERS = {'), liteSrc.indexOf('\n};', liteSrc.indexOf('const LAYERS = {')));
+const liteOrder = [...liteBlock.matchAll(/^  ([a-z_]+):\s*\{/gm)].map(m => m[1]);
+assert(/\{[a-z]+key\}/.test(liteBlock.match(new RegExp(`  ${liteDefault}:\\s+\\{.*`))[0]) === false,
+  'lite has no key fields, so its default layer must not need a key');
+const liteFirstKeyed = liteOrder.findIndex(k => /\{[a-z]+key\}/.test(liteBlock.match(new RegExp(`  ${k}:\\s+\\{.*`))[0]));
+assert(liteFirstKeyed > 0 && !liteOrder.slice(liteFirstKeyed).some(k =>
+  !/\{[a-z]+key\}/.test(liteBlock.match(new RegExp(`  ${k}:\\s+\\{.*`))[0])),
+  'lite: free layers first, then the keyed ones');
+
+console.log('ok: map keys, default layer and menu order (free first, then TF/MT/CARTO/Stadia)');

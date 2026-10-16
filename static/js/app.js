@@ -5450,23 +5450,31 @@ if (targetEl) {
     return ring;
   }
 
+  // The layer a fresh browser gets. It MUST be key-free: a keyed default greets a
+  // new install with watermarks (or nothing) and asks the user to get a key before
+  // the map works at all. Esri's World Topographic Map is a public service that
+  // needs no key (attribution required, as shown), and it was Filip's pick
+  // (2026-10-16) over the plain OSM default; OSM's tile usage policy also
+  // discourages using its servers as an application default.
+  const DEFAULT_TILE_LAYER = 'esri_topo';
+
+  // Which provider a keyed layer belongs to, keyed by the placeholder its URL carries. Used only for grouping
+  // and naming in the layer menu — the resolver and the key-missing guard stay per-placeholder.
+  const KEY_PROVIDER_GROUPS = {
+    '{apikey}':    { title: 'Thunderforest ★', note: 'API key required — set it in Settings → Map.' },
+    '{mtapikey}':  { title: 'MapTiler ★',      note: 'API key required — set it in Settings → Map.' },
+    '{cartokey}':  { title: 'CARTO ★',         note: 'API key required — set it in Settings → Map.' },
+    '{stadiakey}': { title: 'Stadia Maps ★',   note: 'API key required — set it in Settings → Map.' },
+  };
+
   const TILE_LAYERS = {
     osm:              { label: 'OpenStreetMap',   url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 19 },
-    voyager:          { label: 'Voyager ★',         url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key={cartokey}', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
-    voyager_nolabels: { label: 'Voyager No Labels ★', url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png?key={cartokey}', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
-    positron:         { label: 'Positron ★',        url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key={cartokey}', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
-    dark_matter:      { label: 'Dark Matter ★',     url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key={cartokey}', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
-    dark_nolabels:    { label: 'Dark No Labels ★',  url: 'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png?key={cartokey}', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
-    esri_gray_dark:   { label: 'Esri Dark Gray',  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles © Esri, HERE, Garmin, © OpenStreetMap contributors, and the GIS User Community', maxZoom: 16 },
-    stamen_toner_lite:{ label: 'Toner Lite ★',      url: 'https://tiles.stadiamaps.com/tiles/stamen_toner_lite/{z}/{x}/{y}{r}.png?api_key={stadiakey}', attribution: '© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://stamen.com/">Stamen Design</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', maxZoom: 20 },
-    stamen_toner_dark:{ label: 'Toner Dark ★',      url: 'https://tiles.stadiamaps.com/tiles/stamen_toner_dark/{z}/{x}/{y}{r}.png?api_key={stadiakey}', attribution: '© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://stamen.com/">Stamen Design</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', maxZoom: 20 },
-    stamen_terrain:   { label: 'Stamen Terrain ★',  url: 'https://tiles.stadiamaps.com/tiles/stamen_terrain/{z}/{x}/{y}{r}.png?api_key={stadiakey}', attribution: '© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://stamen.com/">Stamen Design</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', maxZoom: 20 },
-    esri_sat:         { label: 'Esri Satellite',  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles © Esri', maxZoom: 18 },
-    esri_streets:     { label: 'Esri Streets',    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles © Esri, DeLorme, NAVTEQ, USGS, Intermap, NRCAN', maxZoom: 19 },
     esri_topo:        { label: 'Esri Topo',       url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles © Esri', maxZoom: 18 },
-    topo:             { label: 'OpenTopoMap',     url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, © <a href="https://opentopomap.org">OpenTopoMap</a>', maxZoom: 17 },
-    stadia_outdoors:  { label: 'Stadia Outdoors ★', url: 'https://tiles.stadiamaps.com/tiles/outdoors/{z}/{x}/{y}{r}.png?api_key={stadiakey}', attribution: '© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', maxZoom: 20 },
+    esri_streets:     { label: 'Esri Streets',    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles © Esri, DeLorme, NAVTEQ, USGS, Intermap, NRCAN', maxZoom: 19 },
+    esri_sat:         { label: 'Esri Satellite',  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles © Esri', maxZoom: 18 },
+    esri_gray_dark:   { label: 'Esri Dark Gray',  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles © Esri, HERE, Garmin, © OpenStreetMap contributors, and the GIS User Community', maxZoom: 16 },
     esri_hillshade:   { label: 'Esri Hillshade',  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles © Esri, Airbus DS, USGS, NGA, NASA, CGIAR', maxZoom: 16 },
+    topo:             { label: 'OpenTopoMap',     url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, © <a href="https://opentopomap.org">OpenTopoMap</a>', maxZoom: 17 },
     tf_landscape:     { label: 'TF Landscape ★',  url: 'https://tile.thunderforest.com/landscape/{z}/{x}/{y}.png?apikey={apikey}', attribution: 'Maps © <a href="https://www.thunderforest.com/">Thunderforest</a>, Data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 22 },
     tf_outdoors:      { label: 'TF Outdoors ★',   url: 'https://tile.thunderforest.com/outdoors/{z}/{x}/{y}.png?apikey={apikey}', attribution: 'Maps © <a href="https://www.thunderforest.com/">Thunderforest</a>, Data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 22 },
     tf_pioneer:       { label: 'TF Pioneer ★',    url: 'https://tile.thunderforest.com/pioneer/{z}/{x}/{y}.png?apikey={apikey}', attribution: 'Maps © <a href="https://www.thunderforest.com/">Thunderforest</a>, Data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 22 },
@@ -5475,6 +5483,15 @@ if (targetEl) {
     mt_topo:          { label: 'MT Topo ★',          url: 'https://api.maptiler.com/maps/topo-v2/{z}/{x}/{y}.png?key={mtapikey}', attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 20 },
     mt_streets:       { label: 'MT Streets ★',       url: 'https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key={mtapikey}', attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 20 },
     mt_winter:        { label: 'MT Winter ★',        url: 'https://api.maptiler.com/maps/winter-v2/{z}/{x}/{y}.png?key={mtapikey}', attribution: '© <a href="https://www.maptiler.com/copyright/">MapTiler</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 20 },
+    voyager:          { label: 'Voyager ★',         url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key={cartokey}', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
+    voyager_nolabels: { label: 'Voyager No Labels ★', url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png?key={cartokey}', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
+    positron:         { label: 'Positron ★',        url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key={cartokey}', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
+    dark_matter:      { label: 'Dark Matter ★',     url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key={cartokey}', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
+    dark_nolabels:    { label: 'Dark No Labels ★',  url: 'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png?key={cartokey}', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>', maxZoom: 19 },
+    stamen_toner_lite:{ label: 'Toner Lite ★',      url: 'https://tiles.stadiamaps.com/tiles/stamen_toner_lite/{z}/{x}/{y}{r}.png?api_key={stadiakey}', attribution: '© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://stamen.com/">Stamen Design</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', maxZoom: 20 },
+    stamen_toner_dark:{ label: 'Toner Dark ★',      url: 'https://tiles.stadiamaps.com/tiles/stamen_toner_dark/{z}/{x}/{y}{r}.png?api_key={stadiakey}', attribution: '© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://stamen.com/">Stamen Design</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', maxZoom: 20 },
+    stamen_terrain:   { label: 'Stamen Terrain ★',  url: 'https://tiles.stadiamaps.com/tiles/stamen_terrain/{z}/{x}/{y}{r}.png?api_key={stadiakey}', attribution: '© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://stamen.com/">Stamen Design</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', maxZoom: 20 },
+    stadia_outdoors:  { label: 'Stadia Outdoors ★', url: 'https://tiles.stadiamaps.com/tiles/outdoors/{z}/{x}/{y}{r}.png?api_key={stadiakey}', attribution: '© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', maxZoom: 20 },
   };
 
   function allTileLayers() {
@@ -5509,7 +5526,7 @@ if (targetEl) {
       _mapAppTileLayersLoaded = false;
       refreshBaseLayerPanelOptions();
       const saved = (() => { try { return localStorage.getItem('mapTileLayer') || ''; } catch(e) { return ''; } })();
-      if (saved.startsWith('shared_')) setTileLayer('osm');
+      if (saved.startsWith('shared_')) setTileLayer(DEFAULT_TILE_LAYER);
       _sharedTileStatus('Shared tile DB disabled. OM is using built-in layers and browser cache.', true);
     }
   }
@@ -6225,11 +6242,12 @@ if (targetEl) {
   function _keyTag(layerKey) {
     const def = allTileLayers()[layerKey];
     const u = (def && def.url) || '';
-    if (!(u.includes('{apikey}') || u.includes('{mtapikey}') || u.includes('{cartokey}'))) return '';
+    if (!(u.includes('{apikey}') || u.includes('{mtapikey}') || u.includes('{cartokey}') || u.includes('{stadiakey}'))) return '';
     let raw = '';
     if (u.includes('{apikey}'))        raw = localStorage.getItem('thunderforestApiKey') || '';
     else if (u.includes('{mtapikey}')) raw = localStorage.getItem('mapTilerApiKey') || '';
-    else                               raw = localStorage.getItem('cartoApiKey') || '';
+    else if (u.includes('{cartokey}')) raw = localStorage.getItem('cartoApiKey') || '';
+    else                               raw = localStorage.getItem('stadiaApiKey') || '';
     let h = 5381;
     for (let i = 0; i < raw.length; i++) h = ((h << 5) + h + raw.charCodeAt(i)) >>> 0;
     return ':' + (raw ? h.toString(36) : 'nokey');
@@ -6238,7 +6256,7 @@ if (targetEl) {
   function setTileLayer(key) {
     if (!leafletMap) return;
     const layers = allTileLayers();
-    const def = layers[key] || TILE_LAYERS.osm;
+    const def = layers[key] || TILE_LAYERS[DEFAULT_TILE_LAYER];
     const url = _resolveTileUrl(def.url);
     if (_activeTileLayer) {
       // Update cache prefix BEFORE setUrl so new tiles use the right key
@@ -6260,7 +6278,7 @@ if (targetEl) {
       if (el.dataset.layer) el.classList.toggle('active', el.dataset.layer === key);
     });
     const btn = document.getElementById('map-layer-btn');
-    if (btn) btn.classList.toggle('active', key !== 'osm');
+    if (btn) btn.classList.toggle('active', key !== DEFAULT_TILE_LAYER);
     // Update the offline save label so it's clear which layer you're saving
     const lbl = document.getElementById('tile-save-layer-label');
     if (lbl) lbl.textContent = def.label;
@@ -6607,8 +6625,18 @@ if (targetEl) {
     document.getElementById('region-dl-progress').style.display = 'none';
     document.getElementById('region-dl-btn').disabled = false;
     const sel = document.getElementById('region-dl-layer');
-    sel.innerHTML = Object.entries(allTileLayers()).map(([k, def]) =>
-      `<option value="${k}">${escHtml(def.label)}</option>`).join('');
+    // Same order and grouping as the layer menu: free maps, then each key provider.
+    const _all = allTileLayers();
+    const _free = [], _grp = new Map(Object.keys(KEY_PROVIDER_GROUPS).map(ph => [ph, []]));
+    Object.entries(_all).forEach(([k, def]) => {
+      const ph = Object.keys(KEY_PROVIDER_GROUPS).find(p => (def.url || '').includes(p));
+      (ph ? _grp.get(ph) : _free).push([k, def]);
+    });
+    const _opt = ([k, def]) => `<option value="${k}">${escHtml(def.label)}</option>`;
+    sel.innerHTML = `<optgroup label="Free maps">${_free.map(_opt).join('')}</optgroup>`
+      + [..._grp.entries()].filter(([, list]) => list.length)
+          .map(([ph, list]) => `<optgroup label="${escHtml(KEY_PROVIDER_GROUPS[ph].title)}">${list.map(_opt).join('')}</optgroup>`)
+          .join('');
     sel.value = layerKey || (_activeTileLayer ? (_activeTileLayer.options.cachePrefix || 'osm') : 'osm');
     updateRegionEstimate();
   }
@@ -6632,7 +6660,7 @@ if (targetEl) {
   }
 
   function _tileUrlForLayer(layerKey, z, x, y) {
-    const def = allTileLayers()[layerKey] || TILE_LAYERS.osm;
+    const def = allTileLayers()[layerKey] || TILE_LAYERS[DEFAULT_TILE_LAYER];
     const s = 'abc'[Math.abs(x + y) % 3];
     return _resolveTileUrl(def.url).replace('{s}', s).replace('{z}', z).replace('{x}', x).replace('{y}', y).replace('{r}', '');
   }
@@ -6664,7 +6692,7 @@ if (targetEl) {
     }
 
     const layerKey   = document.getElementById('region-dl-layer').value || 'osm';
-    const layerLabel = (allTileLayers()[layerKey] || TILE_LAYERS.osm).label;
+    const layerLabel = (allTileLayers()[layerKey] || TILE_LAYERS[DEFAULT_TILE_LAYER]).label;
     if (_layerKeyMissing(layerKey)) {
       txt.textContent = 'This layer needs your own API key. Set it in Settings → Map, then download again.';
       btn.disabled = false;
@@ -6969,7 +6997,7 @@ if (targetEl) {
   function refreshBaseLayerPanelOptions() {
     if (!_baseLayerMenuPanel) return;
     _baseLayerMenuPanel.innerHTML = '';
-    const saved = (() => { try { return localStorage.getItem('mapTileLayer') || 'osm'; } catch(e) { return 'osm'; } })();
+    const saved = (() => { try { return localStorage.getItem('mapTileLayer') || DEFAULT_TILE_LAYER; } catch(e) { return DEFAULT_TILE_LAYER; } })();
     const addTitle = (label, note = '') => {
       const title = L.DomUtil.create('div', '', _baseLayerMenuPanel);
       title.textContent = label;
@@ -7011,7 +7039,30 @@ if (targetEl) {
       empty.style.cssText = 'padding:4px 10px 6px 10px;font-size:11px;color:var(--muted)';
     }
     addTitle('Online Maps', _sharedTileServerEnabled ? '' : 'Built-in layers. Browser cache may work offline only after viewing/downloading.');
-    Object.entries(TILE_LAYERS).forEach(([key, def]) => addLayer(key, def));
+    // Free maps first, then the API-key providers grouped by provider (Filip, 2026-10-16). The grouping is
+    // derived from the placeholder in each URL rather than from a hardcoded key list, so a layer added later
+    // lands in the right group by itself — and anything carrying a placeholder we do not know is shown under
+    // "Other (API key)" instead of being silently listed as free.
+    const byProvider = new Map(Object.keys(KEY_PROVIDER_GROUPS).map(ph => [ph, []]));
+    const freeMaps = [], unknownKey = [];
+    Object.entries(TILE_LAYERS).forEach(([key, def]) => {
+      const url = def.url || '';
+      const ph = Object.keys(KEY_PROVIDER_GROUPS).find(p => url.includes(p));
+      if (ph) byProvider.get(ph).push([key, def]);
+      else if (/\{[a-z]+key\}/.test(url)) unknownKey.push([key, def]);
+      else freeMaps.push([key, def]);
+    });
+    addTitle('Free maps', 'No API key needed.');
+    freeMaps.forEach(([key, def]) => addLayer(key, def));
+    for (const [ph, list] of byProvider) {
+      if (!list.length) continue;
+      addTitle(KEY_PROVIDER_GROUPS[ph].title, KEY_PROVIDER_GROUPS[ph].note);
+      list.forEach(([key, def]) => addLayer(key, def));
+    }
+    if (unknownKey.length) {
+      addTitle('Other (API key)', 'These layers need a key OverMesh has no field for yet.');
+      unknownKey.forEach(([key, def]) => addLayer(key, def));
+    }
   }
 
   function refreshMapLayerPanelOptions() {
@@ -7964,7 +8015,7 @@ if (targetEl) {
     const _initCenter = _savedMapView ? [_savedMapView.lat, _savedMapView.lng] : [46.05, 14.50];
     const _initZoom   = _savedMapView ? _savedMapView.zoom : 9;
     leafletMap = L.map('map', { zoomSnap: 0.5, zoomDelta: 0.5 }).setView(_initCenter, _initZoom);
-    const _savedLayer = (() => { try { return localStorage.getItem('mapTileLayer') || 'osm'; } catch(e) { return 'osm'; } })();
+    const _savedLayer = (() => { try { return localStorage.getItem('mapTileLayer') || DEFAULT_TILE_LAYER; } catch(e) { return DEFAULT_TILE_LAYER; } })();
     setTileLayer(_savedLayer);
     loadMapAppTileLayers();
     if (_showPolarGrid) _drawPolarGrid();
@@ -8181,8 +8232,8 @@ if (targetEl) {
         });
         leafletMap.on('click', () => panel.classList.remove('open'));
 
-        const savedKey = (() => { try { return localStorage.getItem('mapTileLayer') || 'osm'; } catch(e) { return 'osm'; } })();
-        if (savedKey !== 'osm') btn.classList.add('active');
+        const savedKey = (() => { try { return localStorage.getItem('mapTileLayer') || DEFAULT_TILE_LAYER; } catch(e) { return DEFAULT_TILE_LAYER; } })();
+        if (savedKey !== DEFAULT_TILE_LAYER) btn.classList.add('active');
 
         return wrap;
       }
@@ -10175,8 +10226,8 @@ if (targetEl) {
     pipMap = L.map('pip-map-el', {
       zoomControl: false, attributionControl: false, zoomSnap: 1,
     }).setView([46.05, 14.50], 9);
-    const _pipLayerKey = (() => { try { return localStorage.getItem('mapTileLayer') || 'osm'; } catch(e) { return 'osm'; } })();
-    const _pipDef = allTileLayers()[_pipLayerKey] || TILE_LAYERS.osm;
+    const _pipLayerKey = (() => { try { return localStorage.getItem('mapTileLayer') || DEFAULT_TILE_LAYER; } catch(e) { return DEFAULT_TILE_LAYER; } })();
+    const _pipDef = allTileLayers()[_pipLayerKey] || TILE_LAYERS[DEFAULT_TILE_LAYER];
     new OfflineTileLayer(_resolveTileUrl(_pipDef.url), { maxZoom: _pipDef.maxZoom }).addTo(pipMap);
 
     // Draggable header

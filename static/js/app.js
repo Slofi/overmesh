@@ -5555,6 +5555,47 @@ if (targetEl) {
     }
   }
 
+  // mbtileserver's /services LIST carries only name/url/imageType. The zoom limits live in the per-service
+  // detail (`/services/<id>`). Without them OM claims maxZoom 19 for a pack that ends at 17, and mbtileserver
+  // answers anything past max zoom with HTTP 200 + a BLANK tile, so over-zooming looks like an empty map
+  // instead of an error. The detail read is best-effort: if it fails, keep the old default rather than
+  // dropping the layer.
+  async function _sharedLayerDetail(id) {
+    try {
+      const r = await fetch(`${_sharedTileServerUrl}/services/${encodeURIComponent(id)}`, {cache: 'no-store'});
+      if (!r.ok) return null;
+      const d = await r.json();
+      return (d && typeof d === 'object') ? d : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function _sharedLayerDef(layer, detail) {
+    const id = layer.id || (layer.url ? layer.url.split('/').pop() : null);
+    if (!id) return null;
+    const meta = detail || {};
+    const ext = (layer.imageType || 'png').toLowerCase();
+    const rawMax = Number(meta.maxzoom || layer.maxzoom || layer.maxZoom || 19);
+    const rawMin = Number(meta.minzoom || layer.minzoom || 0);
+    // A malformed detail must not poison Leaflet with NaN; fall back to the old default.
+    const nativeMax = Number.isFinite(rawMax) && rawMax > 0 ? rawMax : 19;
+    const nativeMin = Number.isFinite(rawMin) && rawMin >= 0 ? rawMin : 0;
+    return {
+      key: _mapAppLocalLayerKey(id),
+      def: {
+        label: layer.name || id,
+        url: `${_sharedTileServerUrl}/services/${encodeURIComponent(id)}/tiles/{z}/{x}/{y}.${ext}`,
+        attribution: layer.attribution || meta.attribution || `Local tiles · ${layer.name || id}`,
+        minNativeZoom: nativeMin,
+        maxNativeZoom: nativeMax,
+        // Over-zoom instead of blanking: Leaflet upscales the deepest real tile.
+        maxZoom: Math.max(nativeMax, 19),
+        sharedTileServer: true,
+      },
+    };
+  }
+
   async function loadMapAppTileLayers(opts = {}) {
     if (!_sharedTileServerEnabled) {
       _mapAppTileLayers = {};
@@ -5571,19 +5612,16 @@ if (targetEl) {
       const r = await fetch(`${_sharedTileServerUrl}/services`, {cache: 'no-store'});
       if (!r.ok) throw new Error(String(r.status));
       const local = await r.json();
-      const next = {};
-      (Array.isArray(local) ? local : []).forEach(layer => {
+      const list = Array.isArray(local) ? local : [];
+      // One detail read per layer, in parallel. A failed read only costs that layer its real zoom limits.
+      const details = await Promise.all(list.map(layer => {
         const id = layer.id || (layer.url ? layer.url.split('/').pop() : null);
-        if (!id) return;
-        const ext = (layer.imageType || 'png').toLowerCase();
-        const key = _mapAppLocalLayerKey(id);
-        next[key] = {
-          label: layer.name || id,
-          url: `${_sharedTileServerUrl}/services/${encodeURIComponent(id)}/tiles/{z}/{x}/{y}.${ext}`,
-          attribution: layer.attribution || `Local tiles · ${layer.name || id}`,
-          maxZoom: Number(layer.maxzoom || layer.maxZoom || 19),
-          sharedTileServer: true,
-        };
+        return id ? _sharedLayerDetail(id) : null;
+      }));
+      const next = {};
+      list.forEach((layer, i) => {
+        const built = _sharedLayerDef(layer, details[i]);
+        if (built) next[built.key] = built.def;
       });
       _mapAppTileLayers = next;
       _mapAppTileLayersLoaded = true;
@@ -6325,9 +6363,19 @@ if (targetEl) {
         leafletMap.attributionControl.addAttribution(def.attribution);
       }
       _activeTileLayer.options.attribution = def.attribution;
-      _activeTileLayer.options.maxZoom     = def.maxZoom;
+      _activeTileLayer.options.maxZoom       = def.maxZoom;
+      // Shared OPS-TOC layers carry native zoom limits; clear them when switching to an ordinary layer.
+      _activeTileLayer.options.maxNativeZoom = def.maxNativeZoom;
+      _activeTileLayer.options.minNativeZoom = def.minNativeZoom;
     } else {
-      _activeTileLayer = new OfflineTileLayer(url, { attribution: def.attribution, maxZoom: def.maxZoom, cachePrefix: key, keyTag: _keyTag(key) });
+      _activeTileLayer = new OfflineTileLayer(url, {
+        attribution: def.attribution,
+        maxZoom: def.maxZoom,
+        maxNativeZoom: def.maxNativeZoom,
+        minNativeZoom: def.minNativeZoom,
+        cachePrefix: key,
+        keyTag: _keyTag(key),
+      });
       _activeTileLayer.addTo(leafletMap);
     }
     try { localStorage.setItem('mapTileLayer', key); } catch(e) {}

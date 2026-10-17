@@ -35,6 +35,12 @@ _gps_thread             = None
 _gps_last_push_ts       = 0.0      # epoch seconds — rate-limits auto-push to nodes
 _GPS_AUTO_PUSH_INTERVAL = 30       # default seconds between auto-pushes (overridden by config)
 _PROXY_FAIL_LIMIT = 5
+_PROXY_RETRY_SECONDS = 2      # pause between proxy attempts
+_PROXY_WARN_EVERY = 300       # a sustained outage logs at most once per 5 minutes
+# Set by the proxy reader when it gives up AND a usable serial fallback exists. The watchdog reads it, clears it
+# and runs the direct reader that round. Without this the watchdog restarted the proxy forever: the old
+# "falling back to <port>" warning was logged every 10 s while nothing actually fell back.
+_gps_proxy_fallback_port = ""
 
 _gps_runtime = {
     "port": "",
@@ -375,12 +381,14 @@ def _gps_stop():
 # ---------------------------------------------------------------------------
 
 def _gps_proxy_reader(proxy_url, fallback_port, stop_event):
+    global _gps_proxy_fallback_port
     url = proxy_url.rstrip("/") + "/api/gps"
     log.info(f"GPS: proxy mode → {url}")
     with gps_lock:
         _gps_runtime.update({"port": f"OPS-TOC ({proxy_url})", "running": True,
                               "port_present": True, "error": "", "source": "proxy"})
     fails = 0
+    last_warn = 0.0
     while not stop_event.is_set():
         try:
             with urllib.request.urlopen(url, timeout=3) as resp:
@@ -423,15 +431,33 @@ def _gps_proxy_reader(proxy_url, fallback_port, stop_event):
                             args=(lat, lon, int(alt) if alt is not None else 0, precision_bits),
                             daemon=True
                         ).start()
+            if fails:
+                log.info(f"GPS: OPS-TOC reachable again after {fails} failed attempt(s)")
             fails = 0
         except Exception as e:
             fails += 1
             with gps_lock:
                 _gps_runtime["error"] = f"OPS-TOC unreachable ({fails}x): {e}"
-            if fails >= _PROXY_FAIL_LIMIT and fallback_port and gps_port_present(fallback_port):
-                log.warning(f"GPS: OPS-TOC unreachable after {fails} tries — falling back to {fallback_port}")
-                break  # watchdog will restart as direct serial reader
-        time.sleep(2)
+            if fails >= _PROXY_FAIL_LIMIT:
+                # Only a port that is present AND not one of our radios can serve as a fallback. CD's configured
+                # fallback is the MC radio's own port, so the honest outcome there is "keep waiting for OPS-TOC".
+                conflict = gps_port_conflict(fallback_port) if fallback_port else None
+                usable = bool(fallback_port) and gps_port_present(fallback_port) and not conflict
+                if usable:
+                    log.warning(f"GPS: OPS-TOC unreachable after {fails} tries - using the configured serial port {fallback_port}")
+                    _gps_proxy_fallback_port = fallback_port
+                    break  # watchdog honours the request and starts the direct reader
+                now = time.monotonic()
+                if now - last_warn >= _PROXY_WARN_EVERY:
+                    if not fallback_port:
+                        why = "no fallback port configured"
+                    elif conflict:
+                        why = f"fallback {fallback_port} is the {conflict.get('name') or conflict.get('network')} radio"
+                    else:
+                        why = f"fallback {fallback_port} is not connected"
+                    log.warning(f"GPS: OPS-TOC unreachable ({fails} tries, {why}) - still retrying every {_PROXY_RETRY_SECONDS}s")
+                    last_warn = now
+        time.sleep(_PROXY_RETRY_SECONDS)
     with gps_lock:
         _gps_runtime.update({"running": False})
     log.info("GPS: proxy reader stopped")
@@ -452,6 +478,7 @@ def _gps_start_proxy(proxy_url, fallback_port=""):
 
 
 def gps_watchdog_loop():
+    global _gps_proxy_fallback_port
     while True:
         time.sleep(5)
         cfg = CONFIG.get("gps", {}) or {}
@@ -464,8 +491,13 @@ def gps_watchdog_loop():
         if _gps_thread and _gps_thread.is_alive():
             continue
         if source == "proxy":
-            _gps_start_proxy(proxy_url, fallback_port=port)
-            continue
+            if _gps_proxy_fallback_port:
+                # The proxy reader gave up and there IS a usable serial fallback: read it directly this round.
+                port = _gps_proxy_fallback_port
+                _gps_proxy_fallback_port = ""
+            else:
+                _gps_start_proxy(proxy_url, fallback_port=port)
+                continue
         # direct serial path
         if not port:
             with gps_lock:

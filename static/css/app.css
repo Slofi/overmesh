@@ -1581,6 +1581,8 @@
     .leaflet-control-zoom-out { border-top: none !important; }
     .leaflet-control-attribution { background: rgba(20,20,20,0.80) !important; color: #ccc !important; font-size: 11px !important; border-radius: 4px 0 0 0 !important; }
     .leaflet-control-attribution a { color: #aaa !important; }
+    /* The PiP is 280x210: the full provider credit has to fit, but must not cover the map. */
+    #pip-map-el .leaflet-control-attribution { font-size: 8px !important; line-height: 1.2 !important; }
 
     /* ── Bot ─────────────────────────────────────────────────────────────── */
     /* Map toolbar */

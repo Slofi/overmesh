@@ -186,4 +186,49 @@ assert(liteFirstKeyed > 0 && !liteOrder.slice(liteFirstKeyed).some(k =>
   !/\{[a-z]+key\}/.test(liteBlock.match(new RegExp(`  ${k}:\\s+\\{.*`))[0])),
   'lite: free layers first, then the keyed ones');
 
+// ── credits: required provider text present, Leaflet branding absent (S458) ─
+// The Leaflet flag/wordmark is courtesy, not a licence term; provider credits are
+// terms. A credit that names a provider without its required link is the failure
+// this guards, and so is an abbreviated Esri string.
+for (const [name, def] of layers) {
+  assert(typeof def.attribution === 'string' && def.attribution.trim(),
+    `${name} must carry an attribution`);
+  assert(!/leaflet/i.test(def.attribution),
+    `${name} must not credit Leaflet on the map`);
+}
+assert(/openstreetmap\.org\/copyright/.test(TILE_LAYERS.osm.attribution),
+  'OSM must link to the copyright page');
+for (const k of ['voyager', 'voyager_nolabels', 'positron', 'dark_matter', 'dark_nolabels']) {
+  assert(/carto\.com/.test(TILE_LAYERS[k].attribution), `${k} must link CARTO`);
+  assert(/openstreetmap\.org\/copyright/.test(TILE_LAYERS[k].attribution), `${k} must link OSM`);
+}
+for (const k of ['tf_landscape', 'tf_outdoors', 'tf_pioneer', 'tf_atlas']) {
+  assert(/thunderforest\.com/.test(TILE_LAYERS[k].attribution), `${k} must link Thunderforest`);
+  assert(/openstreetmap\.org\/copyright/.test(TILE_LAYERS[k].attribution), `${k} must link OSM`);
+}
+for (const k of ['mt_hybrid', 'mt_topo', 'mt_streets', 'mt_winter']) {
+  assert(/maptiler\.com/.test(TILE_LAYERS[k].attribution), `${k} must link MapTiler`);
+  assert(/openstreetmap\.org\/copyright/.test(TILE_LAYERS[k].attribution), `${k} must link OSM`);
+}
+for (const k of ['stamen_toner_lite', 'stamen_toner_dark', 'stamen_terrain', 'stadia_outdoors']) {
+  assert(/stadiamaps\.com/.test(TILE_LAYERS[k].attribution), `${k} must link Stadia Maps`);
+  assert(/openstreetmap\.org\/copyright/.test(TILE_LAYERS[k].attribution), `${k} must link OSM`);
+}
+assert(/opentopomap\.org/.test(TILE_LAYERS.topo.attribution) &&
+  /openstreetmap\.org\/copyright/.test(TILE_LAYERS.topo.attribution),
+  'OpenTopoMap must link both itself and OSM');
+for (const k of ['esri_topo', 'esri_streets', 'esri_sat', 'esri_gray_dark', 'esri_hillshade']) {
+  assert(TILE_LAYERS[k].attribution.startsWith('Esri,'), `${k} must use the service's own Esri credit`);
+  assert(!/^Tiles © Esri\b/.test(TILE_LAYERS[k].attribution), `${k} still carries the old abbreviated credit`);
+}
+assert(src.includes('leafletMap.attributionControl.setPrefix(false)'),
+  'the main map must drop the Leaflet prefix');
+assert(liteSrc.includes('map.attributionControl.setPrefix(false)'),
+  'the lite map must drop the Leaflet prefix');
+assert(src.includes('pipMap.attributionControl.setPrefix(false)'),
+  'the PiP map must drop the Leaflet prefix too');
+assert(src.includes('attribution: _pipDef.attribution'),
+  'the PiP map must carry the basemap provider credit');
+
 console.log('ok: map keys, default layer and menu order (free first, then TF/MT/CARTO/Stadia)');
+console.log('ok: provider credits present, Leaflet prefix removed');

@@ -24,6 +24,13 @@ function extract(startMarker, endMarker) {
 const factory = [
   'let _sharedTileServerUrl = "http://localhost:8092";',
   'function _mapAppLocalLayerKey(id) { return "shared_" + String(id).replace(/[^A-Za-z0-9_-]/g, "_"); }',
+  // Credits used by the shared-layer derivation; the real values are pinned by test_map_keys_ui.js.
+  'const TILE_LAYERS = { esri_topo: { attribution: "ESRI_TOPO" }, esri_sat: { attribution: "ESRI_SAT" },'
+    + ' esri_streets: { attribution: "ESRI_STREETS" }, esri_gray_dark: { attribution: "ESRI_GRAY" },'
+    + ' esri_hillshade: { attribution: "ESRI_HILL" }, tf_atlas: { attribution: "TF" },'
+    + ' voyager: { attribution: "CARTO" }, mt_topo: { attribution: "MT" }, topo: { attribution: "OPENTOPO" },'
+    + ' osm: { attribution: "OSM" } };',
+  extract('function _sharedLayerCredit(', '\n  }'),
   extract('function _sharedLayerDef(', '\n  }'),
   'return _sharedLayerDef;',
 ].join('\n');
@@ -44,6 +51,20 @@ assert(built.def.maxZoom === 19, 'the map stays zoomable, but from native z17 up
 assert(built.def.url === 'http://localhost:8092/services/slovenija-esri-topo-z9-16/tiles/{z}/{x}/{y}.jpg',
   `tile URL must keep the service id and image type, got ${built.def.url}`);
 assert(built.def.attribution === 'Tiles (c) Esri', 'detail attribution wins when the list has none');
+
+// The real mbtileserver detail has source_url/source_layer_name but NO attribution. The credit
+// must come from the pack's own recorded source, never be invented and never stay blank.
+built = sharedLayerDef(entry, {
+  maxzoom: 17, minzoom: 9,
+  source_url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+});
+assert(built.def.attribution === 'ESRI_TOPO', `an Esri Topo pack must carry the Topo credit, got ${built.def.attribution}`);
+built = sharedLayerDef({ url: 'http://localhost:8092/services/tf-atlas', name: 'TF Atlas', imageType: 'png' }, {
+  source_url: 'https://tile.thunderforest.com/atlas/{z}/{x}/{y}.png?apikey=x',
+});
+assert(built.def.attribution === 'TF', `a Thunderforest pack must carry the TF credit, got ${built.def.attribution}`);
+built = sharedLayerDef({ url: 'http://localhost:8092/services/unknown', name: 'Unknown', imageType: 'png' }, {});
+assert(built.def.attribution === 'Local tiles · Unknown', 'an unknown pack stays honest instead of inventing a provider');
 
 // Detail unreadable: keep the old behaviour (19), never NaN and never a dropped layer.
 built = sharedLayerDef(entry, null);

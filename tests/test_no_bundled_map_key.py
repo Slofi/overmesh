@@ -57,7 +57,11 @@ class NoBundledMapKeyTests(unittest.TestCase):
         offenders: list[str] = []
         for path in _js_files():
             for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-                if "basemaps.cartocdn.com" in line and "{cartokey}" not in line:
+                # Only a TILE URL is in scope. A provider-name mention (e.g. the shared-layer credit
+                # helper matching `source.includes('basemaps.cartocdn.com')`) is not a URL and must
+                # not be flagged: the old line-only pattern flagged it the moment that helper landed.
+                if ("basemaps.cartocdn.com" in line and ("https://" in line or "url:" in line)
+                        and "{cartokey}" not in line):
                     offenders.append(f"{path.name}:{n}")
         self.assertFalse(offenders, "cartocdn layer without the {cartokey} placeholder: " + ", ".join(offenders))
 

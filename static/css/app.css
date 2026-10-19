@@ -1582,7 +1582,7 @@
     .leaflet-control-attribution { background: rgba(20,20,20,0.80) !important; color: #ccc !important; font-size: 11px !important; border-radius: 4px 0 0 0 !important; }
     .leaflet-control-attribution a { color: #aaa !important; }
     /* The PiP is 280x210: the full provider credit has to fit, but must not cover the map. */
-    #pip-map-el .leaflet-control-attribution { font-size: 8px !important; line-height: 1.2 !important; }
+    #pip-map-el .leaflet-control-attribution { font-size: 8px !important; line-height: 1.2 !important; max-width: calc(100% - 10px) !important; }
 
     /* ── Bot ─────────────────────────────────────────────────────────────── */
     /* Map toolbar */
@@ -1997,3 +1997,18 @@
   justify-content: center;
   line-height: 1;
 }
+
+
+.leaflet-bottom.leaflet-right { width: 100%; }
+.leaflet-control-attribution {
+  max-width: calc(100% - 70px);
+  white-space: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  line-height: 1.25;
+}
+.leaflet-control-attribution::-webkit-scrollbar { display: none; }

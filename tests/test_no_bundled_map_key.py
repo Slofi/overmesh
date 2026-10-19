@@ -137,7 +137,9 @@ class MapKeyProviderWiringTests(unittest.TestCase):
         self.assertEqual(name, "esri_topo", "the default is Filip's pick")
         line = next(ln for ln in self.app.splitlines() if ln.strip().startswith(name + ":"))
         self.assertNotIn("key}", line, "the default layer must not need an API key")
-        self.assertNotIn("openstreetmap.org", line, "he asked for something other than plain OSM")
+        # The attribution now links OSM (required); only the TILE URL must not be OSM.
+        self.assertNotIn("tile.openstreetmap.org", line.split("attribution:")[0],
+                         "he asked for something other than plain OSM")
         # lite has no key fields at all, so its default must be key-free too
         lite_default = re.search(r"const DEFAULT_LAYER = '([a-z_]+)'", self.lite)
         self.assertIsNotNone(lite_default, "lite.js must name its default too")

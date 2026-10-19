@@ -528,7 +528,22 @@
     .ss-mesh-node:nth-child(1){animation-delay:0s}.ss-mesh-node:nth-child(2){animation-delay:1s}.ss-mesh-node:nth-child(3){animation-delay:2s}
     .service-splash[data-mode="shutdown"] .ss-anim{display:none}
     @media(prefers-reduced-motion:reduce){.ss-dot,.ss-mesh-node{animation:none}}
-  </style>
+  
+.leaflet-bottom.leaflet-right { width: 100%; }
+.leaflet-control-attribution {
+  max-width: calc(100% - 70px);
+  white-space: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  line-height: 1.25;
+}
+.leaflet-control-attribution::-webkit-scrollbar { display: none; }
+
+</style>
 </head>
 <body{% if exposed_no_auth %} class="exposed-active"{% endif %}>
 <div id="exposed-banner" title="This instance is bound to {{ bind_host }} with no login enabled. Anyone who can reach it can send RF and control it. Enable a password or bind to 127.0.0.1 (see README → Security).">⚠ No login enabled. Reachable on your network ({{ bind_host }})

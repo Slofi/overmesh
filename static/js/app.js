@@ -5494,11 +5494,11 @@ if (targetEl) {
   const TILE_LAYERS = {
     osm:              { label: 'OpenStreetMap',   url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 19 },
     // Esri credits are the service's own copyrightText, read from each MapServer's ?f=pjson (S458).
-    esri_topo:        { label: 'Esri Topo',       url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', attribution: 'Esri, HERE, Garmin, Intermap, increment P Corp., GEBCO, USGS, FAO, NPS, NRCAN, GeoBase, IGN, Kadaster NL, Ordnance Survey, Esri Japan, METI, Esri China (Hong Kong), (c) OpenStreetMap contributors, and the GIS User Community', maxZoom: 18 },
-    esri_streets:     { label: 'Esri Streets',    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', attribution: 'Esri, HERE, Garmin, USGS, Intermap, INCREMENT P, NRCan, Esri Japan, METI, Esri China (Hong Kong), Esri Korea, Esri (Thailand), NGCC, (c) OpenStreetMap contributors, and the GIS User Community', maxZoom: 19 },
+    esri_topo:        { label: 'Esri Topo',       url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', attribution: 'Esri, HERE, Garmin, © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, and the GIS User Community <span title="Esri, HERE, Garmin, Intermap, increment P Corp., GEBCO, USGS, FAO, NPS, NRCAN, GeoBase, IGN, Kadaster NL, Ordnance Survey, Esri Japan, METI, Esri China (Hong Kong), (c) OpenStreetMap contributors, and the GIS User Community">ⓘ</span>', maxZoom: 18 },
+    esri_streets:     { label: 'Esri Streets',    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', attribution: 'Esri, HERE, Garmin, © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, and the GIS User Community <span title="Esri, HERE, Garmin, USGS, Intermap, INCREMENT P, NRCan, Esri Japan, METI, Esri China (Hong Kong), Esri Korea, Esri (Thailand), NGCC, (c) OpenStreetMap contributors, and the GIS User Community">ⓘ</span>', maxZoom: 19 },
     esri_sat:         { label: 'Esri Satellite',  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attribution: 'Esri, Vantor, Earthstar Geographics, and the GIS User Community', maxZoom: 18 },
     esri_gray_dark:   { label: 'Esri Dark Gray',  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', attribution: 'Esri, HERE, Garmin, (c) OpenStreetMap contributors, and the GIS user community', maxZoom: 16 },
-    esri_hillshade:   { label: 'Esri Hillshade',  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}', attribution: 'Esri, Vantor, Airbus DS, USGS, NGA, NASA, CGIAR, N Robinson, NCEAS, NLS, OS, NMA, Geodatastyrelsen, Rijkswaterstaat, GSA, Geoland, FEMA, Intermap, and the GIS user community', maxZoom: 16 },
+    esri_hillshade:   { label: 'Esri Hillshade',  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}', attribution: 'Esri, USGS, NGA, NASA, and the GIS User Community <span title="Esri, Vantor, Airbus DS, USGS, NGA, NASA, CGIAR, N Robinson, NCEAS, NLS, OS, NMA, Geodatastyrelsen, Rijkswaterstaat, GSA, Geoland, FEMA, Intermap, and the GIS user community">ⓘ</span>', maxZoom: 16 },
     topo:             { label: 'OpenTopoMap',     url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, © <a href="https://opentopomap.org">OpenTopoMap</a>', maxZoom: 17 },
     tf_landscape:     { label: 'TF Landscape ★',  url: 'https://tile.thunderforest.com/landscape/{z}/{x}/{y}.png?apikey={apikey}', attribution: 'Maps © <a href="https://www.thunderforest.com/">Thunderforest</a>, Data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 22 },
     tf_outdoors:      { label: 'TF Outdoors ★',   url: 'https://tile.thunderforest.com/outdoors/{z}/{x}/{y}.png?apikey={apikey}', attribution: 'Maps © <a href="https://www.thunderforest.com/">Thunderforest</a>, Data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 22 },
@@ -5576,7 +5576,14 @@ if (targetEl) {
   // shared pack would otherwise show "Local tiles · name" and credit nobody. Derive the provider
   // credit from the pack's own recorded source; never invent one.
   function _sharedLayerCredit(layer, meta, id) {
-    const stored = layer.attribution || meta.attribution;
+    const rawStored = layer.attribution || meta.attribution;
+    const stored = rawStored && /increment P Corp\.|GEBCO|Kadaster NL/.test(rawStored)
+      ? TILE_LAYERS.esri_topo.attribution
+      : rawStored && /INCREMENT P|NRCan|NGCC/.test(rawStored)
+        ? TILE_LAYERS.esri_streets.attribution
+        : rawStored && /Airbus DS|Robinson|NCEAS/.test(rawStored)
+          ? TILE_LAYERS.esri_hillshade.attribution
+          : rawStored;
     if (stored) return stored;
     const source = `${meta.source_url || ''} ${meta.source_layer_name || ''} ${id} ${layer.name || ''}`.toLowerCase();
     if (source.includes('world_topo_map') || source.includes('esri topo')) return TILE_LAYERS.esri_topo.attribution;

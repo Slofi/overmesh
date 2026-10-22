@@ -1756,12 +1756,19 @@
       flex-shrink: 0; cursor: grab; user-select: none;
     }
     #pip-header:active { cursor: grabbing; }
+    /* the title gives way first when the minimap is resized small (S468: one more header button) */
+    #pip-header > span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
     #pip-collapse-btn, #pip-locate-btn {
       background: none; border: none; color: var(--muted);
       cursor: pointer; font-size: 13px; padding: 0 2px; line-height: 1;
     }
     #pip-collapse-btn:hover { color: var(--text); }
     #pip-locate-btn:hover { color: var(--accent); }
+    #pip-trace-btn {
+      background: none; border: none; color: var(--muted);
+      cursor: pointer; font-size: 10px; padding: 0 4px; line-height: 1; white-space: nowrap;
+    }
+    #pip-trace-btn:hover, #pip-trace-btn.on { color: var(--accent); }
     #pip-map-el { flex: 1; min-height: 0; }
 
     /* ── Mobile (≤640px) ─────────────────────────────────────────────────── */

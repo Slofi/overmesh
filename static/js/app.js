@@ -10367,6 +10367,90 @@ if (targetEl) {
       if (!pipInited) initPipMap();
       else { setTimeout(() => pipMap && pipMap.invalidateSize(), 10); updatePipMarkers(allNodes); }
     }
+    _pipTracesSync();   // a hidden minimap never polls
+  }
+
+  // ── Minimap MC Traces ──────────────────────────────────────────────────────
+  // The same passive "overheard packets" animation as Sense → Traces, drawn on
+  // the minimap. It needs its OWN toggle: Sense switches its Traces off whenever
+  // the Map tab is left, and the minimap only lives on Nodes/Chat, so the two
+  // are never on screen together. Remembered across reloads; polls only while
+  // the minimap is actually visible and an MC radio is connected.
+  let _pipRxOn = (() => { try { return localStorage.getItem('pipMcTraces') === '1'; } catch (e) { return false; } })();
+  let _pipRxTimer = null;
+  let _pipRxRows  = [];
+  let _pipRxStamp = null;
+  let _pipRxSeen  = new Set();
+  // Bumped on every start/stop. A poll that was in flight across a close+reopen
+  // belongs to the OLD run: without this it would land in the new run's empty
+  // seen-set and replay up to MC_RX_MAX_ANIM stale packets as one burst.
+  let _pipRxGen   = 0;
+
+  function _pipMcConnected() {
+    return Object.values(mcLastStatus).some(s => s.status === 'connected')
+           && localStorage.getItem('mcHide') !== '1';
+  }
+
+  function _pipRxActive() {
+    return _pipRxOn && pipOpen && pipInited && !!pipMap
+           && ['nodes', 'chat'].includes(currentTab) && _pipMcConnected();
+  }
+
+  function togglePipTraces() {
+    _pipRxOn = !_pipRxOn;
+    try { localStorage.setItem('pipMcTraces', _pipRxOn ? '1' : '0'); } catch (e) {}
+    _pipTracesSync();
+  }
+
+  function _pipTraceBtnState() {
+    const btn = document.getElementById('pip-trace-btn');
+    if (!btn) return;
+    btn.style.display = _pipMcConnected() ? '' : 'none';
+    btn.textContent = _pipRxOn ? 'Traces ●' : 'Traces';
+    btn.classList.toggle('on', _pipRxOn);
+  }
+
+  // Start or stop the minimap poll to match what is on screen. Cheap when
+  // nothing changed, so it is called from every visibility/connection change.
+  function _pipTracesSync() {
+    _pipTraceBtnState();
+    const want = _pipRxActive();
+    if (want && !_pipRxTimer) {
+      _pipRxGen++;
+      _pipRxStamp = null;
+      _pipRxSeen = new Set();
+      _pipRxRefresh(true);
+      _pipRxTimer = setInterval(_pipRxRefresh, MC_RX_REFRESH_MS);
+    } else if (!want && _pipRxTimer) {
+      _pipRxGen++;
+      clearInterval(_pipRxTimer);
+      _pipRxTimer = null;
+      _pipRxRows = [];
+      _pipRxStamp = null;
+      if (pipMap) _clearMcRxLines(pipMap);
+    }
+  }
+
+  async function _pipRxRefresh(seed = false) {
+    const rid = activeMcRadioId;
+    if (!rid || !_pipRxActive()) return;
+    const gen = _pipRxGen;
+    try {
+      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/passive_obs`
+                            + `?obs_types=rx&limit=${MC_RX_FETCH_LIMIT}`);
+      if (!r.ok) return;
+      const rows = await r.json();
+      if (gen !== _pipRxGen) return;   // stopped (and maybe restarted) while in flight
+      const stamp = `${rows.length}:${rows[0]?.ts ?? ''}:${rows[0]?.path ?? ''}`;
+      _pipRxRows = rows;
+      if (stamp === _pipRxStamp) return;
+      _pipRxStamp = stamp;
+    } catch (e) {
+      console.warn('minimap MC traces fetch failed:', e);
+      return;
+    }
+    if (!_pipRxActive()) return;   // closed while the fetch was in flight
+    _pipRxSeen = _mcRxPlay(_pipRxRows, _pipRxSeen, seed, pipMap, _pipRxActive);
   }
 
   function togglePip() {
@@ -10393,7 +10477,8 @@ if (targetEl) {
     let resizing = false, rsx, rsy, rwStart, rhStart;
 
     header.addEventListener('mousedown', e => {
-      if (e.target.id === 'pip-collapse-btn' || e.target.id === 'pip-locate-btn') return;
+      if (e.target.id === 'pip-collapse-btn' || e.target.id === 'pip-locate-btn'
+          || e.target.id === 'pip-trace-btn') return;
       dragging = true;
       const r = wrap.getBoundingClientRect();
       sx = e.clientX; sy = e.clientY;
@@ -10428,7 +10513,7 @@ if (targetEl) {
     // Invalidate Leaflet size on any dimension change
     new ResizeObserver(() => pipMap && pipMap.invalidateSize()).observe(wrap);
 
-    setTimeout(() => { pipMap.invalidateSize(); updatePipMarkers(allNodes); }, 50);
+    setTimeout(() => { pipMap.invalidateSize(); updatePipMarkers(allNodes); _pipTracesSync(); }, 50);
   }
 
   function updatePipMarkers(nodes) {
@@ -11634,6 +11719,7 @@ if (targetEl) {
     // Overheard traces need a connected radio to keep refreshing.
     if (!mcConnected && _mcRxTracesOn) setMcTraces(false);
     _mcTraceSetButtonState();
+    _pipTracesSync();   // the minimap's Traces follow the same connection rule
   }
 
   function applyMcVisibility() {
@@ -17615,18 +17701,22 @@ if (targetEl) {
     return out.filter(Boolean);
   }
 
-  function _mcRxLaunch(res) {
-    if (!leafletMap || _mcRxAnims.length >= MC_RX_MAX_ANIM) return;
+  // `map` is the main map or the minimap (PiP). Each animation remembers its
+  // map, so clearing one view never wipes the other; the minimap gets smaller
+  // marks to suit its size.
+  function _mcRxLaunch(res, map = leafletMap) {
+    if (!map || _mcRxAnims.filter(a => a.map === map).length >= MC_RX_MAX_ANIM) return;
+    const mini = map !== leafletMap;
     const color = _mcRxColor(res.row.payload_type);
-    if (res.direct) return _mcRxLaunchDirect(res, color);
+    if (res.direct) return _mcRxLaunchDirect(res, color, map);
     const geom = _mcRxGeometry(res.points);
     if (!geom.segs.length) return;
     const tail = L.polyline([], {
-      color, weight: 3, opacity: 0.9, lineCap: 'round', lineJoin: 'round', interactive: false,
-    }).addTo(leafletMap);
+      color, weight: mini ? 2 : 3, opacity: 0.9, lineCap: 'round', lineJoin: 'round', interactive: false,
+    }).addTo(map);
     const dot = L.circleMarker(res.points[0], {
-      radius: 4, color: '#fff', weight: 1.5, fillColor: color, fillOpacity: 1, interactive: true,
-    }).addTo(leafletMap);
+      radius: mini ? 3 : 4, color: '#fff', weight: mini ? 1 : 1.5, fillColor: color, fillOpacity: 1, interactive: true,
+    }).addTo(map);
     const hops = res.hopMeta.map(h => h.name).join(' → ');
     const when = res.row.ts ? new Date(res.row.ts * 1000).toLocaleTimeString() : '';
     dot.bindTooltip(
@@ -17637,7 +17727,7 @@ if (targetEl) {
       + `${res.row.rssi != null ? res.row.rssi + ' dBm' : ''} ${res.row.snr != null ? '/ ' + res.row.snr + ' SNR' : ''}<br>`
       + `${escHtml(when)}`, {sticky: true});
     _mcRxAnims.push({
-      geom, tail, dot, color,
+      map, geom, tail, dot, color,
       // Longer paths take longer, so hop count reads as distance travelled.
       duration: Math.max(MC_RX_HOP_MS, geom.segs.length * MC_RX_HOP_MS),
       startedAt: null, done: false,
@@ -17647,10 +17737,11 @@ if (targetEl) {
   }
 
   // Direct arrival: an expanding, fading ring on our own radio.
-  function _mcRxLaunchDirect(res, color) {
+  function _mcRxLaunchDirect(res, color, map = leafletMap) {
+    const mini = map !== leafletMap;
     const ring = L.circleMarker(res.points[0], {
-      radius: 3, color, weight: 2.5, opacity: 1, fill: false, interactive: true,
-    }).addTo(leafletMap);
+      radius: 3, color, weight: mini ? 2 : 2.5, opacity: 1, fill: false, interactive: true,
+    }).addTo(map);
     const when = res.row.ts ? new Date(res.row.ts * 1000).toLocaleTimeString() : '';
     ring.bindTooltip(
       `<b>${escHtml(res.row.payload_type || 'UNK')}</b> · ${escHtml(res.row.route_type || '')}<br>`
@@ -17658,7 +17749,8 @@ if (targetEl) {
       + `${res.row.rssi != null ? res.row.rssi + ' dBm' : ''} ${res.row.snr != null ? '/ ' + res.row.snr + ' SNR' : ''}<br>`
       + `${escHtml(when)}`, {sticky: true});
     _mcRxAnims.push({
-      direct: true, ring, color,
+      map, direct: true, ring, color,
+      maxR: MC_RX_DIRECT_RADIUS * (mini ? 0.6 : 1),
       duration: MC_RX_DIRECT_MS, startedAt: null, done: false,
     });
     _mcRxUpdateCount();
@@ -17673,7 +17765,7 @@ if (targetEl) {
       if (a.direct) {
         const t = elapsed / a.duration;
         if (t >= 1) { a.done = true; continue; }
-        a.ring.setRadius(3 + t * MC_RX_DIRECT_RADIUS);
+        a.ring.setRadius(3 + t * (a.maxR ?? MC_RX_DIRECT_RADIUS));
         a.ring.setStyle({opacity: 1 - t});
         continue;
       }
@@ -17704,7 +17796,9 @@ if (targetEl) {
 
   function _mcRxUpdateCount() {
     const el = document.getElementById('mc-trace-count');
-    if (el) el.textContent = `${_mcRxAnims.length} in flight · ${_mcRxRows.length} heard`;
+    // Sense's counter describes the main map only — minimap packets are not its business.
+    const n = _mcRxAnims.filter(a => a.map === leafletMap).length;
+    if (el) el.textContent = `${n} in flight · ${_mcRxRows.length} heard`;
   }
 
   function _mcRxStartLoop() {
@@ -17712,34 +17806,47 @@ if (targetEl) {
   }
 
   function _mcRxRemoveAnim(a) {
-    if (!leafletMap) return;
-    [a.tail, a.dot, a.ring].forEach(l => l && leafletMap.removeLayer(l));
+    const map = a.map || leafletMap;
+    if (!map) return;
+    [a.tail, a.dot, a.ring].forEach(l => l && map.removeLayer(l));
   }
 
-  function _clearMcRxLines() {
-    if (_mcRxRaf !== null) { cancelAnimationFrame(_mcRxRaf); _mcRxRaf = null; }
-    _mcRxAnims.forEach(a => _mcRxRemoveAnim(a));
-    _mcRxAnims = [];
+  // Clears ONE map's packets. Sense turns its Traces off whenever the Map tab is
+  // left; that must not wipe the minimap's, and the minimap closing must not
+  // wipe the main map's.
+  function _clearMcRxLines(map = leafletMap) {
+    _mcRxAnims.filter(a => a.map === map).forEach(a => _mcRxRemoveAnim(a));
+    _mcRxAnims = _mcRxAnims.filter(a => a.map !== map);
+    if (!_mcRxAnims.length && _mcRxRaf !== null) { cancelAnimationFrame(_mcRxRaf); _mcRxRaf = null; }
   }
 
   // Animate packets that are NEW since the last poll. On first enable there is
   // no history to compare against, so replay the most recent few, staggered, to
   // give the user something to watch immediately.
   function _mcRxAnimateNew(seed) {
-    const rows = _mcRxRows.filter(r => !_mcRxHidden.has(r.payload_type || 'UNK'));
-    const fresh = rows.filter(r => !_mcRxSeen.has(_mcRxKey(r)));
-    rows.forEach(r => _mcRxSeen.add(_mcRxKey(r)));
-    if (_mcRxSeen.size > 2000) _mcRxSeen = new Set([...(_mcRxSeen)].slice(-1000));
+    _mcRxSeen = _mcRxPlay(_mcRxRows, _mcRxSeen, seed, leafletMap, () => _mcRxTracesOn);
+    _mcRxUpdateCount();
+  }
+
+  // Shared by Sense (main map) and the minimap: each view keeps its OWN seen-set,
+  // so a packet animates once per view. Returns the (possibly trimmed) seen-set.
+  // `stillOn` is re-checked before each staggered seed launch, so turning the
+  // view off mid-seed launches nothing more.
+  function _mcRxPlay(allRows, seen, seed, map, stillOn) {
+    const rows = allRows.filter(r => !_mcRxHidden.has(r.payload_type || 'UNK'));
+    const fresh = rows.filter(r => !seen.has(_mcRxKey(r)));
+    rows.forEach(r => seen.add(_mcRxKey(r)));
+    if (seen.size > 2000) seen = new Set([...seen].slice(-1000));
     // rows arrive newest-first; play oldest-first so motion reads chronologically
     const play = (seed ? fresh.slice(0, MC_RX_SEED_COUNT) : fresh).reverse();
     const cache = new Map();
     play.forEach((row, i) => {
       const res = _mcRxPathResult(row, cache);
       if (!res) return;
-      if (seed) setTimeout(() => { if (_mcRxTracesOn) _mcRxLaunch(res); }, i * MC_RX_SEED_STAGGER_MS);
-      else _mcRxLaunch(res);
+      if (seed) setTimeout(() => { if (stillOn()) _mcRxLaunch(res, map); }, i * MC_RX_SEED_STAGGER_MS);
+      else _mcRxLaunch(res, map);
     });
-    _mcRxUpdateCount();
+    return seen;
   }
 
   function _renderMcTraceLegend() {

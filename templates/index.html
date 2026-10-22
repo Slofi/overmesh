@@ -2496,6 +2496,7 @@
   <div id="pip-header">
     <span style="color:var(--accent);font-weight:600;letter-spacing:0.3px">📍 Live Map</span>
     <div style="display:flex;gap:2px;align-items:center">
+      <button id="pip-trace-btn" onclick="togglePipTraces()" title="Show MeshCore packets this radio overhears, moving along their paths. Passive, transmits nothing" style="display:none">Traces</button>
       <button id="pip-locate-btn" onclick="pipLocateMe()" title="Center on my location">⊕</button>
       <button id="pip-collapse-btn" onclick="togglePip()" title="Collapse">▼</button>
     </div>

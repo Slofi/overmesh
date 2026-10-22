@@ -227,8 +227,11 @@ assert(liteSrc.includes('map.attributionControl.setPrefix(false)'),
   'the lite map must drop the Leaflet prefix');
 assert(src.includes('pipMap.attributionControl.setPrefix(false)'),
   'the PiP map must drop the Leaflet prefix too');
-assert(src.includes('attribution: _pipDef.attribution'),
-  'the PiP map must carry the basemap provider credit');
+// S468: the PiP no longer builds its own layer; it goes through _applyTileLayer()
+// (shared with the main map), which carries and swaps the provider credit.
+// Behaviour is tested in test_pip_layer.js; this keeps the wiring visible here.
+assert(/_pipTileLayer = _applyTileLayer\(pipMap, /.test(src) && src.includes('attribution: def.attribution'),
+  'the PiP map must carry the basemap provider credit (via _applyTileLayer)');
 
 console.log('ok: map keys, default layer and menu order (free first, then TF/MT/CARTO/Stadia)');
 console.log('ok: provider credits present, Leaflet prefix removed');

@@ -6376,37 +6376,56 @@ if (targetEl) {
     return ':' + (raw ? h.toString(36) : 'nokey');
   }
 
-  function setTileLayer(key) {
-    if (!leafletMap) return;
+  // Point `layer` (or a new one added to `map`) at tile layer `key`: URL, cache
+  // key, credits and zoom limits. Shared by the main map and the minimap so the
+  // two cannot drift apart (S468: the minimap built its own layer once, with no
+  // cachePrefix, and never followed a change).
+  // The cache key is the layer ACTUALLY drawn: an unknown key (a saved shared
+  // OPS-TOC layer before the shared list has loaded) falls back to the default
+  // layer, and must cache under the default's key too — otherwise default tiles
+  // land in the shared layer's cache slot and come back later as wrong tiles.
+  function _applyTileLayer(map, layer, key) {
     const layers = allTileLayers();
-    const def = layers[key] || TILE_LAYERS[DEFAULT_TILE_LAYER];
+    const shown = layers[key] ? key : DEFAULT_TILE_LAYER;
+    const def = layers[shown] || TILE_LAYERS[DEFAULT_TILE_LAYER];
     const url = _resolveTileUrl(def.url);
-    if (_activeTileLayer) {
+    if (layer) {
       // Update cache prefix BEFORE setUrl so new tiles use the right key
-      _activeTileLayer.options.cachePrefix = key;
-      _activeTileLayer.options.keyTag      = _keyTag(key);
-      _activeTileLayer.setUrl(url);
-      if (leafletMap.attributionControl) {
-        leafletMap.attributionControl.removeAttribution(_activeTileLayer.options.attribution);
-        leafletMap.attributionControl.addAttribution(def.attribution);
+      layer.options.cachePrefix = shown;
+      layer.options.keyTag      = _keyTag(shown);
+      layer.setUrl(url);
+      if (map.attributionControl) {
+        map.attributionControl.removeAttribution(layer.options.attribution);
+        map.attributionControl.addAttribution(def.attribution);
       }
-      _activeTileLayer.options.attribution = def.attribution;
-      _activeTileLayer.options.maxZoom       = def.maxZoom;
+      layer.options.attribution = def.attribution;
+      layer.options.maxZoom       = def.maxZoom;
       // Shared OPS-TOC layers carry native zoom limits; clear them when switching to an ordinary layer.
-      _activeTileLayer.options.maxNativeZoom = def.maxNativeZoom;
-      _activeTileLayer.options.minNativeZoom = def.minNativeZoom;
+      layer.options.maxNativeZoom = def.maxNativeZoom;
+      layer.options.minNativeZoom = def.minNativeZoom;
     } else {
-      _activeTileLayer = new OfflineTileLayer(url, {
+      layer = new OfflineTileLayer(url, {
         attribution: def.attribution,
         maxZoom: def.maxZoom,
         maxNativeZoom: def.maxNativeZoom,
         minNativeZoom: def.minNativeZoom,
-        cachePrefix: key,
-        keyTag: _keyTag(key),
+        cachePrefix: shown,
+        keyTag: _keyTag(shown),
       });
-      _activeTileLayer.addTo(leafletMap);
+      layer.addTo(map);
     }
+    return { layer, def };
+  }
+
+  function setTileLayer(key) {
+    if (!leafletMap) return;
+    const applied = _applyTileLayer(leafletMap, _activeTileLayer, key);
+    _activeTileLayer = applied.layer;
+    const def = applied.def;
+    // The REQUESTED key is saved, not the fallback: a shared layer chosen before
+    // its list loaded is restored once it arrives (loadMapAppTileLayers).
     try { localStorage.setItem('mapTileLayer', key); } catch(e) {}
+    _pipSyncTileLayer();   // the minimap follows the main map's layer
     document.querySelectorAll('.map-layer-opt').forEach(el => {
       if (el.dataset.layer) el.classList.toggle('active', el.dataset.layer === key);
     });
@@ -7145,6 +7164,7 @@ if (targetEl) {
   }
 
   function refreshBaseLayerPanelOptions() {
+    _pipSyncTileLayer();   // the shared layer list changed: the minimap re-resolves its layer
     if (!_baseLayerMenuPanel) return;
     _baseLayerMenuPanel.innerHTML = '';
     const saved = (() => { try { return localStorage.getItem('mapTileLayer') || DEFAULT_TILE_LAYER; } catch(e) { return DEFAULT_TILE_LAYER; } })();
@@ -10453,6 +10473,17 @@ if (targetEl) {
     _pipRxSeen = _mcRxPlay(_pipRxRows, _pipRxSeen, seed, pipMap, _pipRxActive);
   }
 
+  // The minimap shows the layer the main map uses (the saved choice), through
+  // the same code path, so URL, cache key, credits and zoom limits match. Called
+  // on init, on every main-map layer change and whenever the shared OPS-TOC
+  // layer list changes (a saved shared layer becomes available, or goes away).
+  let _pipTileLayer = null;
+  function _pipSyncTileLayer() {
+    if (!pipMap) return;
+    const key = (() => { try { return localStorage.getItem('mapTileLayer') || DEFAULT_TILE_LAYER; } catch(e) { return DEFAULT_TILE_LAYER; } })();
+    _pipTileLayer = _applyTileLayer(pipMap, _pipTileLayer, key).layer;
+  }
+
   function togglePip() {
     pipOpen = !pipOpen;
     updatePipVisibility();
@@ -10465,9 +10496,7 @@ if (targetEl) {
     }).setView([46.05, 14.50], 9);
     // Provider credits only; the Leaflet flag/wordmark is courtesy, not a licence term.
     pipMap.attributionControl.setPrefix(false);
-    const _pipLayerKey = (() => { try { return localStorage.getItem('mapTileLayer') || DEFAULT_TILE_LAYER; } catch(e) { return DEFAULT_TILE_LAYER; } })();
-    const _pipDef = allTileLayers()[_pipLayerKey] || TILE_LAYERS[DEFAULT_TILE_LAYER];
-    new OfflineTileLayer(_resolveTileUrl(_pipDef.url), { maxZoom: _pipDef.maxZoom, attribution: _pipDef.attribution }).addTo(pipMap);
+    _pipSyncTileLayer();
 
     // Draggable header
     const wrap        = document.getElementById('pip-wrap');

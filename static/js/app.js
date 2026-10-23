@@ -11937,7 +11937,7 @@ if (targetEl) {
       // so they don't overwrite contact properties (especially numeric contact_type vs event type string)
       const isNew = !mcContacts[data.radio_id][data.id];
       const {type: _t, radio_id: _r, radio_name: _n, ...contactFields} = data;
-      // contact_type is the node type (0=client,1=room,2=repeater) sent by background retry
+      // contact_type is the node type (0=none,1=companion,2=repeater,3=room,4=sensor) sent by background retry
       if (contactFields.contact_type !== undefined) { contactFields.type = contactFields.contact_type; delete contactFields.contact_type; }
       const _prevContact = mcContacts[data.radio_id][data.id] || {};
       const _merged = Object.assign({}, _prevContact, contactFields);
@@ -18194,8 +18194,9 @@ if (targetEl) {
     return head + `<div style="max-height:52vh;overflow-y:auto">${rows}</div>`;
   }
 
+  // MeshCore AdvType: 0=none, 1=chat/companion, 2=repeater, 3=room, 4=sensor
   function _mcScanKindFromType(nodeType) {
-    return nodeType === 2 ? 'repeater' : (nodeType === 1 ? 'room' : 'node');
+    return nodeType === 2 ? 'repeater' : (nodeType === 3 ? 'room' : 'node');
   }
 
   function _mcScanSortResults(entries) {

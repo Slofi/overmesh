@@ -649,15 +649,16 @@ def mc_scan_note_discover(config_id, payload):
 
 def _mc_scan_kind(node_type, contact_type):
     """RPTR / ROOM / node, from the node type or the stored contact type
-    (MeshCore: 0=client, 1=room, 2=repeater)."""
+    (MeshCore AdvType: 0=none, 1=chat/companion, 2=repeater, 3=room, 4=sensor).
+    S469: 1 was read as 'room', so a companion's zero-hop advert listed as ROOM."""
     for value in (node_type, contact_type):
         try:
             value = int(value)
         except (TypeError, ValueError):
             continue
-        if value == 2:
+        if value == AdvType.REPEATER.value:
             return "repeater"
-        if value == 1:
+        if value == AdvType.ROOM.value:
             return "room"
     return "node"
 

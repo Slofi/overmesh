@@ -101,10 +101,19 @@ class ScanResultsTests(unittest.TestCase):
                          "a contact last heard an hour ago is not a scan result")
 
     def test_room_servers_and_plain_nodes_get_their_own_kind(self):
-        self._discover(ROOM_KEY, node_type=1)
+        self._discover(ROOM_KEY, node_type=3)
         results, summary = mesh_mc.mc_scan_results("mc1", self.now - 30, advert=False, discover=True)
         self.assertEqual([r for r in results if r["full_key"] == ROOM_KEY][0]["kind"], "room")
         self.assertEqual(summary["rooms"], 1)
+
+    def test_a_companion_is_a_node_not_a_room(self):
+        """S469: Filip's EDC-3 companion (AdvType 1 = CHAT) listed as ROOM after a
+        zero-hop advert, because 1 was read as 'room'. MeshCore: 3 = room."""
+        for value in (0, 1, 4, None):
+            self.assertEqual(mesh_mc._mc_scan_kind(value, value), "node", value)
+        self.assertEqual(mesh_mc._mc_scan_kind(3, None), "room")
+        self.assertEqual(mesh_mc._mc_scan_kind(None, 3), "room")
+        self.assertEqual(mesh_mc._mc_scan_kind(2, None), "repeater")
 
     def test_a_reply_without_a_stored_contact_still_lists(self):
         """The name may be unknown at reply time (non-blocking lookup missed it),
@@ -115,7 +124,7 @@ class ScanResultsTests(unittest.TestCase):
 
     def test_summary_counts_what_the_pop_up_shows(self):
         self._discover(RPTR_KEY, rssi=-70)
-        self._discover(ROOM_KEY, rssi=-90, node_type=1)
+        self._discover(ROOM_KEY, rssi=-90, node_type=3)
         results, summary = mesh_mc.mc_scan_results("mc1", self.now - 30, advert=True, discover=True)
         self.assertEqual(summary["total"], len(results))
         self.assertEqual(summary["answered"], 2)
@@ -261,6 +270,11 @@ class ScanResultsPanelWiringTests(unittest.TestCase):
             self.assertIn(fragment, self.src, f"the results list must show {fragment}")
         self.assertIn("_mcScanSignalText", self.src)
         self.assertIn("first seen in this scan", self.src, "newly seen contacts are flagged")
+
+    def test_live_rows_use_meshcore_type_numbers(self):
+        """The live pop-up maps types itself — it must agree with the backend (3 = room)."""
+        self.assertIn("nodeType === 2 ? 'repeater' : (nodeType === 3 ? 'room' : 'node')", self.src)
+        self.assertNotIn("nodeType === 1 ? 'room'", self.src)
 
     def test_an_empty_window_explains_itself(self):
         self.assertIn("Nothing answered and nothing was heard in the", self.src)

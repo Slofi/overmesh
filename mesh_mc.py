@@ -83,8 +83,16 @@ def _mc_configured_scope(config_id):
     return None
 
 
+# A channel stored as MC_SCOPE_NONE sends UNSCOPED even when the node has a
+# default scope (empty = inherit the default). "!" is outside the region-name
+# alphabet, so no real region can collide with it (Filip, S470: Don't Panic
+# went out as #si because its empty scope meant "default", not "none").
+MC_SCOPE_NONE = "!none"
+
+
 def _mc_channel_scope(config_id, chan_idx):
-    """OM's configured scope for a channel slot (config.json), or None."""
+    """OM's configured scope for a channel slot (config.json): a region name,
+    MC_SCOPE_NONE (explicitly unscoped), or None (inherit the node default)."""
     with CONFIG_LOCK:
         for n in CONFIG.get("mc_nodes", []):
             if n.get("id") == config_id:
@@ -331,7 +339,8 @@ def _mc_scope_key_for(region):
 
 
 def resolve_mc_send_scope(config_id, chan_idx=None):
-    """Resolution order for a send: channel scope -> node default scope -> unscoped."""
+    """Resolution order for a send: channel scope -> node default scope -> unscoped.
+    Returns MC_SCOPE_NONE when the channel is explicitly unscoped."""
     if chan_idx is not None:
         chan_scope = _mc_channel_scope(config_id, chan_idx)
         if chan_scope is not None:
@@ -353,6 +362,12 @@ def _assert_mc_scope_locked(config_id, chan_idx=None, timeout=10):
       is actually configured in OM."""
     region = resolve_mc_send_scope(config_id, chan_idx=chan_idx)
     cached = _mc_scope_cache.get(config_id, _MC_SCOPE_UNKNOWN)
+    if region == MC_SCOPE_NONE:
+        # Explicitly unscoped: clear the slot even if we never asserted it —
+        # a scope left there (phone app, or before a reconnect) must not leak in.
+        if cached is not None:
+            run_mc(_assert_mc_scope_async(config_id, None), timeout=timeout)
+        return None
     if region is None:
         if cached in (_MC_SCOPE_UNKNOWN, None):
             return None  # nothing of ours to undo — leave the device scope alone

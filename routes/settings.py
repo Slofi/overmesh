@@ -1352,7 +1352,7 @@ def api_settings_mc_nodes_default_scope(node_id):
 @bp.route("/api/settings/mc_nodes/<node_id>/channel_scope/<int:chan_idx>", methods=["GET", "POST"])
 def api_settings_mc_nodes_channel_scope(node_id, chan_idx):
     """Read or set the scope applied when sending on one channel slot."""
-    from mesh_mc import _mc_normalize_region_name, reset_mc_scope_cache
+    from mesh_mc import MC_SCOPE_NONE, _mc_normalize_region_name, reset_mc_scope_cache
 
     with CONFIG_LOCK:
         mc_nodes = CONFIG.get("mc_nodes", [])
@@ -1364,11 +1364,16 @@ def api_settings_mc_nodes_channel_scope(node_id, chan_idx):
             return jsonify({"ok": True, "channel": chan_idx,
                             "scope": scopes.get(str(chan_idx)) or ""})
         data = request.get_json(silent=True) or {}
-        raw = (data.get("scope") or "").strip()
-        try:
-            scope = _mc_normalize_region_name(raw) or ""
-        except ValueError as e:
-            return jsonify({"error": str(e)}), 400
+        # mode "none" = send unscoped even when the node has a default scope;
+        # an empty scope (no mode) = inherit the node default, as before.
+        if data.get("mode") == "none":
+            scope = MC_SCOPE_NONE
+        else:
+            raw = (data.get("scope") or "").strip()
+            try:
+                scope = _mc_normalize_region_name(raw) or ""
+            except ValueError as e:
+                return jsonify({"error": str(e)}), 400
         if scope:
             scopes[str(chan_idx)] = scope
         else:

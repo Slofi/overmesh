@@ -1599,6 +1599,56 @@ class McFloodScopeTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertEqual(calls, [None])  # clear sent to undo our own assertion
 
+    # ---- explicit "No scope" per channel (S470) ----
+
+    def test_resolve_explicit_none_beats_default(self):
+        # Don't Panic went out as #si because an EMPTY channel scope inherits
+        # the default; MC_SCOPE_NONE must not.
+        CONFIG["mc_nodes"] = [{"id": "mc1", "default_scope": "si",
+                               "channel_scopes": {"1": "si", "2": mesh_mc.MC_SCOPE_NONE}}]
+        self.assertEqual(mesh_mc.resolve_mc_send_scope("mc1", chan_idx=2), mesh_mc.MC_SCOPE_NONE)
+        self.assertEqual(mesh_mc.resolve_mc_send_scope("mc1", chan_idx=1), "si")
+        self.assertEqual(mesh_mc.resolve_mc_send_scope("mc1", chan_idx=3), "si")       # empty = inherit
+        self.assertEqual(mesh_mc.resolve_mc_send_scope("mc1", chan_idx=None), "si")    # DMs/adverts: default
+
+    def test_sentinel_cannot_be_a_region_name(self):
+        with self.assertRaises(ValueError):
+            mesh_mc._mc_normalize_region_name(mesh_mc.MC_SCOPE_NONE)
+
+    def _locked_none_send(self, cached):
+        CONFIG["mc_nodes"] = [{"id": "mc1", "default_scope": "si",
+                               "channel_scopes": {"2": mesh_mc.MC_SCOPE_NONE}}]
+        fake_mc, calls = self._fake_mc()
+        if cached is not mesh_mc._MC_SCOPE_UNKNOWN:
+            mesh_mc._mc_scope_cache["mc1"] = cached
+        with mock.patch.object(mesh_mc, "_get_mc", return_value=(fake_mc, {})):
+            with mock.patch.object(mesh_mc, "run_mc", side_effect=lambda coro, timeout=10: asyncio.run(coro)):
+                result = mesh_mc._assert_mc_scope_locked("mc1", chan_idx=2)
+        return result, calls
+
+    def test_locked_none_clears_a_previous_scope(self):
+        result, calls = self._locked_none_send("si")
+        self.assertIsNone(result)
+        self.assertEqual(calls, [None])
+        self.assertIsNone(mesh_mc._mc_scope_cache.get("mc1", "missing"))
+
+    def test_locked_none_clears_even_when_never_asserted(self):
+        # Unlike "inherit, nothing configured" (which leaves the slot alone),
+        # an explicit No scope must clear a scope left on the radio by the
+        # phone app or from before a reconnect.
+        result, calls = self._locked_none_send(mesh_mc._MC_SCOPE_UNKNOWN)
+        self.assertIsNone(result)
+        self.assertEqual(calls, [None])
+
+    def test_locked_none_is_noop_when_already_unscoped(self):
+        result, calls = self._locked_none_send(None)
+        self.assertIsNone(result)
+        self.assertEqual(calls, [])
+
+    def test_locked_none_never_sends_the_sentinel_to_the_radio(self):
+        _, calls = self._locked_none_send("si")
+        self.assertTrue(calls and all(c is None for c in calls), calls)
+
     def test_scope_state_accessor_folds_unknown_to_none(self):
         self.assertEqual(mesh_mc.get_mc_scope_state("mc1"), (True, None))
         mesh_mc._mc_scope_cache["mc1"] = "si"

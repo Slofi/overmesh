@@ -399,5 +399,56 @@ class AppSettingsOmPositionTests(unittest.TestCase):
         self.assertEqual(resp.get_json()["error"], "Enter a Bluetooth address")
 
 
+class McChannelScopeNoneApiTests(unittest.TestCase):
+    """Per-channel scope API: Default (inherit) / No scope / region (S470)."""
+
+    def setUp(self):
+        from mesh_mc import MC_SCOPE_NONE
+        self.NONE = MC_SCOPE_NONE
+        self.app = Flask(__name__)
+        self.app.register_blueprint(settings_routes.bp)
+        self.client = self.app.test_client()
+        self.config_backup = json.loads(json.dumps(settings_routes.CONFIG))
+        settings_routes.CONFIG.clear()
+        settings_routes.CONFIG.update({"nodes": [], "app": {}, "gps": {}, "mc_nodes": [
+            {"id": "mc1", "default_scope": "si", "channel_scopes": {"1": "si"}},
+        ]})
+        self.save_mock = mock.patch.object(settings_routes, "save_config").start()
+        self.addCleanup(self._cleanup)
+
+    def _cleanup(self):
+        mock.patch.stopall()
+        settings_routes.CONFIG.clear()
+        settings_routes.CONFIG.update(self.config_backup)
+
+    def _scopes(self):
+        return settings_routes.CONFIG["mc_nodes"][0]["channel_scopes"]
+
+    def test_mode_none_stores_the_sentinel(self):
+        resp = self.client.post("/api/settings/mc_nodes/mc1/channel_scope/2", json={"mode": "none"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json()["scope"], self.NONE)
+        self.assertEqual(self._scopes(), {"1": "si", "2": self.NONE})
+        self.save_mock.assert_called_once()
+        got = self.client.get("/api/settings/mc_nodes/mc1/channel_scope/2").get_json()
+        self.assertEqual(got["scope"], self.NONE)
+
+    def test_empty_scope_still_means_inherit_default(self):
+        self._scopes()["2"] = self.NONE
+        resp = self.client.post("/api/settings/mc_nodes/mc1/channel_scope/2", json={"scope": ""})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self._scopes(), {"1": "si"})   # key removed = Default
+
+    def test_region_still_saved_normalised(self):
+        resp = self.client.post("/api/settings/mc_nodes/mc1/channel_scope/2", json={"scope": "#SI-LJU"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self._scopes()["2"], "si-lju")
+
+    def test_sentinel_cannot_be_typed_as_a_region(self):
+        resp = self.client.post("/api/settings/mc_nodes/mc1/channel_scope/2", json={"scope": self.NONE})
+        self.assertEqual(resp.status_code, 400)
+        self.assertNotIn("2", self._scopes())
+
+
 if __name__ == "__main__":
     unittest.main()

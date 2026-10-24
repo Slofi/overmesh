@@ -778,8 +778,24 @@ def _build_mc_test_hops_info(msg, config_id):
     return f" | Hops(?): unknown{byte_suffix}"
 
 
-def send_mc_bot_response(config_id, text, chan_idx, dest_pre=None):
-    """Send bot reply via MC. Runs in a background thread — blocks until sent or timeout."""
+# A reply to an incoming flood message waits a random few seconds first. Fired
+# instantly it lands on top of the repeaters rebroadcasting that very message,
+# and the asker loses both (S470: EDC-3 in the next room got none of CD's
+# replies; the one PONG that arrived answered the only ping no repeater
+# relayed). Random, so two bots answering the same command do not collide.
+MC_BOT_REPLY_DELAY_S = (3.0, 5.0)
+
+
+def _mc_bot_reply_wait():
+    time.sleep(random.uniform(*MC_BOT_REPLY_DELAY_S))
+
+
+def send_mc_bot_response(config_id, text, chan_idx, dest_pre=None, reply_delay=False):
+    """Send bot reply via MC. Runs in a background thread — blocks until sent or timeout.
+    reply_delay=True for answers to an incoming message (see MC_BOT_REPLY_DELAY_S);
+    Silent Running is checked AFTER the wait, so switching it on meanwhile still holds."""
+    if reply_delay:
+        _mc_bot_reply_wait()
     if CONFIG.get("silent_mode"):
         log.info("[bot] Silent Running active — MC bot response suppressed")
         return False
@@ -796,7 +812,7 @@ def send_mc_bot_response(config_id, text, chan_idx, dest_pre=None):
 
 
 def send_and_record_mc_bot_response(config_id, text, chan_idx, dest_pre=None, to_name=None, cmd=""):
-    if send_mc_bot_response(config_id, text, chan_idx, dest_pre):
+    if send_mc_bot_response(config_id, text, chan_idx, dest_pre, reply_delay=True):
         push_to_sse({
             "type": "mc_bot_reply",
             "radio_id": config_id,
@@ -874,6 +890,7 @@ def handle_mc_bot_command(msg, config_id, subtype):
                         threading.Thread(
                             target=send_mc_bot_response,
                             args=(config_id, relay_text, relay_ch, dest),
+                            kwargs={"reply_delay": True},
                             daemon=True,
                         ).start()
                         response = f"{prefix} Relayed to {target_name}."

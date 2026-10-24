@@ -17618,6 +17618,51 @@ if (targetEl) {
     return out;
   }
 
+  // A packet heard with NO relay hops came straight from its sender, but the RX
+  // log cannot name the sender (it is inside the encrypted payload). The
+  // decrypted message can: every received message lands in the Sense log with
+  // the sender's position, arrival time and hop count — the same entry a click
+  // on the message draws its line from. Match the packet to that entry so the
+  // live view draws sender → us instead of a bare ring (Filip, S470: EDC-3 → CD
+  // messages arrived but Traces showed nothing).
+  // Time alone is NOT enough: packets on channels we hold no key for are direct
+  // GRP_TXT too, but never become a message, and would borrow whoever spoke in
+  // the same seconds. The backend copies the packet's own RSSI/SNR onto the
+  // message it correlated (by channel hash), so both must be equal — verified
+  // on CD's live data, S470: 10/10 messages matched their packet exactly. An
+  // entry without signal values gets no line. Two different senders left in
+  // the window = no line either, rather than a guessed one.
+  const MC_RX_DIRECT_MATCH_S = 20;   // packet log vs message arrival clock skew
+  function _mcRxDirectSender(row, rid) {
+    const type = row.payload_type;
+    if (type !== 'TEXT_MSG' && type !== 'GRP_TXT') return null;
+    const ts = Number(row.ts);
+    if (!Number.isFinite(ts)) return null;
+    if (row.rssi == null || row.snr == null) return null;
+    const matches = [];
+    for (const e of _mcSenseLogEntries) {
+      if (e.kind !== 'message') continue;
+      if (rid && e.radioId && e.radioId !== rid) continue;
+      if (Number(e.hopLen) !== 0) continue;
+      // GRP_TXT = channel message (no sender key), TEXT_MSG = DM (sender key)
+      const isChan = !e.fromId || e.fromId === '?';
+      if ((type === 'GRP_TXT') !== isChan) continue;
+      const eRssi = e.rx_rssi, eSnr = e.rx_snr ?? e.snr;
+      if (eRssi == null || eSnr == null) continue;
+      if (Number(eRssi) !== Number(row.rssi) || Number(eSnr) !== Number(row.snr)) continue;
+      const lat = Number(e.lat), lon = Number(e.lon);
+      if (e.lat == null || e.lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      const dt = Math.abs(Number(e.ts_epoch) - ts);
+      if (!(dt <= MC_RX_DIRECT_MATCH_S)) continue;
+      matches.push({dt, pt: [lat, lon], name: e.name || '?'});
+    }
+    if (!matches.length) return null;
+    const first = matches[0].pt;
+    if (matches.some(m => m.pt[0] !== first[0] || m.pt[1] !== first[1])) return null;
+    matches.sort((a, b) => a.dt - b.dt);
+    return matches[0];
+  }
+
   // Build the polyline for one overheard packet: relay hops in order, ending at
   // our own radio (we are the receiver). Hops that cannot be resolved to a known
   // contact are skipped rather than guessed — 1-byte hashes are ambiguous.
@@ -17662,6 +17707,16 @@ if (targetEl) {
     // nearby node: 0 hops, empty path, nothing on the map.
     if (points.length < 2) {
       if (radioLat == null || radioLon == null) return null;
+      // Truly direct (no hops at all): the sender is the last transmitter, so
+      // a straight sender → us line is the real route. NOT for packets whose
+      // hops merely failed to resolve — that line would hide the relays.
+      const sender = hops.length === 0 ? _mcRxDirectSender(row, rid) : null;
+      if (sender && (sender.pt[0] !== radioLat || sender.pt[1] !== radioLon)) {
+        return {
+          points: [sender.pt, [radioLat, radioLon]], hopMeta: [], row, direct: false,
+          sender: sender.name, resolvedHops: 0, totalHops: 0, anchored: true,
+        };
+      }
       return {
         points: [[radioLat, radioLon]], hopMeta, row, direct: true,
         resolvedHops: hopMeta.length, totalHops: hops.length, anchored: true,
@@ -17750,9 +17805,11 @@ if (targetEl) {
     const when = res.row.ts ? new Date(res.row.ts * 1000).toLocaleTimeString() : '';
     dot.bindTooltip(
       `<b>${escHtml(res.row.payload_type || 'UNK')}</b> · ${escHtml(res.row.route_type || '')}<br>`
-      + `${res.totalHops} hop(s)`
-      + (res.resolvedHops < res.totalHops ? ` (${res.totalHops - res.resolvedHops} unresolved)` : '') + '<br>'
-      + (hops ? `${escHtml(hops)} → us<br>` : '')
+      + (res.sender
+        ? `from <b>${escHtml(res.sender)}</b>, heard direct<br>`
+        : `${res.totalHops} hop(s)`
+          + (res.resolvedHops < res.totalHops ? ` (${res.totalHops - res.resolvedHops} unresolved)` : '') + '<br>'
+          + (hops ? `${escHtml(hops)} → us<br>` : ''))
       + `${res.row.rssi != null ? res.row.rssi + ' dBm' : ''} ${res.row.snr != null ? '/ ' + res.row.snr + ' SNR' : ''}<br>`
       + `${escHtml(when)}`, {sticky: true});
     _mcRxAnims.push({
@@ -17774,7 +17831,9 @@ if (targetEl) {
     const when = res.row.ts ? new Date(res.row.ts * 1000).toLocaleTimeString() : '';
     ring.bindTooltip(
       `<b>${escHtml(res.row.payload_type || 'UNK')}</b> · ${escHtml(res.row.route_type || '')}<br>`
-      + `heard <b>direct</b>, no relay hops<br>`
+      + (res.totalHops
+        ? `${res.totalHops} relay hop(s), none known on the map<br>`
+        : `heard <b>direct</b>, no relay hops<br>`)
       + `${res.row.rssi != null ? res.row.rssi + ' dBm' : ''} ${res.row.snr != null ? '/ ' + res.row.snr + ' SNR' : ''}<br>`
       + `${escHtml(when)}`, {sticky: true});
     _mcRxAnims.push({
@@ -18497,6 +18556,14 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   // ---- MC Flood Scope (Regions) UI ----
   let _mcScope = { regions: [], default_scope: '', channel_scopes: {} };
+  // Stored channel scope meaning "send unscoped even if the node has a default"
+  // (mesh_mc.MC_SCOPE_NONE). Empty = inherit the node default (S470).
+  const MC_SCOPE_NONE = '!none';
+
+  function _mcScopeChannelMode(stored) {
+    if (stored === MC_SCOPE_NONE) return 'none';
+    return stored ? 'region' : 'default';
+  }
 
   function _mcScopeRadioId() {
     return mcSettingsRadioId || activeMcRadioId;
@@ -18640,43 +18707,76 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         if (d.error) { el.innerHTML = `<span style="color:var(--red)">${escHtml(d.error)}</span>`; return; }
         const chs = d.channels || [];
         if (!chs.length) { el.innerHTML = '<span style="color:var(--muted);font-size:11px">No channels to scope.</span>'; return; }
-        el.innerHTML = `<div style="font-size:12px;font-weight:600;margin-bottom:4px">Per-channel scope <span style="font-weight:400;color:var(--muted)">(empty = node default scope)</span></div>
+        const defLabel = _mcScope.default_scope ? `Default (#${escHtml(_mcScope.default_scope)})` : 'Default (unscoped)';
+        el.innerHTML = `<div style="font-size:12px;font-weight:600;margin-bottom:4px">Per-channel scope <span style="font-weight:400;color:var(--muted)">(Default = the node default scope above · No scope = always unscoped)</span></div>
           <table style="border-collapse:collapse;font-size:12px;width:100%">
             <tr style="color:var(--muted)">
               <th style="text-align:left;padding:2px 12px 4px 0;font-weight:normal">Slot</th>
               <th style="text-align:left;padding:2px 12px 4px 0;font-weight:normal">Channel</th>
               <th style="text-align:left;padding:2px 0 4px;font-weight:normal">Scope</th>
             </tr>
-            ${chs.filter(ch => ch.name).map((ch, i) => `<tr style="${i ? 'border-top:1px solid var(--border)' : ''}">
+            ${chs.filter(ch => ch.name).map((ch, i) => {
+              const idx = parseInt(ch.idx) || 0;
+              const stored = (_mcScope.channel_scopes || {})[String(ch.idx)] || '';
+              const mode = _mcScopeChannelMode(stored);
+              return `<tr style="${i ? 'border-top:1px solid var(--border)' : ''}">
               <td style="padding:4px 12px 4px 0;font-size:11px;color:var(--muted);width:16px;text-align:right">${escHtml(String(ch.idx))}</td>
               <td style="padding:4px 12px 4px 0">${escHtml(ch.name)}</td>
               <td style="padding:4px 0">
-                <div style="display:flex;gap:6px;align-items:center">
-                  <input id="mc-scope-ch-${parseInt(ch.idx) || 0}" class="settings-input" list="mc-scope-region-presets" placeholder="unscoped"
-                         value="${escHtml((_mcScope.channel_scopes || {})[String(ch.idx)] || '')}"
-                         style="width:130px;font-family:monospace;font-size:11px" maxlength="32"
-                         onkeydown="if(event.key==='Enter'){event.preventDefault();mcScopeSetChannel(${parseInt(ch.idx) || 0})}">
-                  <button class="btn" style="padding:1px 8px;font-size:11px" onclick="mcScopeSetChannel(${parseInt(ch.idx) || 0})" title="Save scope for this channel">Save</button>
+                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                  <select id="mc-scope-mode-${idx}" class="settings-input" style="font-size:11px" onchange="mcScopeModeChanged(${idx})" title="Scope used when sending on this channel">
+                    <option value="default"${mode === 'default' ? ' selected' : ''}>${defLabel}</option>
+                    <option value="none"${mode === 'none' ? ' selected' : ''}>No scope</option>
+                    <option value="region"${mode === 'region' ? ' selected' : ''}>Region…</option>
+                  </select>
+                  <input id="mc-scope-ch-${idx}" class="settings-input" list="mc-scope-region-presets" placeholder="region, e.g. si"
+                         value="${mode === 'region' ? escHtml(stored) : ''}"
+                         style="width:110px;font-family:monospace;font-size:11px;${mode === 'region' ? '' : 'display:none'}" maxlength="32"
+                         onkeydown="if(event.key==='Enter'){event.preventDefault();mcScopeSetChannel(${idx})}">
+                  <button class="btn" style="padding:1px 8px;font-size:11px" onclick="mcScopeSetChannel(${idx})" title="Save scope for this channel">Save</button>
                 </div>
               </td>
-            </tr>`).join('')}
+            </tr>`;
+            }).join('')}
           </table>`;
       }).catch(e => { if (el) el.innerHTML = `<span style="color:var(--red)">${escHtml(e.message || e)}</span>`; });
+  }
+
+  function mcScopeModeChanged(chanIdx) {
+    const mode = document.getElementById(`mc-scope-mode-${chanIdx}`)?.value;
+    const input = document.getElementById(`mc-scope-ch-${chanIdx}`);
+    if (!input) return;
+    input.style.display = mode === 'region' ? '' : 'none';
+    if (mode === 'region') input.focus();
+  }
+
+  // Request body for a channel-scope save: default = inherit (empty scope),
+  // none = explicitly unscoped, region = the typed name.
+  function _mcScopeChannelBody(mode, typed) {
+    if (mode === 'none') return {mode: 'none'};
+    if (mode === 'region') return {scope: (typed || '').trim()};
+    return {scope: ''};
   }
 
   function mcScopeSetChannel(chanIdx) {
     const radioId = _mcScope.radioId;
     if (!radioId) return;
-    const v = (document.getElementById(`mc-scope-ch-${chanIdx}`)?.value || '').trim();
+    const mode = document.getElementById(`mc-scope-mode-${chanIdx}`)?.value || 'region';
+    const typed = document.getElementById(`mc-scope-ch-${chanIdx}`)?.value || '';
+    if (mode === 'region' && !typed.trim()) return mcScopeStatus('Type a region name, or pick Default / No scope.', true);
     fetch(BASE_PATH + `/api/settings/mc_nodes/${encodeURIComponent(radioId)}/channel_scope/${chanIdx}`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({scope: v || ''}),
+      body: JSON.stringify(_mcScopeChannelBody(mode, typed)),
     }).then(r => r.json().then(d => ({ok: r.ok, d}))).then(({ok, d}) => {
       if (!ok || d.error) return mcScopeStatus(d.error || 'Failed to save channel scope.', true);
       _mcScope.channel_scopes = { ...(_mcScope.channel_scopes || {}), [String(chanIdx)]: d.scope || '' };
-      if (d.scope && !_mcScope.regions.includes(d.scope)) _mcScope.regions.push(d.scope);
+      const isNone = d.scope === MC_SCOPE_NONE;
+      if (d.scope && !isNone && !_mcScope.regions.includes(d.scope)) _mcScope.regions.push(d.scope);
       renderMcScopePanel();
-      mcScopeStatus(`Channel ${chanIdx} scope ${d.scope ? `set to #${d.scope}` : 'cleared'}.`, false);
+      const what = isNone ? 'set to No scope (always unscoped)'
+        : d.scope ? `set to #${d.scope}`
+        : `set to Default (${_mcScope.default_scope ? '#' + _mcScope.default_scope : 'unscoped'})`;
+      mcScopeStatus(`Channel ${chanIdx} scope ${what}.`, false);
     }).catch(e => mcScopeStatus(String(e.message || e), true));
   }
 

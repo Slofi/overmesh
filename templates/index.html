@@ -2134,72 +2134,56 @@
       <div id="bridge-settings-status" style="font-size:12px;min-height:16px;margin-top:8px;color:var(--muted)"></div>
     </div>
 
-    <!-- GPS Receiver -->
+    <!-- OM Position: ONE source, chosen by hand; hand-picked by default; sharing with radios separate (S471) -->
     <div class="settings-section">
-      <h2 class="settings-title">GPS Receiver</h2>
-      <p style="color:var(--muted);font-size:12px;margin:0 0 12px 0">USB GPS receiver for location data. Two modes: <b>Direct serial</b> (OM owns the port) or <b>OPS-TOC proxy</b> (polls OPS-TOC when both apps run together, avoids serial conflicts). Can auto-push coordinates to connected nodes.</p>
-      <div style="display:flex;gap:16px;align-items:flex-start">
-        <!-- Controls (left) -->
-        <div style="flex:1;min-width:0">
-          <!-- Source select -->
+      <h2 class="settings-title">OM Position</h2>
+      <p style="color:var(--muted);font-size:12px;margin:0 0 12px 0">Your own position in OverMesh: private, for orientation only (map origin, range circles, distances). It changes source only when you change it here. Nothing is sent to radios unless you turn it on under <b>Share with radios</b>.</p>
+      <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
+        <div style="flex:1;min-width:260px">
           <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
-            <label class="settings-label" style="margin:0;white-space:nowrap">Source</label>
-            <select id="gps-source-select" class="settings-select" style="flex:1" onchange="gpsSourceChanged()">
-              <option value="direct">Direct serial port</option>
-              <option value="proxy">OPS-TOC proxy (localhost:8090)</option>
+            <label class="settings-label" style="margin:0;white-space:nowrap" for="gps-source-select">Source</label>
+            <select id="gps-source-select" class="settings-select" style="flex:1" onchange="gpsSourceChanged(true)">
+              <option value="manual">Hand-picked position (map)</option>
+              <option value="internal">Internal GPS (built-in UART)</option>
+              <option value="usb">USB GPS dongle</option>
+              <option value="proxy">OPS-TOC GPS (localhost:8090)</option>
             </select>
           </div>
-          <!-- Port + enable -->
-          <div id="gps-port-row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <label class="settings-label" style="margin:0">Port</label>
+          <!-- Hand-picked -->
+          <div id="om-pos-manual-row">
+            <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+              <div style="min-width:140px">
+                <label class="settings-label" style="margin-bottom:4px">Latitude</label>
+                <input id="om-pos-lat" type="number" step="0.000001" min="-90" max="90"
+                       style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:13px"
+                       placeholder="46.056947">
+              </div>
+              <div style="min-width:140px">
+                <label class="settings-label" style="margin-bottom:4px">Longitude</label>
+                <input id="om-pos-lon" type="number" step="0.000001" min="-180" max="180"
+                       style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:13px"
+                       placeholder="14.505751">
+              </div>
+              <button class="btn btn-sm" onclick="startOmMapPick()">Select on map</button>
+              <button class="btn btn-sm" onclick="saveOmManualPosition(this)">Save</button>
+              <button class="btn btn-sm" style="color:var(--red);border-color:var(--red)"
+                      onmouseenter="this.style.background='rgba(248,81,73,0.12)'"
+                      onmouseleave="this.style.background=''"
+                      onclick="clearOmManualPosition(this)">Clear</button>
+            </div>
+            <div id="om-pos-status" style="font-size:12px;min-height:16px;margin-top:8px;color:var(--muted)"></div>
+          </div>
+          <!-- Internal / USB GPS: that kind of port only -->
+          <div id="gps-port-row" style="display:none;gap:8px;align-items:center;flex-wrap:wrap">
+            <label id="gps-port-label" class="settings-label" style="margin:0">Port</label>
             <select id="gps-port-select" class="settings-select" style="flex:1;min-width:140px" onchange="saveGpsSettings()"></select>
             <button class="btn" onclick="gpsRefreshPorts()" title="Rescan serial ports">↻</button>
           </div>
-          <div style="margin-top:10px;display:flex;align-items:center;gap:12px">
-            <label class="bot-toggle">
-              <input type="checkbox" id="gps-enabled-toggle" onchange="saveGpsSettings()">
-              <span class="bot-toggle-slider"></span>
-            </label>
-            <span style="font-size:13px">Enable GPS dongle</span>
-          </div>
-          <!-- Position privacy -->
-          <div style="margin-top:14px">
-            <label class="settings-label">Position privacy: <span id="gps-precision-label" style="color:var(--accent)">Exact position</span> <span style="font-weight:400;color:var(--muted)">(slide right = more private)</span></label>
-            <div style="font-size:11px;color:var(--muted);margin:2px 0 4px 0">Blurs coordinates before sending to nodes.</div>
-            <input type="range" id="gps-precision-slider" min="0" max="1000" step="100" value="0" style="width:200px;vertical-align:middle"
-                   oninput="document.getElementById('gps-precision-label').textContent=precMeterLabel(parseInt(this.value))"
-                   onchange="saveGpsSettings()">
-          </div>
-          <!-- Push to nodes -->
-          <div style="border-top:1px solid var(--border);margin:14px 0 10px 0"></div>
-          <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Push to Nodes</div>
-          <div style="display:flex;align-items:center;gap:12px">
-            <label class="bot-toggle">
-              <input type="checkbox" id="gps-auto-push-toggle" onchange="saveGpsSettings()">
-              <span class="bot-toggle-slider"></span>
-            </label>
-            <span style="font-size:13px">Auto-push to all nodes <span style="color:var(--muted);font-size:11px">(when fix is available)</span></span>
-          </div>
-          <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
-            <label style="font-size:12px;color:var(--muted)">Interval:</label>
-            <input type="number" id="gps-push-interval-val" min="1" max="3600" step="1" value="30"
-              style="width:60px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:var(--fg);font-size:12px"
-              onchange="saveGpsSettings()" title="Interval between auto-pushes">
-            <select id="gps-push-interval-unit" onchange="saveGpsSettings()"
-              style="background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:var(--fg);font-size:12px">
-              <option value="1">s</option>
-              <option value="60">min</option>
-              <option value="3600">h</option>
-            </select>
-          </div>
-          <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
-            <button class="btn btn-sm" onclick="gpsPushToNode()" title="Send current GPS fix to all connected nodes as their fixed position">Send to nodes now</button>
-            <span id="gps-push-status" style="font-size:12px;color:var(--muted)"></span>
-          </div>
+          <div id="gps-source-note" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
           <div id="gps-status" style="font-size:12px;min-height:16px;margin-top:6px;color:var(--muted)"></div>
         </div>
-        <!-- Live status card (right) -->
-        <div id="gps-live-card" style="min-width:155px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:10px 12px;font-size:12px;flex-shrink:0">
+        <!-- Live GPS status (GPS sources only) -->
+        <div id="gps-live-card" style="display:none;min-width:155px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:10px 12px;font-size:12px;flex-shrink:0">
           <div style="font-size:11px;font-weight:600;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">GPS Signal</div>
           <div id="gps-card-fix" style="margin-bottom:8px;font-size:13px;color:var(--muted)">● No signal</div>
           <table style="border-collapse:collapse;width:100%">
@@ -2211,33 +2195,51 @@
           </table>
         </div>
       </div>
-    </div>
 
-    <!-- OM Position -->
-    <div class="settings-section">
-      <h2 class="settings-title">OM Position</h2>
-      <p style="color:var(--muted);font-size:12px;margin:0 0 12px 0">App-only local position for OverMesh. Not sent to radios. Used as the map origin and for range circles when there is no live GPS fix.</p>
-      <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
-        <div style="min-width:140px">
-          <label class="settings-label" style="margin-bottom:4px">Latitude</label>
-          <input id="om-pos-lat" type="number" step="0.000001" min="-90" max="90"
-                 style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:13px"
-                 placeholder="46.056947">
+      <!-- Share with radios: optional, off by default, per network -->
+      <div id="gps-share-block" style="margin-top:16px;border-left:3px solid var(--yellow, #facc15);padding:4px 0 4px 12px">
+        <div style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Share with radios <span style="font-weight:400;text-transform:none;color:var(--muted)">(optional, off by default)</span></div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Gives your connected radios your position, which they can send out over the mesh. Only a <b>live GPS fix</b> is ever shared, never the hand-picked position.</div>
+        <div id="gps-share-manual-note" style="display:none;font-size:12px;color:var(--yellow, #facc15);margin-bottom:8px">Source is the hand-picked position: nothing is shared.</div>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
+          <label class="bot-toggle">
+            <input type="checkbox" id="gps-auto-push-mt-toggle" onchange="saveGpsSettings()">
+            <span class="bot-toggle-slider"></span>
+          </label>
+          <span style="font-size:13px">Auto-share with <b>Meshtastic</b> radios <span style="color:var(--muted);font-size:11px">(sets their fixed position)</span></span>
         </div>
-        <div style="min-width:140px">
-          <label class="settings-label" style="margin-bottom:4px">Longitude</label>
-          <input id="om-pos-lon" type="number" step="0.000001" min="-180" max="180"
-                 style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:13px"
-                 placeholder="14.505751">
+        <div style="display:flex;align-items:center;gap:12px">
+          <label class="bot-toggle">
+            <input type="checkbox" id="gps-auto-push-mc-toggle" onchange="saveGpsSettings()">
+            <span class="bot-toggle-slider"></span>
+          </label>
+          <span style="font-size:13px">Auto-share with <b>MeshCore</b> radios <span style="color:var(--muted);font-size:11px">(sets the companion's location; sent in its adverts only if its advert location is on)</span></span>
         </div>
-        <button class="btn btn-sm" onclick="startOmMapPick()">Select on map</button>
-        <button class="btn btn-sm" onclick="saveOmManualPosition(this)">Save</button>
-        <button class="btn btn-sm" style="color:var(--red);border-color:var(--red)"
-                onmouseenter="this.style.background='rgba(248,81,73,0.12)'"
-                onmouseleave="this.style.background=''"
-                onclick="clearOmManualPosition(this)">Clear</button>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:10px">
+          <label style="font-size:12px;color:var(--muted)">Every:</label>
+          <input type="number" id="gps-push-interval-val" min="1" max="3600" step="1" value="30"
+            style="width:60px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:var(--fg);font-size:12px"
+            onchange="saveGpsSettings()" title="Interval between auto-shares (each network on its own clock)">
+          <select id="gps-push-interval-unit" onchange="saveGpsSettings()"
+            style="background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:var(--fg);font-size:12px">
+            <option value="1">s</option>
+            <option value="60">min</option>
+            <option value="3600">h</option>
+          </select>
+        </div>
+        <div style="margin-top:10px">
+          <label class="settings-label">Privacy: <span id="gps-precision-label" style="color:var(--accent)">Exact position</span> <span style="color:var(--muted);font-weight:400">(slide right = more private)</span></label>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Blurs the shared position, both networks.</div>
+          <input type="range" id="gps-precision-slider" min="0" max="1000" step="100" value="0" style="width:100%;max-width:320px"
+            oninput="document.getElementById('gps-precision-label').textContent=precMeterLabel(parseInt(this.value))"
+            onchange="saveGpsSettings()">
+        </div>
+        <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button class="btn btn-sm gps-share-now" onclick="gpsPushToNode('mt')" title="Send the current GPS fix to all connected Meshtastic radios now">Share with MT now</button>
+          <button class="btn btn-sm gps-share-now" onclick="gpsPushToNode('mc')" title="Send the current GPS fix to all connected MeshCore radios now">Share with MC now</button>
+          <span id="gps-push-status" style="font-size:12px;color:var(--muted)"></span>
+        </div>
       </div>
-      <div id="om-pos-status" style="font-size:12px;min-height:16px;margin-top:8px;color:var(--muted)"></div>
     </div>
 
     <!-- Map API Keys -->

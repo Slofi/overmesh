@@ -218,22 +218,25 @@ class GpsBoolCoercionTests(_ConfigStub):
         self.app.register_blueprint(gps_routes.bp)
         self.client = self.app.test_client()
         mock.patch.object(gps_routes, "save_config").start()
-        mock.patch.object(gps_routes, "_gps_start").start()
-        mock.patch.object(gps_routes, "_gps_stop").start()
+        import gps as gps_mod
+        self.gps_start = mock.patch.object(gps_mod, "_gps_start").start()
+        mock.patch.object(gps_mod, "_gps_start_proxy").start()
+        mock.patch.object(gps_mod, "_gps_stop").start()
         mock.patch.object(gps_routes, "gps_port_conflict", return_value=None).start()
 
     def test_auto_push_string_false(self):
-        gps_routes.CONFIG["gps"] = {"enabled": False, "port": "", "auto_push": True}
-        resp = self.client.post("/api/settings/gps", json={"auto_push": "false"})
+        gps_routes.CONFIG["gps"] = {"source": "manual", "auto_push_mt": True, "auto_push_mc": True}
+        resp = self.client.post("/api/settings/gps", json={"source": "manual", "auto_push_mt": "false", "auto_push_mc": "false"})
         self.assertEqual(resp.status_code, 200)
-        self.assertIs(gps_routes.CONFIG["gps"]["auto_push"], False)
+        self.assertIs(gps_routes.CONFIG["gps"]["auto_push_mt"], False)
+        self.assertIs(gps_routes.CONFIG["gps"]["auto_push_mc"], False)
 
-    def test_enabled_string_false_stays_disabled(self):
+    def test_old_page_enabled_string_false_means_hand_picked(self):
         gps_routes.CONFIG["gps"] = {"enabled": True, "port": ""}
         resp = self.client.post("/api/settings/gps", json={"enabled": "false"})
         self.assertEqual(resp.status_code, 200)
-        self.assertIs(gps_routes.CONFIG["gps"]["enabled"], False)
-        gps_routes._gps_start.assert_not_called()
+        self.assertEqual(gps_routes.CONFIG["gps"]["source"], "manual")
+        self.gps_start.assert_not_called()
 
 
 class McBoolCoercionTests(_ConfigStub):

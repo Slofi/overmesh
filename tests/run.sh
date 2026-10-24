@@ -30,6 +30,7 @@ node tests/test_pip_traces.js
 node tests/test_pip_layer.js
 node tests/test_rx_direct_sender.js
 node tests/test_mc_scope_none_ui.js
+node tests/test_om_position_source.js
 
 # JS lint (no-undef) — the only check that sees client-side ReferenceErrors,
 # which never reach the server journal. It MUST run with the repo as the base

@@ -205,6 +205,28 @@ class AppSettingsOmPositionTests(unittest.TestCase):
         self.assertTrue(ports["/dev/ttyACM1"]["in_use"])
         self.assertFalse(ports["/dev/ttyACM2"]["in_use"])
 
+    def test_ports_unplugged_radio_does_not_claim_its_saved_path(self):
+        # S471, CD board swap: CD-MC (T114, serial 4925...) is off; the FakeTec came up on CD-MC's saved
+        # /dev/ttyACM0 and Settings -> Add radio hid it as "in use". An absent board claims no port.
+        settings_routes.CONFIG["nodes"] = []
+        settings_routes.CONFIG["mc_nodes"] = [
+            {"id": "mc_a", "name": "CD-MC", "type": "serial", "port": "/dev/ttyACM0", "usb_serial": "4925104047D17CA4"}
+        ]
+        fake_ports = [
+            mock.Mock(device="/dev/ttyACM0", description="FakeTec", serial_number="68DF6C579D8FC812", vid=0x239A, pid=0xB3),
+        ]
+        with mock.patch("serial.tools.list_ports.comports", return_value=fake_ports):
+            resp = self.client.get("/api/settings/ports")
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.get_json()["ports"][0]["in_use"])
+
+        # ...and once the T114 is back (on ttyACM1), it claims ttyACM1, not the FakeTec's ttyACM0.
+        fake_ports.append(mock.Mock(device="/dev/ttyACM1", description="T114", serial_number="4925104047D17CA4", vid=0x239A, pid=0x8029))
+        with mock.patch("serial.tools.list_ports.comports", return_value=fake_ports):
+            ports = {p["device"]: p for p in self.client.get("/api/settings/ports").get_json()["ports"]}
+        self.assertFalse(ports["/dev/ttyACM0"]["in_use"])
+        self.assertTrue(ports["/dev/ttyACM1"]["in_use"])
+
     def test_ports_ignore_disabled_saved_radios(self):
         settings_routes.CONFIG["nodes"] = [
             {"id": "node_a", "name": "Disabled MT", "enabled": False, "type": "serial", "port": "/dev/ttyACM0", "usb_serial": "ABC"}

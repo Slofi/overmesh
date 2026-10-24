@@ -1,13 +1,12 @@
-"""The GPS proxy must not claim a fallback it never performs.
+"""OPS-TOC as the OM Position source never falls back to a serial port.
 
-Found live on CD 2026-10-17 (S454): with OPS-TOC stopped, OM logged
-"GPS: OPS-TOC unreachable after 5 tries - falling back to /dev/ttyACM0" every 10 seconds, forever. The watchdog
-restarted the proxy each time, so nothing fell back, and /dev/ttyACM0 is the MC radio's own port, not a GPS.
+History: S454 found the proxy logging "falling back to /dev/ttyACM0" forever while nothing fell back (that path
+was the MC radio's own port). S471 made the fallback real and then hit the worst case: OPS-TOC down, the saved
+fallback path /dev/ttyACM0 now held a freshly flashed Meshtastic board, and OM opened it. Filip then decided:
+"If OPS-TOC doesn't have a fix, OM doesn't have a fix ... this time I want no automation."
 
-New contract:
-  * a fallback is used only when the port is present AND not one of our radios (gps_port_conflict);
-  * otherwise the proxy keeps retrying and warns at most once per _PROXY_WARN_EVERY, never "falling back";
-  * the usable-fallback case is actually wired through the watchdog (the old code always restarted the proxy).
+Contract: with OPS-TOC chosen, an unreachable OPS-TOC means no position. The proxy reader never opens or
+nominates a serial port, and a sustained outage warns at most once per _PROXY_WARN_EVERY.
 """
 import json
 import os
@@ -34,21 +33,16 @@ sys.path.insert(0, REPO)
 import gps  # noqa: E402
 
 
-class GpsProxyFallbackTests(unittest.TestCase):
-    def setUp(self):
-        gps._gps_proxy_fallback_port = ""
-
-    def test_a_radio_port_is_never_used_as_a_gps_fallback(self):
+class GpsProxyNeverFallsBackTests(unittest.TestCase):
+    def test_unreachable_ops_toc_opens_nothing_and_warns_once(self):
         stop = threading.Event()
         with mock.patch.object(gps.urllib.request, "urlopen", side_effect=OSError("connection refused")), \
              mock.patch.object(gps, "_PROXY_RETRY_SECONDS", 0.01), \
-             mock.patch.object(gps, "gps_port_present", return_value=True), \
-             mock.patch.object(gps, "gps_port_conflict", return_value={"network": "MC", "name": "MC"}), \
+             mock.patch.object(gps, "_gps_start") as start, \
+             mock.patch.object(gps, "gps_device_check") as check, \
              mock.patch.object(gps.log, "warning") as warn:
-            t = threading.Thread(target=gps._gps_proxy_reader,
-                                 args=("http://localhost:8090", "/dev/ttyACM0", stop), daemon=True)
+            t = threading.Thread(target=gps._gps_proxy_reader, args=("http://localhost:8090", stop), daemon=True)
             t.start()
-            # 5 fails to reach the limit, then more cycles: enough to prove the message is throttled.
             deadline = time.time() + 1.0
             while time.time() < deadline:
                 if warn.call_count:
@@ -58,33 +52,17 @@ class GpsProxyFallbackTests(unittest.TestCase):
             stop.set()
             t.join(timeout=2)
 
-        self.assertEqual(gps._gps_proxy_fallback_port, "",
-                         "a port that is the MC radio must not be advertised as a fallback")
-        self.assertEqual(warn.call_count, 1, f"a sustained outage must warn once, got {warn.call_count}: {warn.call_args_list}")
+        start.assert_not_called()
+        check.assert_not_called()   # it does not even look for a serial device
+        self.assertEqual(warn.call_count, 1, f"a sustained outage must warn once, got {warn.call_args_list}")
         msg = warn.call_args[0][0]
-        self.assertIn("still retrying", msg)
-        self.assertIn("MC radio", msg)
-        self.assertNotIn("falling back", msg)
+        self.assertIn("no position until it answers", msg)
+        self.assertNotIn("using", msg)
 
-    def test_a_usable_serial_port_is_handed_to_the_watchdog(self):
-        with mock.patch.object(gps.urllib.request, "urlopen", side_effect=OSError("connection refused")), \
-             mock.patch.object(gps, "_PROXY_RETRY_SECONDS", 0.01), \
-             mock.patch.object(gps, "gps_port_present", return_value=True), \
-             mock.patch.object(gps, "gps_port_conflict", return_value=None), \
-             mock.patch.object(gps.log, "warning") as warn:
-            gps._gps_proxy_reader("http://localhost:8090", "/dev/ttyUSB0", threading.Event())
-
-        self.assertEqual(gps._gps_proxy_fallback_port, "/dev/ttyUSB0",
-                         "a present, non-radio port must be offered to the watchdog")
-        self.assertTrue(warn.called)
-        self.assertIn("using the configured serial port", warn.call_args[0][0])
-
-    def test_watchdog_honours_the_fallback_request(self):
-        src = Path(REPO, "gps.py").read_text(encoding="utf-8")
-        self.assertIn("if _gps_proxy_fallback_port:", src,
-                      "the watchdog must check the fallback request before restarting the proxy")
-        self.assertIn("port = _gps_proxy_fallback_port", src,
-                      "the watchdog must read the requested port, not the configured one")
+    def test_the_proxy_reader_has_no_serial_port_parameter(self):
+        import inspect
+        self.assertEqual(list(inspect.signature(gps._gps_proxy_reader).parameters), ["proxy_url", "stop_event"])
+        self.assertFalse(hasattr(gps, "_gps_proxy_fallback_port"), "the fallback hand-over must be gone")
 
 
 if __name__ == "__main__":

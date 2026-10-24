@@ -5269,7 +5269,8 @@ if (targetEl) {
   let notesData       = {};  // note_id → note object
   let noteMarkers     = {};  // note_id → leaflet marker
   let _gpsMarker      = null;
-  let _gpsEnabled     = false;
+  let _gpsEnabled     = false;    // = a GPS source is chosen (anything but the hand-picked position)
+  let _omPosSource    = 'manual'; // OM Position source, chosen by hand in Settings (S471): manual|internal|usb|proxy
   let _localGpsPos    = null;  // {lat, lon} when GPS has fix — set from gps_position SSE
   let _omManualPos    = null;  // {lat, lon} app-only manual origin when GPS is unavailable
   let _distanceUnit   = 'km';   // app-wide distance display unit: km or mi
@@ -5397,13 +5398,23 @@ if (targetEl) {
   }
 
   function _omLocalOrigin() {
-    if (_localGpsPos) return {lat: _localGpsPos.lat, lon: _localGpsPos.lon};
-    if (_omManualPos) return {lat: _omManualPos.lat, lon: _omManualPos.lon};
-    return null;
+    // ONE source, no fallback between them (Filip, S471): hand-picked means the map position; a GPS source
+    // means its live fix, and without a fix OM has no position of its own.
+    if (_omPosSource === 'manual') return _omManualPos ? {lat: _omManualPos.lat, lon: _omManualPos.lon} : null;
+    return _localGpsPos ? {lat: _localGpsPos.lat, lon: _localGpsPos.lon} : null;
+  }
+
+  // Distances, range circles and the trace endpoint measure from: the chosen source's live position, else the
+  // hand-picked OM Position even while a GPS source has no fix (Filip, S471: "if no GPS, it should show from the
+  // OM position"), and only then the radio's own reported position. Map centring and the Log's +GPS stay strict.
+  function _omDistanceOrigin() {
+    const origin = _omLocalOrigin();
+    if (origin) return origin;
+    return _omManualPos ? {lat: _omManualPos.lat, lon: _omManualPos.lon} : null;
   }
 
   function _mtLocalPosition(radioId = '') {
-    const origin = _omLocalOrigin();
+    const origin = _omDistanceOrigin();
     if (origin) return origin;
     const local = allNodes.find(n => n.is_local && n.latitude != null && n.longitude != null && (!radioId || n.radio_id === radioId))
       || allNodes.find(n => n.is_local && n.latitude != null && n.longitude != null);
@@ -5411,7 +5422,7 @@ if (targetEl) {
   }
 
   function _mcLocalPosition(radioId = '') {
-    const origin = _omLocalOrigin();
+    const origin = _omDistanceOrigin();
     if (origin) return origin;
     const st = (radioId && mcLastStatus[radioId]) || (activeMcRadioId && mcLastStatus[activeMcRadioId]) || null;
     if (st && st.lat != null && st.lon != null && !(st.lat === 0 && st.lon === 0)) return {lat: Number(st.lat), lon: Number(st.lon)};
@@ -11110,15 +11121,20 @@ if (targetEl) {
 
   // ── GPS receiver ──────────────────────────────────────────────────────────
 
+  let _gpsPorts = {internal: '', usb: ''};   // each serial source keeps its own port
+  let _gpsPortListKind = '';                 // which kind the port <select> currently lists (it loads async)
+
   function loadGpsSettings() {
     fetch(BASE_PATH + '/api/settings/gps')
       .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(cfg => {
-        _gpsEnabled = cfg.enabled || false;
-        document.getElementById('gps-enabled-toggle').checked   = _gpsEnabled;
-        document.getElementById('gps-auto-push-toggle').checked = cfg.auto_push || false;
+        _omPosSource = ['manual', 'internal', 'usb', 'proxy'].includes(cfg.source) ? cfg.source : 'manual';
+        _gpsEnabled = _omPosSource !== 'manual';
+        _gpsPorts = {internal: cfg.internal_port || '', usb: cfg.usb_port || ''};
         const srcSel = document.getElementById('gps-source-select');
-        if (srcSel) { srcSel.value = cfg.source || 'direct'; gpsSourceChanged(); }
+        if (srcSel) srcSel.value = _omPosSource;
+        document.getElementById('gps-auto-push-mt-toggle').checked = !!cfg.auto_push_mt;
+        document.getElementById('gps-auto-push-mc-toggle').checked = !!cfg.auto_push_mc;
         const storedSecs = cfg.push_interval ?? 30;
         const unitEl = document.getElementById('gps-push-interval-unit');
         const valEl  = document.getElementById('gps-push-interval-val');
@@ -11128,34 +11144,57 @@ if (targetEl) {
         const precMeters = cfg.precision_meters ?? bitToSliderMeters(cfg.precision ?? 32);
         document.getElementById('gps-precision-slider').value = precMeters;
         document.getElementById('gps-precision-label').textContent = precMeterLabel(precMeters);
-        _gpsPopulatePortList(cfg.port || '');
+        gpsSourceChanged(false);
         _gpsUpdatePosition(cfg);
+        if (_showPolarGrid) _drawPolarGrid();
+        if (mapLocked && leafletMap) centerOnLocal();
       })
       .catch(e => console.error('loadGpsSettings failed:', e));
   }
 
-  function gpsSourceChanged() {
-    const v   = (document.getElementById('gps-source-select') || {}).value;
-    const row = document.getElementById('gps-port-row');
-    if (row) row.style.display = v === 'proxy' ? 'none' : 'flex';
+  // Show the controls of the chosen source only. Changing the selector IS the user's choice, so it is saved
+  // straight away; nothing else ever changes the source.
+  function gpsSourceChanged(save) {
+    const v = (document.getElementById('gps-source-select') || {}).value || 'manual';
+    const show = (id, on, disp = '') => { const el = document.getElementById(id); if (el) el.style.display = on ? disp : 'none'; };
+    show('om-pos-manual-row', v === 'manual');
+    show('gps-port-row', v === 'internal' || v === 'usb', 'flex');
+    show('gps-live-card', v !== 'manual');
+    show('gps-share-manual-note', v === 'manual');
+    document.querySelectorAll('.gps-share-now').forEach(b => { b.disabled = v === 'manual'; });
+    const label = document.getElementById('gps-port-label');
+    if (label) label.textContent = v === 'internal' ? 'UART' : 'Dongle';
+    const note = document.getElementById('gps-source-note');
+    if (note) note.textContent = {
+      manual:   '',
+      internal: 'Reads the built-in GPS on the chosen UART (CD: /dev/ttyS3). No fix = no OM position.',
+      usb:      'Reads only the dongle picked here (remembered by its USB identity). No fix = no OM position.',
+      proxy:    "Uses OPS-TOC's GPS. If OPS-TOC has no fix, OM has none either.",
+    }[v] || '';
+    if (v === 'internal' || v === 'usb') _gpsPopulatePortList(v, _gpsPorts[v]);
+    if (save) saveGpsSettings();
   }
 
   function gpsRefreshPorts() {
-    const currentPort = document.getElementById('gps-port-select').value;
-    _gpsPopulatePortList(currentPort);
+    const v = (document.getElementById('gps-source-select') || {}).value;
+    _gpsPopulatePortList(v, document.getElementById('gps-port-select').value);
   }
 
-  function _gpsPopulatePortList(currentPort) {
+  // Only ports of the chosen kind; a saved radio's port is shown but cannot be picked.
+  function _gpsPopulatePortList(kind, currentPort) {
     fetch(BASE_PATH + '/api/settings/ports')
       .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(data => {
         const sel = document.getElementById('gps-port-select');
         sel.innerHTML = '<option value="">select port</option>';
-        (data.ports || []).forEach(p => {
+        _gpsPortListKind = kind;
+        const isUart = d => /^\/dev\/tty(AS|S)\d/.test(d);
+        (data.ports || []).filter(p => kind === 'internal' ? isUart(p.device) : !isUart(p.device)).forEach(p => {
           const opt = document.createElement('option');
           opt.value = p.device;
-          opt.textContent = `${p.device}: ${p.description}`;
-          if (p.device === currentPort) opt.selected = true;
+          opt.textContent = `${p.device}: ${p.description}${p.in_use ? ' (radio)' : ''}`;
+          if (p.in_use) opt.disabled = true;                          // a radio is never the GPS
+          else if (p.device === currentPort) opt.selected = true;
           sel.appendChild(opt);
         });
       })
@@ -11176,7 +11215,7 @@ if (targetEl) {
       _localGpsPos = null;
       if (_showPolarGrid) _drawPolarGrid();
       fixEl.style.color = 'var(--muted)';
-      fixEl.textContent = '● Disabled';
+      fixEl.textContent = '● Not used (hand-picked)';
       if (satsEl) satsEl.textContent = '-';
       if (latEl)  latEl.textContent  = '-';
       if (lonEl)  lonEl.textContent  = '-';
@@ -11204,7 +11243,9 @@ if (targetEl) {
       _localGpsPos = null;
       if (_showPolarGrid) _drawPolarGrid();
       fixEl.style.color = 'var(--yellow, #facc15)';
-      fixEl.textContent = '● Error';
+      fixEl.textContent = '● Not reading';
+      const why = document.getElementById('gps-status');   // the reason, not a bare "Error" (S471)
+      if (why) why.textContent = pos.error;
       if (satsEl) satsEl.textContent = '0';
       if (latEl)  latEl.textContent  = '-';
       if (lonEl)  lonEl.textContent  = '-';
@@ -11219,7 +11260,7 @@ if (targetEl) {
       if (_showPolarGrid) _drawPolarGrid();
       fixEl.style.color = 'var(--muted)';
       fixEl.textContent = '● Searching…';
-      if (satsEl) satsEl.textContent = '0';
+      if (satsEl) satsEl.textContent = _gpsSatsLabel(pos);
       if (latEl)  latEl.textContent  = '-';
       if (lonEl)  lonEl.textContent  = '-';
       if (altEl)  altEl.textContent  = '-';
@@ -11234,7 +11275,7 @@ if (targetEl) {
     if (_showPolarGrid) _drawPolarGrid();
     fixEl.style.color = hasFix ? 'var(--accent)' : 'var(--yellow, #facc15)';
     fixEl.textContent  = hasFix ? '● Fix' : '● No fix';
-    if (satsEl) satsEl.textContent = pos.sats != null ? pos.sats : '-';
+    if (satsEl) satsEl.textContent = _gpsSatsLabel(pos);
     if (latEl)  latEl.textContent  = pos.lat  != null ? pos.lat.toFixed(6)  : '-';
     if (lonEl)  lonEl.textContent  = pos.lon  != null ? pos.lon.toFixed(6)  : '-';
     if (altEl)  altEl.textContent  = pos.alt  != null ? pos.alt + ' m'      : '-';
@@ -11244,6 +11285,13 @@ if (targetEl) {
       _gpsPlaceMarker(pos.lat, pos.lon, pos.alt, pos.sats);
       if (mapLocked && leafletMap) leafletMap.panTo([pos.lat, pos.lon], { animate: true, duration: 0.6 });
     } else _gpsRemoveMarker();
+  }
+
+  // "used · seen": seen = satellites the receiver HEARS (GSV). Seen staying 0 outdoors means the antenna or
+  // local interference, not a slow fix (S471).
+  function _gpsSatsLabel(pos) {
+    const used = pos.sats != null ? pos.sats : 0;
+    return pos.sats_view != null ? `${used} used · ${pos.sats_view} seen` : `${used}`;
   }
 
   function _gpsPlaceMarker(lat, lon, alt, sats) {
@@ -11267,12 +11315,11 @@ if (targetEl) {
   }
 
   function saveGpsSettings() {
-    const enabled    = document.getElementById('gps-enabled-toggle').checked;
-    _gpsEnabled      = enabled;
-    const port       = document.getElementById('gps-port-select').value;
     const srcSel     = document.getElementById('gps-source-select');
-    const source     = srcSel ? srcSel.value : 'direct';
-    const auto_push  = document.getElementById('gps-auto-push-toggle').checked;
+    const source     = srcSel ? srcSel.value : 'manual';
+    const portSel    = document.getElementById('gps-port-select');
+    // Send a port only if the list on screen is of this source's kind; otherwise the server keeps the saved one.
+    const port       = (source === _gpsPortListKind) ? (portSel.value || '') : '';
     const precMeters = parseInt(document.getElementById('gps-precision-slider').value);
     const precision  = metersToBit(precMeters);
     const push_interval = Math.max(10, parseInt(document.getElementById('gps-push-interval-val').value || 30)
@@ -11282,15 +11329,17 @@ if (targetEl) {
     fetch(BASE_PATH + '/api/settings/gps', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({enabled, port, source, proxy_url: 'http://localhost:8090',
-                            auto_push, precision, precision_meters: precMeters, push_interval}),
+      body: JSON.stringify({source, port, proxy_url: 'http://localhost:8090',
+                            auto_push_mt: document.getElementById('gps-auto-push-mt-toggle').checked,
+                            auto_push_mc: document.getElementById('gps-auto-push-mc-toggle').checked,
+                            precision, precision_meters: precMeters, push_interval}),
     }).then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || `HTTP ${r.status}`); }))
       .then((d) => {
-        statusEl.textContent = d.warning || (enabled ? '✓ GPS enabled' : '✓ Saved');
-        setTimeout(() => { statusEl.textContent = ''; }, 2000);
+        statusEl.textContent = d.warning || '✓ Saved';
+        if (!d.warning) setTimeout(() => { statusEl.textContent = ''; }, 2000);
         loadGpsSettings();
       })
-      .catch(e => { statusEl.textContent = `✗ ${escHtml(String(e))}`; });
+      .catch(e => { statusEl.textContent = `✗ ${escHtml(String(e))}`; loadGpsSettings(); });
   }
 
   function fillPositionFromGps(btn) {
@@ -11313,15 +11362,19 @@ if (targetEl) {
       .catch(() => { if (statusEl) statusEl.textContent = '✗ Failed to read GPS data'; });
   }
 
-  function gpsPushToNode() {
+  function gpsPushToNode(network) {
     const statusEl = document.getElementById('gps-push-status');
+    const net = network === 'mc' ? 'mc' : 'mt';
     statusEl.textContent = 'Sending…';
-    fetch(BASE_PATH + '/api/gps/push', {method: 'POST'})
+    fetch(BASE_PATH + '/api/gps/push', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({network: net}),
+    })
       .then(r => r.json().then(d => ({ok: r.ok, d})))
       .then(({ok, d}) => {
         if (!ok) { statusEl.textContent = `✗ ${escHtml(d.error || 'Request failed')}`; return; }
-        const n = d.pushed ? d.pushed.length : 0;
-        statusEl.textContent = n ? `✓ Sent to ${n} node(s)` : '✓ Sent (no nodes connected)';
+        statusEl.textContent = `✓ Sent to connected ${net === 'mc' ? 'MeshCore' : 'Meshtastic'} radios`;
         setTimeout(() => { statusEl.textContent = ''; }, 3000);
       })
       .catch(e => { statusEl.textContent = `✗ ${escHtml(String(e))}`; });

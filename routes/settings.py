@@ -529,7 +529,10 @@ def api_settings_ports():
             return configured or None
         matches = [p.device for p in all_ports if p.serial_number == serial]
         if not matches:
-            return configured or None
+            # Its board is not plugged in, so it holds no port. The saved /dev/ttyACMx name may belong to another
+            # board now (S471: T114 off, the FakeTec took ttyACM0 and was hidden as "in use" by CD-MC). This
+            # matches the connect code, which also refuses a radio whose serial is not present.
+            return None
         return configured if configured in matches else matches[0]
 
     used_devices = set()

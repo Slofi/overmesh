@@ -71,6 +71,7 @@ class GpsPushApiSilentTests(_ConfigStub):
         self.client = self.app.test_client()
         with gps_mod.gps_lock:
             gps_mod.gps_state.update({"fix": True, "lat": 46.05, "lon": 14.5, "alt": 300})
+        CONFIG["gps"] = {"source": "usb"}   # a live GPS source: the hand-picked position is never pushed (S471)
 
     def test_silent_mode_returns_409_and_does_not_push(self):
         CONFIG["silent_mode"] = True
@@ -78,6 +79,13 @@ class GpsPushApiSilentTests(_ConfigStub):
             resp = self.client.post("/api/gps/push", json={})
         self.assertEqual(resp.status_code, 409)
         self.assertEqual(resp.get_json()["error"], _SILENT_MSG)
+        push.assert_not_called()
+
+    def test_silent_mode_blocks_the_mc_push_too(self):
+        CONFIG["silent_mode"] = True
+        with mock.patch.object(gps_routes, "_gps_push_to_mc") as push:
+            resp = self.client.post("/api/gps/push", json={"network": "mc"})
+        self.assertEqual(resp.status_code, 409)
         push.assert_not_called()
 
     def test_not_silent_still_pushes(self):

@@ -120,8 +120,8 @@ class TestLabelFixes(unittest.TestCase):
 
     def test_c2_lora_save_title_names_tx_power(self):
         self.assertIn(
-            'title="Save LoRa region, modem preset, TX power and hop limit to the node"',
-            _html(), "C2: the Save tooltip must name TX power, which it also writes")
+            'title="Save LoRa region, modem preset, TX power, hop limit and the MQTT flags to the node"',
+            _html(), "C2: the Save tooltip must name TX power and the MQTT flags, which it also writes")
 
     def test_c4_four_close_controls_have_accessible_name(self):
         html = _html()

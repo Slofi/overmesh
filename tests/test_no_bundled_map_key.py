@@ -111,7 +111,8 @@ class MapKeyProviderWiringTests(unittest.TestCase):
 
     def test_the_thunderforest_hint_names_all_four_layers(self) -> None:
         """It listed only two of the four Thunderforest layers that need the key."""
-        hint = next(ln for ln in self.html.splitlines() if "Required for all four Thunderforest" in ln)
+        # S472: the hint now sits on the key field's own label line
+        hint = next(ln for ln in self.html.splitlines() if 'for="tf-api-key-input"' in ln)
         for layer in ("TF Landscape", "TF Outdoors", "TF Pioneer", "TF Atlas"):
             self.assertIn(layer, hint, f"the Thunderforest hint does not mention {layer}")
 

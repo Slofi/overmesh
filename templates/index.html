@@ -1029,34 +1029,37 @@
 
   <div class="panel" id="panel-settings">
 
-    <!-- Settings sub-tabs -->
+    <!-- Settings sub-tabs (sticky while the long tabs scroll). Layout refreshed S472: cards per topic,
+         long cards split into collapsible "st-group" details elements, each with a data-key; open state remembered. -->
     <div class="settings-tab-bar">
-      <button class="settings-tab active" id="stab-mt"    onclick="switchSettingsTab('mt')"    title="Meshtastic node settings">Meshtastic</button>
+      <button class="settings-tab active" id="stab-mt"    onclick="switchSettingsTab('mt')"    title="Meshtastic radio settings">Meshtastic</button>
       <button class="settings-tab"        id="stab-mc"    onclick="switchSettingsTab('mc')"    style="display:none" title="MeshCore radio settings">MeshCore</button>
-      <button class="settings-tab"        id="stab-app"   onclick="switchSettingsTab('app')"   title="App preferences, theme, and map tiles">App</button>
+      <button class="settings-tab"        id="stab-app"   onclick="switchSettingsTab('app')"   title="App preferences, position, maps and system">App</button>
     </div>
 
+    <!-- ═════════════ MESHTASTIC ═════════════ -->
     <div id="st-mt">
-    <!-- Radios -->
     <div class="settings-section">
-      <h2 class="settings-title">Radios</h2>
+      <div class="st-head">
+        <h2 class="settings-title">Radios</h2>
+        <span class="st-head-hint">Meshtastic radios OverMesh connects to</span>
+      </div>
       <div id="settings-nodes-list"></div>
 
-      <h3 class="settings-subtitle">Add radio</h3>
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
-        <label class="settings-label" style="margin:0">Type:</label>
+      <div class="st-sub st-sub-gap">Add radio</div>
+      <div class="st-row">
         <div class="view-toggle">
           <div class="btn active" id="add-type-serial" onclick="settingsSetAddType('serial')" title="Connect via USB serial port">Serial</div>
           <div class="btn"        id="add-type-tcp"    onclick="settingsSetAddType('tcp')"    title="Connect via TCP/IP or WiFi">TCP / WiFi</div>
         </div>
       </div>
-      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+      <div class="st-row" style="margin-top:8px">
         <div id="add-serial-fields" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
           <div>
             <label class="settings-label">Port</label>
-            <select id="settings-port-select" class="settings-select" style="min-width:160px"></select>
+            <select id="settings-port-select" class="settings-select" style="min-width:180px"></select>
           </div>
-          <button class="btn" onclick="settingsScanPorts()" title="Rescan ports" style="margin-bottom:0">↻</button>
+          <button class="btn" onclick="settingsScanPorts()" title="Rescan ports">↻</button>
         </div>
         <div id="add-tcp-fields" style="display:none;gap:8px;align-items:flex-end;flex-wrap:wrap">
           <div>
@@ -1077,421 +1080,424 @@
       <div id="settings-add-error" class="settings-error"></div>
     </div>
 
-    <!-- Node Settings -->
+    <!-- Node settings: one radio at a time -->
     <div class="settings-section">
-      <h2 class="settings-title">Node</h2>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <div id="node-cfg-tabs" style="display:flex;gap:4px;flex-wrap:wrap"></div>
-        <button class="btn" onclick="loadNodeConfig()" title="Reload config from node" style="flex-shrink:0">↻ Reload</button>
+      <div class="st-head">
+        <h2 class="settings-title">Node settings</h2>
+        <div id="node-cfg-tabs" class="st-radio-tabs"></div>
+        <div class="st-head-actions">
+          <button class="btn" onclick="loadNodeConfig()" title="Reload config from node">↻ Reload</button>
+        </div>
       </div>
-      <div id="node-cfg-error" style="margin-top:6px;font-size:12px;color:var(--red)"></div>
+      <div id="node-cfg-error" style="font-size:12px;color:var(--red)"></div>
 
-      <div id="node-cfg-content" style="display:none;margin-top:16px">
+      <div id="node-cfg-content" style="display:none">
 
-        <!-- Identity -->
-        <h3 class="settings-subtitle">Identity</h3>
-        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
-          <div>
-            <label class="settings-label">Long Name <span style="font-weight:400">(max 39 chars)</span></label>
-            <input id="node-cfg-long-name" class="settings-input" maxlength="39" style="width:220px">
-          </div>
-          <div>
-            <label class="settings-label">Short Name <span style="font-weight:400">(max 4 chars)</span></label>
-            <input id="node-cfg-short-name" class="settings-input" maxlength="4" style="width:80px">
-          </div>
-          <button class="btn" onclick="saveNodeOwner(this)" title="Save long name and short name to the node">Save</button>
-        </div>
-        <div id="node-cfg-owner-status" style="font-size:12px;min-height:16px;margin-top:6px"></div>
-
-        <!-- Device Role -->
-        <h3 class="settings-subtitle">Device Role</h3>
-        <div style="display:flex;gap:8px;align-items:flex-end">
-          <div>
-            <label class="settings-label">Role</label>
-            <select id="node-cfg-role" class="settings-select" style="min-width:180px"></select>
-          </div>
-          <button class="btn" onclick="saveNodeDevice(this)" title="Save device role to the node">Save</button>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
-          <input type="checkbox" id="node-cfg-led-heartbeat-disabled">
-          <label for="node-cfg-led-heartbeat-disabled" class="settings-label" style="margin:0">Disable LED heartbeat</label>
-        </div>
-        <div id="node-cfg-device-status" style="font-size:12px;min-height:16px;margin-top:6px"></div>
-
-        <!-- LoRa -->
-        <h3 class="settings-subtitle">LoRa</h3>
-        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
-          <div>
-            <label class="settings-label">Region</label>
-            <select id="node-cfg-region" class="settings-select" style="min-width:120px"></select>
-          </div>
-          <div>
-            <label class="settings-label">Modem Preset</label>
-            <select id="node-cfg-preset" class="settings-select" style="min-width:160px"></select>
-          </div>
-          <div>
-            <label class="settings-label">TX Power <span style="font-weight:400">(0 = max)</span></label>
-            <input id="node-cfg-txpower" type="number" class="settings-input" min="0" max="30" style="width:70px">
-          </div>
-          <div>
-            <label class="settings-label">Hop Limit <span style="font-weight:400">(1–7)</span></label>
-            <input id="node-cfg-hoplimit" type="number" class="settings-input" min="1" max="7" style="width:55px">
-          </div>
-          <button class="btn" onclick="saveNodeLora(this)" title="Save LoRa region, modem preset, TX power and hop limit to the node">Save</button>
-        </div>
-        <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:center;margin-top:8px">
-          <label style="display:flex;align-items:center;gap:5px;font-size:12px"
-                 title="Sets the ok_to_mqtt bit on this node's outgoing packets, so OTHER gateways may uplink them too. Community maps (e.g. map.meshnet.si) ask for this. It does not itself enable MQTT or uplinking.">
-            <input type="checkbox" id="node-cfg-ok-to-mqtt"> OK to MQTT <span style="color:var(--muted)">(others may uplink my packets)</span>
-          </label>
-          <label style="display:flex;align-items:center;gap:5px;font-size:12px"
-                 title="Refuse any packet that travelled via MQTT (keeps internet traffic out of your local mesh). Independent of uplinking. Your own packets still go up if a channel has Uplink enabled.">
-            <input type="checkbox" id="node-cfg-ignore-mqtt"> Ignore MQTT-relayed packets
-          </label>
-        </div>
-        <p style="font-size:11px;color:var(--muted);margin:8px 0 0">Region and preset changes take effect after node reboot. Hop limit applies immediately (also used for Traceroute).</p>
-        <div id="node-cfg-lora-status" style="font-size:12px;min-height:16px;margin-top:4px"></div>
-
-        <!-- Channels -->
-        <h3 class="settings-subtitle">Channels</h3>
-        <div id="node-cfg-channels-list" style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:4px"></div>
-        <div id="node-cfg-channels-remove-status" style="font-size:12px;min-height:16px;margin-bottom:4px"></div>
-
-        <!-- Inline edit panel -->
-        <div id="node-cfg-channel-edit" style="display:none;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:14px;margin-top:4px">
-          <div style="font-size:12px;font-weight:600;margin-bottom:12px" id="node-cfg-ch-edit-title">Edit Channel 0</div>
-          <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
-            <div>
-              <label class="settings-label">Name <span style="font-weight:400">(max 11 chars)</span></label>
-              <input id="node-cfg-ch-name" class="settings-input" maxlength="11" style="width:160px">
-            </div>
-            <div>
-              <label class="settings-label">Role</label>
-              <select id="node-cfg-ch-role" class="settings-select">
-                <option value="0">Disabled</option>
-                <option value="1">Primary</option>
-                <option value="2">Secondary</option>
-              </select>
-            </div>
-          </div>
-          <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-top:10px">
-            <label style="display:flex;align-items:center;gap:5px;font-size:12px"
-                   title="Uplink = publish this channel's packets (messages, telemetry, positions) to the MQTT broker. Leave OFF to keep your local mesh traffic off the internet.">
-              <input type="checkbox" id="node-cfg-ch-uplink"> MQTT uplink
-            </label>
-            <label style="display:flex;align-items:center;gap:5px;font-size:12px"
-                   title="Downlink = inject MQTT traffic from the network into your local mesh.">
-              <input type="checkbox" id="node-cfg-ch-downlink"> MQTT downlink
-            </label>
-          </div>
-          <div style="margin-top:10px">
-            <label class="settings-label">Encryption Key</label>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-              <select id="node-cfg-ch-psk-type" class="settings-select" onchange="chPskTypeChange()">
-                <option value="keep">Keep existing</option>
-                <option value="default">Default (LongFast key)</option>
-                <option value="random">Random (new secure key)</option>
-                <option value="custom">Custom (hex)</option>
-              </select>
-            </div>
-            <input id="node-cfg-ch-psk-hex" class="settings-input" placeholder="hex or base64: e.g. d4f1bb3a… or OG8mgh5H…"
-                   style="width:100%;margin-top:6px;display:none;font-family:monospace;font-size:11px">
-            <div id="node-cfg-ch-key-row" style="display:none;margin-top:8px">
-              <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-                <span style="font-size:11px;color:var(--muted)">Current key (base64):</span>
-                <button type="button" id="btn-ch-key-eye" onclick="toggleNodeChKeyVis()"
-                        style="background:none;border:1px solid var(--border);border-radius:4px;padding:1px 6px;cursor:pointer;color:var(--muted);font-size:11px">Show</button>
-                <button type="button" onclick="copyNodeChKey(this)"
-                        style="background:none;border:1px solid var(--border);border-radius:4px;padding:1px 6px;cursor:pointer;color:var(--muted);font-size:11px">Copy</button>
+        <details class="st-group" data-key="mt-identity" open>
+          <summary><span class="st-group-title">Identity &amp; role</span><span class="st-group-hint" id="node-cfg-hw"></span></summary>
+          <div class="st-group-body">
+            <div class="st-row">
+              <div>
+                <label class="settings-label">Long name <span class="st-unit">max 39</span></label>
+                <input id="node-cfg-long-name" class="settings-input" maxlength="39" style="width:220px">
               </div>
-              <input id="node-cfg-ch-key-display" type="password" readonly class="settings-input"
-                     style="width:100%;font-family:monospace;font-size:11px" placeholder="-">
+              <div>
+                <label class="settings-label">Short name <span class="st-unit">max 4</span></label>
+                <input id="node-cfg-short-name" class="settings-input" maxlength="4" style="width:80px">
+              </div>
+              <button class="btn" onclick="saveNodeOwner(this)" title="Save long name and short name to the node">Save names</button>
+            </div>
+            <div id="node-cfg-owner-status" class="st-status"></div>
+
+            <div class="st-row" style="margin-top:6px">
+              <div>
+                <label class="settings-label">Device role</label>
+                <select id="node-cfg-role" class="settings-select" style="min-width:180px"></select>
+              </div>
+              <label class="st-check" style="padding-bottom:6px"><input type="checkbox" class="st-switch" id="node-cfg-led-heartbeat-disabled"> Disable LED heartbeat</label>
+              <button class="btn" onclick="saveNodeDevice(this)" title="Save device role and LED heartbeat to the node">Save role</button>
+            </div>
+            <div id="node-cfg-device-status" class="st-status"></div>
+          </div>
+        </details>
+
+        <details class="st-group" data-key="mt-lora" open>
+          <summary><span class="st-group-title">LoRa</span><span class="st-group-hint">region, preset, TX power, hops</span></summary>
+          <div class="st-group-body">
+            <div class="st-row">
+              <div>
+                <label class="settings-label">Region</label>
+                <select id="node-cfg-region" class="settings-select" style="min-width:120px"></select>
+              </div>
+              <div>
+                <label class="settings-label">Modem preset</label>
+                <select id="node-cfg-preset" class="settings-select" style="min-width:160px"></select>
+              </div>
+              <div>
+                <label class="settings-label">TX power <span class="st-unit">dBm, 0 = max</span></label>
+                <input id="node-cfg-txpower" type="number" class="settings-input" min="0" max="30" style="width:80px">
+              </div>
+              <div>
+                <label class="settings-label">Hop limit <span class="st-unit">1–7</span></label>
+                <input id="node-cfg-hoplimit" type="number" class="settings-input" min="1" max="7" style="width:70px">
+              </div>
+            </div>
+            <div class="st-checks">
+              <label class="st-check"
+                     title="Sets the ok_to_mqtt bit on this node's outgoing packets, so OTHER gateways may uplink them too. Community maps (e.g. map.meshnet.si) ask for this. It does not itself enable MQTT or uplinking.">
+                <input type="checkbox" class="st-switch" id="node-cfg-ok-to-mqtt"> OK to MQTT <span class="st-unit">others may uplink my packets</span>
+              </label>
+              <label class="st-check"
+                     title="Refuse any packet that travelled via MQTT (keeps internet traffic out of your local mesh). Independent of uplinking. Your own packets still go up if a channel has Uplink enabled.">
+                <input type="checkbox" class="st-switch" id="node-cfg-ignore-mqtt"> Ignore MQTT-relayed packets
+              </label>
+            </div>
+            <p class="st-hint">Region and preset take effect after a node reboot. Hop limit applies immediately (Traceroute uses it too).</p>
+            <div class="st-actions"><button class="btn" onclick="saveNodeLora(this)" title="Save LoRa region, modem preset, TX power, hop limit and the MQTT flags to the node">Save LoRa</button></div>
+            <div id="node-cfg-lora-status" class="st-status"></div>
+          </div>
+        </details>
+
+        <details class="st-group" data-key="mt-channels" open>
+          <summary><span class="st-group-title">Channels</span><span class="st-group-hint">slots 0–7, edit, share, import</span></summary>
+          <div class="st-group-body">
+            <div id="node-cfg-channels-list" class="st-list"></div>
+            <div id="node-cfg-channels-remove-status" class="st-status"></div>
+
+            <!-- Inline edit panel -->
+            <div id="node-cfg-channel-edit" class="st-edit-panel" style="display:none">
+              <div class="st-edit-title" id="node-cfg-ch-edit-title">Edit Channel 0</div>
+              <div class="st-row">
+                <div>
+                  <label class="settings-label">Name <span class="st-unit">max 11</span></label>
+                  <input id="node-cfg-ch-name" class="settings-input" maxlength="11" style="width:160px">
+                </div>
+                <div>
+                  <label class="settings-label">Role</label>
+                  <select id="node-cfg-ch-role" class="settings-select">
+                    <option value="0">Disabled</option>
+                    <option value="1">Primary</option>
+                    <option value="2">Secondary</option>
+                  </select>
+                </div>
+              </div>
+              <div class="st-checks">
+                <label class="st-check"
+                       title="Uplink = publish this channel's packets (messages, telemetry, positions) to the MQTT broker. Leave OFF to keep your local mesh traffic off the internet.">
+                  <input type="checkbox" class="st-switch" id="node-cfg-ch-uplink"> MQTT uplink
+                </label>
+                <label class="st-check"
+                       title="Downlink = inject MQTT traffic from the network into your local mesh.">
+                  <input type="checkbox" class="st-switch" id="node-cfg-ch-downlink"> MQTT downlink
+                </label>
+              </div>
+              <div style="margin-top:12px">
+                <label class="settings-label">Encryption key</label>
+                <select id="node-cfg-ch-psk-type" class="settings-select" onchange="chPskTypeChange()">
+                  <option value="keep">Keep existing</option>
+                  <option value="default">Default (LongFast key)</option>
+                  <option value="random">Random (new secure key)</option>
+                  <option value="custom">Custom (hex)</option>
+                </select>
+                <input id="node-cfg-ch-psk-hex" class="settings-input st-mono" placeholder="hex or base64: e.g. d4f1bb3a… or OG8mgh5H…"
+                       style="width:100%;margin-top:6px;display:none">
+                <div id="node-cfg-ch-key-row" style="display:none;margin-top:8px">
+                  <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+                    <span class="st-unit" style="margin:0">Current key (base64):</span>
+                    <button type="button" class="btn btn-mini" id="btn-ch-key-eye" onclick="toggleNodeChKeyVis()">Show</button>
+                    <button type="button" class="btn btn-mini" onclick="copyNodeChKey(this)">Copy</button>
+                  </div>
+                  <input id="node-cfg-ch-key-display" type="password" readonly class="settings-input st-mono"
+                         style="width:100%" placeholder="-">
+                </div>
+              </div>
+              <div class="st-actions" style="margin-top:12px">
+                <button class="btn" onclick="saveNodeChannel(this)" title="Save channel settings to node">Save</button>
+                <button class="btn btn-quiet" onclick="closeChEdit()" title="Discard changes">Cancel</button>
+                <button class="btn btn-quiet" onclick="clearNodeChannelHistory(_editingChIndex, this)" title="Delete saved chat history for this MT channel">Delete history</button>
+                <button id="btn-ch-remove" class="btn btn-danger" onclick="removeNodeChannel(_editingChIndex, this)" style="margin-left:auto" title="Disable this channel and clear its name and key">Remove channel</button>
+              </div>
+              <div id="node-cfg-channels-status" class="st-status"></div>
+            </div>
+
+            <!-- Import from a share link (shown by loadNodeConfig once a node is loaded) -->
+            <div id="st-mt-import" style="display:none">
+              <div class="st-sub st-sub-gap">Import from share link</div>
+              <input id="mt-import-channel-link" class="settings-input st-mono" style="width:100%;max-width:760px;box-sizing:border-box"
+                     placeholder="https://meshtastic.org/e/#…" oninput="parseMtChannelLink()">
+              <p class="st-hint" style="margin-top:4px">Paste a <code>meshtastic.org/e/</code> link to add its channel to this node.</p>
+              <div id="mt-import-channel-preview" class="st-edit-panel" style="display:none">
+                <div style="font-size:12px;margin-bottom:10px">
+                  <span style="color:var(--muted)">Name:</span> <strong id="mt-import-ch-name-preview"></strong>
+                  <span style="color:var(--muted);margin-left:14px">Key:</span> <span id="mt-import-ch-key-preview" class="st-mono" style="color:var(--muted)"></span>
+                </div>
+                <div class="st-row">
+                  <div>
+                    <label class="settings-label">Save to slot</label>
+                    <input id="mt-import-ch-slot" class="settings-input" type="number" min="0" max="7" value="1" style="width:60px">
+                  </div>
+                  <button class="btn" onclick="importMtChannel()" title="Write this channel to the selected node slot">Import</button>
+                </div>
+              </div>
+              <div id="mt-import-channel-status" class="st-status"></div>
             </div>
           </div>
-          <div style="display:flex;gap:8px;margin-top:12px">
-            <button class="btn" onclick="saveNodeChannel(this)" title="Save channel settings to node">Save</button>
-            <button class="btn" onclick="closeChEdit()" style="background:var(--bg3)" title="Discard changes">Cancel</button>
-            <button class="btn" onclick="clearNodeChannelHistory(_editingChIndex, this)" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted)" title="Delete saved chat history for this MT channel">Delete History</button>
-            <button id="btn-ch-remove" class="btn" onclick="removeNodeChannel(_editingChIndex, this)" style="margin-left:auto;background:var(--bg3);border:1px solid var(--border);color:var(--muted)" title="Disable this channel and clear its name and key">Remove</button>
-          </div>
-          <div id="node-cfg-channels-status" style="font-size:12px;min-height:16px;margin-top:6px"></div>
-        </div>
+        </details>
 
-        <!-- Position -->
-        <h3 class="settings-subtitle">Position</h3>
+        <details class="st-group" data-key="mt-position">
+          <summary><span class="st-group-title">Position</span><span class="st-group-hint">onboard GPS, broadcast, fixed position</span></summary>
+          <div class="st-group-body">
+            <div class="st-sub">Onboard GPS</div>
+            <div class="st-row">
+              <div>
+                <label class="settings-label">GPS mode</label>
+                <select id="node-cfg-gps-mode" class="settings-select">
+                  <option value="0">Disabled</option>
+                  <option value="1">Enabled</option>
+                  <option value="2">Not Present</option>
+                </select>
+              </div>
+              <div>
+                <label class="settings-label">Broadcast every <span class="st-unit">s, 0 = smart</span></label>
+                <input id="node-cfg-pos-broadcast" type="number" class="settings-input" min="0" style="width:90px">
+              </div>
+              <label class="st-check" style="padding-bottom:6px"><input type="checkbox" class="st-switch" id="node-cfg-smart-pos"> Smart position</label>
+            </div>
+            <div style="margin-top:10px">
+              <label class="settings-label">Broadcast precision: <span id="node-cfg-pos-prec-val" style="color:var(--accent)">Exact position</span> <span class="st-unit">slide right = more private</span></label>
+              <input type="range" id="node-cfg-pos-precision" min="0" max="1000" step="100" style="width:220px;vertical-align:middle"
+                     oninput="document.getElementById('node-cfg-pos-prec-val').textContent=precMeterLabel(parseInt(this.value))">
+            </div>
 
-        <!-- Onboard GPS -->
-        <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Onboard GPS</div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
-          <div>
-            <label class="settings-label">GPS Mode</label>
-            <select id="node-cfg-gps-mode" class="settings-select">
-              <option value="0">Disabled</option>
-              <option value="1">Enabled</option>
-              <option value="2">Not Present</option>
-            </select>
+            <div class="st-sub st-sub-gap">Fixed position</div>
+            <label class="st-check"><input type="checkbox" class="st-switch" id="node-cfg-fixed-pos" onchange="toggleFixedCoords()"> Use a fixed position instead of the node's GPS</label>
+            <div id="node-cfg-fixed-coords" style="display:none;margin-top:10px;flex-wrap:wrap;gap:8px;align-items:flex-end">
+              <div><label class="settings-label">Latitude</label><input id="node-cfg-fixed-lat" class="settings-input" style="width:120px" placeholder="46.05870"></div>
+              <div><label class="settings-label">Longitude</label><input id="node-cfg-fixed-lon" class="settings-input" style="width:120px" placeholder="14.49656"></div>
+              <div><label class="settings-label">Altitude <span class="st-unit">m</span></label><input id="node-cfg-fixed-alt" type="number" class="settings-input" style="width:80px" value="0"></div>
+              <button class="btn" onclick="startMapPick(this)" title="Click on the map to set position">Pick on map</button>
+              <button id="btn-from-gps" class="btn" onclick="fillPositionFromGps(this)" title="Fill from the live GPS fix (its source is chosen in App → OM Position)" disabled>Fill from GPS</button>
+            </div>
+            <div class="st-actions" style="margin-top:12px">
+              <button class="btn" onclick="saveNodePosition(this)" title="Save position settings to the node">Save position</button>
+              <button class="btn btn-quiet" onclick="removeNodePosition(this)" title="Clear fixed position. Onboard GPS resumes">Clear fixed position</button>
+            </div>
+            <div id="node-cfg-position-status" class="st-status"></div>
           </div>
-          <div>
-            <label class="settings-label">Broadcast every (s) <span style="font-weight:400">(0 = smart)</span></label>
-            <input id="node-cfg-pos-broadcast" type="number" class="settings-input" min="0" style="width:80px">
-          </div>
-          <div style="display:flex;align-items:center;gap:6px;padding-bottom:2px">
-            <input type="checkbox" id="node-cfg-smart-pos">
-            <label for="node-cfg-smart-pos" class="settings-label" style="margin:0">Smart position</label>
-          </div>
-        </div>
-        <div style="margin-top:10px">
-          <label class="settings-label">Broadcast precision: <span id="node-cfg-pos-prec-val" style="color:var(--accent)">Exact position</span> <span style="font-weight:400;color:var(--muted)">(slide right = more private)</span></label>
-          <input type="range" id="node-cfg-pos-precision" min="0" max="1000" step="100" style="width:200px;vertical-align:middle"
-                 oninput="document.getElementById('node-cfg-pos-prec-val').textContent=precMeterLabel(parseInt(this.value))">
-        </div>
+        </details>
 
-        <!-- Fixed Position -->
-        <div style="border-top:1px solid var(--border);margin:14px 0 10px 0"></div>
-        <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Fixed Position</div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Override the node's GPS with a static coordinate. Enable the checkbox to enter coordinates manually, pick from the map, or fill from a USB GPS dongle.</div>
-        <div style="display:flex;align-items:center;gap:6px">
-          <input type="checkbox" id="node-cfg-fixed-pos" onchange="toggleFixedCoords()">
-          <label for="node-cfg-fixed-pos" class="settings-label" style="margin:0">Enable fixed position</label>
-        </div>
-        <div id="node-cfg-fixed-coords" style="display:none;margin-top:10px;flex-wrap:wrap;gap:8px">
-          <div><label class="settings-label">Latitude</label><input id="node-cfg-fixed-lat" class="settings-input" style="width:110px" placeholder="46.05870"></div>
-          <div><label class="settings-label">Longitude</label><input id="node-cfg-fixed-lon" class="settings-input" style="width:110px" placeholder="14.49656"></div>
-          <div><label class="settings-label">Altitude (m)</label><input id="node-cfg-fixed-alt" type="number" class="settings-input" style="width:70px" value="0"></div>
-          <div style="align-self:flex-end"><button class="btn" onclick="startMapPick(this)" title="Click on the map to set position">Pick on map</button></div>
-          <div style="align-self:flex-end"><button id="btn-from-gps" class="btn" onclick="fillPositionFromGps(this)" title="Fill from USB GPS dongle (configure dongle in App tab)" disabled>Fill from GPS dongle</button></div>
-        </div>
-        <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
-          <button class="btn" onclick="saveNodePosition(this)" title="Save position settings to the node">Save</button>
-          <button class="btn" onclick="removeNodePosition(this)" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted)" title="Clear fixed position. Onboard GPS resumes">Clear fixed position</button>
-        </div>
-        <div id="node-cfg-position-status" style="font-size:12px;min-height:16px;margin-top:4px"></div>
+        <details class="st-group" data-key="mt-power-display">
+          <summary><span class="st-group-title">Power &amp; display</span><span class="st-group-hint">low power, auto-shutdown, screen</span></summary>
+          <div class="st-group-body">
+            <div class="st-sub">Power</div>
+            <div class="st-row">
+              <label class="st-check" style="padding-bottom:6px"><input type="checkbox" class="st-switch" id="node-cfg-power-saving"> Low power mode</label>
+              <div>
+                <label class="settings-label">Auto-shutdown after <span class="st-unit">s, 0 = never</span></label>
+                <input id="node-cfg-shutdown-secs" type="number" class="settings-input" min="0" style="width:100px">
+              </div>
+              <button class="btn" onclick="saveNodePower(this)" title="Save power management settings to the node">Save power</button>
+            </div>
+            <div id="node-cfg-power-status" class="st-status"></div>
 
-        <!-- Power -->
-        <h3 class="settings-subtitle">Power</h3>
-        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
-          <div style="display:flex;align-items:center;gap:6px;padding-bottom:2px">
-            <input type="checkbox" id="node-cfg-power-saving">
-            <label for="node-cfg-power-saving" class="settings-label" style="margin:0">Low power mode</label>
+            <div class="st-sub st-sub-gap">Display</div>
+            <div class="st-row">
+              <div>
+                <label class="settings-label">Screen timeout <span class="st-unit">s, 0 = always on</span></label>
+                <div style="display:flex;gap:6px">
+                  <input id="node-cfg-screen-secs" type="number" class="settings-input" min="0" style="width:90px">
+                  <button class="btn btn-quiet" onclick="quickScreenOff(this)" title="Set to 10s. Effectively always off">Off</button>
+                  <button class="btn btn-quiet" onclick="quickScreenOn(this)" title="Set to 0. Never sleep">Always on</button>
+                </div>
+              </div>
+              <div>
+                <label class="settings-label">Units</label>
+                <select id="node-cfg-display-units" class="settings-select">
+                  <option value="0">Metric</option>
+                  <option value="1">Imperial</option>
+                </select>
+              </div>
+              <label class="st-check" style="padding-bottom:6px"><input type="checkbox" class="st-switch" id="node-cfg-flip-screen"> Flip screen</label>
+              <button class="btn" onclick="saveNodeDisplay(this)" title="Save display settings to the node">Save display</button>
+            </div>
+            <div id="node-cfg-display-status" class="st-status"></div>
           </div>
-          <div>
-            <label class="settings-label">Auto-shutdown after (s) <span style="font-weight:400">(0 = never)</span></label>
-            <input id="node-cfg-shutdown-secs" type="number" class="settings-input" min="0" style="width:90px">
-          </div>
-          <button class="btn" onclick="saveNodePower(this)" title="Save power management settings to the node">Save</button>
-        </div>
-        <div id="node-cfg-power-status" style="font-size:12px;min-height:16px;margin-top:4px"></div>
+        </details>
 
-        <!-- Display -->
-        <h3 class="settings-subtitle">Display</h3>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
-          <div>
-            <label class="settings-label">Screen timeout (s) <span style="font-weight:400">(0 = always on)</span></label>
-            <input id="node-cfg-screen-secs" type="number" class="settings-input" min="0" style="width:80px">
+        <details class="st-group" data-key="mt-telemetry">
+          <summary><span class="st-group-title">Telemetry</span><span class="st-group-hint">how often the node reports metrics</span></summary>
+          <div class="st-group-body">
+            <div class="st-row">
+              <div>
+                <label class="settings-label">Device metrics every <span class="st-unit">s, 0 = firmware default</span></label>
+                <input id="node-cfg-tel-device" type="number" class="settings-input" min="0" style="width:100px">
+              </div>
+              <div>
+                <label class="settings-label">Environment metrics every <span class="st-unit">s</span></label>
+                <input id="node-cfg-tel-env" type="number" class="settings-input" min="0" style="width:100px">
+              </div>
+              <button class="btn" onclick="saveNodeTelemetry(this)" title="Save telemetry broadcast intervals to the node">Save telemetry</button>
+            </div>
+            <div id="node-cfg-telemetry-status" class="st-status"></div>
           </div>
-          <button class="btn" onclick="quickScreenOff(this)" title="Set to 10s. Effectively always off">Turn off</button>
-          <button class="btn" onclick="quickScreenOn(this)" title="Set to 0. Never sleep">Always on</button>
-          <div>
-            <label class="settings-label">Units</label>
-            <select id="node-cfg-display-units" class="settings-select">
-              <option value="0">Metric</option>
-              <option value="1">Imperial</option>
-            </select>
-          </div>
-          <div style="display:flex;align-items:center;gap:6px;padding-bottom:2px">
-            <input type="checkbox" id="node-cfg-flip-screen">
-            <label for="node-cfg-flip-screen" class="settings-label" style="margin:0">Flip screen</label>
-          </div>
-          <button class="btn" onclick="saveNodeDisplay(this)" title="Save display settings to the node">Save</button>
-        </div>
-        <div id="node-cfg-display-status" style="font-size:12px;min-height:16px;margin-top:4px"></div>
+        </details>
 
-        <!-- Telemetry -->
-        <h3 class="settings-subtitle">Telemetry</h3>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
-          <div>
-            <label class="settings-label">Device metrics every (s) <span style="font-weight:400">(0 = firmware default)</span></label>
-            <input id="node-cfg-tel-device" type="number" class="settings-input" min="0" style="width:90px">
-          </div>
-          <div>
-            <label class="settings-label">Environment metrics every (s)</label>
-            <input id="node-cfg-tel-env" type="number" class="settings-input" min="0" style="width:90px">
-          </div>
-          <button class="btn" onclick="saveNodeTelemetry(this)" title="Save telemetry broadcast intervals to the node">Save</button>
-        </div>
-        <div id="node-cfg-telemetry-status" style="font-size:12px;min-height:16px;margin-top:4px"></div>
+        <details class="st-group" data-key="mt-mqtt">
+          <summary><span class="st-group-title">MQTT</span><span class="st-group-hint">broker, encryption, map reports</span></summary>
+          <div class="st-group-body">
+            <label class="st-check"><input type="checkbox" class="st-switch" id="node-cfg-mqtt-enabled"> MQTT enabled</label>
+            <div class="st-row" style="margin-top:10px">
+              <div>
+                <label class="settings-label">Broker address</label>
+                <input id="node-cfg-mqtt-address" class="settings-input" style="width:200px" placeholder="mqtt.meshtastic.org">
+              </div>
+              <div>
+                <label class="settings-label">Username</label>
+                <input id="node-cfg-mqtt-username" class="settings-input" style="width:130px">
+              </div>
+              <div>
+                <label class="settings-label">Password</label>
+                <input id="node-cfg-mqtt-password" type="password" class="settings-input" style="width:150px" autocomplete="new-password">
+              </div>
+              <div>
+                <label class="settings-label">Root topic <span class="st-unit">server's "Topic", default msh</span></label>
+                <input id="node-cfg-mqtt-root" class="settings-input" style="width:200px" placeholder="msh">
+              </div>
+            </div>
+            <div class="st-checks">
+              <label class="st-check"><input type="checkbox" class="st-switch" id="node-cfg-mqtt-encryption"> Encryption</label>
+              <label class="st-check"><input type="checkbox" class="st-switch" id="node-cfg-mqtt-json"> JSON output</label>
+              <label class="st-check"><input type="checkbox" class="st-switch" id="node-cfg-mqtt-tls"> TLS</label>
+            </div>
 
-        <!-- MQTT -->
-        <h3 class="settings-subtitle">MQTT</h3>
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
-          <input type="checkbox" id="node-cfg-mqtt-enabled">
-          <label for="node-cfg-mqtt-enabled" class="settings-label" style="margin:0">Enabled</label>
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:8px">
-          <div>
-            <label class="settings-label">Broker address</label>
-            <input id="node-cfg-mqtt-address" class="settings-input" style="width:200px" placeholder="mqtt.meshtastic.org">
+            <div class="st-sub st-sub-gap">Map reports</div>
+            <div class="st-checks" style="margin-top:0">
+              <label class="st-check" title="Publish map reports (name, model, firmware) to the &lt;root&gt;/2/map/ topic. Used by maps that consume MAP_REPORT (e.g. meshmap.net).">
+                <input type="checkbox" class="st-switch" id="node-cfg-mqtt-map"> Send map reports
+              </label>
+              <label class="st-check"
+                     title="Include this node's position in its map reports. NOTE: map.meshnet.si does NOT use map reports. It builds its map from uplinked NODEINFO + POSITION packets, so for that map enable 'MQTT uplink' on the primary channel instead.">
+                <input type="checkbox" class="st-switch" id="node-cfg-mqtt-map-location"> Include my location
+              </label>
+            </div>
+            <div class="st-row" style="margin-top:8px">
+              <div>
+                <label class="settings-label">Report interval <span class="st-unit">s, blank = firmware default, min 3600</span></label>
+                <input id="node-cfg-mqtt-map-interval" type="number" min="3600" max="86400" class="settings-input" style="width:120px" placeholder="e.g. 3600">
+              </div>
+              <div>
+                <label class="settings-label">Position precision <span class="st-unit">12–15</span></label>
+                <input id="node-cfg-mqtt-map-precision" type="number" min="12" max="15" class="settings-input" style="width:80px" placeholder="14">
+              </div>
+            </div>
+            <div class="st-actions" style="margin-top:12px"><button class="btn" onclick="saveNodeMqtt(this)" title="Save MQTT settings to the node">Save MQTT</button></div>
+            <div id="node-cfg-mqtt-status" class="st-status"></div>
           </div>
-          <div>
-            <label class="settings-label">Username</label>
-            <input id="node-cfg-mqtt-username" class="settings-input" style="width:120px">
-          </div>
-          <div>
-            <label class="settings-label">Password</label>
-            <input id="node-cfg-mqtt-password" type="password" class="settings-input" style="width:120px" autocomplete="new-password">
-          </div>
-          <div>
-            <label class="settings-label">Root topic <span style="color:var(--muted);font-size:11px">(server's "Topic"; default msh)</span></label>
-            <input id="node-cfg-mqtt-root" class="settings-input" style="width:200px" placeholder="msh">
-          </div>
-        </div>
-        <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px">
-          <label style="display:flex;align-items:center;gap:5px;font-size:12px"><input type="checkbox" id="node-cfg-mqtt-encryption"> Encryption</label>
-          <label style="display:flex;align-items:center;gap:5px;font-size:12px"><input type="checkbox" id="node-cfg-mqtt-json"> JSON output</label>
-          <label style="display:flex;align-items:center;gap:5px;font-size:12px"><input type="checkbox" id="node-cfg-mqtt-tls"> TLS</label>
-          <label style="display:flex;align-items:center;gap:5px;font-size:12px"><input type="checkbox" id="node-cfg-mqtt-map"> Map reporting</label>
-        </div>
-        <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-top:8px">
-          <label style="display:flex;align-items:center;gap:5px;font-size:12px"
-                 title="Map REPORTING: publishes this node's name/position/model to the <root>/2/map/ topic. Used by maps that consume MAP_REPORT (e.g. meshmap.net). NOTE: map.meshnet.si does NOT use map reports. It builds its map from uplinked NODEINFO + POSITION packets, so for that map enable 'MQTT uplink' on the primary channel instead.">
-            <input type="checkbox" id="node-cfg-mqtt-map-location"> Report my location to the map
-          </label>
-          <div>
-            <label class="settings-label">Map report interval (s)<span style="font-weight:400">: blank = firmware default; firmware minimum 3600</span></label>
-            <input id="node-cfg-mqtt-map-interval" type="number" min="3600" max="86400" class="settings-input" style="width:120px" placeholder="e.g. 3600">
-          </div>
-          <div>
-            <label class="settings-label">Position precision (12–15)</label>
-            <input id="node-cfg-mqtt-map-precision" type="number" min="12" max="15" class="settings-input" style="width:80px" placeholder="14">
-          </div>
-        </div>
-        <button class="btn" onclick="saveNodeMqtt(this)" title="Save MQTT settings to the node">Save</button>
-        <div id="node-cfg-mqtt-status" style="font-size:12px;min-height:16px;margin-top:4px"></div>
+        </details>
 
-        <!-- Bluetooth -->
-        <h3 class="settings-subtitle">Bluetooth</h3>
-        <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start">
-          <label style="display:flex;align-items:center;gap:5px;font-size:12px">
-            <input type="checkbox" id="node-cfg-bt-enabled"> Enabled
-          </label>
-          <div>
-            <label class="settings-label">PIN mode</label>
-            <select id="node-cfg-bt-mode" class="settings-select" onchange="btModeChange()">
-              <option value="0">No PIN</option>
-              <option value="1">Fixed PIN</option>
-              <option value="2">Random PIN</option>
-            </select>
-          </div>
-          <div id="node-cfg-bt-pin-wrap" style="display:none">
-            <label class="settings-label">Fixed PIN (6 digits)</label>
-            <input id="node-cfg-bt-pin" type="number" class="settings-input" min="0" max="999999" style="width:100px">
-          </div>
-        </div>
-        <button class="btn" onclick="saveNodeBluetooth(this)" style="margin-top:8px" title="Save Bluetooth settings to the node">Save</button>
-        <div id="node-cfg-bluetooth-status" style="font-size:12px;min-height:16px;margin-top:4px"></div>
+        <details class="st-group" data-key="mt-connectivity">
+          <summary><span class="st-group-title">Bluetooth &amp; WiFi</span><span class="st-group-hint">pairing PIN, network</span></summary>
+          <div class="st-group-body">
+            <div class="st-sub">Bluetooth</div>
+            <div class="st-row">
+              <label class="st-check" style="padding-bottom:6px"><input type="checkbox" class="st-switch" id="node-cfg-bt-enabled"> Bluetooth enabled</label>
+              <div>
+                <label class="settings-label">PIN mode</label>
+                <select id="node-cfg-bt-mode" class="settings-select" onchange="btModeChange()">
+                  <option value="0">No PIN</option>
+                  <option value="1">Fixed PIN</option>
+                  <option value="2">Random PIN</option>
+                </select>
+              </div>
+              <div id="node-cfg-bt-pin-wrap" style="display:none">
+                <label class="settings-label">Fixed PIN <span class="st-unit">6 digits</span></label>
+                <input id="node-cfg-bt-pin" type="number" class="settings-input" min="0" max="999999" style="width:110px">
+              </div>
+              <button class="btn" onclick="saveNodeBluetooth(this)" title="Save Bluetooth settings to the node">Save Bluetooth</button>
+            </div>
+            <div id="node-cfg-bluetooth-status" class="st-status"></div>
 
-        <!-- Network / WiFi -->
-        <h3 class="settings-subtitle">Network / WiFi</h3>
-        <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end">
-          <label style="display:flex;align-items:center;gap:5px;font-size:12px">
-            <input type="checkbox" id="node-cfg-wifi-enabled"> WiFi enabled
-          </label>
-          <label style="display:flex;align-items:center;gap:5px;font-size:12px">
-            <input type="checkbox" id="node-cfg-wifi-ap-mode" disabled> AP mode <span style="color:var(--muted);font-size:11px">(not supported by this radio firmware, not sent)</span>
-          </label>
-          <div>
-            <label class="settings-label">SSID</label>
-            <input id="node-cfg-wifi-ssid" class="settings-input" maxlength="32" style="width:180px">
+            <div class="st-sub st-sub-gap">WiFi</div>
+            <div class="st-row">
+              <label class="st-check" style="padding-bottom:6px"><input type="checkbox" class="st-switch" id="node-cfg-wifi-enabled"> WiFi enabled</label>
+              <div>
+                <label class="settings-label">SSID</label>
+                <input id="node-cfg-wifi-ssid" class="settings-input" maxlength="32" style="width:180px">
+              </div>
+              <div>
+                <label class="settings-label">Password</label>
+                <div style="display:flex;gap:4px;align-items:center">
+                  <input id="node-cfg-wifi-psk" type="password" class="settings-input" style="width:160px">
+                  <button type="button" class="btn btn-mini" id="node-cfg-wifi-psk-eye" onclick="togglePwdVis('node-cfg-wifi-psk','node-cfg-wifi-psk-eye')" title="Show/hide password">👁</button>
+                </div>
+              </div>
+              <button class="btn" onclick="saveNodeNetwork(this)" title="Save WiFi/network settings to the node. Reboot required">Save WiFi</button>
+            </div>
+            <!-- AP mode: not supported by this firmware and never sent; kept hidden so nothing references a missing element -->
+            <input type="checkbox" id="node-cfg-wifi-ap-mode" disabled hidden>
+            <p class="st-hint">Enabling WiFi disables Bluetooth on ESP32 nodes. Reboot the node after saving.</p>
+            <div id="node-cfg-network-status" class="st-status"></div>
           </div>
-          <div>
-            <label class="settings-label">Password</label>
-            <div style="display:flex;gap:4px;align-items:center">
-              <input id="node-cfg-wifi-psk" type="password" class="settings-input" style="width:160px">
-              <button type="button" id="node-cfg-wifi-psk-eye" onclick="togglePwdVis('node-cfg-wifi-psk','node-cfg-wifi-psk-eye')" style="background:none;border:1px solid var(--border);border-radius:4px;padding:2px 6px;cursor:pointer;color:var(--muted);font-size:13px" title="Show/hide password">👁</button>
+        </details>
+
+        <details class="st-group" data-key="mt-maintenance">
+          <summary><span class="st-group-title">Maintenance</span><span class="st-group-hint">stale-node cleanup, reboot, shutdown</span></summary>
+          <div class="st-group-body">
+            <label class="st-option">
+              <input type="checkbox" class="st-switch" id="mt-cleanup-enabled" onchange="saveMtCleanup(null)">
+              <span><b>Auto-remove stale nodes</b><br>
+                <span class="st-option-text">MT radios keep a rolling node DB (~80-100 entries, oldest drop out on their own). ON = OM also purges nodes this radio hasn't heard for the chosen number of days, from the radio's flash nodeDB and its own records. Favorites, ignored nodes and your own node are always kept. Runs roughly every 6 hours, local serial admin only (no radio transmissions).</span>
+              </span>
+            </label>
+            <div class="st-row" style="margin-top:8px;padding-left:40px">
+              <div>
+                <label class="settings-label">Purge after <span class="st-unit">days</span></label>
+                <input id="mt-cleanup-days" class="settings-input" type="number" min="7" max="365" value="30" style="width:80px" title="Nodes not heard for this many days are removed">
+              </div>
+              <button class="btn" onclick="saveMtCleanup(this)" title="Save node DB hygiene settings for this radio">Save cleanup</button>
+            </div>
+            <div id="mt-cleanup-status" class="st-status" style="padding-left:40px"></div>
+
+            <div class="st-danger">
+              <div class="st-sub" style="margin-top:0">Node actions</div>
+              <div class="st-row">
+                <button class="btn" onclick="rebootNode(this)" title="Remotely reboot this Meshtastic node">↺ Reboot node</button>
+                <button class="btn btn-warn" onclick="resetKnownNodesDb(this)" title="Clear all remembered remote nodes for this selected radio from OverMesh history and live cache">⌫ Clear known nodes</button>
+                <button class="btn btn-danger" onclick="shutdownNode(this)" title="Remotely shut down this node. Requires physical power cycle to restart">⏻ Shut down node</button>
+              </div>
+              <div id="node-cfg-actions-status" class="st-status"></div>
             </div>
           </div>
-        </div>
-        <p style="font-size:11px;color:var(--muted);margin:6px 0 0">Note: enabling WiFi disables Bluetooth on ESP32 nodes. Reboot required after saving.</p>
-        <button class="btn" onclick="saveNodeNetwork(this)" style="margin-top:8px" title="Save WiFi/network settings to the node. Reboot required">Save</button>
-        <div id="node-cfg-network-status" style="font-size:12px;min-height:16px;margin-top:4px"></div>
+        </details>
 
-        <!-- Node actions -->
-        <h3 class="settings-subtitle">Node Actions</h3>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          <button class="btn" onclick="rebootNode(this)" style="background:var(--bg3);border:1px solid var(--border)" title="Remotely reboot this Meshtastic node">↺ Reboot node</button>
-          <button class="btn" onclick="shutdownNode(this)" style="background:var(--bg3);border:1px solid #f87171;color:#f87171" title="Remotely shut down this node. Requires physical power cycle to restart">⏻ Shutdown node</button>
-          <button class="btn" onclick="resetKnownNodesDb(this)" style="background:var(--bg3);border:1px solid #f59e0b;color:#f59e0b" title="Clear all remembered remote nodes for this selected radio from OverMesh history and live cache">⌫ Clear known nodes</button>
-        </div>
-        <div id="node-cfg-actions-status" style="font-size:12px;min-height:16px;margin-top:6px"></div>
-
-        <!-- Node DB hygiene (auto stale cleanup) -->
-        <h2 class="settings-title">Node DB Hygiene</h2>
-        <label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;max-width:660px;margin-bottom:6px">
-          <input type="checkbox" id="mt-cleanup-enabled" onchange="saveMtCleanup(null)" style="margin-top:2px">
-          <span>
-            <b>Auto-remove stale nodes</b><br>
-            <span style="color:var(--muted)">MT radios keep a rolling node DB (~80-100 entries, oldest drop out on their own). ON = OM also purges nodes this radio hasn't heard for the chosen number of days - from the radio's flash nodeDB and its own records - so old entries don't linger or clutter OM. Favorites, ignored nodes and your own node are always kept. Runs roughly every 6 hours, using local serial admin only (no radio transmissions).</span>
-          </span>
-        </label>
-        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:4px">
-          <div>
-            <label class="settings-label">Purge after (days)</label>
-            <input id="mt-cleanup-days" class="settings-input" type="number" min="7" max="365" value="30" style="width:80px" title="Nodes not heard for this many days are removed">
-          </div>
-          <button class="btn" onclick="saveMtCleanup(this)" title="Save node DB hygiene settings for this radio">Save Hygiene</button>
-        </div>
-        <div id="mt-cleanup-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-bottom:14px"></div>
-
-      </div>
+      </div><!-- /node-cfg-content -->
     </div>
     </div><!-- /st-mt -->
 
-    <!-- MT Import Channel (outside node-cfg-content, always visible in MT tab) -->
-    <div id="st-mt-import" style="display:none">
-    <div class="settings-section">
-      <h2 class="settings-title">Import MT Channel</h2>
-      <p class="network-section-note" style="margin:0 0 10px">Paste a <code>meshtastic.org/e/</code> share link to add a channel to the selected node.</p>
-      <label class="settings-label">Share Link</label>
-      <input id="mt-import-channel-link" class="settings-input" style="width:100%;font-family:monospace;font-size:11px;box-sizing:border-box"
-             placeholder="https://meshtastic.org/e/#…" oninput="parseMtChannelLink()">
-      <div id="mt-import-channel-preview" style="display:none;margin-top:10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px">
-        <div style="font-size:12px;margin-bottom:10px">
-          <span style="color:var(--muted)">Name:</span> <strong id="mt-import-ch-name-preview"></strong>
-          <span style="color:var(--muted);margin-left:14px">Key:</span> <span id="mt-import-ch-key-preview" style="font-family:monospace;font-size:11px;color:var(--muted)"></span>
-        </div>
-        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
-          <div>
-            <label class="settings-label">Save to slot</label>
-            <input id="mt-import-ch-slot" class="settings-input" type="number" min="0" max="7" value="1" style="width:60px">
-          </div>
-          <button class="btn" onclick="importMtChannel()" title="Write this channel to the selected node slot">Import</button>
-        </div>
-      </div>
-      <div id="mt-import-channel-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-top:6px"></div>
-    </div>
-    </div><!-- /st-mt-import -->
-
+    <!-- ═════════════ MESHCORE ═════════════ -->
     <div id="st-mc" style="display:none">
-    <!-- MC Radios -->
     <div class="settings-section">
-      <h2 class="settings-title">MC Radios <span style="font-size:12px;color:var(--mc-color);font-weight:normal">(MeshCore)</span></h2>
+      <div class="st-head">
+        <h2 class="settings-title">Radios</h2>
+        <span class="st-head-hint">MeshCore companions OverMesh connects to</span>
+      </div>
       <div id="settings-mc-nodes-list"><p style="color:var(--muted);font-size:12px;margin:0">No MC radios configured.</p></div>
-      <h3 class="settings-subtitle" style="margin-top:14px">Add MC radio</h3>
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
-        <label class="settings-label" style="margin:0">Type:</label>
+
+      <div class="st-sub st-sub-gap">Add radio</div>
+      <div class="st-row">
         <div class="view-toggle">
           <div class="btn active" id="mc-add-type-serial" onclick="settingsMcSetAddType('serial')" title="Connect via USB serial port">Serial</div>
           <div class="btn"        id="mc-add-type-tcp"    onclick="settingsMcSetAddType('tcp')"    title="Connect via TCP/IP or WiFi">TCP / WiFi</div>
-          <div class="btn"        id="mc-add-type-ble"    onclick="settingsMcSetAddType('ble')"    title="Connect via Bluetooth Low Energy">BT</div>
+          <div class="btn"        id="mc-add-type-ble"    onclick="settingsMcSetAddType('ble')"    title="Connect via Bluetooth Low Energy">Bluetooth</div>
         </div>
       </div>
-      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+      <div class="st-row" style="margin-top:8px">
         <div id="mc-add-serial-fields" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
           <div>
             <label class="settings-label">Port</label>
-            <select id="settings-mc-port-select" class="settings-select" style="min-width:160px"></select>
+            <select id="settings-mc-port-select" class="settings-select" style="min-width:180px"></select>
           </div>
-          <button class="btn" onclick="settingsMcScanPorts()" title="Rescan ports" style="margin-bottom:0">↻</button>
+          <button class="btn" onclick="settingsMcScanPorts()" title="Rescan ports">↻</button>
         </div>
         <div id="mc-add-tcp-fields" style="display:none;gap:8px;align-items:flex-end;flex-wrap:wrap">
           <div>
@@ -1515,634 +1521,490 @@
         </div>
         <div>
           <label class="settings-label">Name</label>
-          <input id="settings-mc-node-name" class="settings-input" placeholder="e.g. TTGO" maxlength="30" style="width:140px">
+          <input id="settings-mc-node-name" class="settings-input" placeholder="e.g. TTGO" maxlength="30" style="width:150px">
         </div>
         <button class="btn" onclick="settingsMcAddNode()" title="Add this MeshCore radio to OverMesh">Add</button>
       </div>
       <div id="settings-mc-add-error" class="settings-error"></div>
     </div>
 
-    <!-- MC Node Settings (shown when at least one MC radio is configured) -->
+    <!-- Radio settings: one MC radio at a time (shown when at least one MC radio is configured) -->
     <div class="settings-section" id="mc-node-settings-section" style="display:none">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
-        <span class="settings-label" style="margin:0">Configure:</span>
-        <select id="mc-settings-radio-select" class="settings-select" onchange="switchMcSettingsRadio(this.value)" style="min-width:130px"></select>
-        <button class="btn" onclick="loadMcNodeSettings()" title="Refresh node settings" style="padding:4px 10px;font-size:12px">↻</button>
-      </div>
-
-      <h2 class="settings-title">Radio Parameters</h2>
-      <div style="display:grid;grid-template-columns:auto auto;gap:8px 16px;align-items:center;margin-bottom:10px">
-        <span class="settings-label" style="margin:0">Frequency (MHz)</span>
-        <input id="mc-radio-freq" class="settings-input" type="number" step="0.001" min="400" max="950" style="width:100px" title="e.g. 868.0 for EU">
-        <span class="settings-label" style="margin:0">Bandwidth (kHz)</span>
-        <input id="mc-radio-bw" class="settings-input" type="number" step="1" min="1" max="1000" placeholder="e.g. 125" style="width:100px" title="Common: 125, 250, 500 kHz">
-        <span class="settings-label" style="margin:0">Spreading Factor</span>
-        <select id="mc-radio-sf" class="settings-select">
-          <option value="7">SF7 (fastest)</option>
-          <option value="8">SF8</option>
-          <option value="9">SF9</option>
-          <option value="10">SF10</option>
-          <option value="11">SF11</option>
-          <option value="12">SF12 (longest range)</option>
-        </select>
-        <span class="settings-label" style="margin:0">Coding Rate</span>
-        <select id="mc-radio-cr" class="settings-select">
-          <option value="5">5</option>
-          <option value="6">6</option>
-          <option value="7">7</option>
-          <option value="8">8</option>
-        </select>
-        <span class="settings-label" style="margin:0">TX Power (dBm)</span>
-        <div style="display:flex;align-items:center;gap:6px">
-          <input id="mc-tx-power" class="settings-input" type="number" min="1" max="30" style="width:70px" title="EU 868 MHz: 14 dBm legal max · EU 869.4–869.65 MHz: 27 dBm · Common EU default: 17 dBm · SX1276 max: 20 dBm · SX1262 max: 22 dBm · US 915 MHz: up to 30 dBm">
-          <span id="mc-tx-power-max" style="color:var(--muted);font-size:11px"></span>
-        </div>
-      </div>
-      <div style="display:flex;gap:8px;margin-bottom:4px">
-        <button class="btn" onclick="saveMcRadioParams(this)" title="Save freq/BW/SF/CR">Save Radio Params</button>
-        <button class="btn" onclick="saveMcTxPower(this)" title="Save TX power only">Save TX Power</button>
-      </div>
-      <div id="mc-radio-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-bottom:14px"></div>
-
-      <h2 class="settings-title">Path Hash Mode</h2>
-      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:6px">
-        <div>
-          <label class="settings-label">Default MC path hash</label>
-          <select id="mc-path-hash-mode" class="settings-select" title="Preferred MeshCore path hash size for stored routes and firmware default when supported">
-            <option value="0">1B/hop - legacy compatible</option>
-            <option value="1">2B/hop - balanced</option>
-            <option value="2">3B/hop - most specific</option>
-          </select>
-        </div>
-        <button class="btn btn-net-mc" onclick="saveMcPathHashMode(this)" title="Save preferred MeshCore path hash mode">Save Path Mode</button>
-      </div>
-      <div style="font-size:11px;color:var(--muted);max-width:560px;margin-bottom:4px">OM applies this to the radio when supported and uses it when saving MC contact routes. If the radio rejects the selected mode, OM falls back to the highest mode it can apply.</div>
-      <div id="mc-path-hash-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-bottom:14px"></div>
-
-      <h2 class="settings-title">MC Routing</h2>
-      <label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;max-width:620px;margin-bottom:6px">
-        <input type="checkbox" id="mc-force-flood" onchange="saveMcForceFlood(this.checked)" style="margin-top:2px">
-        <span>
-          <b>Always use flood routing for this MC radio</b><br>
-          <span style="color:var(--muted)">Before each MC DM or status ping, OM clears the contact path so the firmware sends in flood/automatic mode instead of using learned or manually stored routes.</span>
-        </span>
-      </label>
-      <div id="mc-force-flood-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-bottom:14px"></div>
-      <div style="margin-bottom:14px">
-        <button class="btn" onclick="mcResetAllPaths(this)" title="Clear all stored contact routes on this MC radio, including manually-set ones">Reset All Paths</button>
-        <span id="mc-reset-all-paths-status" style="font-size:12px;color:var(--muted);margin-left:8px"></span>
-      </div>
-
-      <h2 class="settings-title">Contact Storage</h2>
-      <label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;max-width:640px;margin-bottom:6px">
-        <input type="checkbox" id="mc-auto-add-contacts" onchange="saveMcAutoAddContacts(this.checked)" style="margin-top:2px">
-        <span>
-          <b>Auto-store every contact this radio hears</b><br>
-          <span style="color:var(--muted)">ON = stock behaviour: the radio writes every node it hears into its own contact table (the ~350-slot NVS that fills overnight). OFF = manual approval: the radio stores nothing by itself; contacts stay in OM and you approve them with the "+ Radio" action in the Contacts list. Stored contacts are the only ones this radio can DM.</span>
-        </span>
-      </label>
-      <div id="mc-auto-add-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-bottom:14px"></div>
-
-      <h2 class="settings-title">Device Info <button class="btn" onclick="loadMcDeviceInfo()" style="font-size:11px;padding:2px 8px;margin-left:6px" title="Query device for fresh info">↻ Refresh</button></h2>
-      <div id="mc-device-info-content" style="color:var(--muted);font-size:12px;margin-bottom:14px">-</div>
-
-      <h2 class="settings-title">Device Actions</h2>
-      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:8px">
-        <div>
-          <label class="settings-label">New Name</label>
-          <input id="mc-device-name-input" class="settings-input" maxlength="32" style="width:160px" placeholder="Device name">
-        </div>
-        <button class="btn" onclick="saveMcDeviceName(this)" title="Rename device">Rename</button>
-      </div>
-      <div style="margin-bottom:8px">
-        <label class="settings-label">Precision: <span id="mc-coords-prec-val" style="color:var(--accent)">Exact position</span> <span style="font-weight:400;color:var(--muted)">(slide right = more private)</span></label>
-        <input type="range" id="mc-coords-precision" min="0" max="1000" step="100" value="0" style="width:200px;vertical-align:middle;margin-top:4px"
-               oninput="document.getElementById('mc-coords-prec-val').textContent=precMeterLabel(parseInt(this.value))">
-      </div>
-      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:8px">
-        <div>
-          <label class="settings-label">Latitude</label>
-          <input id="mc-coords-lat" class="settings-input" type="number" step="0.000001" style="width:120px" placeholder="46.05">
-        </div>
-        <div>
-          <label class="settings-label">Longitude</label>
-          <input id="mc-coords-lon" class="settings-input" type="number" step="0.000001" style="width:120px" placeholder="14.50">
-        </div>
-        <button class="btn" onclick="startMcMapPick()" title="Click on the map to set position">Select on map</button>
-        <button class="btn" onclick="saveMcCoords(this)" title="Set GPS coordinates on MC device">Save</button>
-      </div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
-        <label class="settings-label" style="margin-bottom:0">Share position in adverts:</label>
-        <button id="mc-loc-policy-btn" class="btn" onclick="toggleMcAdvertLoc(this)" title="Enable or disable broadcasting your position in mesh advertisements">-</button>
-      </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn" style="color:var(--red);border-color:var(--red)" onclick="rebootMcNode(this)" title="Send reboot command. May not be supported by all firmware versions">Reboot Device</button>
-        <button class="btn" id="mc-debug-btn" onclick="startMcDebugEvents()" title="Log all serial events for 60s. Check the server log to diagnose ping/status issues">Debug Events</button>
-      </div>
-      <div id="mc-actions-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-top:6px"></div>
-
-      <h2 class="settings-title">Node Stats <button class="btn" onclick="loadMcStats()" style="font-size:11px;padding:2px 8px;margin-left:6px" title="Fetch live stats from this MC radio">↻ Fetch</button></h2>
-      <div id="mc-stats-content" style="color:var(--muted);font-size:12px;margin-bottom:14px">-</div>
-
-      <h2 class="settings-title">Flood Scope (Regions) <span id="mc-scope-fw-note" style="font-weight:400;font-size:11px;color:var(--muted)"></span></h2>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:8px;max-width:640px;line-height:1.5">
-        Scopes tag this radio's outgoing flood traffic so repeaters only relay it where the region is allowed
-        (e.g. <code class="net-mc">si</code> keeps adverts and channel messages inside Slovenian repeaters). This companion
-        has a single scope slot. OM switches it per channel before each send. Empty = unscoped (floods everywhere).
-        Repeaters must carry the same region for traffic to pass.
-      </div>
-
-      <div style="margin-bottom:10px">
-        <span class="settings-label">Known regions</span>
-        <div id="mc-scope-region-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 6px;min-height:24px"></div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <input id="mc-scope-region-add" class="settings-input" list="mc-scope-region-presets" placeholder="e.g. si or si-lju"
-                 style="width:180px;font-family:monospace;font-size:11px" maxlength="32"
-                 onkeydown="if(event.key==='Enter'){event.preventDefault();mcScopeAddRegion()}"
-                 title="Lowercase letters, numbers and hyphens. A leading # is stripped.">
-          <button class="btn" onclick="mcScopeAddRegion()" title="Add this region to the known-regions catalog">Add</button>
-          <span style="font-size:11px;color:var(--muted)">Presets:</span>
-          <button class="btn" style="font-size:11px;padding:2px 8px" onclick="mcScopeAddRegion('si')">si</button>
-          <button class="btn" style="font-size:11px;padding:2px 8px" onclick="mcScopeAddRegion('europe')">europe</button>
-          <button class="btn" style="font-size:11px;padding:2px 8px;color:var(--yellow);border-color:var(--yellow)" onclick="mcScopeSetDefault('')" title="Clear the default scope. Floods go out unscoped">Clear default</button>
-        </div>
-        <datalist id="mc-scope-region-presets">
-          <option value="si"></option><option value="si-gor"></option><option value="si-kor"></option>
-          <option value="si-sta"></option><option value="si-pre"></option><option value="si-pri"></option>
-          <option value="si-not"></option><option value="si-dol"></option><option value="europe"></option>
-        </datalist>
-      </div>
-
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
-        <span class="settings-label" style="margin-bottom:0">Default scope:</span>
-        <span id="mc-scope-default-label" style="font-family:monospace;font-size:12px;color:var(--accent);background:var(--bg3);padding:2px 10px;border-radius:10px;border:1px solid var(--border)">-</span>
-        <input id="mc-scope-default-input" class="settings-input" list="mc-scope-region-presets" placeholder="region name or empty"
-               style="width:150px;font-family:monospace;font-size:11px" maxlength="32"
-               onkeydown="if(event.key==='Enter'){event.preventDefault();mcScopeSetDefaultFromInput()}">
-        <button class="btn" onclick="mcScopeSetDefaultFromInput()" title="Set the default scope this radio's floods carry">Set default</button>
-        <button class="btn" onclick="mcScopeReload()" title="Reload the configured scope state from the server" style="background:var(--bg3)">↻ Reload</button>
-        <span id="mc-scope-status" style="font-size:11px;color:var(--muted)"></span>
-      </div>
-
-      <div style="margin-bottom:14px;max-width:640px">
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px">
-          <span class="settings-label" style="margin-bottom:0">Discover regions</span>
-          <button class="btn" onclick="mcScopeDiscover()" id="mc-scope-discover-btn"
-                  title="Ask nearby repeaters (0-hop) which regions they serve. Transmits a sweep like Scan">Discover</button>
-          <span id="mc-scope-discover-status" style="font-size:11px;color:var(--muted)"></span>
-        </div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:6px;line-height:1.4">
-          Queries repeaters in direct range for the regions they carry. Results are suggestions. Click a chip to add it
-          to the known-regions catalog or set it as the default.
-        </div>
-        <div id="mc-scope-discover-results" style="display:none">
-          <div id="mc-scope-discover-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 6px"></div>
-          <div id="mc-scope-discover-sources" style="font-size:11px;color:var(--muted);line-height:1.5"></div>
+      <div class="st-head">
+        <h2 class="settings-title">Radio settings</h2>
+        <select id="mc-settings-radio-select" class="settings-select" onchange="switchMcSettingsRadio(this.value)" style="min-width:140px" title="Which MC radio to configure"></select>
+        <div class="st-head-actions">
+          <button class="btn" onclick="loadMcNodeSettings()" title="Reload this radio's settings">↻ Reload</button>
         </div>
       </div>
 
-      <div id="mc-scope-per-channel" style="margin-bottom:14px;max-width:640px"></div>
+      <details class="st-group" data-key="mc-radio" open>
+        <summary><span class="st-group-title">Radio</span><span class="st-group-hint">frequency, bandwidth, SF, CR, TX power</span></summary>
+        <div class="st-group-body">
+          <div class="st-row">
+            <div>
+              <label class="settings-label">Frequency <span class="st-unit">MHz</span></label>
+              <input id="mc-radio-freq" class="settings-input" type="number" step="0.001" min="400" max="950" style="width:110px" title="e.g. 868.0 for EU">
+            </div>
+            <div>
+              <label class="settings-label">Bandwidth <span class="st-unit">kHz</span></label>
+              <input id="mc-radio-bw" class="settings-input" type="number" step="1" min="1" max="1000" placeholder="e.g. 125" style="width:100px" title="Common: 62.5, 125, 250, 500 kHz">
+            </div>
+            <div>
+              <label class="settings-label">Spreading factor</label>
+              <select id="mc-radio-sf" class="settings-select">
+                <option value="7">SF7 (fastest)</option>
+                <option value="8">SF8</option>
+                <option value="9">SF9</option>
+                <option value="10">SF10</option>
+                <option value="11">SF11</option>
+                <option value="12">SF12 (longest range)</option>
+              </select>
+            </div>
+            <div>
+              <label class="settings-label">Coding rate</label>
+              <select id="mc-radio-cr" class="settings-select">
+                <option value="5">5</option>
+                <option value="6">6</option>
+                <option value="7">7</option>
+                <option value="8">8</option>
+              </select>
+            </div>
+            <button class="btn" onclick="saveMcRadioParams(this)" title="Save frequency, bandwidth, SF and CR">Save radio</button>
+          </div>
+          <div class="st-row" style="margin-top:10px">
+            <div>
+              <label class="settings-label">TX power <span class="st-unit">dBm</span> <span id="mc-tx-power-max" class="st-unit"></span></label>
+              <input id="mc-tx-power" class="settings-input" type="number" min="1" max="30" style="width:80px" title="EU 868 MHz: 14 dBm legal max · EU 869.4–869.65 MHz: 27 dBm · Common EU default: 17 dBm · SX1276 max: 20 dBm · SX1262 max: 22 dBm · US 915 MHz: up to 30 dBm">
+            </div>
+            <button class="btn" onclick="saveMcTxPower(this)" title="Save TX power only">Save TX power</button>
+          </div>
+          <div id="mc-radio-status" class="st-status"></div>
+        </div>
+      </details>
+
+      <details class="st-group" data-key="mc-channels" open>
+        <summary><span class="st-group-title">Channels</span><span class="st-group-hint">edit, share, import</span></summary>
+        <div class="st-group-body">
+          <div id="mc-channels-section" style="display:none">
+            <div id="mc-channels-list" class="st-list-plain" style="color:var(--muted);font-size:12px">-</div>
+            <div id="mc-channels-remove-status" class="st-status"></div>
+
+            <!-- Inline edit panel -->
+            <div id="mc-channel-edit" class="st-edit-panel" style="display:none">
+              <div class="st-edit-title" id="mc-ch-edit-title">Edit Channel 0</div>
+              <div>
+                <label class="settings-label">Name <span class="st-unit">max 32</span></label>
+                <input id="mc-ch-name" class="settings-input" maxlength="32" style="width:220px">
+              </div>
+              <div style="margin-top:10px">
+                <label class="settings-label">Encryption key</label>
+                <select id="mc-ch-key-type" class="settings-select" onchange="mcChKeyTypeChange()">
+                  <option value="keep">Keep existing</option>
+                  <option value="auto">Auto-derive from name</option>
+                  <option value="random">Random (new secure key)</option>
+                  <option value="custom">Custom (hex)</option>
+                </select>
+                <input id="mc-ch-key-hex" class="settings-input st-mono" placeholder="32 hex chars (16 bytes)"
+                       style="width:100%;margin-top:6px;display:none" maxlength="32">
+              </div>
+              <div class="st-actions" style="margin-top:12px">
+                <button class="btn" onclick="saveMcChannel(this)" title="Save channel settings to device">Save</button>
+                <button class="btn btn-quiet" onclick="closeMcChEdit()" title="Discard changes">Cancel</button>
+                <button class="btn btn-quiet" onclick="clearMcChannelHistory(this)" title="Delete saved chat history for this MC channel">Delete history</button>
+                <button class="btn btn-danger" onclick="removeMcChannel(this)" style="margin-left:auto" title="Clear this channel slot on the device">Remove channel</button>
+              </div>
+              <div id="mc-channels-status" class="st-status"></div>
+            </div>
+          </div><!-- /mc-channels-section -->
+
+          <div id="mc-import-channel-section" style="display:none">
+            <div class="st-sub st-sub-gap">Import from share link</div>
+            <input id="mc-import-channel-link" class="settings-input st-mono" style="width:100%;max-width:760px;box-sizing:border-box" placeholder="meshcore://channel/add?name=…&secret=…" oninput="parseMcChannelLink()">
+            <p class="st-hint" style="margin-top:4px">Paste a <code class="net-mc">meshcore://channel/add?…</code> link to add its channel to this radio.</p>
+            <div id="mc-import-channel-preview" class="st-edit-panel" style="display:none">
+              <div style="font-size:12px;margin-bottom:10px">
+                <span style="color:var(--muted)">Name:</span> <strong id="mc-import-ch-name-preview"></strong>
+                <span style="color:var(--muted);margin-left:14px">Secret:</span> <span id="mc-import-ch-secret-preview" class="st-mono" style="color:var(--muted)"></span>
+              </div>
+              <div class="st-row">
+                <div>
+                  <label class="settings-label">Save to slot</label>
+                  <input id="mc-import-ch-slot" class="settings-input" type="number" min="0" max="255" value="0" style="width:60px">
+                </div>
+                <button class="btn" onclick="importMcChannel()" title="Save this channel to the selected slot">Import</button>
+              </div>
+            </div>
+            <div id="mc-import-channel-status" class="st-status"></div>
+          </div><!-- /mc-import-channel-section -->
+        </div>
+      </details>
+
+      <details class="st-group" data-key="mc-scope">
+        <summary><span class="st-group-title">Flood scope (regions)</span><span class="st-group-hint" id="mc-scope-fw-note"></span></summary>
+        <div class="st-group-body">
+          <p class="st-hint" style="margin-top:0">
+            Scopes tag this radio's outgoing flood traffic so repeaters only relay it where the region is allowed
+            (e.g. <code class="net-mc">si</code> keeps adverts and channel messages inside Slovenian repeaters). This companion
+            has a single scope slot; OM switches it per channel before each send. Empty = unscoped (floods everywhere).
+            Repeaters must carry the same region for traffic to pass.
+          </p>
+
+          <div class="st-sub st-sub-gap">Known regions</div>
+          <div id="mc-scope-region-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px;min-height:24px"></div>
+          <div class="st-row" style="align-items:center">
+            <input id="mc-scope-region-add" class="settings-input st-mono" list="mc-scope-region-presets" placeholder="e.g. si or si-lju"
+                   style="width:180px" maxlength="32"
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();mcScopeAddRegion()}"
+                   title="Lowercase letters, numbers and hyphens. A leading # is stripped.">
+            <button class="btn" onclick="mcScopeAddRegion()" title="Add this region to the known-regions catalog">Add</button>
+            <span class="st-unit" style="margin:0 0 0 6px">Presets:</span>
+            <button class="btn btn-mini" onclick="mcScopeAddRegion('si')">si</button>
+            <button class="btn btn-mini" onclick="mcScopeAddRegion('europe')">europe</button>
+          </div>
+          <datalist id="mc-scope-region-presets">
+            <option value="si"></option><option value="si-gor"></option><option value="si-kor"></option>
+            <option value="si-sta"></option><option value="si-pre"></option><option value="si-pri"></option>
+            <option value="si-not"></option><option value="si-dol"></option><option value="europe"></option>
+          </datalist>
+
+          <div class="st-sub st-sub-gap">Default scope</div>
+          <div class="st-row" style="align-items:center">
+            <span id="mc-scope-default-label" class="st-chip st-mono">-</span>
+            <input id="mc-scope-default-input" class="settings-input st-mono" list="mc-scope-region-presets" placeholder="region name or empty"
+                   style="width:160px" maxlength="32"
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();mcScopeSetDefaultFromInput()}">
+            <button class="btn" onclick="mcScopeSetDefaultFromInput()" title="Set the default scope this radio's floods carry">Set default</button>
+            <button class="btn btn-warn" onclick="mcScopeSetDefault('')" title="Clear the default scope. Floods go out unscoped">Clear default</button>
+            <button class="btn btn-quiet" onclick="mcScopeReload()" title="Reload the configured scope state from the server">↻ Reload</button>
+            <span id="mc-scope-status" class="st-unit" style="margin:0"></span>
+          </div>
+
+          <div class="st-sub st-sub-gap">Discover regions</div>
+          <div class="st-row" style="align-items:center">
+            <button class="btn" onclick="mcScopeDiscover()" id="mc-scope-discover-btn"
+                    title="Ask nearby repeaters (0-hop) which regions they serve. Transmits a sweep like Scan">Discover</button>
+            <span id="mc-scope-discover-status" class="st-unit" style="margin:0"></span>
+          </div>
+          <p class="st-hint">Asks repeaters in direct range (transmits) which regions they carry. Results are suggestions: click a chip to add it to the known regions or set it as the default.</p>
+          <div id="mc-scope-discover-results" style="display:none">
+            <div id="mc-scope-discover-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 6px"></div>
+            <div id="mc-scope-discover-sources" style="font-size:11px;color:var(--muted);line-height:1.5"></div>
+          </div>
+
+          <div id="mc-scope-per-channel" style="margin-top:14px;max-width:680px"></div>
+        </div>
+      </details>
+
+      <details class="st-group" data-key="mc-contacts">
+        <summary><span class="st-group-title">Contacts</span><span class="st-group-hint">auto-store, import</span></summary>
+        <div class="st-group-body">
+          <label class="st-option">
+            <input type="checkbox" class="st-switch" id="mc-auto-add-contacts" onchange="saveMcAutoAddContacts(this.checked)">
+            <span><b>Auto-store every contact this radio hears</b><br>
+              <span class="st-option-text">ON = stock behaviour: the radio writes every node it hears into its own contact table (the ~350-slot NVS that fills overnight). OFF = manual approval: the radio stores nothing by itself; contacts stay in OM and you approve them with "+ Radio" in the Contacts list. Stored contacts are the only ones this radio can DM.</span>
+            </span>
+          </label>
+          <div id="mc-auto-add-status" class="st-status" style="padding-left:40px"></div>
+
+          <div id="mc-import-contact-section" style="display:none">
+            <div class="st-sub st-sub-gap">Import from share link</div>
+            <div class="st-row">
+              <input id="mc-import-link" class="settings-input st-mono" style="flex:1;min-width:220px;max-width:640px;box-sizing:border-box" placeholder="meshcore://...">
+              <button class="btn" onclick="importMcContact(this)" title="Import contact from share link">Import</button>
+            </div>
+            <p class="st-hint" style="margin-top:4px">Paste a <code class="net-mc">meshcore://</code> contact link to add it straight to the radio's contact list.</p>
+            <div id="mc-import-status" class="st-status"></div>
+          </div><!-- /mc-import-contact-section -->
+        </div>
+      </details>
+
+      <details class="st-group" data-key="mc-routing">
+        <summary><span class="st-group-title">Routing</span><span class="st-group-hint">path hash size, flood, stored paths</span></summary>
+        <div class="st-group-body">
+          <div class="st-row">
+            <div>
+              <label class="settings-label">Path hash size</label>
+              <select id="mc-path-hash-mode" class="settings-select" title="Preferred MeshCore path hash size for stored routes and firmware default when supported">
+                <option value="0">1B/hop - legacy compatible</option>
+                <option value="1">2B/hop - balanced</option>
+                <option value="2">3B/hop - most specific</option>
+              </select>
+            </div>
+            <button class="btn btn-net-mc" onclick="saveMcPathHashMode(this)" title="Save preferred MeshCore path hash mode">Save path size</button>
+          </div>
+          <p class="st-hint">OM applies this to the radio when supported and uses it when saving contact routes. If the radio rejects it, OM falls back to the highest mode it can apply.</p>
+          <div id="mc-path-hash-status" class="st-status"></div>
+
+          <label class="st-option" style="margin-top:10px">
+            <input type="checkbox" class="st-switch" id="mc-force-flood" onchange="saveMcForceFlood(this.checked)">
+            <span><b>Always use flood routing for this radio</b><br>
+              <span class="st-option-text">Before each DM or status ping, OM clears the contact's path so the firmware sends in flood/automatic mode instead of using learned or stored routes.</span>
+            </span>
+          </label>
+          <div id="mc-force-flood-status" class="st-status" style="padding-left:40px"></div>
+
+          <div class="st-row" style="margin-top:8px;align-items:center">
+            <button class="btn btn-warn" onclick="mcResetAllPaths(this)" title="Clear all stored contact routes on this MC radio, including manually-set ones">Reset all paths</button>
+            <span id="mc-reset-all-paths-status" class="st-unit" style="margin:0"></span>
+          </div>
+        </div>
+      </details>
+
+      <details class="st-group" data-key="mc-identity">
+        <summary><span class="st-group-title">Name &amp; position</span><span class="st-group-hint">rename, location, share in adverts</span></summary>
+        <div class="st-group-body">
+          <div class="st-row">
+            <div>
+              <label class="settings-label">New name</label>
+              <input id="mc-device-name-input" class="settings-input" maxlength="32" style="width:180px" placeholder="Device name">
+            </div>
+            <button class="btn" onclick="saveMcDeviceName(this)" title="Rename device">Rename</button>
+          </div>
+
+          <div class="st-sub st-sub-gap">Position on the radio</div>
+          <div class="st-row">
+            <div>
+              <label class="settings-label">Latitude</label>
+              <input id="mc-coords-lat" class="settings-input" type="number" step="0.000001" style="width:130px" placeholder="46.05">
+            </div>
+            <div>
+              <label class="settings-label">Longitude</label>
+              <input id="mc-coords-lon" class="settings-input" type="number" step="0.000001" style="width:130px" placeholder="14.50">
+            </div>
+            <button class="btn" onclick="startMcMapPick()" title="Click on the map to set position">Select on map</button>
+            <button class="btn" onclick="saveMcCoords(this)" title="Set GPS coordinates on MC device">Save position</button>
+          </div>
+          <div style="margin-top:10px">
+            <label class="settings-label">Precision: <span id="mc-coords-prec-val" style="color:var(--accent)">Exact position</span> <span class="st-unit">slide right = more private</span></label>
+            <input type="range" id="mc-coords-precision" min="0" max="1000" step="100" value="0" style="width:220px;vertical-align:middle"
+                   oninput="document.getElementById('mc-coords-prec-val').textContent=precMeterLabel(parseInt(this.value))">
+          </div>
+          <div class="st-row" style="margin-top:10px;align-items:center">
+            <span class="settings-label" style="margin:0">Share position in adverts:</span>
+            <button id="mc-loc-policy-btn" class="btn" onclick="toggleMcAdvertLoc(this)" title="Enable or disable broadcasting your position in mesh advertisements">-</button>
+          </div>
+          <div id="mc-actions-status" class="st-status"></div>
+        </div>
+      </details>
+
+      <details class="st-group" data-key="mc-device">
+        <summary><span class="st-group-title">Device</span><span class="st-group-hint">info, live stats, reboot, debug</span></summary>
+        <div class="st-group-body">
+          <div class="st-sub-row">
+            <div class="st-sub" style="margin:0">Device info</div>
+            <button class="btn btn-mini" onclick="loadMcDeviceInfo()" title="Query device for fresh info">↻ Refresh</button>
+          </div>
+          <div id="mc-device-info-content" class="st-kv-wrap" style="color:var(--muted);font-size:12px">-</div>
+
+          <div class="st-sub-row st-sub-gap">
+            <div class="st-sub" style="margin:0">Node stats</div>
+            <button class="btn btn-mini" onclick="loadMcStats()" title="Fetch live stats from this MC radio">↻ Fetch</button>
+          </div>
+          <div id="mc-stats-content" class="st-kv-wrap" style="color:var(--muted);font-size:12px">-</div>
+
+          <div class="st-danger">
+            <div class="st-sub" style="margin-top:0">Device actions</div>
+            <div class="st-row">
+              <button class="btn" id="mc-debug-btn" onclick="startMcDebugEvents()" title="Log all serial events for 60s. Check the server log to diagnose ping/status issues">Debug events (60 s)</button>
+              <button class="btn btn-danger" onclick="rebootMcNode(this)" title="Send reboot command. May not be supported by all firmware versions">Reboot device</button>
+            </div>
+            <div id="mc-device-actions-status" class="st-status"></div>
+          </div>
+        </div>
+      </details>
     </div><!-- /mc-node-settings-section -->
-
-    <!-- MC Channel Management -->
-    <div class="settings-section" id="mc-channels-section" style="display:none">
-      <h2 class="settings-title">Channels</h2>
-      <div id="mc-channels-list" style="color:var(--muted);font-size:12px;margin-bottom:4px">-</div>
-      <div id="mc-channels-remove-status" style="font-size:12px;min-height:16px;margin-bottom:4px"></div>
-
-      <!-- Inline edit panel -->
-      <div id="mc-channel-edit" style="display:none;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:14px;margin-top:4px">
-        <div style="font-size:12px;font-weight:600;margin-bottom:12px" id="mc-ch-edit-title">Edit Channel 0</div>
-        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
-          <div>
-            <label class="settings-label">Name <span style="font-weight:400">(max 32 chars)</span></label>
-            <input id="mc-ch-name" class="settings-input" maxlength="32" style="width:200px">
-          </div>
-        </div>
-        <div style="margin-top:10px">
-          <label class="settings-label">Encryption Key</label>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-            <select id="mc-ch-key-type" class="settings-select" onchange="mcChKeyTypeChange()">
-              <option value="keep">Keep existing</option>
-              <option value="auto">Auto-derive from name</option>
-              <option value="random">Random (new secure key)</option>
-              <option value="custom">Custom (hex)</option>
-            </select>
-          </div>
-          <input id="mc-ch-key-hex" class="settings-input" placeholder="32 hex chars (16 bytes)"
-                 style="width:100%;margin-top:6px;display:none;font-family:monospace;font-size:11px" maxlength="32">
-        </div>
-        <div style="display:flex;gap:8px;margin-top:12px">
-          <button class="btn" onclick="saveMcChannel(this)" title="Save channel settings to device">Save</button>
-          <button class="btn" onclick="closeMcChEdit()" style="background:var(--bg3)" title="Discard changes">Cancel</button>
-          <button class="btn" onclick="clearMcChannelHistory(this)" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted)" title="Delete saved chat history for this MC channel">Delete History</button>
-          <button class="btn" onclick="removeMcChannel(this)" style="margin-left:auto;background:var(--bg3);border:1px solid var(--border);color:var(--muted)" title="Clear this channel slot on the device">Remove</button>
-        </div>
-        <div id="mc-channels-status" style="font-size:12px;min-height:16px;margin-top:6px"></div>
-      </div>
-    </div><!-- /mc-channels-section -->
-
-    <!-- Import Contact via Share Link -->
-    <div class="settings-section" id="mc-import-contact-section" style="display:none">
-      <h2 class="settings-title">Import Contact</h2>
-      <p class="network-section-note mc" style="margin:0 0 10px">Paste a <code class="net-mc">meshcore://</code> share link to add a contact directly to the radio's contact list.</p>
-      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
-        <div style="flex:1;min-width:200px">
-          <label class="settings-label">Share Link</label>
-          <input id="mc-import-link" class="settings-input" style="width:100%;font-family:monospace;font-size:11px;box-sizing:border-box" placeholder="meshcore://...">
-        </div>
-        <button class="btn" onclick="importMcContact(this)" title="Import contact from share link">Import</button>
-      </div>
-      <div id="mc-import-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-top:6px"></div>
-    </div><!-- /mc-import-contact-section -->
-
-    <!-- Import Channel via Share Link -->
-    <div class="settings-section" id="mc-import-channel-section" style="display:none">
-      <h2 class="settings-title">Import Channel</h2>
-      <p class="network-section-note mc" style="margin:0 0 10px">Paste a <code class="net-mc">meshcore://channel/add?…</code> share link to add a channel to the radio.</p>
-      <div style="flex:1;min-width:200px">
-        <label class="settings-label">Share Link</label>
-        <input id="mc-import-channel-link" class="settings-input" style="width:100%;font-family:monospace;font-size:11px;box-sizing:border-box" placeholder="meshcore://channel/add?name=…&secret=…" oninput="parseMcChannelLink()">
-      </div>
-      <div id="mc-import-channel-preview" style="display:none;margin-top:10px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px">
-        <div style="font-size:12px;margin-bottom:10px">
-          <span style="color:var(--muted)">Name:</span> <strong id="mc-import-ch-name-preview"></strong>
-          <span style="color:var(--muted);margin-left:14px">Secret:</span> <span id="mc-import-ch-secret-preview" style="font-family:monospace;font-size:11px;color:var(--muted)"></span>
-        </div>
-        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
-          <div>
-            <label class="settings-label">Save to slot</label>
-            <input id="mc-import-ch-slot" class="settings-input" type="number" min="0" max="255" value="0" style="width:60px">
-          </div>
-          <button class="btn" onclick="importMcChannel()" title="Save this channel to the selected slot">Import</button>
-        </div>
-      </div>
-      <div id="mc-import-channel-status" style="font-size:12px;min-height:16px;color:var(--muted);margin-top:6px"></div>
-    </div><!-- /mc-import-channel-section -->
 
     <!-- Passive Intel Manager -->
     <div class="settings-section" id="mc-passive-intel-section" style="display:none">
-      <h2 class="settings-title">Passive Intel
-        <button class="btn" onclick="loadPassiveIntelManager()" style="font-size:11px;padding:2px 8px;margin-left:6px" title="Refresh passive observations list">↻ Refresh</button>
-      </h2>
-      <p class="network-section-note mc" style="margin:0 0 10px">
-        OM passively records RF observations from overheard mesh traffic (adverts, messages, and trace hops) without transmitting. Data is stored per MC radio and keyed by node pubkey prefix.
-      </p>
-
-      <!-- Controls row -->
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
-        <label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;max-width:620px">
-          <input type="checkbox" id="mc-passive-collection" onchange="saveMcPassiveCollection(this.checked)" style="margin-top:2px">
-          <span>
-            <b>Passive collection</b><br>
-            <span style="color:var(--muted)">Store new passive MC observations for the selected radio. Turning this off keeps existing observations but stops recording new ones.</span>
-          </span>
-        </label>
-        <span id="mc-passive-collection-status" style="font-size:12px;color:var(--muted);min-height:16px"></span>
+      <div class="st-head">
+        <h2 class="settings-title">Passive intel</h2>
+        <span class="st-head-hint">what OM learns by listening, per MC radio</span>
+        <div class="st-head-actions">
+          <button class="btn" onclick="loadPassiveIntelManager()" title="Refresh passive observations list">↻ Refresh</button>
+        </div>
       </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
-        <button class="btn" onclick="passiveIntelRunCleanup(this)" title="Delete observations older than the configured TTL">Run TTL cleanup</button>
-        <label style="display:flex;align-items:center;gap:6px;font-size:12px">
-          <span style="color:var(--muted)">Keep last</span>
-          <input id="passive-ttl-days" class="settings-input" type="number" min="1" max="365" value="30" style="width:52px;text-align:center">
-          <span style="color:var(--muted)">days</span>
-        </label>
-        <button class="btn" style="color:var(--red);border-color:var(--red)" onclick="passiveIntelClearAll(this)" title="Delete ALL passive observations for this MC radio">Clear all</button>
+      <p class="st-intro">OM passively records RF observations from overheard mesh traffic (adverts, messages and trace hops) without transmitting. Stored per MC radio, keyed by node pubkey prefix.</p>
+
+      <label class="st-option">
+        <input type="checkbox" class="st-switch" id="mc-passive-collection" onchange="saveMcPassiveCollection(this.checked)">
+        <span><b>Passive collection</b><br>
+          <span class="st-option-text">Store new passive observations for the selected radio. Off keeps what is stored but stops recording new ones.</span>
+        </span>
+      </label>
+      <div id="mc-passive-collection-status" class="st-status" style="padding-left:40px"></div>
+
+      <div class="st-row" style="margin-top:8px;align-items:center">
+        <span class="st-unit" style="margin:0">Keep last</span>
+        <input id="passive-ttl-days" class="settings-input" type="number" min="1" max="365" value="30" style="width:64px;text-align:center">
+        <span class="st-unit" style="margin:0">days</span>
+        <button class="btn" onclick="passiveIntelRunCleanup(this)" title="Delete observations older than the configured TTL">Run cleanup now</button>
+        <button class="btn btn-danger" onclick="passiveIntelClearAll(this)" title="Delete ALL passive observations for this MC radio">Clear all</button>
       </div>
 
-      <!-- Stats summary -->
-      <div id="passive-intel-stats" style="font-size:12px;color:var(--muted);margin-bottom:10px">-</div>
-
-      <!-- Contact list -->
+      <div id="passive-intel-stats" style="font-size:12px;color:var(--muted);margin:12px 0 8px">-</div>
       <div id="passive-intel-list" style="font-size:12px">
         <div style="color:var(--muted)">Press Refresh to load.</div>
       </div>
 
-      <!-- Collectors subsection -->
-      <h2 class="settings-title" style="margin-top:20px">Remote Collectors
-        <span style="font-size:11px;font-weight:normal;color:var(--muted);margin-left:6px">your remote RPTRs collecting passive RF intel over the mesh</span>
-      </h2>
-      <p style="font-size:12px;color:var(--muted);margin:0 0 10px">
-        A Remote Collector is your own MeshCore RPTR running custom firmware, deployed at a remote vantage point (hilltop, solar-powered). It passively logs every node it hears (adverts with full identity and RSSI/SNR, plus anonymous packet activity for coverage mapping) into a local buffer. Press <b>Collect</b> to trigger a delivery: the collector sends its buffer back to your OM instance as encrypted mesh DMs, which OM stores automatically as passive observations.
-      </p>
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
-        <label style="font-size:12px;color:var(--muted)">Auto-collect every</label>
-        <select id="rc-auto-collect-interval" class="settings-select" style="font-size:12px" onchange="setRcAutoCollect(this.value)">
-          <option value="0">Off</option>
-          <option value="30">30 min</option>
-          <option value="60">1 hr</option>
-          <option value="120">2 hr</option>
-          <option value="240">4 hr</option>
-          <option value="480">8 hr</option>
-        </select>
-        <span id="rc-auto-collect-status" style="font-size:11px;color:var(--muted)"></span>
-      </div>
-      <div id="passive-collectors-list" style="margin-bottom:10px">
-        <div style="color:var(--muted);font-size:12px">No collectors configured.</div>
-      </div>
-      <div style="margin-bottom:8px;position:relative">
-        <label class="settings-label">Search known nodes</label>
-        <input id="passive-collector-search" class="settings-input" style="width:280px" placeholder="Name or pubkey…" oninput="renderCollectorSearchResults()" autocomplete="off">
-        <div id="passive-collector-search-results" style="display:none;position:absolute;z-index:200;background:var(--bg2);border:1px solid var(--border);border-radius:6px;width:320px;max-height:180px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,0.3);margin-top:2px"></div>
-      </div>
-      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:6px">
-        <div>
-          <label class="settings-label">Collector pubkey prefix <span style="font-weight:normal;color:var(--muted)">(12 chars)</span></label>
-          <input id="passive-collector-key" class="settings-input" maxlength="64" style="width:220px;font-family:monospace;font-size:11px" placeholder="e.g. faff04a08bd6">
+      <details class="st-group" data-key="mc-collectors" style="margin-top:12px">
+        <summary><span class="st-group-title">Remote collectors</span><span class="st-group-hint">your remote RPTRs gathering passive RF intel over the mesh</span></summary>
+        <div class="st-group-body">
+          <p class="st-hint" style="margin-top:0">
+            A Remote Collector is your own MeshCore RPTR running custom firmware at a remote vantage point (hilltop, solar). It passively logs every node it hears (adverts with identity and RSSI/SNR, plus anonymous packet activity for coverage mapping) into a local buffer. <b>Collect</b> asks it to send that buffer back to this OM as encrypted mesh DMs, which OM stores as passive observations.
+          </p>
+          <div class="st-row" style="margin-top:10px;align-items:center">
+            <label class="settings-label" style="margin:0">Auto-collect every</label>
+            <select id="rc-auto-collect-interval" class="settings-select" onchange="setRcAutoCollect(this.value)">
+              <option value="0">Off</option>
+              <option value="30">30 min</option>
+              <option value="60">1 hr</option>
+              <option value="120">2 hr</option>
+              <option value="240">4 hr</option>
+              <option value="480">8 hr</option>
+            </select>
+            <span id="rc-auto-collect-status" class="st-unit" style="margin:0"></span>
+          </div>
+          <div id="passive-collectors-list" style="margin:10px 0">
+            <div style="color:var(--muted);font-size:12px">No collectors configured.</div>
+          </div>
+          <div class="st-sub st-sub-gap">Add collector</div>
+          <div style="margin-bottom:8px;position:relative">
+            <label class="settings-label">Search known nodes</label>
+            <input id="passive-collector-search" class="settings-input" style="width:280px" placeholder="Name or pubkey…" oninput="renderCollectorSearchResults()" autocomplete="off">
+            <div id="passive-collector-search-results" style="display:none;position:absolute;z-index:200;background:var(--bg2);border:1px solid var(--border);border-radius:6px;width:320px;max-height:180px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,0.3);margin-top:2px"></div>
+          </div>
+          <div class="st-row">
+            <div>
+              <label class="settings-label">Collector pubkey prefix <span class="st-unit">12 chars</span></label>
+              <input id="passive-collector-key" class="settings-input st-mono" maxlength="64" style="width:220px" placeholder="e.g. faff04a08bd6">
+            </div>
+            <div>
+              <label class="settings-label">Label</label>
+              <input id="passive-collector-label" class="settings-input" style="width:150px" placeholder="Solar hilltop">
+            </div>
+            <button class="btn" onclick="addPassiveCollector()" title="Save this collector">Add collector</button>
+          </div>
+          <div id="passive-collector-status" class="st-status"></div>
         </div>
-        <div>
-          <label class="settings-label">Label</label>
-          <input id="passive-collector-label" class="settings-input" style="width:140px" placeholder="Solar hilltop">
-        </div>
-        <button class="btn" onclick="addPassiveCollector()" title="Save this collector">Add collector</button>
-      </div>
-      <div id="passive-collector-status" style="font-size:12px;min-height:16px;color:var(--muted)"></div>
+      </details>
     </div><!-- /mc-passive-intel-section -->
 
     </div><!-- /st-mc -->
 
+    <!-- ═════════════ APP ═════════════ -->
     <div id="st-app" style="display:none">
-    <!-- App -->
+
+    <!-- General -->
     <div class="settings-section">
-      <h2 class="settings-title">Appearance</h2>
-      <div style="display:flex;align-items:center;gap:10px">
-        <span class="settings-label" style="margin:0;white-space:nowrap">UI Zoom</span>
-        <input type="range" id="settings-zoom-slider"
-               min="70" max="170" step="5" value="100"
-               oninput="settingsSetZoom(this.value)">
-        <span id="settings-zoom-display">100%</span>
-        <button class="zoom-step-btn" onclick="settingsSetZoom(parseInt(document.getElementById('settings-zoom-slider').value)-5)" title="Zoom out">−</button>
-        <button class="zoom-step-btn" onclick="settingsSetZoom(parseInt(document.getElementById('settings-zoom-slider').value)+5)" title="Zoom in">+</button>
-      </div>
+      <div class="st-head"><h2 class="settings-title">General</h2><span class="st-head-hint">look, units and formats on this OverMesh</span></div>
+      <div class="st-form">
+        <span class="st-form-label">UI zoom</span>
+        <div class="st-form-ctl">
+          <input type="range" id="settings-zoom-slider"
+                 min="70" max="170" step="5" value="100"
+                 oninput="settingsSetZoom(this.value)">
+          <span id="settings-zoom-display">100%</span>
+          <button class="zoom-step-btn" onclick="settingsSetZoom(parseInt(document.getElementById('settings-zoom-slider').value)-5)" title="Zoom out">−</button>
+          <button class="zoom-step-btn" onclick="settingsSetZoom(parseInt(document.getElementById('settings-zoom-slider').value)+5)" title="Zoom in">+</button>
+        </div>
 
-      <div style="margin-top:14px;display:flex;align-items:center;gap:10px">
-        <span class="settings-label" style="margin:0;white-space:nowrap">Accent colour</span>
-        <div id="settings-accent-swatch"
-             onclick="openCPicker()"
-             title="Choose colour"
-             style="width:32px;height:24px;border-radius:6px;background:var(--accent);cursor:pointer;border:1px solid var(--border);flex-shrink:0;transition:border-color 0.15s"
-             onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'"></div>
-        <button class="btn" onclick="settingsResetAccentColor(this)" style="font-size:12px;padding:3px 10px" title="Reset to default accent colour">Reset</button>
-        <span style="font-size:11px;color:var(--muted)">Pick any hue. Shades auto-derive</span>
-      </div>
-    </div>
+        <span class="st-form-label">Accent colour</span>
+        <div class="st-form-ctl">
+          <div id="settings-accent-swatch" class="st-swatch" onclick="openCPicker()" title="Choose colour"></div>
+          <button class="btn btn-mini" onclick="settingsResetAccentColor(this)" title="Reset to default accent colour">Reset</button>
+          <span class="st-unit" style="margin:0">pick any hue, shades follow</span>
+        </div>
 
-    <!-- System -->
-    <div class="settings-section">
-      <h2 class="settings-title">System</h2>
-      <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:start">
-        <div>
-          <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px">OverMesh update</div>
-          <div id="settings-update-summary" style="font-size:12px;color:var(--muted);line-height:1.45">Checking version…</div>
-          <div id="settings-update-log" style="display:none;margin-top:8px;max-height:120px;overflow:auto;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px;font-family:monospace;font-size:11px;color:var(--muted);white-space:pre-wrap"></div>
-        </div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
-          <button class="btn" id="settings-update-check-btn" onclick="settingsLoadUpdateStatus(true, this)" title="Check GitHub for a newer OverMesh commit">Check</button>
-          <button class="btn" id="settings-update-run-btn" onclick="runOverMeshUpdate()" disabled title="Pull the latest OverMesh code">Update</button>
-          <button class="btn" id="settings-update-restart-btn" onclick="restartOverMeshNow(this)" style="display:none" title="Restart OverMesh after an update">Restart</button>
-        </div>
-      </div>
-      <div style="border-top:1px solid var(--border);margin:14px 0 10px 0"></div>
-      <div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:start">
-        <div>
-          <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px">Clean up stale nodes</div>
-          <div style="font-size:12px;color:var(--muted);line-height:1.45">Remove MeshCore contacts and Meshtastic nodes not heard from within the entered number of days, across every connected radio. You pick what actually gets deleted; your own node and favourited nodes are always kept.</div>
-        </div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;align-items:center">
-          <input type="number" id="settings-node-cleanup-days" min="1" step="1" value="30"
-                 style="width:70px;padding:4px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:13px"
-                 title="Nodes not heard from in this many days will be removed">
-          <span style="font-size:12px;color:var(--muted)">days</span>
-          <button class="btn" id="settings-node-cleanup-btn" onclick="runStaleNodeCleanup(this)" title="Remove nodes not heard from within the entered number of days">Clean up</button>
-        </div>
-      </div>
-      <div style="border-top:1px solid var(--border);margin:14px 0 10px 0"></div>
-      <div style="display:flex;align-items:center;gap:10px;justify-content:space-between;flex-wrap:wrap">
-        <div>
-          <div style="font-size:13px;font-weight:600;color:var(--text)">Help</div>
-          <div style="font-size:12px;color:var(--muted)">Open the short intro or the searchable app manual.</div>
-        </div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="btn" onclick="showOmIntro(true)" title="Open the OverMesh intro guide">Show Intro</button>
-          <button class="btn" onclick="showOmManual()" title="Open the searchable OverMesh manual">Manual</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Behaviour -->
-    <div class="settings-section">
-      <h2 class="settings-title">Behaviour</h2>
-      <div style="display:flex;align-items:center;gap:10px">
-        <span class="settings-label" style="margin:0;white-space:nowrap">Sense cooldown</span>
-        <input type="number" id="settings-sense-cooldown"
-               min="10" max="3600" step="1" value="180"
-               style="width:80px;padding:4px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:13px"
-               onchange="settingsSetSenseCooldown(this.value)">
-        <span style="font-size:12px;color:var(--muted)">sec</span>
-        <span id="settings-sense-cooldown-display" style="font-size:12px;color:var(--muted)">(3 min)</span>
-      </div>
-      <div style="font-size:11px;color:var(--muted);margin-top:3px">Minimum time between Sense alerts for the same node.</div>
-
-      <div style="border-top:1px solid var(--border);margin:14px 0 10px 0"></div>
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <span class="settings-label" style="margin:0;white-space:nowrap">Units</span>
-        <select id="settings-distance-unit" onchange="saveDistanceUnit(this.value)"
-                style="padding:4px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:13px">
-          <option value="km">Standard (km)</option>
-          <option value="mi">Imperial (mi)</option>
-        </select>
-        <span class="settings-label" style="margin:0 0 0 10px;white-space:nowrap">Time</span>
-        <select id="settings-time-format" onchange="saveTimeFormat(this.value)"
-                style="padding:4px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:13px">
-          <option value="24h">24-hour</option>
-          <option value="12h">AM/PM</option>
-        </select>
-        <span class="settings-label" style="margin:0 0 0 10px;white-space:nowrap">Date</span>
-        <select id="settings-date-format" onchange="saveDateFormat(this.value)"
-                style="padding:4px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:13px">
-          <option value="eu">Day-first (DD.MM.YYYY)</option>
-          <option value="us">Month-first (MM/DD/YYYY)</option>
-          <option value="iso">ISO (YYYY-MM-DD)</option>
-        </select>
-      </div>
-
-      <div style="border-top:1px solid var(--border);margin:14px 0 10px 0"></div>
-      <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Notifications</div>
-      <div style="display:flex;flex-direction:column;gap:10px">
-        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px">In-app</div>
-        <div style="display:flex;align-items:center;gap:12px">
-          <label class="bot-toggle">
-            <input type="checkbox" id="inapp-notif-messages" onchange="saveInAppNotifPrefs()">
-            <span class="bot-toggle-slider"></span>
-          </label>
-          <span style="font-size:13px">New messages</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:12px">
-          <label class="bot-toggle">
-            <input type="checkbox" id="inapp-notif-nodes" onchange="saveInAppNotifPrefs()">
-            <span class="bot-toggle-slider"></span>
-          </label>
-          <span style="font-size:13px">New node seen</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:12px">
-          <label class="bot-toggle">
-            <input type="checkbox" id="inapp-notif-returned" onchange="saveInAppNotifPrefs()">
-            <span class="bot-toggle-slider"></span>
-          </label>
-          <span style="font-size:13px">Seen again after a long time</span>
-          <input
-            id="inapp-notif-returned-gap-value"
-            type="number"
-            min="1"
-            step="1"
-            value="7"
-            onchange="saveInAppNotifPrefs()"
-            style="width:64px;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:12px"
-          >
-          <select
-            id="inapp-notif-returned-gap-unit"
-            onchange="saveInAppNotifPrefs()"
-            style="padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:12px"
-          >
-            <option value="hours">hours</option>
-            <option value="days">days</option>
+        <span class="st-form-label">Units &amp; formats</span>
+        <div class="st-form-ctl">
+          <select id="settings-distance-unit" class="settings-select" onchange="saveDistanceUnit(this.value)" title="Distance unit">
+            <option value="km">Standard (km)</option>
+            <option value="mi">Imperial (mi)</option>
+          </select>
+          <select id="settings-time-format" class="settings-select" onchange="saveTimeFormat(this.value)" title="Time format">
+            <option value="24h">24-hour</option>
+            <option value="12h">AM/PM</option>
+          </select>
+          <select id="settings-date-format" class="settings-select" onchange="saveDateFormat(this.value)" title="Date format">
+            <option value="eu">Day-first (DD.MM.YYYY)</option>
+            <option value="us">Month-first (MM/DD/YYYY)</option>
+            <option value="iso">ISO (YYYY-MM-DD)</option>
           </select>
         </div>
-        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-top:4px">Browser</div>
-        <div style="display:flex;align-items:center;gap:12px">
-          <label class="bot-toggle">
-            <input type="checkbox" id="notif-messages" onchange="saveNotifPrefs()">
-            <span class="bot-toggle-slider"></span>
-          </label>
-          <span style="font-size:13px">New messages</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:12px">
-          <label class="bot-toggle">
-            <input type="checkbox" id="notif-nodes" onchange="saveNotifPrefs()">
-            <span class="bot-toggle-slider"></span>
-          </label>
-          <span style="font-size:13px">Node comes online</span>
-        </div>
-        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-top:4px">Sound</div>
-        <div style="display:flex;align-items:center;gap:12px">
-          <label class="bot-toggle">
-            <input type="checkbox" id="sound-notif-messages" onchange="saveSoundPrefs()">
-            <span class="bot-toggle-slider"></span>
-          </label>
-          <span style="font-size:13px">New messages</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:12px">
-          <label class="bot-toggle">
-            <input type="checkbox" id="sound-notif-radios" onchange="saveSoundPrefs()">
-            <span class="bot-toggle-slider"></span>
-          </label>
-          <span style="font-size:13px">Radio connected to OM</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:12px">
-          <label class="bot-toggle">
-            <input type="checkbox" id="sound-notif-nodes" onchange="saveSoundPrefs()">
-            <span class="bot-toggle-slider"></span>
-          </label>
-          <span style="font-size:13px">New node or contact discovered</span>
+
+        <span class="st-form-label">External map</span>
+        <div class="st-form-ctl">
+          <select id="ext-map-select" class="settings-select" onchange="saveExtMapPref(this.value)">
+            <option value="osm">OpenStreetMap</option>
+            <option value="google">Google Maps</option>
+          </select>
+          <span class="st-unit" style="margin:0">for "Open in map" links on Marks</span>
         </div>
 
-        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-top:4px">Alert Panel</div>
-        <div style="display:flex;align-items:center;gap:12px">
-          <label class="bot-toggle"><input type="checkbox" id="alert-log-messages" onchange="saveAlertLogPrefs()"><span class="bot-toggle-slider"></span></label>
-          <span style="font-size:13px">Incoming messages</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:12px">
-          <label class="bot-toggle"><input type="checkbox" id="alert-log-geofence" onchange="saveAlertLogPrefs()"><span class="bot-toggle-slider"></span></label>
-          <span style="font-size:13px">Geofence enter / leave</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:12px">
-          <label class="bot-toggle"><input type="checkbox" id="alert-log-node-new" onchange="saveAlertLogPrefs()"><span class="bot-toggle-slider"></span></label>
-          <span style="font-size:13px">New node / contact seen</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:12px">
-          <label class="bot-toggle"><input type="checkbox" id="alert-log-node-return" onchange="saveAlertLogPrefs()"><span class="bot-toggle-slider"></span></label>
-          <span style="font-size:13px">Node / contact seen again</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:12px">
-          <label class="bot-toggle"><input type="checkbox" id="alert-log-radio" onchange="saveAlertLogPrefs()"><span class="bot-toggle-slider"></span></label>
-          <span style="font-size:13px">Radio connected / disconnected</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:12px">
-          <label class="bot-toggle"><input type="checkbox" id="alert-log-rc-collect" onchange="saveAlertLogPrefs()"><span class="bot-toggle-slider"></span></label>
-          <span style="font-size:13px">RC collect summary (auto)</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:12px">
-          <label class="bot-toggle"><input type="checkbox" id="alert-log-rc-new-node" onchange="saveAlertLogPrefs()"><span class="bot-toggle-slider"></span></label>
-          <span style="font-size:13px">RC new node detected</span>
+        <span class="st-form-label">Sense cooldown</span>
+        <div class="st-form-ctl">
+          <input type="number" id="settings-sense-cooldown" class="settings-input"
+                 min="10" max="3600" step="1" value="180" style="width:90px"
+                 onchange="settingsSetSenseCooldown(this.value)">
+          <span class="st-unit" style="margin:0">s</span>
+          <span id="settings-sense-cooldown-display" class="st-unit" style="margin:0">(3 min)</span>
+          <span class="st-unit" style="margin:0">· minimum time between Sense alerts for the same node</span>
         </div>
       </div>
-
-      <div style="border-top:1px solid var(--border);margin:14px 0 10px 0"></div>
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <span class="settings-label" style="margin:0;white-space:nowrap">External map</span>
-        <select id="ext-map-select" onchange="saveExtMapPref(this.value)"
-                style="padding:4px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:13px">
-          <option value="osm">OpenStreetMap</option>
-          <option value="google">Google Maps</option>
-        </select>
-        <span style="font-size:11px;color:var(--muted)">Used for "Open in map" links on Marks</span>
-      </div>
-
     </div>
 
-    <!-- Automation Bridge -->
+    <!-- Notifications -->
     <div class="settings-section">
-      <h2 class="settings-title">Automation Bridge</h2>
-      <p style="color:var(--muted);font-size:12px;margin:0 0 12px 0">Local hooks for Home Assistant and other automations while OverMesh owns the radios.</p>
-      <div style="display:grid;grid-template-columns:minmax(0,1fr);gap:14px">
-        <div>
-          <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
-            <label class="bot-toggle">
-              <input type="checkbox" id="bridge-webhooks-enabled" onchange="saveBridgeSettings()">
-              <span class="bot-toggle-slider"></span>
-            </label>
-            <span style="font-size:13px;font-weight:600">Send incoming messages to HTTP webhooks</span>
-          </div>
-          <label class="settings-label">Webhook URLs</label>
-          <textarea id="bridge-webhook-urls" class="settings-input" rows="3"
-                    placeholder="http://homeassistant.local:8123/api/webhook/overmesh"
-                    style="width:100%;max-width:640px;resize:vertical;line-height:1.4"
-                    onchange="saveBridgeSettings()"></textarea>
-          <div style="font-size:11px;color:var(--muted);margin-top:4px">One URL per line. OverMesh posts normalized inbound MT and MC messages as JSON.</div>
-          <div style="margin-top:8px;max-width:360px">
-            <label class="settings-label">Webhook secret header</label>
-            <input id="bridge-webhook-secret" class="settings-input" type="password" autocomplete="new-password"
-                   placeholder="optional X-OverMesh-Secret" style="width:100%" onchange="saveBridgeSettings()">
+      <div class="st-head"><h2 class="settings-title">Notifications</h2><span class="st-head-hint">what OverMesh tells you, and where</span></div>
+      <div class="st-notif-grid">
+        <div class="st-notif-col">
+          <div class="st-notif-head">In-app</div>
+          <label class="st-notif-item"><span class="bot-toggle"><input type="checkbox" id="inapp-notif-messages" onchange="saveInAppNotifPrefs()"><span class="bot-toggle-slider"></span></span>New messages</label>
+          <label class="st-notif-item"><span class="bot-toggle"><input type="checkbox" id="inapp-notif-nodes" onchange="saveInAppNotifPrefs()"><span class="bot-toggle-slider"></span></span>New node seen</label>
+          <label class="st-notif-item"><span class="bot-toggle"><input type="checkbox" id="inapp-notif-returned" onchange="saveInAppNotifPrefs()"><span class="bot-toggle-slider"></span></span>Seen again after</label>
+          <div class="st-notif-sub">
+            <input id="inapp-notif-returned-gap-value" type="number" min="1" step="1" value="7" class="settings-input" style="width:64px" onchange="saveInAppNotifPrefs()">
+            <select id="inapp-notif-returned-gap-unit" class="settings-select" onchange="saveInAppNotifPrefs()">
+              <option value="hours">hours</option>
+              <option value="days">days</option>
+            </select>
+            <span class="st-unit" style="margin:0">of silence</span>
           </div>
         </div>
-        <div style="border-top:1px solid var(--border);padding-top:12px">
-          <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
-            <label class="bot-toggle">
-              <input type="checkbox" id="bridge-ingest-enabled" onchange="saveBridgeSettings()">
-              <span class="bot-toggle-slider"></span>
-            </label>
-            <span style="font-size:13px;font-weight:600">Allow external systems to send mesh messages</span>
-          </div>
-          <div style="max-width:360px">
-            <label class="settings-label">Bearer token</label>
-            <input id="bridge-ingest-token" class="settings-input" type="password" autocomplete="new-password"
-                   placeholder="required when enabled" style="width:100%" onchange="saveBridgeSettings()">
-          </div>
-          <div style="font-size:11px;color:var(--muted);margin-top:6px">Endpoint: <code>/api/bridge/send</code>. Use <code>Authorization: Bearer TOKEN</code> or <code>X-OverMesh-Token</code>.</div>
+        <div class="st-notif-col">
+          <div class="st-notif-head">Browser</div>
+          <label class="st-notif-item"><span class="bot-toggle"><input type="checkbox" id="notif-messages" onchange="saveNotifPrefs()"><span class="bot-toggle-slider"></span></span>New messages</label>
+          <label class="st-notif-item"><span class="bot-toggle"><input type="checkbox" id="notif-nodes" onchange="saveNotifPrefs()"><span class="bot-toggle-slider"></span></span>Node comes online</label>
+        </div>
+        <div class="st-notif-col">
+          <div class="st-notif-head">Sound</div>
+          <label class="st-notif-item"><span class="bot-toggle"><input type="checkbox" id="sound-notif-messages" onchange="saveSoundPrefs()"><span class="bot-toggle-slider"></span></span>New messages</label>
+          <label class="st-notif-item"><span class="bot-toggle"><input type="checkbox" id="sound-notif-radios" onchange="saveSoundPrefs()"><span class="bot-toggle-slider"></span></span>Radio connected to OM</label>
+          <label class="st-notif-item"><span class="bot-toggle"><input type="checkbox" id="sound-notif-nodes" onchange="saveSoundPrefs()"><span class="bot-toggle-slider"></span></span>New node or contact</label>
+        </div>
+        <div class="st-notif-col">
+          <div class="st-notif-head">Alert panel</div>
+          <label class="st-notif-item"><span class="bot-toggle"><input type="checkbox" id="alert-log-messages" onchange="saveAlertLogPrefs()"><span class="bot-toggle-slider"></span></span>Incoming messages</label>
+          <label class="st-notif-item"><span class="bot-toggle"><input type="checkbox" id="alert-log-geofence" onchange="saveAlertLogPrefs()"><span class="bot-toggle-slider"></span></span>Geofence enter / leave</label>
+          <label class="st-notif-item"><span class="bot-toggle"><input type="checkbox" id="alert-log-node-new" onchange="saveAlertLogPrefs()"><span class="bot-toggle-slider"></span></span>New node / contact</label>
+          <label class="st-notif-item"><span class="bot-toggle"><input type="checkbox" id="alert-log-node-return" onchange="saveAlertLogPrefs()"><span class="bot-toggle-slider"></span></span>Node / contact seen again</label>
+          <label class="st-notif-item"><span class="bot-toggle"><input type="checkbox" id="alert-log-radio" onchange="saveAlertLogPrefs()"><span class="bot-toggle-slider"></span></span>Radio connected / lost</label>
+          <label class="st-notif-item"><span class="bot-toggle"><input type="checkbox" id="alert-log-rc-collect" onchange="saveAlertLogPrefs()"><span class="bot-toggle-slider"></span></span>RC collect summary (auto)</label>
+          <label class="st-notif-item"><span class="bot-toggle"><input type="checkbox" id="alert-log-rc-new-node" onchange="saveAlertLogPrefs()"><span class="bot-toggle-slider"></span></span>RC new node detected</label>
         </div>
       </div>
-      <div id="bridge-settings-status" style="font-size:12px;min-height:16px;margin-top:8px;color:var(--muted)"></div>
     </div>
 
     <!-- OM Position: ONE source, chosen by hand; hand-picked by default; sharing with radios separate (S471) -->
     <div class="settings-section">
-      <h2 class="settings-title">OM Position</h2>
-      <p style="color:var(--muted);font-size:12px;margin:0 0 12px 0">Your own position in OverMesh: private, for orientation only (map origin, range circles, distances). It changes source only when you change it here. Nothing is sent to radios unless you turn it on under <b>Share with radios</b>.</p>
+      <div class="st-head"><h2 class="settings-title">OM Position</h2><span class="st-head-hint">private, for orientation only</span></div>
+      <p class="st-intro">Your own position in OverMesh: map origin, range circles, distances. It changes source only when you change it here. Nothing is sent to radios unless you turn it on under <b>Share with radios</b>.</p>
       <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
         <div style="flex:1;min-width:260px">
           <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
             <label class="settings-label" style="margin:0;white-space:nowrap" for="gps-source-select">Source</label>
-            <select id="gps-source-select" class="settings-select" style="flex:1" onchange="gpsSourceChanged(true)">
+            <select id="gps-source-select" class="settings-select" style="flex:1;max-width:360px" onchange="gpsSourceChanged(true)">
               <option value="manual">Hand-picked position (map)</option>
               <option value="internal">Internal GPS (built-in UART)</option>
               <option value="usb">USB GPS dongle</option>
@@ -2151,36 +2013,29 @@
           </div>
           <!-- Hand-picked -->
           <div id="om-pos-manual-row">
-            <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
-              <div style="min-width:140px">
-                <label class="settings-label" style="margin-bottom:4px">Latitude</label>
-                <input id="om-pos-lat" type="number" step="0.000001" min="-90" max="90"
-                       style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:13px"
-                       placeholder="46.056947">
+            <div class="st-row">
+              <div>
+                <label class="settings-label">Latitude</label>
+                <input id="om-pos-lat" class="settings-input" type="number" step="0.000001" min="-90" max="90" style="width:140px" placeholder="46.056947">
               </div>
-              <div style="min-width:140px">
-                <label class="settings-label" style="margin-bottom:4px">Longitude</label>
-                <input id="om-pos-lon" type="number" step="0.000001" min="-180" max="180"
-                       style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--text);font-size:13px"
-                       placeholder="14.505751">
+              <div>
+                <label class="settings-label">Longitude</label>
+                <input id="om-pos-lon" class="settings-input" type="number" step="0.000001" min="-180" max="180" style="width:140px" placeholder="14.505751">
               </div>
-              <button class="btn btn-sm" onclick="startOmMapPick()">Select on map</button>
-              <button class="btn btn-sm" onclick="saveOmManualPosition(this)">Save</button>
-              <button class="btn btn-sm" style="color:var(--red);border-color:var(--red)"
-                      onmouseenter="this.style.background='rgba(248,81,73,0.12)'"
-                      onmouseleave="this.style.background=''"
-                      onclick="clearOmManualPosition(this)">Clear</button>
+              <button class="btn" onclick="startOmMapPick()">Select on map</button>
+              <button class="btn" onclick="saveOmManualPosition(this)">Save</button>
+              <button class="btn btn-danger" onclick="clearOmManualPosition(this)">Clear</button>
             </div>
-            <div id="om-pos-status" style="font-size:12px;min-height:16px;margin-top:8px;color:var(--muted)"></div>
+            <div id="om-pos-status" class="st-status" style="margin-top:8px"></div>
           </div>
           <!-- Internal / USB GPS: that kind of port only -->
           <div id="gps-port-row" style="display:none;gap:8px;align-items:center;flex-wrap:wrap">
             <label id="gps-port-label" class="settings-label" style="margin:0">Port</label>
-            <select id="gps-port-select" class="settings-select" style="flex:1;min-width:140px" onchange="saveGpsSettings()"></select>
+            <select id="gps-port-select" class="settings-select" style="flex:1;min-width:140px;max-width:320px" onchange="saveGpsSettings()"></select>
             <button class="btn" onclick="gpsRefreshPorts()" title="Rescan serial ports">↻</button>
           </div>
           <div id="gps-source-note" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
-          <div id="gps-status" style="font-size:12px;min-height:16px;margin-top:6px;color:var(--muted)"></div>
+          <div id="gps-status" class="st-status"></div>
         </div>
         <!-- Live GPS status (GPS sources only) -->
         <div id="gps-live-card" style="display:none;min-width:155px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:10px 12px;font-size:12px;flex-shrink:0">
@@ -2197,286 +2052,316 @@
       </div>
 
       <!-- Share with radios: optional, off by default, per network -->
-      <div id="gps-share-block" style="margin-top:16px;border-left:3px solid var(--yellow, #facc15);padding:4px 0 4px 12px">
-        <div style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Share with radios <span style="font-weight:400;text-transform:none;color:var(--muted)">(optional, off by default)</span></div>
+      <div id="gps-share-block" class="st-caution">
+        <div class="st-sub" style="margin-top:0;color:var(--text)">Share with radios <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">(optional, off by default)</span></div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Gives your connected radios your position, which they can send out over the mesh. Only a <b>live GPS fix</b> is ever shared, never the hand-picked position.</div>
         <div id="gps-share-manual-note" style="display:none;font-size:12px;color:var(--yellow, #facc15);margin-bottom:8px">Source is the hand-picked position: nothing is shared.</div>
-        <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
-          <label class="bot-toggle">
-            <input type="checkbox" id="gps-auto-push-mt-toggle" onchange="saveGpsSettings()">
-            <span class="bot-toggle-slider"></span>
-          </label>
-          <span style="font-size:13px">Auto-share with <b>Meshtastic</b> radios <span style="color:var(--muted);font-size:11px">(sets their fixed position)</span></span>
-        </div>
-        <div style="display:flex;align-items:center;gap:12px">
-          <label class="bot-toggle">
-            <input type="checkbox" id="gps-auto-push-mc-toggle" onchange="saveGpsSettings()">
-            <span class="bot-toggle-slider"></span>
-          </label>
-          <span style="font-size:13px">Auto-share with <b>MeshCore</b> radios <span style="color:var(--muted);font-size:11px">(sets the companion's location; sent in its adverts only if its advert location is on)</span></span>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;margin-top:10px">
-          <label style="font-size:12px;color:var(--muted)">Every:</label>
-          <input type="number" id="gps-push-interval-val" min="1" max="3600" step="1" value="30"
-            style="width:60px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:var(--fg);font-size:12px"
+        <label class="st-notif-item"><span class="bot-toggle"><input type="checkbox" id="gps-auto-push-mt-toggle" onchange="saveGpsSettings()"><span class="bot-toggle-slider"></span></span><span>Auto-share with <b>Meshtastic</b> radios <span class="st-unit" style="margin:0">sets their fixed position</span></span></label>
+        <label class="st-notif-item"><span class="bot-toggle"><input type="checkbox" id="gps-auto-push-mc-toggle" onchange="saveGpsSettings()"><span class="bot-toggle-slider"></span></span><span>Auto-share with <b>MeshCore</b> radios <span class="st-unit" style="margin:0">sets the companion's location; sent in its adverts only if its advert location is on</span></span></label>
+        <div class="st-row" style="margin-top:10px;align-items:center">
+          <label class="settings-label" style="margin:0">Every</label>
+          <input type="number" id="gps-push-interval-val" class="settings-input" min="1" max="3600" step="1" value="30" style="width:70px"
             onchange="saveGpsSettings()" title="Interval between auto-shares (each network on its own clock)">
-          <select id="gps-push-interval-unit" onchange="saveGpsSettings()"
-            style="background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:var(--fg);font-size:12px">
+          <select id="gps-push-interval-unit" class="settings-select" onchange="saveGpsSettings()">
             <option value="1">s</option>
             <option value="60">min</option>
             <option value="3600">h</option>
           </select>
         </div>
         <div style="margin-top:10px">
-          <label class="settings-label">Privacy: <span id="gps-precision-label" style="color:var(--accent)">Exact position</span> <span style="color:var(--muted);font-weight:400">(slide right = more private)</span></label>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Blurs the shared position, both networks.</div>
+          <label class="settings-label">Privacy: <span id="gps-precision-label" style="color:var(--accent)">Exact position</span> <span class="st-unit">slide right = more private, both networks</span></label>
           <input type="range" id="gps-precision-slider" min="0" max="1000" step="100" value="0" style="width:100%;max-width:320px"
             oninput="document.getElementById('gps-precision-label').textContent=precMeterLabel(parseInt(this.value))"
             onchange="saveGpsSettings()">
         </div>
-        <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <button class="btn btn-sm gps-share-now" onclick="gpsPushToNode('mt')" title="Send the current GPS fix to all connected Meshtastic radios now">Share with MT now</button>
-          <button class="btn btn-sm gps-share-now" onclick="gpsPushToNode('mc')" title="Send the current GPS fix to all connected MeshCore radios now">Share with MC now</button>
-          <span id="gps-push-status" style="font-size:12px;color:var(--muted)"></span>
+        <div class="st-row" style="margin-top:10px;align-items:center">
+          <button class="btn gps-share-now" onclick="gpsPushToNode('mt')" title="Send the current GPS fix to all connected Meshtastic radios now">Share with MT now</button>
+          <button class="btn gps-share-now" onclick="gpsPushToNode('mc')" title="Send the current GPS fix to all connected MeshCore radios now">Share with MC now</button>
+          <span id="gps-push-status" class="st-unit" style="margin:0"></span>
         </div>
       </div>
     </div>
 
-    <!-- Map API Keys -->
+    <!-- Maps -->
     <div class="settings-section">
-      <h2 class="settings-title">Map API Keys</h2>
-      <p style="color:var(--muted);font-size:12px;margin:0 0 10px 0">Required for all four Thunderforest layers (TF Landscape ★, TF Outdoors ★, TF Pioneer ★, TF Atlas ★). Free API key at <a href="https://www.thunderforest.com/docs/apikeys/" target="_blank" style="color:var(--accent)">thunderforest.com</a>.</p>
-      <div class="settings-row" style="align-items:flex-end;gap:8px;max-width:480px">
-        <div style="flex:1">
-          <label class="settings-label" for="tf-api-key-input">Thunderforest API key</label>
-          <input id="tf-api-key-input" class="settings-input" type="text" placeholder="Enter API key..." maxlength="64" style="font-family:monospace">
-        </div>
-        <button class="btn-primary" onclick="saveThunderforestKey()">Save</button>
-      </div>
-      <div id="tf-key-status" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>
-      <p style="color:var(--muted);font-size:12px;margin:16px 0 10px 0">Required for MapTiler layers (MT Satellite Hybrid ★, MT Topo ★, MT Streets ★, MT Winter ★). Free tier: 100k tiles/month. API key at <a href="https://cloud.maptiler.com/account/keys/" target="_blank" style="color:var(--accent)">cloud.maptiler.com</a>.</p>
-      <div class="settings-row" style="align-items:flex-end;gap:8px;max-width:480px">
-        <div style="flex:1">
-          <label class="settings-label" for="mt-api-key-input">MapTiler API key</label>
-          <input id="mt-api-key-input" class="settings-input" type="text" placeholder="Enter API key..." maxlength="64" style="font-family:monospace">
-        </div>
-        <button class="btn-primary" onclick="saveMapTilerKey()">Save</button>
-      </div>
-      <div id="mt-key-status" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>
-      <p style="color:var(--muted);font-size:12px;margin:16px 0 10px 0">Required for CARTO layers (Voyager, Voyager No Labels, Positron, Dark Matter, Dark No Labels). The app ships no key of its own. These layers stayed broken after the shared one was rotated (CARTO answers a revoked key with HTTP 403), so each user needs their own. Get one at <a href="https://carto.com/" target="_blank" style="color:var(--accent)">carto.com</a>.</p>
-      <div class="settings-row" style="align-items:flex-end;gap:8px;max-width:480px">
-        <div style="flex:1">
-          <label class="settings-label" for="carto-api-key-input">CARTO API key</label>
-          <input id="carto-api-key-input" class="settings-input" type="text" placeholder="Enter API key..." maxlength="64" style="font-family:monospace">
-        </div>
-        <button class="btn-primary" onclick="saveCartoKey()">Save</button>
-      </div>
-      <div id="carto-key-status" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>
-      <p style="color:var(--muted);font-size:12px;margin:16px 0 10px 0">Required for Stadia Maps layers (Toner Lite ★, Toner Dark ★, Stamen Terrain ★, Stadia Outdoors ★). Stadia allows keyless use from localhost only, so an OverMesh reached through a domain or an IP address needs a key (or domain auth on your Stadia account). Free API key at <a href="https://client.stadiamaps.com/" target="_blank" style="color:var(--accent)">client.stadiamaps.com</a>.</p>
-      <div class="settings-row" style="align-items:flex-end;gap:8px;max-width:480px">
-        <div style="flex:1">
-          <label class="settings-label" for="stadia-api-key-input">Stadia Maps API key</label>
-          <input id="stadia-api-key-input" class="settings-input" type="text" placeholder="Enter API key..." maxlength="64" style="font-family:monospace">
-        </div>
-        <button class="btn-primary" onclick="saveStadiaKey()">Save</button>
-      </div>
-      <div id="stadia-key-status" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:16px"></div>
-    </div>
+      <div class="st-head"><h2 class="settings-title">Maps</h2><span class="st-head-hint">provider keys, offline tiles, regions, overlays</span></div>
 
-    <!-- Offline maps -->
-    <div class="settings-section">
-      <h2 class="settings-title">Offline Maps</h2>
-      <p style="color:var(--muted);font-size:12px;margin:0 0 10px 0">Save map tiles to your browser so the map works without internet. Tiles are stored in your browser's IndexedDB.</p>
-      <div class="settings-row" style="align-items:center;gap:8px">
-        <div>
-          <span class="settings-label">Use OPS-TOC locally stored maps</span>
-          <div style="color:var(--muted);font-size:11px;margin-top:2px">Opt-in. Adds OPS-TOC downloaded MBTiles to OM's Map/Sense layer picker under Locally Stored Maps. Leave off for standalone OM installs.</div>
-        </div>
-        <label class="bot-toggle" style="margin-left:auto;flex-shrink:0">
-          <input type="checkbox" id="shared-tile-server-toggle" onchange="settingsSetSharedTileServer(this.checked)">
-          <span class="bot-toggle-slider"></span>
-        </label>
-      </div>
-      <div class="settings-row" style="align-items:flex-end;gap:8px">
-        <div style="flex:1;min-width:220px">
-          <label class="settings-label" for="shared-tile-server-url">Shared tile server URL</label>
-          <input id="shared-tile-server-url" class="settings-input" placeholder="http://this-host:8092" onchange="settingsSetSharedTileServerUrl(this.value)">
-        </div>
-        <button class="btn-sm" onclick="loadMapAppTileLayers({force:true})" title="Refresh shared local tile list">Refresh local layers</button>
-      </div>
-      <div id="shared-tile-server-status" style="font-size:12px;color:var(--muted);min-height:16px;margin:2px 0 8px"></div>
-      <div style="border-top:1px solid var(--border);margin:10px 0 8px 0"></div>
-      <div class="settings-row" style="align-items:center;gap:8px">
-        <div>
-          <span class="settings-label">Auto-cache browsed tiles</span>
-          <div style="color:var(--muted);font-size:11px;margin-top:2px">Every tile you view on the map is automatically saved for offline use. Convenient but grows the cache over time.</div>
-        </div>
-        <label class="bot-toggle" style="margin-left:auto;flex-shrink:0">
-          <input type="checkbox" id="tile-autocache-toggle" onchange="setAutoCacheTiles(this.checked)">
-          <span class="bot-toggle-slider"></span>
-        </label>
-      </div>
-      <div class="settings-row" style="align-items:center;gap:8px">
-        <span class="settings-label">Cached tiles</span>
-        <span id="tile-cache-count" style="color:var(--muted);font-size:12px">-</span>
-        <button class="btn-sm" style="margin-left:auto" onclick="clearTileCache(this)" title="Delete all cached map tiles from browser storage">Clear cache</button>
-      </div>
-
-      <div style="border-top:1px solid var(--border);margin:10px 0 8px 0"></div>
-      <div style="font-weight:600;font-size:12px;margin-bottom:4px">Save current map view</div>
-      <div style="color:var(--muted);font-size:11px;margin-bottom:6px">Layer: <span id="tile-save-layer-label" style="color:var(--text)">OpenStreetMap</span></div>
-      <p style="color:var(--muted);font-size:12px;margin:0 0 8px 0">Go to the Map tab, navigate to the area you want, then come back here and click Save. Downloads tiles for the current viewport.</p>
-      <div class="settings-row" style="align-items:center;gap:8px">
-        <span class="settings-label">Extra zoom levels</span>
-        <input type="number" id="tile-extra-zoom" value="2" min="0" max="4"
-               style="width:52px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:3px 6px;font-size:12px"
-               oninput="updateTileEstimate()">
-        <span style="color:var(--muted);font-size:11px">levels deeper than current view</span>
-      </div>
-      <div style="color:var(--muted);font-size:11px;margin:3px 0 6px 12px">
-        0 = only the zoom level you're viewing now<br>
-        2 = current zoom + 2 levels deeper (more detail, more tiles)<br>
-        4 = maximum. Can be a very large download
-      </div>
-      <div id="tile-estimate" style="color:var(--muted);font-size:11px;margin:2px 0 6px 0;padding-left:2px"></div>
-      <div class="settings-row" style="align-items:center;gap:8px">
-        <button class="btn-primary" id="tile-save-btn" onclick="saveTilesCurrentView(this)" title="Download and cache map tiles for the currently visible map area">Save current map view</button>
-      </div>
-      <div id="tile-progress-wrap" style="display:none;margin-top:8px">
-        <div style="background:var(--bg3);border-radius:4px;height:5px;overflow:hidden;margin-bottom:4px">
-          <div id="tile-progress-bar" style="background:var(--accent);height:100%;width:0;transition:width 0.3s"></div>
-        </div>
-        <span id="tile-progress-text" style="color:var(--muted);font-size:11px"></span>
-      </div>
-    </div>
-
-    <!-- Map Regions -->
-    <div class="settings-section">
-      <h2 class="settings-title">Map Regions</h2>
-      <p style="color:var(--muted);font-size:12px;margin:0 0 8px 0">Download a named area at a range of zoom levels. Good for pre-loading a whole country or city for offline use.</p>
-
-      <!-- Search -->
-      <div class="settings-row" style="gap:6px">
-        <input type="text" id="region-search" placeholder="Search for a place…"
-               style="flex:1;padding:5px 8px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:4px;font-size:12px"
-               onkeydown="if(event.key==='Enter')searchRegion()">
-        <button class="btn-sm" onclick="searchRegion()" title="Search for a location to download tiles for">Search</button>
-      </div>
-      <div id="region-search-results" style="display:none;margin:4px 0;max-height:160px;overflow-y:auto;background:var(--bg3);border:1px solid var(--border);border-radius:4px;font-size:12px"></div>
-
-      <!-- Quick regions -->
-      <div style="display:flex;flex-wrap:wrap;gap:5px;margin:6px 0 2px 0">
-        <span style="color:var(--muted);font-size:11px;width:100%;margin-bottom:2px">Quick add:</span>
-        <button class="btn-sm" onclick="pickQuickRegion('Slovenia')"  title="Pre-load Slovenia">Slovenia</button>
-        <button class="btn-sm" onclick="pickQuickRegion('Croatia')"   title="Pre-load Croatia">Croatia</button>
-        <button class="btn-sm" onclick="pickQuickRegion('Austria')"   title="Pre-load Austria">Austria</button>
-        <button class="btn-sm" onclick="pickQuickRegion('Italy')"     title="Pre-load Italy">Italy</button>
-        <button class="btn-sm" onclick="pickQuickRegion('Trieste')"   title="Pre-load Trieste area">Trieste</button>
-        <button class="btn-sm" onclick="pickQuickRegion('Ljubljana')" title="Pre-load Ljubljana area">Ljubljana</button>
-      </div>
-
-      <!-- Configure + download panel -->
-      <div id="region-config" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:10px;margin:8px 0">
-        <div style="font-weight:600;font-size:13px;margin-bottom:8px" id="region-config-title"></div>
-        <div class="settings-row" style="gap:8px;align-items:center;flex-wrap:wrap">
-          <span class="settings-label">Min zoom</span>
-          <input type="number" id="region-min-z" value="9" min="1" max="18"
-                 style="width:52px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:3px 6px;font-size:12px"
-                 oninput="updateRegionEstimate()">
-          <span class="settings-label" style="margin-left:8px">Max zoom</span>
-          <input type="number" id="region-max-z" value="14" min="1" max="19"
-                 style="width:52px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:3px 6px;font-size:12px"
-                 oninput="updateRegionEstimate()">
-        </div>
-        <div style="color:var(--muted);font-size:11px;margin:3px 0 4px 0">
-          Zoom level guide: 6=country overview · 9=city/region · 12=streets · 14=detailed streets · 16=buildings<br>
-          Wider range = more tiles = larger download. Recommended: min 9, max 14.
-        </div>
-        <div class="settings-row" style="gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
-          <span class="settings-label">Map layer</span>
-          <select id="region-dl-layer" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:3px 6px;font-size:12px">
-            <!-- populated by showRegionConfig() -->
-          </select>
-        </div>
-        <div id="region-config-estimate" style="color:var(--muted);font-size:11px;margin:4px 0 8px 0"></div>
-        <div style="display:flex;gap:6px">
-          <button class="btn-primary" id="region-dl-btn" onclick="downloadSelectedRegion()" title="Download and cache tiles for the selected region">Download</button>
-          <button class="btn-sm" onclick="cancelRegionConfig()" title="Cancel region download setup">Cancel</button>
-        </div>
-        <div id="region-dl-progress" style="display:none;margin-top:8px">
-          <div style="background:var(--bg);border-radius:4px;height:5px;overflow:hidden;margin-bottom:4px">
-            <div id="region-dl-bar" style="background:var(--accent);height:100%;width:0;transition:width 0.3s"></div>
+      <details class="st-group" data-key="app-map-keys">
+        <summary><span class="st-group-title">Map API keys</span><span class="st-group-hint">Thunderforest · MapTiler · CARTO · Stadia, stored in this browser</span></summary>
+        <div class="st-group-body">
+          <div class="st-key">
+            <label class="settings-label" for="tf-api-key-input">Thunderforest <span class="st-unit">needed by all four: TF Landscape ★, TF Outdoors ★, TF Pioneer ★, TF Atlas ★</span></label>
+            <div class="st-row" style="align-items:center">
+              <input id="tf-api-key-input" class="settings-input st-mono" type="text" placeholder="Enter API key..." maxlength="64" style="width:300px">
+              <button class="btn" onclick="saveThunderforestKey()">Save</button>
+              <a class="st-link" href="https://www.thunderforest.com/docs/apikeys/" target="_blank">free key ↗</a>
+            </div>
+            <div id="tf-key-status" class="st-status"></div>
           </div>
-          <span id="region-dl-text" style="color:var(--muted);font-size:11px"></span>
+          <div class="st-key">
+            <label class="settings-label" for="mt-api-key-input">MapTiler <span class="st-unit">MT Satellite Hybrid ★, MT Topo ★, MT Streets ★, MT Winter ★ · free tier 100k tiles/month</span></label>
+            <div class="st-row" style="align-items:center">
+              <input id="mt-api-key-input" class="settings-input st-mono" type="text" placeholder="Enter API key..." maxlength="64" style="width:300px">
+              <button class="btn" onclick="saveMapTilerKey()">Save</button>
+              <a class="st-link" href="https://cloud.maptiler.com/account/keys/" target="_blank">free key ↗</a>
+            </div>
+            <div id="mt-key-status" class="st-status"></div>
+          </div>
+          <div class="st-key">
+            <label class="settings-label" for="carto-api-key-input">CARTO <span class="st-unit">Voyager, Voyager No Labels, Positron, Dark Matter, Dark No Labels</span></label>
+            <div class="st-row" style="align-items:center">
+              <input id="carto-api-key-input" class="settings-input st-mono" type="text" placeholder="Enter API key..." maxlength="64" style="width:300px">
+              <button class="btn" onclick="saveCartoKey()">Save</button>
+              <a class="st-link" href="https://carto.com/" target="_blank">get a key ↗</a>
+            </div>
+            <p class="st-hint" style="margin-top:2px">OM ships no CARTO key: a revoked shared key answers HTTP 403, so each install needs its own.</p>
+            <div id="carto-key-status" class="st-status"></div>
+          </div>
+          <div class="st-key">
+            <label class="settings-label" for="stadia-api-key-input">Stadia Maps <span class="st-unit">Toner Lite ★, Toner Dark ★, Stamen Terrain ★, Stadia Outdoors ★</span></label>
+            <div class="st-row" style="align-items:center">
+              <input id="stadia-api-key-input" class="settings-input st-mono" type="text" placeholder="Enter API key..." maxlength="64" style="width:300px">
+              <button class="btn" onclick="saveStadiaKey()">Save</button>
+              <a class="st-link" href="https://client.stadiamaps.com/" target="_blank">free key ↗</a>
+            </div>
+            <p class="st-hint" style="margin-top:2px">Keyless only from localhost: an OM reached by domain or IP needs a key (or domain auth on your Stadia account).</p>
+            <div id="stadia-key-status" class="st-status"></div>
+          </div>
         </div>
-      </div>
+      </details>
 
-      <!-- Downloaded regions list -->
-      <div id="region-list" style="margin-top:4px"></div>
-    </div>
+      <details class="st-group" data-key="app-offline">
+        <summary><span class="st-group-title">Offline maps</span><span class="st-group-hint">OPS-TOC tiles, browser tile cache, save current view</span></summary>
+        <div class="st-group-body">
+          <label class="st-option">
+            <span class="bot-toggle" style="margin-top:2px"><input type="checkbox" id="shared-tile-server-toggle" onchange="settingsSetSharedTileServer(this.checked)"><span class="bot-toggle-slider"></span></span>
+            <span><b>Use OPS-TOC locally stored maps</b><br>
+              <span class="st-option-text">Opt-in. Adds OPS-TOC's downloaded MBTiles to the Map/Sense layer picker under Locally Stored Maps. Leave off for standalone OM installs.</span>
+            </span>
+          </label>
+          <div class="st-row" style="margin-top:8px;padding-left:46px">
+            <div style="flex:1;min-width:220px;max-width:340px">
+              <label class="settings-label" for="shared-tile-server-url">Shared tile server URL</label>
+              <input id="shared-tile-server-url" class="settings-input" style="width:100%;box-sizing:border-box" placeholder="http://this-host:8092" onchange="settingsSetSharedTileServerUrl(this.value)">
+            </div>
+            <button class="btn" onclick="loadMapAppTileLayers({force:true})" title="Refresh shared local tile list">↻ Refresh local layers</button>
+          </div>
+          <div id="shared-tile-server-status" class="st-status" style="padding-left:46px"></div>
 
-    <!-- Map Layers -->
-    <div class="settings-section">
-      <h2 class="settings-title">Map Layers</h2>
-      <p style="color:var(--muted);font-size:12px;margin:0 0 8px 0">Import GeoJSON overlays such as zones, routes, POIs, or boundaries. Saved layers can be shown on the map and toggled on/off.</p>
-      <div style="display:grid;gap:8px;max-width:760px">
-        <div class="settings-row" style="gap:8px;align-items:center;flex-wrap:wrap">
-          <div style="flex:1;min-width:180px">
-            <label class="settings-label" for="map-layer-name">Layer name</label>
-            <input id="map-layer-name" class="settings-input" maxlength="60" placeholder="e.g. Patrol route, Event boundary">
+          <label class="st-option" style="margin-top:12px">
+            <span class="bot-toggle" style="margin-top:2px"><input type="checkbox" id="tile-autocache-toggle" onchange="setAutoCacheTiles(this.checked)"><span class="bot-toggle-slider"></span></span>
+            <span><b>Auto-cache browsed tiles</b><br>
+              <span class="st-option-text">Every tile you view is saved in this browser (IndexedDB) for offline use. Convenient, but the cache grows over time.</span>
+            </span>
+          </label>
+          <div class="st-row" style="margin-top:8px;padding-left:46px;align-items:center">
+            <span class="settings-label" style="margin:0">Cached tiles:</span>
+            <span id="tile-cache-count" style="color:var(--muted);font-size:12px">-</span>
+            <button class="btn btn-mini" onclick="clearTileCache(this)" title="Delete all cached map tiles from browser storage">Clear cache</button>
           </div>
-          <div style="width:96px;flex-shrink:0">
-            <label class="settings-label" for="map-layer-color">Color</label>
-            <input id="map-layer-color" type="color" value="#f59e0b" style="width:100%;height:34px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:2px">
+
+          <div class="st-sub st-sub-gap">Save current map view</div>
+          <p class="st-hint" style="margin-top:0">On the Map tab, move to the area you want, then come back and save. Layer: <span id="tile-save-layer-label" style="color:var(--text)">OpenStreetMap</span></p>
+          <div class="st-row" style="margin-top:8px;align-items:center">
+            <label class="settings-label" style="margin:0">Extra zoom levels</label>
+            <input type="number" id="tile-extra-zoom" class="settings-input" value="2" min="0" max="4" style="width:64px" oninput="updateTileEstimate()">
+            <span class="st-unit" style="margin:0">0 = this zoom only · 2 = two levels deeper · 4 = max, can be very large</span>
           </div>
-          <div style="display:flex;align-items:flex-end;gap:6px;flex-wrap:wrap">
-            <button class="btn-sm" type="button" onclick="document.getElementById('map-layer-file').click()">Choose file</button>
+          <div id="tile-estimate" style="color:var(--muted);font-size:11px;margin:6px 0"></div>
+          <button class="btn-primary" id="tile-save-btn" onclick="saveTilesCurrentView(this)" title="Download and cache map tiles for the currently visible map area">Save current map view</button>
+          <div id="tile-progress-wrap" style="display:none;margin-top:8px">
+            <div style="background:var(--bg3);border-radius:4px;height:5px;overflow:hidden;margin-bottom:4px">
+              <div id="tile-progress-bar" style="background:var(--accent);height:100%;width:0;transition:width 0.3s"></div>
+            </div>
+            <span id="tile-progress-text" style="color:var(--muted);font-size:11px"></span>
+          </div>
+        </div>
+      </details>
+
+      <details class="st-group" data-key="app-regions">
+        <summary><span class="st-group-title">Map regions</span><span class="st-group-hint">download a named area for offline use</span></summary>
+        <div class="st-group-body">
+          <div class="st-row" style="align-items:center">
+            <input type="text" id="region-search" class="settings-input" placeholder="Search for a place…" style="flex:1;min-width:200px;max-width:340px"
+                   onkeydown="if(event.key==='Enter')searchRegion()">
+            <button class="btn" onclick="searchRegion()" title="Search for a location to download tiles for">Search</button>
+          </div>
+          <div id="region-search-results" style="display:none;margin:4px 0;max-height:160px;overflow-y:auto;background:var(--bg3);border:1px solid var(--border);border-radius:4px;font-size:12px"></div>
+
+          <div class="st-row" style="margin-top:8px;align-items:center">
+            <span class="st-unit" style="margin:0">Quick add:</span>
+            <button class="btn btn-mini" onclick="pickQuickRegion('Slovenia')"  title="Pre-load Slovenia">Slovenia</button>
+            <button class="btn btn-mini" onclick="pickQuickRegion('Croatia')"   title="Pre-load Croatia">Croatia</button>
+            <button class="btn btn-mini" onclick="pickQuickRegion('Austria')"   title="Pre-load Austria">Austria</button>
+            <button class="btn btn-mini" onclick="pickQuickRegion('Italy')"     title="Pre-load Italy">Italy</button>
+            <button class="btn btn-mini" onclick="pickQuickRegion('Trieste')"   title="Pre-load Trieste area">Trieste</button>
+            <button class="btn btn-mini" onclick="pickQuickRegion('Ljubljana')" title="Pre-load Ljubljana area">Ljubljana</button>
+          </div>
+
+          <!-- Configure + download panel -->
+          <div id="region-config" class="st-edit-panel" style="display:none">
+            <div class="st-edit-title" id="region-config-title"></div>
+            <div class="st-row">
+              <div>
+                <label class="settings-label">Min zoom</label>
+                <input type="number" id="region-min-z" class="settings-input" value="9" min="1" max="18" style="width:64px" oninput="updateRegionEstimate()">
+              </div>
+              <div>
+                <label class="settings-label">Max zoom</label>
+                <input type="number" id="region-max-z" class="settings-input" value="14" min="1" max="19" style="width:64px" oninput="updateRegionEstimate()">
+              </div>
+              <div>
+                <label class="settings-label">Map layer</label>
+                <select id="region-dl-layer" class="settings-select">
+                  <!-- populated by showRegionConfig() -->
+                </select>
+              </div>
+            </div>
+            <p class="st-hint">Zoom guide: 6 country · 9 city/region · 12 streets · 14 detailed streets · 16 buildings. Wider range = larger download; recommended 9 to 14.</p>
+            <div id="region-config-estimate" style="color:var(--muted);font-size:11px;margin:4px 0 8px 0"></div>
+            <div class="st-actions">
+              <button class="btn-primary" id="region-dl-btn" onclick="downloadSelectedRegion()" title="Download and cache tiles for the selected region">Download</button>
+              <button class="btn btn-quiet" onclick="cancelRegionConfig()" title="Cancel region download setup">Cancel</button>
+            </div>
+            <div id="region-dl-progress" style="display:none;margin-top:8px">
+              <div style="background:var(--bg);border-radius:4px;height:5px;overflow:hidden;margin-bottom:4px">
+                <div id="region-dl-bar" style="background:var(--accent);height:100%;width:0;transition:width 0.3s"></div>
+              </div>
+              <span id="region-dl-text" style="color:var(--muted);font-size:11px"></span>
+            </div>
+          </div>
+
+          <!-- Downloaded regions list -->
+          <div id="region-list" style="margin-top:8px"></div>
+        </div>
+      </details>
+
+      <details class="st-group" data-key="app-layers">
+        <summary><span class="st-group-title">Map layers</span><span class="st-group-hint">import GeoJSON overlays: zones, routes, POIs</span></summary>
+        <div class="st-group-body">
+          <div class="st-row">
+            <div style="flex:1;min-width:180px;max-width:340px">
+              <label class="settings-label" for="map-layer-name">Layer name</label>
+              <input id="map-layer-name" class="settings-input" maxlength="60" placeholder="e.g. Patrol route, Event boundary" style="width:100%;box-sizing:border-box">
+            </div>
+            <div>
+              <label class="settings-label" for="map-layer-color">Colour</label>
+              <input id="map-layer-color" type="color" value="#f59e0b" style="width:64px;height:30px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:2px">
+            </div>
+            <button class="btn" type="button" onclick="document.getElementById('map-layer-file').click()">Choose file</button>
             <button class="btn-primary" type="button" onclick="saveMapLayer(this)">Import layer</button>
           </div>
+          <input id="map-layer-file" type="file" accept=".json,.geojson,application/geo+json,application/json" style="display:none" onchange="handleMapLayerFileInput(event)">
+          <div style="margin-top:10px;max-width:760px">
+            <label class="settings-label" for="map-layer-geojson">GeoJSON <span class="st-unit">or choose a file above</span></label>
+            <textarea id="map-layer-geojson" class="settings-input st-mono" placeholder='Paste GeoJSON here, e.g. {"type":"FeatureCollection",...}' style="width:100%;height:auto;min-height:110px;resize:vertical;box-sizing:border-box"></textarea>
+          </div>
+          <div id="map-layer-status" class="st-status"></div>
+          <div class="st-sub st-sub-gap">Saved layers</div>
+          <div id="map-layer-list" style="display:grid;gap:6px;max-width:760px"></div>
         </div>
-        <input id="map-layer-file" type="file" accept=".json,.geojson,application/geo+json,application/json" style="display:none" onchange="handleMapLayerFileInput(event)">
+      </details>
+    </div>
+
+    <!-- System -->
+    <div class="settings-section">
+      <div class="st-head"><h2 class="settings-title">System</h2><span class="st-head-hint">updates, cleanup, help, stored data</span></div>
+      <div class="st-sysrow">
         <div>
-          <label class="settings-label" for="map-layer-geojson">GeoJSON</label>
-          <textarea id="map-layer-geojson" class="settings-input" placeholder='Paste GeoJSON here, e.g. {"type":"FeatureCollection",...}' style="width:100%;min-height:140px;resize:vertical;font-family:monospace"></textarea>
+          <div class="st-sysrow-title">OverMesh update</div>
+          <div id="settings-update-summary" style="font-size:12px;color:var(--muted);line-height:1.45">Checking version…</div>
+          <div id="settings-update-log" style="display:none;margin-top:8px;max-height:120px;overflow:auto;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px;font-family:monospace;font-size:11px;color:var(--muted);white-space:pre-wrap"></div>
         </div>
-        <div id="map-layer-status" style="font-size:12px;color:var(--muted);min-height:16px"></div>
-        <div style="border-top:1px solid var(--border);margin:2px 0 0 0"></div>
-        <div style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px">Saved layers</div>
-        <div id="map-layer-list" style="display:grid;gap:6px"></div>
+        <div class="st-sysrow-actions">
+          <button class="btn" id="settings-update-check-btn" onclick="settingsLoadUpdateStatus(true, this)" title="Check GitHub for a newer OverMesh commit">Check</button>
+          <button class="btn" id="settings-update-run-btn" onclick="runOverMeshUpdate()" disabled title="Pull the latest OverMesh code">Update</button>
+          <button class="btn" id="settings-update-restart-btn" onclick="restartOverMeshNow(this)" style="display:none" title="Restart OverMesh after an update">Restart</button>
+        </div>
+      </div>
+      <div class="st-sysrow">
+        <div>
+          <div class="st-sysrow-title">Clean up stale nodes</div>
+          <div class="st-hint" style="margin:0">Remove MeshCore contacts and Meshtastic nodes not heard within the given number of days, on every connected radio. You pick what actually gets deleted; your own node and favourites are always kept.</div>
+        </div>
+        <div class="st-sysrow-actions">
+          <input type="number" id="settings-node-cleanup-days" class="settings-input" min="1" step="1" value="30" style="width:70px"
+                 title="Nodes not heard from in this many days will be removed">
+          <span class="st-unit" style="margin:0">days</span>
+          <button class="btn" id="settings-node-cleanup-btn" onclick="runStaleNodeCleanup(this)" title="Remove nodes not heard from within the entered number of days">Clean up</button>
+        </div>
+      </div>
+      <div class="st-sysrow">
+        <div>
+          <div class="st-sysrow-title">GPS history</div>
+          <div class="st-hint" style="margin:0">Movement history of all nodes, stored in <code>overmesh_prefs.db</code>. Entries older than 1 year are pruned automatically.</div>
+          <div id="gps-clear-status" class="st-status"></div>
+        </div>
+        <div class="st-sysrow-actions">
+          <button class="btn btn-warn" onclick="clearGpsHistory(this)" title="Delete all GPS movement history for all nodes">⌫ Clear GPS history</button>
+        </div>
+      </div>
+      <div class="st-sysrow">
+        <div>
+          <div class="st-sysrow-title">Help</div>
+          <div class="st-hint" style="margin:0">The short intro or the searchable app manual.</div>
+        </div>
+        <div class="st-sysrow-actions">
+          <button class="btn" onclick="showOmIntro(true)" title="Open the OverMesh intro guide">Show intro</button>
+          <button class="btn" onclick="showOmManual()" title="Open the searchable OverMesh manual">Manual</button>
+        </div>
       </div>
     </div>
+
+    <!-- Security & integrations -->
     <div class="settings-section">
-      <h2 class="settings-title">Data &amp; Storage</h2>
-      <p style="color:var(--muted);font-size:12px;margin:0 0 12px">GPS history is stored locally in <code>overmesh_prefs.db</code>. Entries older than 1 year are pruned automatically on each new position log.</p>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <button class="btn" onclick="clearGpsHistory(this)" style="background:var(--bg3);border:1px solid #f59e0b;color:#f59e0b" title="Delete all GPS movement history for all nodes">⌫ Clear GPS history</button>
-      </div>
-      <div id="gps-clear-status" style="font-size:12px;color:var(--muted);margin-top:8px;min-height:16px"></div>
-    </div>
-    <div class="settings-section">
-      <h2 class="settings-title">Authentication</h2>
-      <p style="color:var(--muted);font-size:12px;margin:0 0 12px">Optional username/password login. Off by default. Set credentials before enabling.</p>
-      <div style="display:grid;gap:10px;max-width:400px">
-        <div style="display:flex;align-items:center;gap:12px">
-          <label class="bot-toggle">
-            <input type="checkbox" id="auth-enabled-toggle" onchange="saveAuthEnabled(this.checked)">
-            <span class="bot-toggle-slider"></span>
-          </label>
-          <span style="font-size:13px">Require login</span>
+      <div class="st-head"><h2 class="settings-title">Security &amp; integrations</h2><span class="st-head-hint">login, Home Assistant hooks</span></div>
+
+      <details class="st-group" data-key="app-auth" open>
+        <summary><span class="st-group-title">Login</span><span class="st-group-hint">optional username/password, off by default</span></summary>
+        <div class="st-group-body">
+          <label class="st-notif-item"><span class="bot-toggle"><input type="checkbox" id="auth-enabled-toggle" onchange="saveAuthEnabled(this.checked)"><span class="bot-toggle-slider"></span></span>Require login</label>
+          <p class="st-hint" style="margin-top:2px">Set credentials before enabling.</p>
+          <div class="st-row" style="margin-top:8px">
+            <div>
+              <label class="settings-label">Username</label>
+              <input type="text" id="auth-username" class="settings-input" autocomplete="off" placeholder="admin" style="width:180px">
+            </div>
+            <div>
+              <label class="settings-label">New password</label>
+              <input type="password" id="auth-password" class="settings-input" autocomplete="new-password" placeholder="leave blank to keep current" style="width:220px">
+            </div>
+            <button class="btn" onclick="saveAuthCredentials()">Save credentials</button>
+          </div>
+          <div id="auth-settings-status" class="st-status"></div>
         </div>
-        <div style="display:grid;gap:6px">
-          <label class="settings-label">Username</label>
-          <input type="text" id="auth-username" class="settings-input" autocomplete="off" placeholder="admin">
+      </details>
+
+      <details class="st-group" data-key="app-bridge">
+        <summary><span class="st-group-title">Automation bridge</span><span class="st-group-hint">webhooks out, messages in (Home Assistant etc.)</span></summary>
+        <div class="st-group-body">
+          <p class="st-hint" style="margin-top:0">Local hooks for Home Assistant and other automations while OverMesh owns the radios.</p>
+          <label class="st-notif-item" style="margin-top:8px"><span class="bot-toggle"><input type="checkbox" id="bridge-webhooks-enabled" onchange="saveBridgeSettings()"><span class="bot-toggle-slider"></span></span><b>Send incoming messages to HTTP webhooks</b></label>
+          <div style="padding-left:46px">
+            <label class="settings-label" style="margin-top:6px">Webhook URLs <span class="st-unit">one per line</span></label>
+            <textarea id="bridge-webhook-urls" class="settings-input st-mono" rows="3"
+                      placeholder="http://homeassistant.local:8123/api/webhook/overmesh"
+                      style="width:100%;max-width:640px;height:auto;resize:vertical;line-height:1.4;box-sizing:border-box"
+                      onchange="saveBridgeSettings()"></textarea>
+            <p class="st-hint" style="margin-top:2px">OverMesh posts normalized inbound MT and MC messages as JSON.</p>
+            <label class="settings-label" style="margin-top:8px">Webhook secret header</label>
+            <input id="bridge-webhook-secret" class="settings-input" type="password" autocomplete="new-password"
+                   placeholder="optional X-OverMesh-Secret" style="width:100%;max-width:360px;box-sizing:border-box" onchange="saveBridgeSettings()">
+          </div>
+          <label class="st-notif-item" style="margin-top:14px"><span class="bot-toggle"><input type="checkbox" id="bridge-ingest-enabled" onchange="saveBridgeSettings()"><span class="bot-toggle-slider"></span></span><b>Allow external systems to send mesh messages</b></label>
+          <div style="padding-left:46px">
+            <label class="settings-label" style="margin-top:6px">Bearer token</label>
+            <input id="bridge-ingest-token" class="settings-input" type="password" autocomplete="new-password"
+                   placeholder="required when enabled" style="width:100%;max-width:360px;box-sizing:border-box" onchange="saveBridgeSettings()">
+            <p class="st-hint" style="margin-top:4px">Endpoint: <code>/api/bridge/send</code>. Use <code>Authorization: Bearer TOKEN</code> or <code>X-OverMesh-Token</code>.</p>
+          </div>
+          <div id="bridge-settings-status" class="st-status"></div>
         </div>
-        <div style="display:grid;gap:6px">
-          <label class="settings-label">New password</label>
-          <input type="password" id="auth-password" class="settings-input" autocomplete="new-password" placeholder="leave blank to keep current">
-        </div>
-        <div style="display:flex;gap:8px">
-          <button class="btn" onclick="saveAuthCredentials()">Save credentials</button>
-        </div>
-        <div id="auth-settings-status" style="font-size:12px;color:var(--muted);min-height:16px"></div>
-      </div>
+      </details>
     </div>
 
     </div><!-- /st-app -->

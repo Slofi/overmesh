@@ -10631,10 +10631,6 @@ if (targetEl) {
       document.getElementById('st-' + t).style.display = t === name ? '' : 'none';
       document.getElementById('stab-' + t).classList.toggle('active', t === name);
     });
-    if (name !== 'mt') {
-      const el = document.getElementById('st-mt-import');
-      if (el) el.style.display = 'none';
-    }
     localStorage.setItem('settingsTab', name);
     if (name === 'mc') {
       const sel = document.getElementById('settings-mc-port-select');
@@ -10642,6 +10638,51 @@ if (targetEl) {
       loadMcNodeSettings();
       loadPassiveIntelManager();
       renderPassiveCollectors();
+    }
+  }
+
+  // ── Settings layout helpers (S472) ──
+  // Collapsible groups (<details class="st-group" data-key>) remember open/closed per browser.
+  const _ST_GROUPS_KEY = 'omSettingsGroups';
+  function _stLoadGroupState() {
+    try { return JSON.parse(localStorage.getItem(_ST_GROUPS_KEY) || '{}') || {}; } catch (_) { return {}; }
+  }
+  function _stInitGroups() {
+    const state = _stLoadGroupState();
+    document.querySelectorAll('#panel-settings details.st-group[data-key]').forEach(d => {
+      if (d.dataset.stBound) return;
+      d.dataset.stBound = '1';
+      const key = d.dataset.key;
+      if (Object.prototype.hasOwnProperty.call(state, key)) d.open = !!state[key];
+      d.addEventListener('toggle', () => {
+        const s = _stLoadGroupState();
+        s[key] = d.open;
+        try { localStorage.setItem(_ST_GROUPS_KEY, JSON.stringify(s)); } catch (_) {}
+      });
+    });
+  }
+  // Open every collapsed group around an element (e.g. after a map pick) and bring it into view.
+  function _stReveal(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    for (let d = el.closest('details'); d; d = d.parentElement && d.parentElement.closest('details')) d.open = true;
+    setTimeout(() => { try { el.scrollIntoView({behavior: 'smooth', block: 'center'}); } catch (_) {} }, 60);
+  }
+  // Empty channel slots are folded away by default; one flag per network's list.
+  const _stShowEmptySlots = { mt: false, mc: false };
+  function stToggleEmptySlots(net) {
+    _stShowEmptySlots[net] = !_stShowEmptySlots[net];
+    _stApplyEmptySlots(net);
+  }
+  function _stApplyEmptySlots(net) {
+    const list = document.getElementById(net === 'mc' ? 'mc-channels-list' : 'node-cfg-channels-list');
+    if (!list) return;
+    const show = !!_stShowEmptySlots[net];
+    list.querySelectorAll('.st-empty-slot').forEach(r => { r.style.display = show ? '' : 'none'; });
+    const t = list.querySelector('.st-empty-toggle');
+    if (t) {
+      const n = parseInt(t.dataset.count, 10) || 0;
+      t.textContent = show ? 'Hide empty slots' : `Show ${n} empty slot${n === 1 ? '' : 's'}`;
     }
   }
 
@@ -11077,6 +11118,7 @@ if (targetEl) {
   }
 
   function initSettings() {
+    _stInitGroups();
     switchSettingsTab(localStorage.getItem('settingsTab') || 'mt');
     settingsLoadNodes();
     loadMcSettingsNodes();
@@ -19021,25 +19063,27 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         if (data.error) { el.innerHTML = `<span style="color:var(--red)">${escHtml(data.error)}</span>`; return; }
         const chs = data.channels || [];
         if (!chs.length) { el.innerHTML = '<span style="color:var(--muted)">No channels found.</span>'; return; }
-        el.innerHTML = `<table style="border-collapse:collapse;font-size:12px;width:100%;max-width:560px">
-          <tr style="color:var(--muted)">
-            <th style="text-align:left;padding:2px 12px 4px 0;font-weight:normal">Slot</th>
-            <th style="text-align:left;padding:2px 12px 4px 0;font-weight:normal">Name</th>
-            <th style="text-align:left;padding:2px 0 4px;font-weight:normal">Key hash</th>
-            <th style="text-align:right;padding:2px 0 4px;font-weight:normal"></th>
-          </tr>
-          ${chs.map((ch, i) => `<tr style="${i < chs.length-1 ? 'border-bottom:1px solid var(--border)' : ''}">
-            <td style="padding:4px 12px 4px 0;font-size:11px;color:var(--muted);width:14px;text-align:right">${escHtml(String(ch.idx))}</td>
-            <td style="padding:4px 12px 4px 0">${escHtml(ch.name || '(empty)')}</td>
-            <td style="padding:4px 0;color:var(--muted);font-family:monospace">${escHtml(ch.hash || '-')}</td>
-            <td style="padding:4px 0;text-align:right;white-space:nowrap">
-              ${ch.name
-                ? `<button class="btn" style="padding:2px 8px;font-size:11px" onclick="shareMcChannel('${jsSafe(radioId)}',${parseInt(ch.idx) || 0},'${jsSafe(ch.name || '')}','${jsSafe(ch.hash || '')}')">Info/Share</button>`
-                : `<button class="btn" style="padding:2px 8px;font-size:11px;opacity:.45;cursor:default" disabled>Info/Share</button>`}
-              <button class="btn" style="padding:2px 8px;font-size:11px;margin-left:4px" onclick="openMcChEdit('${jsSafe(radioId)}',${parseInt(ch.idx) || 0},'${jsSafe(ch.name || '')}','${jsSafe(ch.hash || '')}')">Edit</button>
-            </td>
-          </tr>`).join('')}
-        </table>`;
+        // Unnamed slots are folded away; "Add channel" opens the first free one (S472)
+        const empty = chs.filter(ch => !ch.name);
+        const editCall = ch => `openMcChEdit('${jsSafe(radioId)}',${parseInt(ch.idx) || 0},'${jsSafe(ch.name || '')}','${jsSafe(ch.hash || '')}')`;
+        el.innerHTML = `<div class="st-list">
+          <div class="st-ch-row st-ch-headrow">
+            <span class="st-ch-idx">#</span><span class="st-ch-name">Name</span><span class="st-ch-hash">Key hash</span><span class="st-ch-actions"></span>
+          </div>
+          ${chs.map(ch => `<div class="st-ch-row${ch.name ? '' : ' st-empty-slot'}">
+            <span class="st-ch-idx">${escHtml(String(ch.idx))}</span>
+            <span class="st-ch-name" style="color:${ch.name ? 'var(--text)' : 'var(--muted)'}">${escHtml(ch.name || 'empty slot')}</span>
+            <span class="st-ch-hash">${escHtml(ch.hash || '-')}</span>
+            <span class="st-ch-actions">${ch.name
+              ? `<button class="btn btn-mini" onclick="shareMcChannel('${jsSafe(radioId)}',${parseInt(ch.idx) || 0},'${jsSafe(ch.name || '')}','${jsSafe(ch.hash || '')}')">Info/Share</button>`
+              : ''}<button class="btn btn-mini" onclick="${editCall(ch)}">Edit</button></span>
+          </div>`).join('')}
+          ${empty.length ? `<div class="st-ch-foot">
+            <button class="btn btn-mini" onclick="${editCall(empty[0])}" title="Set up the first free slot (${escHtml(String(empty[0].idx))})">＋ Add channel</button>
+            <button class="st-empty-toggle" data-count="${empty.length}" onclick="stToggleEmptySlots('mc')"></button>
+          </div>` : ''}
+        </div>`;
+        _stApplyEmptySlots('mc');
       }).catch(e => { if (el) el.innerHTML = `<span style="color:var(--red)">Failed: ${escHtml(e.message)}</span>`; });
   }
 
@@ -19366,7 +19410,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     const name = mcLastStatus[radioId]?.name || radioId;
     document.getElementById('confirm-ok').textContent = 'Reboot';
     showConfirm(`Reboot MC device "${escHtml(name)}"?`, () => {
-      const statusEl = document.getElementById('mc-actions-status');
+      const statusEl = document.getElementById('mc-device-actions-status') || document.getElementById('mc-actions-status');
       if (statusEl) statusEl.textContent = 'Rebooting…';
       fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/reboot`, {method: 'POST'})
         .then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || 'HTTP ' + r.status); }))
@@ -19502,7 +19546,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   function startMcDebugEvents() {
     const radioId = mcSettingsRadioId || activeMcRadioId;
-    const statusEl = document.getElementById('mc-actions-status');
+    const statusEl = document.getElementById('mc-device-actions-status') || document.getElementById('mc-actions-status');
     const btn = document.getElementById('mc-debug-btn');
     if (!radioId) { if (statusEl) statusEl.innerHTML = '<span style="color:var(--red)">No MC radio selected.</span>'; return; }
     fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/debug_events`, {
@@ -20473,13 +20517,15 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
           .map(([v,n]) => `<option value="${escHtml(v)}">${escHtml(n)}</option>`).join('');
         presetSel.value = d.modem_preset;
 
-        // Show hw_model in the identity subtitle if available
-        const hw = d.hw_model ? `: ${d.hw_model}` : '';
-        document.querySelector('#node-cfg-content h3').textContent = 'Identity' + hw;
+        // Show hw_model next to the Identity & role group title if available
+        const hwEl = document.getElementById('node-cfg-hw');
+        if (hwEl) hwEl.textContent = d.hw_model || '';
 
         content.style.display = '';
+        // Import lives inside the MT Channels group since S472, so it shows whenever a node is loaded
+        // (it used to vanish after visiting another settings tab until the next config load).
         const importEl = document.getElementById('st-mt-import');
-        if (importEl) importEl.style.display = (localStorage.getItem('settingsTab') === 'mt' || !localStorage.getItem('settingsTab')) ? '' : 'none';
+        if (importEl) importEl.style.display = '';
         ['owner','device','lora','channels','position','power','display','telemetry','mqtt','bluetooth','network'].forEach(k => {
           const el = document.getElementById(`node-cfg-${k}-status`);
           if (el) el.textContent = '';
@@ -20735,22 +20781,27 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         if (data.error) return;
         _chCache = data;
         const list = document.getElementById('node-cfg-channels-list');
-        list.innerHTML = data.map((ch, i) => {
+        // Disabled slots are folded away; "Add channel" opens the first free one (S472)
+        const empty = data.filter(ch => ch.role === 0);
+        list.innerHTML = data.map(ch => {
           const roleLabel = CH_ROLES[ch.role] || '?';
           const roleColor = CH_ROLE_COLOR[ch.role] || 'var(--muted)';
-          const nameLabel = ch.name || (ch.role === 0 ? '-' : `CH${ch.index}`);
-          const pskBadge  = ch.role !== 0 ? `<span style="font-size:10px;color:var(--muted);margin-right:4px">${ch.psk_set ? '🔒' : '🔓'}</span>` : '';
-          return `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;${i < data.length-1 ? 'border-bottom:1px solid var(--border)' : ''}">
-            <span style="font-size:11px;color:var(--muted);width:14px;flex-shrink:0;text-align:right">${ch.index}</span>
-            <span style="flex:1;font-size:12px;color:${ch.role===0?'var(--muted)':'var(--text)'}">${escHtml(nameLabel)}</span>
+          const nameLabel = ch.name || (ch.role === 0 ? 'empty slot' : `CH${ch.index}`);
+          const pskBadge  = ch.role !== 0 ? `<span style="font-size:10px;color:var(--muted)" title="${ch.psk_set ? 'Encrypted' : 'No key'}">${ch.psk_set ? '🔒' : '🔓'}</span>` : '';
+          return `<div class="st-ch-row${ch.role === 0 ? ' st-empty-slot' : ''}">
+            <span class="st-ch-idx">${ch.index}</span>
+            <span class="st-ch-name" style="color:${ch.role===0?'var(--muted)':'var(--text)'}">${escHtml(nameLabel)}</span>
             ${pskBadge}
             <span style="font-size:11px;color:${roleColor};width:68px;text-align:right;flex-shrink:0">${roleLabel}</span>
-            ${ch.role !== 0
-              ? `<button class="btn" style="padding:2px 8px;font-size:11px;flex-shrink:0" onclick="shareMtChannel(${ch.index})" title="Show channel share data">Info/Share</button>`
-              : `<button class="btn" style="padding:2px 8px;font-size:11px;flex-shrink:0;opacity:.45;cursor:default" disabled>Info/Share</button>`}
-            <button class="btn" style="padding:2px 8px;font-size:11px;flex-shrink:0" onclick="openChEdit(${ch.index})" title="Edit channel settings">Edit</button>
+            <span class="st-ch-actions">${ch.role !== 0
+              ? `<button class="btn btn-mini" onclick="shareMtChannel(${ch.index})" title="Show channel share data">Info/Share</button>`
+              : ''}<button class="btn btn-mini" onclick="openChEdit(${ch.index})" title="Edit channel settings">Edit</button></span>
           </div>`;
-        }).join('');
+        }).join('') + (empty.length ? `<div class="st-ch-foot">
+            <button class="btn btn-mini" onclick="openChEdit(${empty[0].index})" title="Set up the first free slot (${empty[0].index})">＋ Add channel</button>
+            <button class="st-empty-toggle" data-count="${empty.length}" onclick="stToggleEmptySlots('mt')"></button>
+          </div>` : '');
+        _stApplyEmptySlots('mt');
       })
       .catch(() => {});
   }
@@ -21133,9 +21184,12 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     if (mode === 'rc-collector') {
       switchTab('settings');
       switchSettingsTab('mc');
+      _stReveal('passive-collector-status');
       return;
     }
     switchTab('settings');
+    if (mode === 'mt') _stReveal('node-cfg-fixed-lat');
+    else if (mode === 'mc') _stReveal('mc-coords-lat');
   }
 
   function toggleFixedCoords() {

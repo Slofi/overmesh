@@ -509,6 +509,19 @@ def _run_update_job():
         _update_append(f"Error: {e}")
 
 
+def _uart_placeholder(device):
+    """True for a ttyS slot the 8250 driver registered with no hardware behind it (sysfs type 0). On CD only
+    ttyS2/3/6 are real UARTs; the GPS picker hides the other five (S471)."""
+    name = os.path.basename(str(device or ""))
+    if not name.startswith("ttyS"):
+        return False
+    try:
+        with open(f"/sys/class/tty/{name}/type") as f:
+            return f.read().strip() == "0"
+    except OSError:
+        return False
+
+
 @bp.route("/api/settings/ports")
 def api_settings_ports():
     import glob
@@ -556,6 +569,7 @@ def api_settings_ports():
             "vid":         p.vid,
             "pid":         p.pid,
             "in_use":      p.device in used_devices,
+            "placeholder": _uart_placeholder(p.device),
         })
     for dev in sorted(glob.glob("/dev/ttyAS*")):
         ports.append({

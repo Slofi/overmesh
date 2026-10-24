@@ -227,6 +227,14 @@ class AppSettingsOmPositionTests(unittest.TestCase):
         self.assertFalse(ports["/dev/ttyACM0"]["in_use"])
         self.assertTrue(ports["/dev/ttyACM1"]["in_use"])
 
+    def test_uart_placeholder_slots_are_flagged(self):
+        # S471: on CD only ttyS2/3/6 are real UARTs (sysfs type 4); the other ttyS slots are type 0.
+        with mock.patch("builtins.open", mock.mock_open(read_data="0\n")):
+            self.assertTrue(settings_routes._uart_placeholder("/dev/ttyS5"))
+        with mock.patch("builtins.open", mock.mock_open(read_data="4\n")):
+            self.assertFalse(settings_routes._uart_placeholder("/dev/ttyS3"))
+        self.assertFalse(settings_routes._uart_placeholder("/dev/ttyACM0"), "only ttyS slots can be placeholders")
+
     def test_ports_ignore_disabled_saved_radios(self):
         settings_routes.CONFIG["nodes"] = [
             {"id": "node_a", "name": "Disabled MT", "enabled": False, "type": "serial", "port": "/dev/ttyACM0", "usb_serial": "ABC"}

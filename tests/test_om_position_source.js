@@ -31,7 +31,9 @@ function extract(name, endMarker = '\n  }') {
 
 const make = new Function([
   'let _omPosSource = "manual", _omManualPos = null, _localGpsPos = null;',
-  'let _gpsPorts = {internal: "/dev/ttyS3", usb: "/dev/ttyACM2"};',
+  'let _gpsPorts = {internal: "/dev/ttyS3", usb: "/dev/ttyACM2"}; let _gpsShowUartPicker = false;',
+  'function escHtml(s) { return String(s); }',
+  extract('_gpsUartLabel'), extract('_gpsPortChoices'),
   'const saved = [], populated = [];',
   'function saveGpsSettings() { saved.push(1); }',
   'function _gpsPopulatePortList(kind, port) { populated.push([kind, port]); }',
@@ -41,7 +43,7 @@ const make = new Function([
   'const document = { getElementById: el, querySelectorAll: () => buttons };',
   extract('_omLocalOrigin'),
   extract('gpsSourceChanged'),
-  'return { _omLocalOrigin, gpsSourceChanged, el, buttons, saved, populated,',
+  'return { _omLocalOrigin, gpsSourceChanged, _gpsPortChoices, _gpsUartLabel, el, buttons, saved, populated,',
   '  set: (k, v) => { eval(k + " = v"); } };',
 ].join('\n'));
 
@@ -82,6 +84,22 @@ assert(t.saved.length === 1, 'a user change of the selector saves once');
 t.el('gps-source-select').value = 'internal';
 t.gpsSourceChanged(true);
 assert(JSON.stringify(t.populated.at(-1)) === JSON.stringify(['internal', '/dev/ttyS3']), 'internal: its own saved UART');
+// Filip: "the internal GPS is connected to the Radxa pins directly, no ports" -> no dropdown once saved
+assert(show('gps-port-row') === 'none', 'internal with a saved UART: no dropdown');
+assert(t.el('gps-source-note').innerHTML.includes('UART3 (/dev/ttyS3)'), 'internal: says which UART the pins are');
+t.set('_gpsShowUartPicker', true);
+t.gpsSourceChanged(false);
+assert(show('gps-port-row') === 'flex', '"change" opens the UART picker');
+t.set('_gpsShowUartPicker', false); t.set('_gpsPorts', {internal: '', usb: ''});
+t.gpsSourceChanged(false);
+assert(show('gps-port-row') === 'flex', 'internal with NO saved UART: the picker shows');
+// the picker offers real UARTs only, by name
+const ports = [{device: '/dev/ttyS0', placeholder: true}, {device: '/dev/ttyS3', placeholder: false},
+               {device: '/dev/ttyAS2'}, {device: '/dev/ttyACM0'}];
+assert(JSON.stringify(t._gpsPortChoices('internal', ports).map(p => p.device)) === '["/dev/ttyS3","/dev/ttyAS2"]',
+  'internal lists real UARTs only (no placeholder slots, no USB)');
+assert(JSON.stringify(t._gpsPortChoices('usb', ports).map(p => p.device)) === '["/dev/ttyACM0"]', 'usb lists USB only');
+assert(t._gpsUartLabel('/dev/ttyS3') === 'UART3 (/dev/ttyS3)' && t._gpsUartLabel('/dev/ttyAS2') === 'GPIO UART (/dev/ttyAS2)', 'UART names');
 
 t.el('gps-source-select').value = 'proxy';
 t.gpsSourceChanged(true);

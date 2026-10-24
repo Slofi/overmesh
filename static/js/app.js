@@ -11123,6 +11123,27 @@ if (targetEl) {
 
   let _gpsPorts = {internal: '', usb: ''};   // each serial source keeps its own port
   let _gpsPortListKind = '';                 // which kind the port <select> currently lists (it loads async)
+  let _gpsShowUartPicker = false;            // the internal GPS's UART picker, opened only via "change"
+
+  // The built-in GPS is wired to GPIO pins, which Linux exposes as a UART: on CD, UART3 = /dev/ttyS3.
+  function _gpsUartLabel(dev) {
+    const m = /\/ttyS(\d+)$/.exec(dev || '');
+    if (m) return `UART${m[1]} (${dev})`;
+    if (/\/ttyAS\d+$/.test(dev || '')) return `GPIO UART (${dev})`;
+    return dev || '';
+  }
+
+  // Ports offered for a source: built-in UARTs for Internal (never the empty placeholder slots), everything
+  // else for USB. A saved radio's port stays listed but cannot be picked.
+  function _gpsPortChoices(kind, ports) {
+    const isUart = d => /^\/dev\/tty(AS|S)\d/.test(d);
+    return (ports || []).filter(p => kind === 'internal' ? (isUart(p.device) && !p.placeholder) : !isUart(p.device));
+  }
+
+  function gpsChangeUart() {
+    _gpsShowUartPicker = true;
+    gpsSourceChanged(false);
+  }
 
   function loadGpsSettings() {
     fetch(BASE_PATH + '/api/settings/gps')
@@ -11131,6 +11152,7 @@ if (targetEl) {
         _omPosSource = ['manual', 'internal', 'usb', 'proxy'].includes(cfg.source) ? cfg.source : 'manual';
         _gpsEnabled = _omPosSource !== 'manual';
         _gpsPorts = {internal: cfg.internal_port || '', usb: cfg.usb_port || ''};
+        _gpsShowUartPicker = false;
         const srcSel = document.getElementById('gps-source-select');
         if (srcSel) srcSel.value = _omPosSource;
         document.getElementById('gps-auto-push-mt-toggle').checked = !!cfg.auto_push_mt;
@@ -11157,17 +11179,22 @@ if (targetEl) {
   function gpsSourceChanged(save) {
     const v = (document.getElementById('gps-source-select') || {}).value || 'manual';
     const show = (id, on, disp = '') => { const el = document.getElementById(id); if (el) el.style.display = on ? disp : 'none'; };
+    // Internal GPS with its UART already saved: one line, no dropdown ("connected to the pins, no ports", Filip).
+    const uartSet = v === 'internal' && !!_gpsPorts.internal && !_gpsShowUartPicker;
     show('om-pos-manual-row', v === 'manual');
-    show('gps-port-row', v === 'internal' || v === 'usb', 'flex');
+    show('gps-port-row', (v === 'internal' && !uartSet) || v === 'usb', 'flex');
     show('gps-live-card', v !== 'manual');
     show('gps-share-manual-note', v === 'manual');
     document.querySelectorAll('.gps-share-now').forEach(b => { b.disabled = v === 'manual'; });
     const label = document.getElementById('gps-port-label');
     if (label) label.textContent = v === 'internal' ? 'UART' : 'Dongle';
     const note = document.getElementById('gps-source-note');
-    if (note) note.textContent = {
+    if (note && uartSet) {
+      note.innerHTML = `Built-in GPS on the GPIO pins: ${escHtml(_gpsUartLabel(_gpsPorts.internal))}. No fix = no OM position. `
+        + `<a href="#" onclick="gpsChangeUart();return false" style="color:var(--accent)">change</a>`;
+    } else if (note) note.textContent = {
       manual:   '',
-      internal: 'Reads the built-in GPS on the chosen UART (CD: /dev/ttyS3). No fix = no OM position.',
+      internal: 'Pick the UART the built-in GPS pins are wired to (CD: UART3). No fix = no OM position.',
       usb:      'Reads only the dongle picked here (remembered by its USB identity). No fix = no OM position.',
       proxy:    "Uses OPS-TOC's GPS. If OPS-TOC has no fix, OM has none either.",
     }[v] || '';
@@ -11188,11 +11215,12 @@ if (targetEl) {
         const sel = document.getElementById('gps-port-select');
         sel.innerHTML = '<option value="">select port</option>';
         _gpsPortListKind = kind;
-        const isUart = d => /^\/dev\/tty(AS|S)\d/.test(d);
-        (data.ports || []).filter(p => kind === 'internal' ? isUart(p.device) : !isUart(p.device)).forEach(p => {
+        _gpsPortChoices(kind, data.ports).forEach(p => {
           const opt = document.createElement('option');
           opt.value = p.device;
-          opt.textContent = `${p.device}: ${p.description}${p.in_use ? ' (radio)' : ''}`;
+          opt.textContent = kind === 'internal'
+            ? _gpsUartLabel(p.device)
+            : `${p.device}: ${p.description}${p.in_use ? ' (radio)' : ''}`;
           if (p.in_use) opt.disabled = true;                          // a radio is never the GPS
           else if (p.device === currentPort) opt.selected = true;
           sel.appendChild(opt);

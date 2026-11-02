@@ -115,9 +115,23 @@ assert(html.includes('891d 17h') && html.includes('897d 7h'),
   'long ages are formatted the same way as short ones');
 assert(html.includes('read 9m ago'), 'the block must say how old the reading is');
 
-// the unset repeater clock is the important warning: it explains why a login fails
-assert(html.includes('not set'), 'an unset repeater clock must be shown as such');
-assert(html.includes('cannot succeed'), 'the block must explain that settings writes cannot work with an unset clock');
+// A zero in the anonymous clock field is NOT proof of anything: the live repeater
+// returns 0 there while its RTC is correct (its login reply reports the real time).
+assert(!html.includes('not set'), 'a zero anonymous clock must not be presented as an unset clock');
+assert(!html.includes('cannot succeed'), 'a zero anonymous clock must not claim settings cannot work');
+assert(html.includes('not reported'), 'with no clock source the cell must say the clock was not reported');
+assert(html.includes('zero even when the clock is set'), 'the hint must explain why a zero field is not a verdict');
+
+// --- the login reply is the authoritative clock; it wins over the anonymous zero
+const withLogin = JSON.parse(JSON.stringify(payload));
+const nowS = Math.floor(Date.now() / 1000);
+withLogin.login = { ok: true, is_admin: true, permissions: 3, server_timestamp: nowS - 4 };
+const loginHtml = render(withLogin);
+assert(loginHtml.includes('from the login reply'), 'a logged-in read must show the clock the repeater itself reported');
+assert(!loginHtml.includes('not reported'), 'a login clock must not fall back to "not reported"');
+assert(!loginHtml.includes('zero even when the clock is set'), 'a login clock must clear the no-clock hint');
+assert(/from the login reply · -\ds vs here/.test(loginHtml) || loginHtml.includes('in sync'),
+  'the drift against this host must be shown next to the login clock');
 
 // --- stale readings are labelled, not passed off as live
 assert(render(null).includes('not read yet'), 'no payload must say so instead of inventing numbers');
@@ -136,7 +150,10 @@ assert(!healthyHtml.includes('cannot succeed'), 'a clock 30 s off must not raise
 
 const skewed = JSON.parse(JSON.stringify(healthy));
 skewed.basic.data.data = '00000000' + le(now - 86400 * 400) + '00';
-assert(render(skewed).includes('behind'), 'a large clock drift must be flagged as a warning');
+const skewedHtml = render(skewed);
+assert(skewedHtml.includes('behind'), 'a large clock drift must be flagged as a warning');
+assert(skewedHtml.includes('does not block logins'),
+  'the drift warning must not claim logins are blocked: they are stamped by the sending radio');
 
 // --- forwarding disabled / bridge bits come from the same feature byte
 const disabled = JSON.parse(JSON.stringify(healthy));

@@ -16902,6 +16902,7 @@ if (targetEl) {
   function _mcRemoteSaveStatus(data) {
     if (!_mcRemoteManage || !data) return;
     const picked = {
+      login: data.login || null,
       basic: data.basic || null,
       status: data.status || null,
       telemetry: data.telemetry || null,
@@ -16981,23 +16982,34 @@ if (targetEl) {
     const bat = st.bat != null ? `${(Number(st.bat) / 1000).toFixed(2)} V` : '-';
     const temp = _mcRemoteTelemetryValue(payload.telemetry, 'temperature');
     const volt = _mcRemoteTelemetryValue(payload.telemetry, 'voltage');
-    const clockInfo = _mcRemoteClockFromBasic(payload.basic);
+    // Prefer the clock from a successful ADMIN LOGIN reply. The anonymous clock
+    // field is not trustworthy: on SI-LJ-Trnovo II it returns 0 while the repeater's
+    // RTC is correct (verified against the login reply, 2026-11-02), so treating a 0
+    // there as "clock not set" was a false alarm that also mis-diagnosed the logins.
+    const loginClock = ('login' in payload) && payload.login?.ok && Number(payload.login.server_timestamp) > 0
+      ? Number(payload.login.server_timestamp)
+      : null;
+    const anonClock = _mcRemoteClockFromBasic(payload.basic);
+    const clockInfo = loginClock
+      ? { clock: loginClock, features: (anonClock && anonClock.features) || 0, source: 'login' }
+      : (anonClock && anonClock.clock > 0 ? { ...anonClock, source: 'anon' } : null);
     const now = Math.floor(Date.now() / 1000);
     let clockCell = '-';
     let clockHint = '';
     const warns = [];
-    if (clockInfo) {
-      if (!clockInfo.clock) {
-        clockCell = 'not set';
-        clockHint = 'epoch 0';
-        warns.push('The repeater clock is <b>not set</b>. The admin login is timestamped, so <b>settings reads and writes cannot succeed</b> until the clock is set (on site, or with a console on the node). Status, owner, telemetry and neighbours above are unaffected.');
-      } else {
-        const drift = clockInfo.clock - now;
-        clockCell = [_formatAppDate(clockInfo.clock), _formatAppTime(clockInfo.clock)].filter(Boolean).join(' ') || '-';
-        clockHint = drift === 0 ? 'in sync' : `${drift < 0 ? '-' : '+'}${_mcFmtSpan(Math.abs(drift))} vs here`;
-        if (Math.abs(drift) > 300) {
-          warns.push(`The repeater clock is <b>${_mcFmtSpan(Math.abs(drift))} ${drift < 0 ? 'behind' : 'ahead of'}</b> this host. The admin login is timestamped and older builds reject a skewed stamp, so settings writes may fail until it is synced.`);
-        }
+    if (!clockInfo) {
+      clockCell = 'not reported';
+      clockHint = 'repeater sent no clock';
+      warns.push('The repeater did not report its clock. Its anonymous clock field reads <b>zero even when the clock is set</b> on some firmware, so this is not proof that anything is wrong. Use <b>Admin login</b> to read the real time.');
+    } else {
+      const drift = clockInfo.clock - now;
+      const source = clockInfo.source === 'login' ? 'from the login reply' : 'anonymous clock';
+      clockCell = [_formatAppDate(clockInfo.clock), _formatAppTime(clockInfo.clock)].filter(Boolean).join(' ') || '-';
+      clockHint = drift === 0
+        ? `${source} · in sync`
+        : `${source} · ${drift < 0 ? '-' : '+'}${_mcFmtSpan(Math.abs(drift))} vs here`;
+      if (Math.abs(drift) > 300) {
+        warns.push(`The repeater clock is <b>${_mcFmtSpan(Math.abs(drift))} ${drift < 0 ? 'behind' : 'ahead of'}</b> this host. Timestamps it writes (neighbour ages, adverts) will be off by that much. It does not block logins: those are stamped by the sending radio, not by the repeater.`);
       }
       if (clockInfo.features & 0x80) warns.push('<b>Forwarding is switched off</b> on this repeater (it is in a passive role).');
       const bridge = clockInfo.features & 0x03;

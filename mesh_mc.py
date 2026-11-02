@@ -5198,6 +5198,11 @@ async def _remote_login_async(mc, full_key, password, timeout=12):
                     "permissions": payload.get("permissions", 0),
                     "is_admin": bool(payload.get("is_admin")),
                     "pubkey_prefix": payload.get("pubkey_prefix", pubkey_prefix),
+                    # The login reply is the ONLY place a repeater reports its own
+                    # clock reliably: the anonymous clock field comes back as zero on
+                    # at least one live repeater whose RTC is correct (SI-LJ-Trnovo II,
+                    # verified 2026-11-02).
+                    "server_timestamp": payload.get("server_timestamp"),
                 }
             if event.type == EventType.LOGIN_FAILED:
                 return {
@@ -5205,7 +5210,13 @@ async def _remote_login_async(mc, full_key, password, timeout=12):
                     "error": "Login failed",
                     "pubkey_prefix": pubkey_prefix,
                 }
-        return {"ok": False, "error": "Login timed out", "pubkey_prefix": pubkey_prefix}
+        # A WRONG password makes the repeater return nothing at all (handleLoginReq
+        # returns 0 with no reply), which is indistinguishable from a lost packet,
+        # so say what to try instead of just "timed out".
+        error = "Login timed out (no reply)"
+        if password:
+            error += ": a wrong password gets no reply at all, so leave the password empty when this radio is already trusted"
+        return {"ok": False, "error": error, "pubkey_prefix": pubkey_prefix}
     finally:
         for task in (success_task, failed_task):
             if not task.done():

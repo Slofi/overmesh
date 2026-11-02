@@ -3963,10 +3963,19 @@ if (targetEl) {
   setInterval(updateClock, 1000);
 
   // ── Node Actions ───────────────────────────────────────────────────────────
+  // The dialog shell is reused, so its scroll position survives between opens.
+  // Every dialog must start at the top: the RPTR status block and the route
+  // picker both live at the top of their body, and an inherited scroll hides them.
+  function _modalResetScroll() {
+    const body = document.getElementById('modal-body');
+    if (body) body.scrollTop = 0;
+  }
+
   function openModal(title, bodyHtml) {
     document.getElementById('modal-title').textContent = title;
     document.getElementById('modal-body').innerHTML = bodyHtml;
     document.getElementById('action-modal').classList.add('open');
+    _modalResetScroll();
   }
   function closeModal() {
     document.getElementById('action-modal').classList.remove('open');
@@ -12567,13 +12576,17 @@ if (targetEl) {
   // is created once per open and survives hop edits: the list, the candidates,
   // the info card and the action buttons render into their own slots.
   let _mcRouteMap = null;         // Leaflet instance inside the modal
-  let _mcRouteMapView = null;     // {lat,lng,zoom}, kept across re-opens this session
+  let _mcRouteMapView = null;     // {lat,lng,zoom}, kept while the same contact is edited
+  let _mcRouteMapViewFor = null;  // contactId the remembered view belongs to
   let _mcRouteMarkers = new Map();// contact key -> marker, reused across edits
   let _mcRouteTargetMarker = null;
   let _mcRouteLine = null;
 
   function _mcRouteDropMap() {
     _mcRouteMarkers = new Map();
+    // _mcRouteMapView / _mcRouteMapViewFor are deliberately kept: the remembered
+    // view belongs to a contact, and mounting checks that before using it.
+
     _mcRouteTargetMarker = null;
     _mcRouteLine = null;
     if (_mcRouteMap) {
@@ -12652,10 +12665,6 @@ if (targetEl) {
       <div class="mc-route-actions" id="mc-route-actions-slot"></div>`;
     _mcRouteRefresh();
     if (st.picker) _mcRouteMountMap();
-    setTimeout(() => {
-      const input = document.getElementById('mc-route-search');
-      if (input && !st.saving) input.focus({ preventScroll: true });
-    }, 40);
   }
 
   function _mcRouteRefresh() {
@@ -12845,7 +12854,8 @@ if (targetEl) {
     const fallback = leafletMap
       ? { lat: leafletMap.getCenter().lat, lng: leafletMap.getCenter().lng, zoom: leafletMap.getZoom() }
       : { lat: 46.05, lng: 14.5, zoom: 9 };
-    const view = _mcRouteMapView || fallback;
+    const remembered = _mcRouteMapView && _mcRouteMapViewFor === _mcRouteEditor.contactId ? _mcRouteMapView : null;
+    const view = remembered || fallback;
     _mcRouteMap = L.map('mc-route-map', { zoomSnap: 0.5, zoomDelta: 0.5 }).setView([view.lat, view.lng], view.zoom);
     try { _mcRouteMap.attributionControl.setPrefix(false); } catch(e) {}
     const key = (() => { try { return localStorage.getItem('mapTileLayer') || DEFAULT_TILE_LAYER; } catch(e) { return DEFAULT_TILE_LAYER; } })();
@@ -12862,9 +12872,10 @@ if (targetEl) {
       if (!_mcRouteMap) return;
       const c = _mcRouteMap.getCenter();
       _mcRouteMapView = { lat: c.lat, lng: c.lng, zoom: _mcRouteMap.getZoom() };
+      _mcRouteMapViewFor = _mcRouteEditor ? _mcRouteEditor.contactId : null;
     });
     _mcRouteSyncMapMarkers();
-    if (!_mcRouteMapView) {
+    if (!remembered) {
       const pts = _mcRouteMapPoints();
       if (pts.length > 1) _mcRouteMap.fitBounds(pts, { padding: [26, 26], maxZoom: 13 });
     }
@@ -17666,6 +17677,7 @@ if (targetEl) {
     _mcRemoteRenderStatusBlock(_mcRemoteLoadStatus());
     _mcRemoteLoadOmChannelList();
     document.getElementById('action-modal').classList.add('open');
+    _modalResetScroll();   // this dialog bypasses openModal()
   }
 
   async function mcRemoteRead(login, loginOnly = false) {

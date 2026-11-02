@@ -5344,6 +5344,9 @@ def _validate_remote_admin_command(command):
     exact = {
         "clock",
         "clock sync",
+        # Sets the RTC to 2024-05-15 and reboots. The only way to correct a clock that
+        # is AHEAD, because every clock-setting command refuses to go backwards.
+        "clkreboot",
         "advert",
         "advert.zerohop",
         "neighbors",

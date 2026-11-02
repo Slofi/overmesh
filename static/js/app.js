@@ -2220,7 +2220,7 @@
         'Import Contact accepts an official meshcore://contact/add share link and writes the contact to the selected MC radio NVS storage.',
         'Remote Manage opens a login/read/command interface for MC repeater and room-server nodes. Only visible for contacts identified as repeaters or room servers.',
         'Remote Manage also has Quick settings for common RPTR/room-server options: name, repeat, power save, TX power, radio parameters, position, owner info, path hash mode, loop detect, advert timers, flood max, neighbour discovery, and local/flood adverts. After Admin Login + Read, OM best-effort pre-fills these fields from safe remote get commands; Read settings runs that prefill again. The Map button lets you pick RPTR coordinates directly from the map before pressing Set.',
-        'Remember stores the RPTR admin password in this browser for this radio/contact pair, similar to the MeshCore Android app. Uncheck it before Login + Read to remove the saved password.',
+        'Remember stores the RPTR admin password in this browser for this radio/contact pair, similar to the MeshCore Android app. Uncheck it before Login + Read to remove the saved password.', 'The password can be left empty when this radio is already in the repeater ACL: the repeater then accepts a blank login. A WRONG password is not rejected with an error, it simply gets no reply, which looks like a timeout.',
         'Remote Local advert and Flood advert try to send immediately while connected. They are manual actions so settings can be changed without forcing an advert during the admin session.',
         'Contact Storage controls whether the radio writes every contact it hears into its own table (the ~350-slot NVS). ON is stock behaviour and the table can fill overnight on busy meshes. When it is full, DMs to new contacts fail until space is freed. OFF switches the radio to manual approval: it stores nothing on its own, contacts live in OM (Stored = app only) and you write the ones you want with Add to radio. The status line shows whether the radio accepted manual mode.',
         'Contact Storage is applied to the device immediately when connected and re-asserted on every connect, so it survives reboots and reflashes.'
@@ -17756,7 +17756,7 @@ if (targetEl) {
         <button class="btn btn-net-mc" onclick="mcRemoteRead(true, true)" title="Authenticate only: no status read. Use ↻ or Read all afterwards.">Login</button>
         <button class="btn btn-net-mc" onclick="mcRemoteRead(true)">Login + Read</button>
         <button class="btn" onclick="mcRemoteRead(false)" title="Read RPTR status without a password: only works if the repeater allows guest access.">Guest Read</button>
-        <button class="btn" onclick="mcRemoteSyncClock()" title="Sync the RPTR clock to this MC radio before sending timestamp-sensitive adverts.">Sync clock</button>
+        <button class="btn" onclick="mcRemoteSyncClock()" title="Set the RPTR clock from this host (sends time &lt;epoch&gt;). Only forward: a repeater whose clock is AHEAD cannot be corrected remotely, only with clkreboot.">Sync clock</button>
         <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);padding-bottom:6px" title="Run clock sync automatically after every successful admin login.">
           <input id="mc-remote-auto-clock-sync" type="checkbox" onchange="mcRemoteSetAutoClockSync(this.checked)">
           Auto-sync
@@ -17764,8 +17764,10 @@ if (targetEl) {
       </div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:12px">
         <b>Login</b>: authenticates only, fast. Use ↻ buttons or Read all to fetch settings after.
+        Leave the password <b>empty</b> when this radio is already trusted by the repeater (it sits in the repeater ACL): a blank login succeeds without one.
         <b>Login + Read</b>: authenticates and loads full status + settings.
         <b>Guest Read</b>: no password, only works if the repeater allows public access.
+        <b>Sync clock</b> sends <code>time &lt;epoch&gt;</code>: a repeater refuses to move its clock backwards, so this can only correct a clock that is behind. One that is ahead needs <code>clkreboot</code> (resets to 2024-05-15 and reboots).
       </div>
       <div id="mc-remote-result" style="font-size:12px;color:var(--muted);margin-bottom:14px">Not connected.</div>
       <div id="mc-remote-clock-result" style="font-size:12px;color:var(--muted);margin-bottom:14px"></div>
@@ -17859,8 +17861,9 @@ if (targetEl) {
           : '';
         if (_mcRemoteAutoClockSyncEnabled()) await mcRemoteSyncClock(true);
       } else if (login && !d.login?.ok) {
-        if (out) out.innerHTML = `<span style="color:var(--red)">Login failed.</span>`;
-        mcRemoteReport('login', 'login failed (wrong password, or the RPTR has no admin password set)', 'error');
+        const why = d.login?.error || 'no reply';
+        if (out) out.innerHTML = `<span style="color:var(--red)">Login failed: ${escHtml(String(why))}</span>`;
+        mcRemoteReport('login', String(why), 'error');
         return;
       }
       if (!loginOnly) {
@@ -17882,7 +17885,12 @@ if (targetEl) {
   async function mcRemoteSyncClock(auto = false) {
     const out = document.getElementById('mc-remote-clock-result');
     try {
-      const d = await mcRemoteRunCommand('clock sync', 'mc-remote-clock-result', {silentError: auto});
+      // `time <epoch>` rather than `clock sync`: the repeater only accepts a clock
+      // that moves FORWARD, and `clock sync` derives its value from the sending
+      // radio, which is exactly where it can be behind. An absolute epoch is the
+      // one form that sets a clock that is behind by minutes or hours.
+      const target = Math.floor(Date.now() / 1000) + 2;
+      const d = await mcRemoteRunCommand(`time ${target}`, 'mc-remote-clock-result', {silentError: auto});
       if (out && auto) out.innerHTML = `<span style="color:var(--green)">Clock auto-synced.</span>`;
       return d;
     } catch (e) {

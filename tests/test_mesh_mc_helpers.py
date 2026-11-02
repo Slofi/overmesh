@@ -760,6 +760,8 @@ class MeshMcPathHelperTests(unittest.TestCase):
         self.assertEqual(mesh_mc._validate_remote_admin_command("set repeat on"), "set repeat on")
         self.assertEqual(mesh_mc._validate_remote_admin_command("advert.zerohop"), "advert.zerohop")
         self.assertEqual(mesh_mc._validate_remote_admin_command("clock sync"), "clock sync")
+        # the only escape from a clock that is AHEAD (every setter refuses to go back)
+        self.assertEqual(mesh_mc._validate_remote_admin_command("clkreboot"), "clkreboot")
         self.assertEqual(mesh_mc._validate_remote_admin_command("discover.neighbors"), "discover.neighbors")
         self.assertEqual(mesh_mc._validate_remote_admin_command("set radio 869.525,250,11,5"), "set radio 869.525,250,11,5")
         self.assertEqual(mesh_mc._validate_remote_admin_command("set advert.interval 60"), "set advert.interval 60")
@@ -778,6 +780,72 @@ class MeshMcPathHelperTests(unittest.TestCase):
         ts = asyncio.run(mesh_mc._sync_remote_login_clock(mock.Mock(), cfg))
         self.assertGreater(ts, 10_000, "the login stamp must beat the command floor")
         mesh_mc._remote_cmd_clock_floor.pop((cfg, "k" * 64), None)
+
+    def test_remote_login_returns_the_clock_and_explains_silence(self):
+        """The login path is what makes the settings half usable, and its failure mode
+        is silence: a wrong password gets NO reply (handleLoginReq returns 0), so the
+        message must say that instead of just "timed out"."""
+        import asyncio
+        from meshcore import EventType
+
+        class FakeEvent:
+            def __init__(self, type_, payload):
+                self.type = type_
+                self.payload = payload
+
+        class FakeDispatcher:
+            def __init__(self, event, delay=0.0):
+                self.event = event
+                self.delay = delay
+
+            async def wait_for_event(self, type_, attribute_filters=None, timeout=None):
+                if self.delay:
+                    await asyncio.sleep(self.delay)
+                return self.event
+
+        class FakeCommands:
+            def __init__(self, dispatcher, sent):
+                self.dispatcher = dispatcher
+                self.sent = sent
+
+            async def send_login(self, dst, password):
+                self.sent.append((dst, password))
+                return {"ok": True}
+
+        class FakeMc:
+            def __init__(self, commands):
+                self.commands = commands
+
+        def run(event, password, timeout=0.05, delay=0.0):
+            sent = []
+            mc = FakeMc(FakeCommands(FakeDispatcher(event, delay), sent))
+            result = asyncio.run(mesh_mc._remote_login_async(mc, "a" * 64, password, timeout=timeout))
+            return result, sent
+
+        ok_event = FakeEvent(EventType.LOGIN_SUCCESS, {
+            "permissions": 1, "is_admin": True, "pubkey_prefix": "aaaaaaaaaaaa",
+            "server_timestamp": 1793650842,
+        })
+        result, sent = run(ok_event, "")            # blank password, ACL path
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["is_admin"])
+        self.assertEqual(result["server_timestamp"], 1793650842,
+                         "the login reply's clock must reach the caller: it is the only trustworthy clock")
+        self.assertEqual(sent[0][1], "", "a blank password must be sent as blank, not as a placeholder")
+
+        failed, _ = run(FakeEvent(EventType.LOGIN_FAILED, {"pubkey_prefix": "aaaaaaaaaaaa"}), "root")
+        self.assertFalse(failed["ok"])
+        self.assertIn("Login failed", failed["error"])
+
+        silent_with_pw, _ = run(None, "root", delay=0.3)
+        self.assertFalse(silent_with_pw["ok"])
+        self.assertIn("leave the password empty", silent_with_pw["error"],
+                      "a silent login with a password must name the empty-password path")
+
+        silent_blank, _ = run(None, "", delay=0.3)
+        self.assertIn("no reply", silent_blank["error"])
+        self.assertNotIn("leave the password empty", silent_blank["error"],
+                         "no hint when the blank login is what failed")
 
     def test_remote_command_timestamp_is_monotonic_per_target(self):
         """A repeater drops any request whose timestamp is not greater than the last

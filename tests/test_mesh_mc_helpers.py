@@ -767,6 +767,18 @@ class MeshMcPathHelperTests(unittest.TestCase):
         self.assertEqual(mesh_mc._validate_remote_admin_command("set loop.detect minimal"), "set loop.detect minimal")
         self.assertEqual(mesh_mc._validate_remote_admin_command("OMCOLLECT"), "OMCOLLECT")
 
+    def test_login_clock_floor_considers_commands_already_sent(self):
+        """If a command for this radio was stamped ahead of `now` (host clock stepped
+        back), the pre-login radio clock must still be newer, or the repeater drops
+        the login as a replay and every settings read times out."""
+        import asyncio
+        cfg = "r_login_floor"
+        mesh_mc._remote_login_clock_floor.pop(cfg, None)
+        mesh_mc._remote_cmd_clock_floor[(cfg, "k" * 64)] = 10_000
+        ts = asyncio.run(mesh_mc._sync_remote_login_clock(mock.Mock(), cfg))
+        self.assertGreater(ts, 10_000, "the login stamp must beat the command floor")
+        mesh_mc._remote_cmd_clock_floor.pop((cfg, "k" * 64), None)
+
     def test_remote_command_timestamp_is_monotonic_per_target(self):
         """A repeater drops any request whose timestamp is not greater than the last
         one it accepted. The login is stamped by the radio (now+5) and commands by
@@ -793,7 +805,8 @@ class MeshMcPathHelperTests(unittest.TestCase):
         import time as _time
         now = int(_time.time())
         self.assertEqual(mesh_mc._validate_remote_admin_command(f"time {now + 60}"), f"time {now + 60}")
-        for bad in ("time", "time abc", "time -1", "time 12345", f"time {now + 900 * 86400}"):
+        for bad in ("time", "time abc", "time -1", "time 12345",
+                    f"time {now + 2 * 86400}", f"time {now + 900 * 86400}"):
             with self.assertRaises(ValueError, msg=bad):
                 mesh_mc._validate_remote_admin_command(bad)
 

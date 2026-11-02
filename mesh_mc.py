@@ -5250,7 +5250,13 @@ async def _sync_remote_login_clock(mc, config_id):
     # command cannot make the next login look like a replay to older RPTR builds.
     now = int(time.time()) + 5
     prev = _remote_login_clock_floor.get(config_id, 0)
-    ts = max(now, prev + 1)
+    # A command stamped earlier for one of this radio's targets can be ahead of `now`
+    # (the host clock moved backwards, or that target's floor was seeded high). The
+    # login must still be newer than anything the repeater has seen from us, or it is
+    # dropped as a replay and every setting read fails with a bare timeout.
+    futures = [ts for (cid, _key), ts in _remote_cmd_clock_floor.items() if cid == config_id]
+    floor = max(futures) if futures else 0
+    ts = max(now, prev + 1, floor + 1)
     _remote_login_clock_floor[config_id] = ts
     try:
         await mc.commands.set_time(ts)
@@ -5437,8 +5443,11 @@ def _validate_remote_admin_command(command):
         if not arg.isdigit():
             raise ValueError("time takes a UTC epoch in seconds")
         epoch = int(arg)
-        if not (1700000000 <= epoch <= int(time.time()) + 400 * 86400):
-            raise ValueError("time epoch is out of the plausible range")
+        # Ceiling of one day on purpose: a repeater REFUSES to move its clock
+        # backwards, so a value pushed years ahead can only be undone with
+        # `clkreboot`. One day is enough for any real correction.
+        if not (1700000000 <= epoch <= int(time.time()) + 86400):
+            raise ValueError("time epoch is out of the plausible range (one day ahead at most)")
         return cmd
     if lower in exact or any(lower.startswith(prefix) for prefix in prefixes):
         return cmd

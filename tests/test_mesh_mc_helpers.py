@@ -767,6 +767,21 @@ class MeshMcPathHelperTests(unittest.TestCase):
         self.assertEqual(mesh_mc._validate_remote_admin_command("set loop.detect minimal"), "set loop.detect minimal")
         self.assertEqual(mesh_mc._validate_remote_admin_command("OMCOLLECT"), "OMCOLLECT")
 
+    def test_remote_admin_command_accepts_a_plausible_epoch_only(self):
+        """`time <epoch>` is how a repeater with an unset clock is fixed.
+
+        `clock sync` compares against the timestamp carried by the incoming packet,
+        which is 0 on a local console, so the firmware always answers
+        "ERR: clock cannot go backwards". `time` compares against the repeater's own
+        clock instead. The allowlist must accept a sane epoch and nothing else.
+        """
+        import time as _time
+        now = int(_time.time())
+        self.assertEqual(mesh_mc._validate_remote_admin_command(f"time {now + 60}"), f"time {now + 60}")
+        for bad in ("time", "time abc", "time -1", "time 12345", f"time {now + 900 * 86400}"):
+            with self.assertRaises(ValueError, msg=bad):
+                mesh_mc._validate_remote_admin_command(bad)
+
     def test_rc_collector_import_stores_identity_obs_only(self):
         with mc_connections_lock:
             mc_connections["mc1"] = {

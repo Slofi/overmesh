@@ -5388,6 +5388,20 @@ def _validate_remote_admin_command(command):
         "region home ",
         "region default ",
     )
+    # `clock sync` cannot fix a repeater whose clock is unset: the firmware only
+    # accepts a timestamp newer than the one carried by the incoming packet, and a
+    # local console carries none (0), so it always answers
+    # "ERR: clock cannot go backwards" (CommonCLI.cpp). `time <epoch>` compares
+    # against the REPEATER's own clock instead, so it is the command that actually
+    # sets a repeaters whose clock reads 0. Only a plausible epoch is accepted.
+    if lower.startswith("time "):
+        arg = lower[5:].strip()
+        if not arg.isdigit():
+            raise ValueError("time takes a UTC epoch in seconds")
+        epoch = int(arg)
+        if not (1700000000 <= epoch <= int(time.time()) + 400 * 86400):
+            raise ValueError("time epoch is out of the plausible range")
+        return cmd
     if lower in exact or any(lower.startswith(prefix) for prefix in prefixes):
         return cmd
     raise ValueError("Command is not in the safe remote-admin allowlist")

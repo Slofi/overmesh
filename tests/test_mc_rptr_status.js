@@ -26,7 +26,14 @@ function extract(name, endMarker = '\n  }') {
   return src.slice(start, end + endMarker.length);
 }
 
+const CONTACTS = {
+  ba9053aa: { id: 'ba9053aa4a70', long_name: 'SI-LJ-Trnovo' },
+  c0983ed3: { id: 'c0983ed3b1c2', long_name: 'SI-LJ-Vic' },
+};
+
 const code = [
+  'var _mcRemoteManage = { radioId: "r1" };',
+  'function findMcContactByKeyPrefix(prefix) { return CONTACTS[String(prefix || "").toLowerCase().slice(0, 8)] || null; }',
   extract('_mcRemoteClockFromBasic'),
   extract('_mcRemoteTelemetryValue'),
   extract('_mcFmtSpan'),
@@ -38,7 +45,7 @@ const code = [
   'return _mcRemoteStatusBlockHtml;',
 ].join('\n');
 
-const render = new Function(code)();
+const render = new Function('CONTACTS', code)(CONTACTS);
 
 const payload = {
   basic: { ok: true, data: { tag: '5ddbe86a', data: '8e785b660000000000000000' } },
@@ -59,6 +66,8 @@ const payload = {
     neighbours: [
       { pubkey: 'ba9053aa', secs_ago: 82936, snr: -1.5 },
       { pubkey: 'c0983ed3', secs_ago: 534370, snr: 12.5 },
+      { pubkey: 'ead8e0ae', secs_ago: 891 * 86400 + 17 * 3600, snr: -6.75 },
+      { pubkey: '9da4f7b6', secs_ago: 897 * 86400 + 7 * 3600, snr: -0.5 },
     ],
   } },
   read_at: Math.floor(Date.now() / 1000) - 540,
@@ -82,6 +91,28 @@ assert(html.includes('1174') && html.includes('queue full 0'), 'errors and the q
 assert(html.includes('10.2 °C'), 'telemetry temperature must be shown');
 assert(html.includes('SI-LJ-Trnovo II · Ljubljana - Trnovo'), 'owner name and text must be shown');
 assert(html.includes('ba9053aa') && html.includes('12.5 dB') && html.includes('6d'), 'neighbours must be listed with SNR and age');
+
+// --- a neighbour we know by name shows the name in bold with the prefix under it
+assert(html.includes('<span class="rptr-neigh-name">SI-LJ-Trnovo</span>'),
+  'a known neighbour must show its name as the headline');
+assert(html.includes('rptr-neigh-id">ba9053aa<'),
+  'the prefix must still be shown underneath the name');
+assert(html.includes('<span class="rptr-neigh-name">SI-LJ-Vic</span>'), 'every known neighbour gets its name');
+// --- an unknown prefix stays the headline instead of being called "unknown"
+assert(html.includes('rptr-neigh-name-raw">ead8e0ae<'),
+  'an unresolved neighbour must show its prefix as the headline');
+assert(!/ead8e0ae<[^]*?rptr-neigh-id">ead8e0ae</.test(html),
+  'an unresolved neighbour must not print its prefix twice');
+// --- an age longer than the uptime cannot be real: the entry predates the clock
+// being set (the live repeater reports 884d on a 17d uptime), so it is marked
+assert(html.includes('rptr-neigh-clock'), 'an impossible neighbour age must be marked, not passed off as a measurement');
+const freshNeigh = JSON.parse(JSON.stringify(payload));
+freshNeigh.neighbours.data.neighbours = [{ pubkey: 'ba9053aa', secs_ago: 60, snr: -1.5 }];
+assert(!render(freshNeigh).includes('rptr-neigh-clock'), 'a plausible age must not be marked');
+
+// --- the four live neighbours of the real repeater are all present, with their ages
+assert(html.includes('891d 17h') && html.includes('897d 7h'),
+  'long ages are formatted the same way as short ones');
 assert(html.includes('read 9m ago'), 'the block must say how old the reading is');
 
 // the unset repeater clock is the important warning: it explains why a login fails
@@ -125,6 +156,15 @@ assert(!badHtml.includes('cannot succeed'), 'a malformed clock reply must not ra
 const shortBasic = JSON.parse(JSON.stringify(payload));
 shortBasic.basic = { ok: true, data: { tag: 'x', data: 'abcd' } };
 assert(!render(shortBasic).includes('not set'), 'a short clock reply must be ignored, not guessed at');
+
+// --- a neighbour name is contact text too and cannot inject markup
+const nastyNeighbour = JSON.parse(JSON.stringify(payload));
+nastyNeighbour.neighbours.data.neighbours[0].pubkey = 'ba9053aa';
+CONTACTS.ba9053aa = { id: 'ba9053aa4a70', long_name: '<img src=x onerror=alert(1)>' };
+const nastyNeighbourHtml = render(nastyNeighbour);
+assert(!nastyNeighbourHtml.includes('<img src=x'), 'neighbour names must be escaped');
+assert(nastyNeighbourHtml.includes('&lt;img'), 'escaped neighbour names must be visible');
+CONTACTS.ba9053aa = { id: 'ba9053aa4a70', long_name: 'SI-LJ-Trnovo' };
 
 // --- contact-supplied text cannot inject markup
 const nasty = JSON.parse(JSON.stringify(payload));

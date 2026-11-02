@@ -1179,10 +1179,21 @@
     .rptr-cell-h { font-size: 10px; color: var(--muted); margin-top: 1px; }
     .rptr-status-neigh { margin-top: 8px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
     .rptr-neigh-chip {
-      display: inline-flex; align-items: center; gap: 4px; font-size: 11px;
-      background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 1px 7px;
+      display: inline-flex; flex-direction: column; gap: 0; font-size: 11px; line-height: 1.25;
+      background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 3px 8px;
+      max-width: 200px;
     }
+    .rptr-neigh-name {
+      font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .rptr-neigh-name-raw { font-family: monospace; font-weight: 600; font-size: 11px; }
+    .rptr-neigh-sub {
+      display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap;
+      font-size: 10px; color: var(--muted);
+    }
+    .rptr-neigh-id { font-family: monospace; font-size: 9px; opacity: 0.9; }
     .rptr-neigh-age { color: var(--muted); font-size: 10px; }
+    .rptr-neigh-clock { color: #fbbf24; font-size: 9px; cursor: help; }
     .rptr-status-warn {
       margin-top: 8px; border: 1px solid rgba(245,158,11,0.45); background: rgba(245,158,11,0.10);
       color: #fbbf24; border-radius: 6px; padding: 6px 8px; font-size: 11px; line-height: 1.45;

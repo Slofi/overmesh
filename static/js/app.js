@@ -17007,12 +17007,32 @@ if (targetEl) {
       ? [payload.owner.data.name, payload.owner.data.owner].filter(Boolean).join(' · ')
       : '';
     const neighbours = payload.neighbours?.ok && payload.neighbours.data?.neighbours;
+    // Neighbours come back as pubkey prefixes only, so resolve each one to a known
+    // contact: a name on top (bold), the prefix underneath in smaller type, then the
+    // signal and age. An unknown prefix stays the headline instead of "unknown".
     const neighbourRows = Array.isArray(neighbours) && neighbours.length
-      ? neighbours.map(n => `<span class="rptr-neigh-chip" title="last heard ${_mcFmtSpan(n.secs_ago)} ago">
-          <span class="mc-hop-prefix">${escHtml(String(n.pubkey || '?').slice(0, 8))}</span>
-          ${n.snr != null ? escHtml(String(n.snr)) + ' dB' : '-'}
-          <span class="rptr-neigh-age">${escHtml(_mcFmtSpan(n.secs_ago))}</span>
-        </span>`).join('')
+      ? neighbours.map(n => {
+          const id = String(n.pubkey || '?').slice(0, 8);
+          const contact = _mcRemoteManage
+            ? findMcContactByKeyPrefix(String(n.pubkey || ''), _mcRemoteManage.radioId)
+            : null;
+          const name = contact ? (contact.long_name || contact.name || contact.id || '') : '';
+          const snr = n.snr != null ? `${escHtml(String(n.snr))} dB` : '-';
+          // A neighbour cannot have been heard before this boot, so an age longer
+          // than the uptime means its timestamp came from the clock before it was
+          // set. That is the normal state of SI-LJ-Trnovo II today ("884d 23h" on a
+          // 17-day uptime), and it should not be read as a real measurement.
+          const staleClock = uptime > 0 && Number(n.secs_ago) > uptime;
+          const age = escHtml(_mcFmtSpan(n.secs_ago))
+            + (staleClock ? ' <span class="rptr-neigh-clock" title="longer than this repeater uptime: timestamped before its clock was set">&#9888;</span>' : '');
+          const title = `${name ? `${name} · ` : ''}${id} · last heard ${_mcFmtSpan(n.secs_ago)} ago${staleClock ? ' (before its clock was set)' : ''}`;
+          const sub = `<span class="rptr-neigh-id">${escHtml(id)}</span>${snr} · <span class="rptr-neigh-age">${age}</span>`;
+          return `<span class="rptr-neigh-chip" title="${escHtml(title)}">
+            ${name
+              ? `<span class="rptr-neigh-name">${escHtml(name)}</span><span class="rptr-neigh-sub">${sub}</span>`
+              : `<span class="rptr-neigh-name rptr-neigh-name-raw">${escHtml(id)}</span><span class="rptr-neigh-sub">${snr} · <span class="rptr-neigh-age">${age}</span></span>`}
+          </span>`;
+        }).join('')
       : '<span class="rptr-status-empty">none reported</span>';
 
     return `<div class="rptr-status">

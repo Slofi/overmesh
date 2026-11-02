@@ -16705,6 +16705,161 @@ if (targetEl) {
     </details>`;
   }
 
+  // ---- RPTR status block (S479) -------------------------------------------
+  // Everything here comes from reads a repeater answers as a GUEST (binary
+  // STATUS / OWNER / TELEMETRY / NEIGHBOURS and the anonymous clock request), so
+  // the block is useful without a password. Field names and the clock layout were
+  // confirmed against a live repeater (SI-LJ-Trnovo II) rather than assumed.
+  function _mcRemoteStatusCacheKey(pubkeyPrefix, radioId) {
+    return `rptr_status:${radioId || ''}:${(pubkeyPrefix || '').slice(0, 12)}`;
+  }
+
+  function _mcRemoteLoadStatus() {
+    if (!_mcRemoteManage) return null;
+    try {
+      return JSON.parse(localStorage.getItem(_mcRemoteStatusCacheKey(_mcRemoteManage.pubkeyPrefix, _mcRemoteManage.radioId)) || 'null');
+    } catch { return null; }
+  }
+
+  function _mcRemoteSaveStatus(data) {
+    if (!_mcRemoteManage || !data) return;
+    const picked = {
+      basic: data.basic || null,
+      status: data.status || null,
+      telemetry: data.telemetry || null,
+      neighbours: data.neighbours || null,
+      owner: data.owner || null,
+      read_at: Math.floor(Date.now() / 1000),
+    };
+    try {
+      localStorage.setItem(_mcRemoteStatusCacheKey(_mcRemoteManage.pubkeyPrefix, _mcRemoteManage.radioId), JSON.stringify(picked));
+    } catch { /* storage full: the block still renders this session */ }
+    return picked;
+  }
+
+  function _mcFmtSpan(seconds) {
+    const total = Math.max(0, Math.floor(Number(seconds) || 0));
+    const d = Math.floor(total / 86400);
+    const h = Math.floor((total % 86400) / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    if (d) return `${d}d ${h}h`;
+    if (h) return `${h}h ${m}m`;
+    if (m) return `${m}m ${s}s`;
+    return `${s}s`;
+  }
+
+  // The anonymous "basic" reply carries the repeater's clock so a client can
+  // compute drift: bytes 0-3 echo our tag, 4-7 are the RPTR epoch (LE), byte 8 is
+  // a feature mask (0x01 RS232 bridge, 0x03 ESP-NOW bridge, 0x80 forwarding off).
+  function _mcRemoteClockFromBasic(basic) {
+    const hex = String(basic?.ok ? (basic.data?.data || basic.data || '') : '');
+    const bytes = hex.match(/../g) || [];
+    if (bytes.length < 9) return null;
+    const clock = (parseInt(bytes[4], 16) | (parseInt(bytes[5], 16) << 8) | (parseInt(bytes[6], 16) << 16) | (parseInt(bytes[7], 16) << 24)) >>> 0;
+    const features = parseInt(bytes[8], 16) || 0;
+    return { clock, features };
+  }
+
+  function _mcRemoteTelemetryValue(telemetry, kind) {
+    const list = telemetry?.ok ? telemetry.data : null;
+    if (!Array.isArray(list)) return null;
+    const hit = list.find(v => String(v?.type || '').toLowerCase() === kind);
+    return hit && hit.value != null ? hit.value : null;
+  }
+
+  function _mcRemoteStatusBlockHtml(payload) {
+    const head = (extra = '') => `<div class="rptr-status-head">
+        <span class="rptr-status-title">RPTR status</span>
+        <span class="rptr-status-when">${escHtml(extra)}</span>
+        <button class="btn" style="margin-left:auto;padding:2px 9px;font-size:11px" onclick="mcRemoteRead(false)" title="Read status, owner, telemetry and neighbours (no login needed)">Read status</button>
+      </div>`;
+    if (!payload || !payload.status) {
+      return `<div class="rptr-status">${head('not read yet')}
+        <div class="rptr-status-empty">No status read yet. Press <b>Read status</b> (works without a password) or <b>Login + Read</b>.</div>
+      </div>`;
+    }
+    const st = (payload.status?.ok && payload.status.data) ? payload.status.data : null;
+    if (!st) {
+      const err = payload.status?.error || 'no answer';
+      return `<div class="rptr-status">${head('read failed')}
+        <div class="rptr-status-empty">The repeater did not answer the status request (${escHtml(err)}).</div>
+      </div>`;
+    }
+    const when = payload.read_at ? `read ${senseTimeAgo(payload.read_at)}` : 'cached';
+    const cell = (label, value, hint = '') => `<div class="rptr-cell">
+        <div class="rptr-cell-k">${escHtml(label)}</div>
+        <div class="rptr-cell-v">${value}</div>
+        ${hint ? `<div class="rptr-cell-h">${escHtml(hint)}</div>` : ''}
+      </div>`;
+    const num = (v) => (v == null ? '-' : String(v));
+    const uptime = Number(st.uptime) || 0;
+    const pct = (secs) => uptime > 0 ? `${((Number(secs) || 0) / uptime * 100).toFixed(2)} %` : '';
+    const bat = st.bat != null ? `${(Number(st.bat) / 1000).toFixed(2)} V` : '-';
+    const temp = _mcRemoteTelemetryValue(payload.telemetry, 'temperature');
+    const volt = _mcRemoteTelemetryValue(payload.telemetry, 'voltage');
+    const clockInfo = _mcRemoteClockFromBasic(payload.basic);
+    const now = Math.floor(Date.now() / 1000);
+    let clockCell = '-';
+    let clockHint = '';
+    const warns = [];
+    if (clockInfo) {
+      if (!clockInfo.clock) {
+        clockCell = 'not set';
+        clockHint = 'epoch 0';
+        warns.push('The repeater clock is <b>not set</b>. The admin login is timestamped, so <b>settings reads and writes cannot succeed</b> until the clock is set (on site, or with a console on the node). Status, owner, telemetry and neighbours above are unaffected.');
+      } else {
+        const drift = clockInfo.clock - now;
+        clockCell = new Date(clockInfo.clock * 1000).toISOString().slice(0, 16).replace('T', ' ');
+        clockHint = drift === 0 ? 'in sync' : `${drift < 0 ? '-' : '+'}${_mcFmtSpan(Math.abs(drift))} vs here`;
+        if (Math.abs(drift) > 300) {
+          warns.push(`The repeater clock is <b>${_mcFmtSpan(Math.abs(drift))} ${drift < 0 ? 'behind' : 'ahead of'}</b> this host. The admin login is timestamped and older builds reject a skewed stamp, so settings writes may fail until it is synced.`);
+        }
+      }
+      if (clockInfo.features & 0x80) warns.push('<b>Forwarding is switched off</b> on this repeater (it is in a passive role).');
+      const bridge = clockInfo.features & 0x03;
+      if (bridge) warns.push(`Bridge enabled (${bridge === 1 ? 'RS232' : bridge === 3 ? 'ESP-NOW' : 'type ' + bridge}).`);
+    }
+    const ownerText = payload.owner?.ok && payload.owner.data
+      ? [payload.owner.data.name, payload.owner.data.owner].filter(Boolean).join(' · ')
+      : '';
+    const neighbours = payload.neighbours?.ok && payload.neighbours.data?.neighbours;
+    const neighbourRows = Array.isArray(neighbours) && neighbours.length
+      ? neighbours.map(n => `<span class="rptr-neigh-chip" title="last heard ${_mcFmtSpan(n.secs_ago)} ago">
+          <span class="mc-hop-prefix">${escHtml(String(n.pubkey || '?').slice(0, 8))}</span>
+          ${n.snr != null ? escHtml(String(n.snr)) + ' dB' : '-'}
+          <span class="rptr-neigh-age">${escHtml(_mcFmtSpan(n.secs_ago))}</span>
+        </span>`).join('')
+      : '<span class="rptr-status-empty">none reported</span>';
+
+    return `<div class="rptr-status">
+      ${head(when)}
+      ${ownerText ? `<div class="rptr-status-owner">${escHtml(ownerText)}</div>` : ''}
+      <div class="rptr-status-grid">
+        ${cell('Uptime', escHtml(_mcFmtSpan(uptime)))}
+        ${cell('Battery', escHtml(bat), volt != null ? `telemetry ${Number(volt).toFixed(2)} V` : '')}
+        ${cell('Noise floor', st.noise_floor != null ? `${escHtml(num(st.noise_floor))} dBm` : '-', st.noise_floor != null ? (st.noise_floor > -100 ? 'noisy band' : 'quiet band') : '')}
+        ${cell('Last signal', st.last_rssi != null ? `${escHtml(num(st.last_rssi))} dBm` : '-', st.last_snr != null ? `${escHtml(num(st.last_snr))} dB SNR` : '')}
+        ${cell('Clock', escHtml(clockCell), escHtml(clockHint))}
+        ${temp != null ? cell('Temperature', `${Number(temp).toFixed(1)} °C`) : ''}
+        ${cell('TX airtime', escHtml(_mcFmtSpan(st.airtime)), pct(st.airtime))}
+        ${cell('RX airtime', escHtml(_mcFmtSpan(st.rx_airtime)), pct(st.rx_airtime))}
+        ${cell('Sent', escHtml(num(st.nb_sent)), `flood ${escHtml(num(st.sent_flood))} · direct ${escHtml(num(st.sent_direct))}`)}
+        ${cell('Received', escHtml(num(st.nb_recv)), `flood ${escHtml(num(st.recv_flood))} · direct ${escHtml(num(st.recv_direct))}`)}
+        ${cell('Duplicates', `flood ${escHtml(num(st.flood_dups))}`, `direct ${escHtml(num(st.direct_dups))}`)}
+        ${cell('Errors / queue', `${escHtml(num(st.recv_errors))} / ${escHtml(num(st.tx_queue_len))}`, `queue full ${escHtml(num(st.full_evts))}×`)}
+      </div>
+      <div class="rptr-status-neigh"><span class="rptr-cell-k">Neighbours</span> ${neighbourRows}</div>
+      ${warns.length ? warns.map(w => `<div class="rptr-status-warn">${w}</div>`).join('') : ''}
+    </div>`;
+  }
+
+  function _mcRemoteRenderStatusBlock(payload) {
+    const el = document.getElementById('mc-remote-status-block');
+    if (!el) return;
+    el.innerHTML = _mcRemoteStatusBlockHtml(payload);
+  }
+
   function _mcRemoteQuickSettingsHtml() {
     const row = (label, inner, action, refreshCmd) => `
       <div style="display:grid;grid-template-columns:minmax(96px,130px) 1fr auto auto;gap:6px;align-items:end;margin-bottom:8px">
@@ -16723,7 +16878,7 @@ if (targetEl) {
         </div>
         ${row('Name', input('mc-remote-set-name', 180, 'RPTR name', 'maxlength="32"'), "mcRemoteApplySetting('name')", 'get name')}
         ${row('Repeat', `<select id="mc-remote-set-repeat" class="settings-select"><option value="on">On</option><option value="off">Off</option></select>`, "mcRemoteApplySetting('repeat')", 'get repeat')}
-        ${row('Power save', `<select id="mc-remote-set-powersaving" class="settings-select"><option value="off">Off</option><option value="on">On</option></select>`, "mcRemoteApplySetting('powersaving')", 'get powersaving')}
+        ${row('Power save', `<select id="mc-remote-set-powersaving" class="settings-select"><option value="off">Off</option><option value="on">On</option></select>`, "mcRemoteApplySetting('powersaving')", 'powersaving')}
         ${row('TX power', input('mc-remote-set-tx', 82, '1-22', 'type="number" min="1" max="22" step="1"'), "mcRemoteApplySetting('tx')", 'get tx')}
         ${row('Radio', `${input('mc-remote-set-freq', 88, 'MHz', 'type="number" step="0.001"')} ${input('mc-remote-set-bw', 72, 'BW', 'type="number" step="0.1"')} ${input('mc-remote-set-sf', 54, 'SF', 'type="number" min="5" max="12" step="1"')} ${input('mc-remote-set-cr', 54, 'CR', 'type="number" min="5" max="8" step="1"')}`, "mcRemoteApplySetting('radio')", 'get radio')}
         ${row('Position', `${input('mc-remote-set-lat', 106, 'lat', 'type="number" step="0.000001"')} ${input('mc-remote-set-lon', 106, 'lon', 'type="number" step="0.000001"')} <button class="btn" onclick="startMcRemoteMapPick()" title="Pick RPTR position from map">Map</button>`, "mcRemoteApplySetting('position')", 'get lat')}
@@ -16840,12 +16995,9 @@ if (targetEl) {
           Login ${data.login.ok ? 'accepted' : 'failed'}${data.login.ok ? (data.login.is_admin ? ' · admin' : ' · guest/read-only') : ''}
         </div>`
       : '';
+    // The status block (above the login row) owns basic/status/telemetry/neighbours:
+    // a raw JSON dump of those added nothing a person could read.
     el.innerHTML = `${login}
-      ${_mcRemoteSection('Basic', data.basic)}
-      ${_mcRemoteSection('Owner', data.owner)}
-      ${_mcRemoteSection('Status', data.status)}
-      ${_mcRemoteSection('Telemetry', data.telemetry)}
-      ${_mcRemoteSection('Neighbours', data.neighbours)}
       ${_mcRemoteSection('Regions', data.regions)}
       ${_mcRemoteSection('ACL', data.acl)}`;
   }
@@ -17362,6 +17514,7 @@ if (targetEl) {
     const radioName = mcLastStatus[radioId]?.name || mcLastStatus[radioId]?.node_name || radioId;
     body.innerHTML = `
       <div class="modal-node">${escHtml(pubkeyPrefix.slice(0, 12))} via ${escHtml(radioName || 'MC radio')}</div>
+      <div id="mc-remote-status-block"></div>
       <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px">
         <div>
           <label class="settings-label">Login mode</label>
@@ -17411,6 +17564,17 @@ if (targetEl) {
             <option value="get flood.advert.interval">get flood.advert.interval</option>
             <option value="get flood.max">get flood.max</option>
             <option value="get dutycycle">get dutycycle</option>
+            <option value="ver">ver (firmware)</option>
+            <option value="board">board</option>
+            <option value="power">power (battery)</option>
+            <option value="powersaving">powersaving</option>
+            <option value="get public.key">get public.key</option>
+            <option value="get flood.max.advert">get flood.max.advert</option>
+            <option value="get flood.max.unscoped">get flood.max.unscoped</option>
+            <option value="get allow.read.only">get allow.read.only</option>
+            <option value="get pwrmgt.support">get pwrmgt.support</option>
+            <option value="get pwrmgt.bootreason">get pwrmgt.bootreason (why it last rebooted)</option>
+            <option value="get pwrmgt.bootmv">get pwrmgt.bootmv (battery at boot)</option>
             <option value="get multi.acks">get multi.acks</option>
             <option value="get owner.info">get owner.info</option>
             <option value="neighbors">neighbors</option>
@@ -17440,6 +17604,7 @@ if (targetEl) {
     const autoClockEl = document.getElementById('mc-remote-auto-clock-sync');
     if (autoClockEl) autoClockEl.checked = _mcRemoteAutoClockSyncEnabled();
     _mcRemotePrefillFromCache();
+    _mcRemoteRenderStatusBlock(_mcRemoteLoadStatus());
     _mcRemoteLoadOmChannelList();
     document.getElementById('action-modal').classList.add('open');
   }
@@ -17477,6 +17642,7 @@ if (targetEl) {
         return;
       }
       if (!loginOnly) {
+        _mcRemoteRenderStatusBlock(_mcRemoteSaveStatus(d));
         _mcRemoteRenderResult(d);
         if (login && d.login?.ok) mcRemoteReadAll();
       }

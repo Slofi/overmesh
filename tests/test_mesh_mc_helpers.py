@@ -750,7 +750,13 @@ class MeshMcPathHelperTests(unittest.TestCase):
 
     def test_remote_admin_command_allowlist_normalizes_safe_commands(self):
         self.assertEqual(mesh_mc._validate_remote_admin_command("  get   name  "), "get name")
-        self.assertEqual(mesh_mc._validate_remote_admin_command("get powersaving"), "get powersaving")
+        # `powersaving` is the query form the repeater firmware implements; there is
+        # no `get powersaving` in CommonCLI's get list (checked in the firmware source
+        # 2026-11-02), so that spelling is rejected instead of silently erroring on
+        # the far end. The UI's Power save refresh button uses the bare command.
+        self.assertEqual(mesh_mc._validate_remote_admin_command("powersaving"), "powersaving")
+        with self.assertRaises(ValueError):
+            mesh_mc._validate_remote_admin_command("get powersaving")
         self.assertEqual(mesh_mc._validate_remote_admin_command("set repeat on"), "set repeat on")
         self.assertEqual(mesh_mc._validate_remote_admin_command("advert.zerohop"), "advert.zerohop")
         self.assertEqual(mesh_mc._validate_remote_admin_command("clock sync"), "clock sync")

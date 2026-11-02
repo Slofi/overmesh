@@ -12566,12 +12566,16 @@ if (targetEl) {
   // built by clicking repeaters instead of only by searching for names. The map
   // is created once per open and survives hop edits: the list, the candidates,
   // the info card and the action buttons render into their own slots.
-  let _mcRouteMap = null;       // Leaflet instance inside the modal
-  let _mcRouteMapView = null;   // {lat,lng,zoom}, kept across re-opens this session
-  let _mcRouteOverlays = [];    // markers + polyline currently drawn
+  let _mcRouteMap = null;         // Leaflet instance inside the modal
+  let _mcRouteMapView = null;     // {lat,lng,zoom}, kept across re-opens this session
+  let _mcRouteMarkers = new Map();// contact key -> marker, reused across edits
+  let _mcRouteTargetMarker = null;
+  let _mcRouteLine = null;
 
   function _mcRouteDropMap() {
-    _mcRouteOverlays = [];
+    _mcRouteMarkers = new Map();
+    _mcRouteTargetMarker = null;
+    _mcRouteLine = null;
     if (_mcRouteMap) {
       try { _mcRouteMap.remove(); } catch(e) {}
       _mcRouteMap = null;
@@ -12631,7 +12635,7 @@ if (targetEl) {
             <option value="2"${mode === 2 ? ' selected' : ''}>3B/hop - most specific</option>
           </select>
         </div>
-        <div style="font-size:11px;color:var(--muted);max-width:300px">Uses ${escHtml(_mcPathHashModeLabel(st.pathHashMode))} when saving this stored route. Older radios may fall back.</div>
+        <div style="font-size:11px;color:var(--muted);max-width:300px">Uses <span id="mc-route-hashmode-hint">${escHtml(_mcPathHashModeLabel(st.pathHashMode))}</span> when saving this stored route. Older radios may fall back.</div>
       </div>
       <div class="mc-route-picker-head">
         <button class="btn" id="mc-route-picker-toggle" onclick="mcRouteTogglePicker()">${st.picker ? 'Hide map picker' : 'Pick on map'}</button>
@@ -12846,7 +12850,14 @@ if (targetEl) {
     try { _mcRouteMap.attributionControl.setPrefix(false); } catch(e) {}
     const key = (() => { try { return localStorage.getItem('mapTileLayer') || DEFAULT_TILE_LAYER; } catch(e) { return DEFAULT_TILE_LAYER; } })();
     try { _applyTileLayer(_mcRouteMap, null, key); } catch(e) {}
-    _mcRouteMap.on('click', () => mcRouteClearPick());
+    _mcRouteMap.on('click', (ev) => {
+      // A click that lands on drawn geometry (the draft route line) is not an
+      // "empty map" click: Leaflet still delivers it here, so filter the target
+      // rather than relying on bubblingMouseEvents alone.
+      const el = ev?.originalEvent?.target;
+      if (el && typeof el.closest === 'function' && el.closest('path')) return;
+      mcRouteClearPick();
+    });
     _mcRouteMap.on('moveend', () => {
       if (!_mcRouteMap) return;
       const c = _mcRouteMap.getCenter();
@@ -12874,34 +12885,57 @@ if (targetEl) {
 
   function _mcRouteSyncMapMarkers() {
     if (!_mcRouteMap || !_mcRouteEditor) return;
-    _mcRouteOverlays.forEach(layer => { try { _mcRouteMap.removeLayer(layer); } catch(e) {} });
-    _mcRouteOverlays = [];
     const st = _mcRouteEditor;
 
     const target = mcContacts[st.radioId]?.[st.contactId];
     const tLat = target?.latitude ?? target?.lat;
     const tLon = target?.longitude ?? target?.lon;
     if (tLat != null && tLon != null) {
-      const marker = L.marker([tLat, tLon], { icon: _mcRouteTargetIcon(), title: st.contactName });
-      marker.bindTooltip(st.contactName, { direction: 'right', className: 'map-label', offset: [8, 0] });
-      marker.addTo(_mcRouteMap);
-      _mcRouteOverlays.push(marker);
+      if (_mcRouteTargetMarker) {
+        _mcRouteTargetMarker.setLatLng([tLat, tLon]);
+      } else {
+        _mcRouteTargetMarker = L.marker([tLat, tLon], { icon: _mcRouteTargetIcon(), title: st.contactName });
+        _mcRouteTargetMarker.bindTooltip(st.contactName, { direction: 'right', className: 'map-label', offset: [8, 0] });
+        _mcRouteTargetMarker.addTo(_mcRouteMap);
+      }
+    } else if (_mcRouteTargetMarker) {
+      try { _mcRouteMap.removeLayer(_mcRouteTargetMarker); } catch(e) {}
+      _mcRouteTargetMarker = null;
     }
 
+    // Markers are created once and then re-iconed: a hop edit must not tear down
+    // and rebuild a hundred markers, and the hover tooltip must not blink.
     const pickedKey = String(st.pickTarget || '').toLowerCase();
+    const wanted = new Set();
     _mcRouteRepeaterList().forEach(c => {
       const key = c.full_key || c.id || '';
       const lat = c.latitude ?? c.lat;
       const lon = c.longitude ?? c.lon;
+      if (!key) return;
+      wanted.add(key);
       const order = _mcRouteSelectedIndex(key);
       const isPicked = pickedKey && String(key).toLowerCase().startsWith(pickedKey);
       const icon = order >= 0 ? _mcRoutePickIcon(order) : makeMcIcon(!!isPicked, c.type ?? 0);
-      const marker = L.marker([lat, lon], { icon, title: c.long_name || c.id || key });
       const hopMeta = order >= 0 ? `hop ${order + 1}` : 'not in path';
-      marker.bindTooltip(`${c.long_name || c.id || key} · ${hopMeta}`, { direction: 'right', className: 'map-label', offset: [8, 0] });
+      const tooltip = `${c.long_name || c.id || key} · ${hopMeta}`;
+      const existing = _mcRouteMarkers.get(key);
+      if (existing) {
+        existing.setLatLng([lat, lon]);
+        existing.setIcon(icon);
+        if (typeof existing.setTooltipContent === 'function') existing.setTooltipContent(tooltip);
+        return;
+      }
+      const marker = L.marker([lat, lon], { icon, title: tooltip });
+      marker.bindTooltip(tooltip, { direction: 'right', className: 'map-label', offset: [8, 0] });
       marker.on('click', () => mcRoutePickRepeater(key));
       marker.addTo(_mcRouteMap);
-      _mcRouteOverlays.push(marker);
+      _mcRouteMarkers.set(key, marker);
+    });
+    Array.from(_mcRouteMarkers.keys()).forEach(key => {
+      if (wanted.has(key)) return;
+      const marker = _mcRouteMarkers.get(key);
+      try { if (marker) _mcRouteMap.removeLayer(marker); } catch(e) {}
+      _mcRouteMarkers.delete(key);
     });
 
     // Draft route, drawn as it is being chosen: our radio -> hops in order -> target.
@@ -12916,9 +12950,18 @@ if (targetEl) {
     });
     if (tLat != null && tLon != null) line.push([tLat, tLon]);
     if (line.length > 1) {
-      const poly = L.polyline(line, { color: '#f59e0b', weight: 3, dashArray: '6,5', opacity: 0.9 });
-      poly.addTo(_mcRouteMap);
-      _mcRouteOverlays.push(poly);
+      if (_mcRouteLine) {
+        _mcRouteLine.setLatLngs(line);
+      } else {
+        // bubblingMouseEvents:false keeps a click on the line from reaching the
+        // map's own click handler, which would treat it as "empty map" and pull the
+        // just-added hop back out.
+        _mcRouteLine = L.polyline(line, { color: '#f59e0b', weight: 3, dashArray: '6,5', opacity: 0.9, bubblingMouseEvents: false });
+        _mcRouteLine.addTo(_mcRouteMap);
+      }
+    } else if (_mcRouteLine) {
+      try { _mcRouteMap.removeLayer(_mcRouteLine); } catch(e) {}
+      _mcRouteLine = null;
     }
   }
 
@@ -12995,6 +13038,8 @@ if (targetEl) {
     if (!_mcRouteEditor) return;
     const mode = Number(value);
     _mcRouteEditor.pathHashMode = Number.isFinite(mode) ? Math.max(0, Math.min(2, mode)) : 2;
+    const hint = document.getElementById('mc-route-hashmode-hint');
+    if (hint) hint.textContent = _mcPathHashModeLabel(_mcRouteEditor.pathHashMode);
   }
 
   function mcRouteAddHop(prefix, source = 'list') {
@@ -15313,9 +15358,16 @@ if (targetEl) {
     return rows.join('');
   }
 
+  function _mcAltCopyPosition(entry, copy) {
+    const all = Array.isArray(entry?.rx_copies) ? entry.rx_copies : [];
+    const idx = all.indexOf(copy);
+    return idx >= 0 ? idx + 1 : null;
+  }
+
   function _mcAltPathsHtml(entry, entryIdx) {
     const copies = _mcAltPathCopies(entry);
     if (!copies.length) return '';
+    const total = Array.isArray(entry?.rx_copies) ? entry.rx_copies.length : copies.length + 1;
     const groups = copies.map((copy, i) => {
       const hops = copy.path_len != null ? mcPathHopLabel(Number(copy.path_len)) : 'unknown hops';
       const bytes = copy.path_hash_size != null ? `${copy.path_hash_size}B/hop` : null;
@@ -15326,7 +15378,10 @@ if (targetEl) {
       const meta = [hops, bytes, rssi, snr, route, when].filter(Boolean).join(' · ');
       return `<div class="mc-alt-copy">
         <div class="mc-alt-copy-head">
-          <span class="mc-alt-copy-title">Copy ${i + 2} of ${copies.length + 1}</span>
+          <span class="mc-alt-copy-title">${(() => {
+            const pos = _mcAltCopyPosition(entry, copy);
+            return pos ? `Copy ${pos} of ${total}` : `Alternate ${i + 1} of ${copies.length}`;
+          })()}</span>
           <span class="mc-alt-copy-meta">${escHtml(meta)}</span>
         </div>
         ${_mcAltCopyHopsHtml(copy, entry, entryIdx, i)}
@@ -16753,9 +16808,14 @@ if (targetEl) {
   // compute drift: bytes 0-3 echo our tag, 4-7 are the RPTR epoch (LE), byte 8 is
   // a feature mask (0x01 RS232 bridge, 0x03 ESP-NOW bridge, 0x80 forwarding off).
   function _mcRemoteClockFromBasic(basic) {
-    const hex = String(basic?.ok ? (basic.data?.data || basic.data || '') : '');
-    const bytes = hex.match(/../g) || [];
-    if (bytes.length < 9) return null;
+    if (!basic?.ok) return null;
+    const raw = basic.data && typeof basic.data === 'object' ? basic.data.data : basic.data;
+    const hex = typeof raw === 'string' ? raw.trim() : '';
+    // 9 bytes minimum (4 tag + 4 clock + 1 features); anything else is not a
+    // basic reply and must not be guessed at, or a parse miss turns into a
+    // false "clock not set" warning.
+    if (!/^[0-9a-fA-F]{18,}$/.test(hex)) return null;
+    const bytes = hex.match(/../g);
     const clock = (parseInt(bytes[4], 16) | (parseInt(bytes[5], 16) << 8) | (parseInt(bytes[6], 16) << 16) | (parseInt(bytes[7], 16) << 24)) >>> 0;
     const features = parseInt(bytes[8], 16) || 0;
     return { clock, features };
@@ -16810,7 +16870,7 @@ if (targetEl) {
         warns.push('The repeater clock is <b>not set</b>. The admin login is timestamped, so <b>settings reads and writes cannot succeed</b> until the clock is set (on site, or with a console on the node). Status, owner, telemetry and neighbours above are unaffected.');
       } else {
         const drift = clockInfo.clock - now;
-        clockCell = new Date(clockInfo.clock * 1000).toISOString().slice(0, 16).replace('T', ' ');
+        clockCell = [_formatAppDate(clockInfo.clock), _formatAppTime(clockInfo.clock)].filter(Boolean).join(' ') || '-';
         clockHint = drift === 0 ? 'in sync' : `${drift < 0 ? '-' : '+'}${_mcFmtSpan(Math.abs(drift))} vs here`;
         if (Math.abs(drift) > 300) {
           warns.push(`The repeater clock is <b>${_mcFmtSpan(Math.abs(drift))} ${drift < 0 ? 'behind' : 'ahead of'}</b> this host. The admin login is timestamped and older builds reject a skewed stamp, so settings writes may fail until it is synced.`);
@@ -17068,7 +17128,7 @@ if (targetEl) {
     const set = (id, v) => { _mcRemoteSetValue(id, v); return v; };
     if (command === 'get name') { const v = set('mc-remote-set-name', value.replace(/^>\s*/, '')); _mcRemoteSaveCache({name: v}); return true; }
     if (command === 'get repeat') { const v = _mcRemoteNormalizeOnOff(value); set('mc-remote-set-repeat', v); _mcRemoteSaveCache({repeat: v}); return !!v; }
-    if (command === 'get powersaving') { const v = _mcRemoteNormalizeOnOff(value); set('mc-remote-set-powersaving', v); _mcRemoteSaveCache({powersaving: v}); return !!v; }
+    if (command === 'powersaving' || command === 'get powersaving') { const v = _mcRemoteNormalizeOnOff(value); set('mc-remote-set-powersaving', v); _mcRemoteSaveCache({powersaving: v}); return !!v; }
     if (command === 'get tx') { const v = value.match(/-?\d+(\.\d+)?/)?.[0] || ''; set('mc-remote-set-tx', v); _mcRemoteSaveCache({tx: v}); return !!v; }
     if (command === 'get lat') { const v = value.match(/-?\d+(\.\d+)?/)?.[0] || ''; set('mc-remote-set-lat', v); _mcRemoteSaveCache({lat: v}); return !!v; }
     if (command === 'get lon') { const v = value.match(/-?\d+(\.\d+)?/)?.[0] || ''; set('mc-remote-set-lon', v); _mcRemoteSaveCache({lon: v}); return !!v; }
@@ -17099,7 +17159,7 @@ if (targetEl) {
     if (!_mcRemoteManage) return;
     const out = document.getElementById('mc-remote-quick-result');
     const commands = [
-      'get name', 'get repeat', 'get powersaving', 'get tx', 'get radio',
+      'get name', 'get repeat', 'powersaving', 'get tx', 'get radio',
       'get lat', 'get lon', 'gps advert', 'get owner.info', 'get path.hash.mode',
       'get loop.detect', 'get advert.interval', 'get flood.advert.interval', 'get flood.max',
     ];
@@ -17557,7 +17617,6 @@ if (targetEl) {
             <option value="get tx">get tx</option>
             <option value="get radio.rxgain">get radio.rxgain</option>
             <option value="get repeat">get repeat</option>
-            <option value="get powersaving">get powersaving</option>
             <option value="get path.hash.mode">get path.hash.mode</option>
             <option value="get loop.detect">get loop.detect</option>
             <option value="get advert.interval">get advert.interval</option>

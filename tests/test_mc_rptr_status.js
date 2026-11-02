@@ -33,6 +33,8 @@ const code = [
   extract('_mcRemoteStatusBlockHtml'),
   extract('escHtml'),
   'function senseTimeAgo(ts) { return "9m ago"; }',
+  'function _formatAppDate(ts) { return "2026-11-02"; }',
+  'function _formatAppTime(ts) { return "19:30"; }',
   'return _mcRemoteStatusBlockHtml;',
 ].join('\n');
 
@@ -112,6 +114,17 @@ assert(render(disabled).includes('Forwarding is switched off'), 'the forwarding-
 const bridge = JSON.parse(JSON.stringify(healthy));
 bridge.basic.data.data = '00000000' + le(now) + '01';
 assert(render(bridge).includes('RS232'), 'the bridge feature bit must be surfaced');
+
+// --- a malformed basic reply must not be mistaken for an unset clock
+const badBasic = JSON.parse(JSON.stringify(payload));
+badBasic.basic = { ok: true, data: 'nonsense' };
+const badHtml = render(badBasic);
+assert(!badHtml.includes('not set'), 'a malformed clock reply must not claim the clock is unset');
+assert(!badHtml.includes('cannot succeed'), 'a malformed clock reply must not raise the login warning');
+
+const shortBasic = JSON.parse(JSON.stringify(payload));
+shortBasic.basic = { ok: true, data: { tag: 'x', data: 'abcd' } };
+assert(!render(shortBasic).includes('not set'), 'a short clock reply must be ignored, not guessed at');
 
 // --- contact-supplied text cannot inject markup
 const nasty = JSON.parse(JSON.stringify(payload));

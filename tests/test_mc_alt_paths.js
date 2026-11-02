@@ -42,6 +42,7 @@ const code = [
   extract('_mcRxCopyKey'),
   extract('_mcAltPathCopies'),
   extract('_mcAltPathMeta'),
+  extract('_mcAltCopyPosition'),
   extract('_mcAltCopyHopsHtml'),
   extract('_mcAltPathsHtml'),
   extract('mcPathHopLabel'),
@@ -121,6 +122,30 @@ assert(html.includes('hop 1') && html.includes('hop 2'), 'hops must be numbered'
 // --- a contact name cannot inject markup
 assert(!html.includes('<img src=x'), 'contact names must be escaped');
 assert(html.includes('&lt;img'), 'the escaped form must be shown instead');
+
+const copyA2 = {
+  path: '86a8ead8', path_len: 2, path_hash_size: 2, rx_rssi: -88, rx_snr: 5.5,
+  first_seen: 1700000000, route_type: 'ROUTE_DIRECT',
+};
+const copyB2 = {
+  path: 'ead8ba90', path_len: 2, path_hash_size: 2, rx_rssi: -101, rx_snr: -1.5,
+  first_seen: 1700000005, route_type: 'ROUTE_FLOOD',
+};
+// --- copy numbers follow the real position in rx_copies, even when the shown
+// copy is NOT the first one heard (the primary is picked by hops, then signal)
+const midPrimary = {
+  path: '86a8ba90', path_len: 2, path_hash_size: 2, rx_rssi: -97, rx_snr: 2.0,
+  first_seen: 1700000001, route_type: 'ROUTE_FLOOD',
+};
+const midEntry = {
+  kind: 'message', radioId: 'mc1', lat: 46.05, lon: 14.50,
+  path: midPrimary.path, path_len: 2, path_hash_size: 2, rx_rssi: -97, rx_snr: 2.0,
+  rx_copies: [copyA2, midPrimary, copyB2],
+};
+const midHtml = api.html(midEntry, 3);
+assert(midHtml.includes('Copy 1 of 3'), 'the copy heard first must be numbered 1');
+assert(midHtml.includes('Copy 3 of 3'), 'the copy heard last must be numbered 3');
+assert(!midHtml.includes('Copy 2 of 3'), 'the shown copy must not appear in the alternate list');
 
 // --- a hop with GPS is a clickable control, one without GPS is not
 assert(html.includes('_mcFocusAltCopyHop(event,'), 'a hop with a position must be clickable');

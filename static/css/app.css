@@ -1141,6 +1141,23 @@
       background:rgba(56,189,248,0.06); user-select:none;
     }
     .mc-hop-list { display:flex; flex-direction:column; gap:5px; padding:8px; }
+    /* Alternate received copies of one MC message (S479): the "Other copies"
+       row opens this list, one block per copy, hops rendered like the main path. */
+    .mc-alt-open {
+      border:1px solid rgba(148,163,184,0.35); background:rgba(148,163,184,0.10);
+      color:var(--text); border-radius:4px; padding:1px 6px; cursor:pointer;
+      font-size:11px; font-family:inherit; line-height:1.5;
+    }
+    .mc-alt-open:hover { background:rgba(148,163,184,0.20); border-color:var(--mc-color); }
+    .mc-alt-caret { color:var(--muted); margin-left:4px; font-size:10px; }
+    .mc-alt-copy { border:1px solid var(--border); border-radius:6px; background:rgba(255,255,255,0.02); padding:6px 8px; }
+    .mc-alt-copy-head { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
+    .mc-alt-copy-title { font-weight:700; font-size:11px; color:var(--mc-color); }
+    .mc-alt-copy-meta { color:var(--muted); font-size:10px; }
+    .mc-alt-hop { display:flex; align-items:center; gap:6px; padding:2px 0; font-size:11px; }
+    .mc-alt-hop-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .mc-alt-hop-conf { color:var(--muted); font-size:10px; }
+    .mc-alt-hop-idx { color:var(--muted); font-size:10px; font-family:monospace; white-space:nowrap; }
     .mc-hop-focus {
       display:flex; align-items:center; gap:7px; width:100%; text-align:left;
       border:1px solid rgba(56,189,248,0.24); background:rgba(56,189,248,0.07);

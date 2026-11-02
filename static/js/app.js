@@ -14915,23 +14915,28 @@ if (targetEl) {
     return { label: `${size}B`, detail: `Primary received copy uses ${size}-byte path hashes.` };
   }
 
-  function _mcAltPathMeta(msg) {
-    const copies = Array.isArray(msg?.rx_copies) ? msg.rx_copies : [];
-    if (copies.length <= 1) return null;
-    const primaryKey = [
-      String(msg.path || ''),
-      String(msg.path_len),
-      String(msg.path_hash_size),
-      String(msg.rx_rssi),
-      String(msg.rx_snr),
+  function _mcRxCopyKey(c) {
+    return [
+      String(c?.path || ''),
+      String(c?.path_len),
+      String(c?.path_hash_size),
+      String(c?.rx_rssi),
+      String(c?.rx_snr),
     ].join('|');
-    const alternates = copies.filter(c => [
-      String(c.path || ''),
-      String(c.path_len),
-      String(c.path_hash_size),
-      String(c.rx_rssi),
-      String(c.rx_snr),
-    ].join('|') !== primaryKey);
+  }
+
+  // Copies that are NOT the one whose path the popup shows above (that one comes
+  // from _best_rx_copy: fewest hops, then strongest). Empty when the packet was
+  // heard once, which is the normal case.
+  function _mcAltPathCopies(msg) {
+    const copies = Array.isArray(msg?.rx_copies) ? msg.rx_copies : [];
+    if (copies.length <= 1) return [];
+    const primaryKey = _mcRxCopyKey(msg);
+    return copies.filter(c => _mcRxCopyKey(c) !== primaryKey);
+  }
+
+  function _mcAltPathMeta(msg) {
+    const alternates = _mcAltPathCopies(msg);
     if (!alternates.length) return null;
     const detail = alternates.map(c => {
       const hops = c.path_len != null ? mcPathHopLabel(Number(c.path_len), true) : 'unknown';
@@ -14941,6 +14946,74 @@ if (targetEl) {
       return `${hops}, ${rssi}, ${snr}, ${bytes}`;
     }).join('\n');
     return { count: alternates.length, detail };
+  }
+
+  // One received copy, rendered as its own hop rows with the same hash chip and
+  // confidence wording the primary path uses above. No per-hop SNR exists for a
+  // copy (the radio only reports the signal of the packet it handed us), so the
+  // copy header carries RSSI/SNR instead.
+  function _mcAltCopyHopsHtml(copy, entry) {
+    const hashBytes = Number(copy?.path_hash_size ?? (copy?.path_hash_mode != null ? Number(copy.path_hash_mode) + 1 : 0));
+    const charsPerHop = (Number.isFinite(hashBytes) && hashBytes > 0 ? hashBytes : 2) * 2;
+    const raw = String(copy?.path || '').toLowerCase();
+    const declared = Number(copy?.path_len);
+    const hopCount = Number.isFinite(declared) && declared >= 0 && declared !== 255
+      ? declared
+      : Math.floor(raw.length / charsPerHop);
+    if (!hopCount || !raw) return '<div class="mc-alt-copy-meta">No relay hops recorded for this copy (direct).</div>';
+    const [radioLat, radioLon] = _mcSenseRadioPos(entry?.radioId);
+    const senderLat = entry?.lat ?? null;
+    const senderLon = entry?.lon ?? null;
+    const rows = [];
+    for (let i = 0; i < hopCount; i++) {
+      const hash = raw.slice(i * charsPerHop, (i + 1) * charsPerHop);
+      if (!hash) break;
+      const resolution = _mcPickPathHopResolution(
+        hash, entry?.radioId, radioLat, radioLon, senderLat, senderLon, i, hopCount, { requireGps: false }
+      );
+      const contact = resolution?.contact || findMcContactByKeyPrefix(hash, entry?.radioId);
+      const label = contact ? (contact.long_name || contact.id || hash) : hash;
+      const confLabel = _mcHopConfidenceLabel(resolution);
+      const conf = confLabel ? ` <span class="mc-alt-hop-conf">${escHtml(confLabel)}</span>` : '';
+      rows.push(`<div class="mc-alt-hop">
+        <span class="mc-hop-prefix">${escHtml(hash)}</span>
+        <span class="mc-alt-hop-name">${escHtml(label)}${conf}</span>
+        <span class="mc-alt-hop-idx">hop ${i + 1}</span>
+      </div>`);
+    }
+    return rows.join('');
+  }
+
+  function _mcAltPathsHtml(entry, entryIdx) {
+    const copies = _mcAltPathCopies(entry);
+    if (!copies.length) return '';
+    const groups = copies.map((copy, i) => {
+      const hops = copy.path_len != null ? mcPathHopLabel(Number(copy.path_len)) : 'unknown hops';
+      const bytes = copy.path_hash_size != null ? `${copy.path_hash_size}B/hop` : null;
+      const rssi = copy.rx_rssi != null ? `RSSI ${copy.rx_rssi}` : null;
+      const snr = copy.rx_snr != null ? `SNR ${Number(copy.rx_snr).toFixed(1)} dB` : null;
+      const route = copy.route_type ? String(copy.route_type) : null;
+      const when = copy.first_seen ? _formatAppTime(copy.first_seen, { seconds: true }) : null;
+      const meta = [hops, bytes, rssi, snr, route, when].filter(Boolean).join(' · ');
+      return `<div class="mc-alt-copy">
+        <div class="mc-alt-copy-head">
+          <span class="mc-alt-copy-title">Copy ${i + 2} of ${copies.length + 1}</span>
+          <span class="mc-alt-copy-meta">${escHtml(meta)}</span>
+        </div>
+        ${_mcAltCopyHopsHtml(copy, entry)}
+      </div>`;
+    }).join('');
+    return `<details class="mc-hop-details mc-alt-paths" id="mc-alt-paths-${entryIdx}">
+      <summary>Alternate paths (${copies.length})</summary>
+      <div class="mc-hop-list">${groups}</div>
+    </details>`;
+  }
+
+  function _mcOpenAltPaths(entryIdx) {
+    const el = document.getElementById('mc-alt-paths-' + entryIdx);
+    if (!el) return;
+    el.open = true;
+    if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' });
   }
 
   function _mcRxConfidenceMeta(msg) {
@@ -15335,12 +15408,16 @@ if (targetEl) {
       const confMeta = _mcRxConfidenceMeta(entry);
       let rows = td('Via', escHtml(chanLabel));
       rows += td('Path', hopLabel + escHtml(msgHashSuffix));
-      if (altMeta) rows += td('Other copies', escHtml(`${altMeta.count} alternate path${altMeta.count !== 1 ? 's' : ''}`));
+      if (altMeta) {
+        const altLabel = `${altMeta.count} alternate path${altMeta.count !== 1 ? 's' : ''}`;
+        rows += td('Other copies', `<button class="mc-alt-open" onclick="_mcOpenAltPaths(${entryIdx})" title="${escHtml(altMeta.detail)}">${escHtml(altLabel)}<span class="mc-alt-caret">&#9656;</span></button>`);
+      }
       if (confMeta) rows += td('Confidence', escHtml(confMeta.label));
       rows += td('Route source', escHtml(msgMeta.quality || 'unknown') + (msgMeta.refreshed ? ' · refreshed' : ''));
       if (entry.text) rows += td('Message', escHtml(entry.text.length > 100 ? entry.text.slice(0, 100) + '…' : entry.text));
       body.innerHTML = `<table style="border-collapse:collapse;width:100%">${rows}</table>
         ${_mcLogHopListHtml(entry, msgMeta.path, entryIdx)}
+        ${_mcAltPathsHtml(entry, entryIdx)}
         <div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end">
           <button class="btn" onclick="refreshMcEntryPath(${_mcLogPinnedIdx})" title="Refresh contact/path data for this message">Path refresh</button>
         </div>`;

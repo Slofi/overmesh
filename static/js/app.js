@@ -2065,7 +2065,7 @@
         'Sense/Map is the live RF activity view. It is the best place to watch recent packets, adverts, messages, pings, traces, and resolved path hops.',
         'The left panel is the map. The right panel is the activity/response log. Clicking log entries draws paths on the map; clicking again clears them.',
         'MT and MC show separate Sense panels because the two protocols expose different route metadata.',
-        'The Heat toolbar toggle is connected to Map → Overlays → Signal heatmap. In Sense mode it follows the Sense MT/MC selector: MT heat comes from live MT node positions plus RSSI/SNR, while MC heat comes from passive observations, including Remote Collector imports.'
+        'The Heat toolbar toggle is connected to Map → Overlays → Signal heatmap. In Sense mode it follows the Sense MT/MC selector: MT heat comes from live MT node positions plus RSSI/SNR, while MC heat comes from the MC passive store: the packets your own radio overhears (filed under the relay that carried them) plus any Remote Collector observations.'
       ],
       split: [
         {
@@ -2094,7 +2094,7 @@
           kind: 'mc',
           body: [
             'MC Sense logs adverts, channel messages, DMs, pings, traces, scans, and bot replies. It is the primary place to inspect MC routing.',
-            'When Heat is on and MC is selected in Sense, MC passive observations contribute to the heatmap. Remote Collector observations are included through the same passive-observation store.',
+            'When Heat is on and MC is selected in Sense, the MC passive store feeds the heatmap: overheard packets from your own radio (each one filed under the relay it arrived from) and Remote Collector observations. A local MC node therefore shows heat without any Remote Collector.',
             'Scan and Trace are separate on purpose. Scan sends a flood advert then a DISCOVER_REQ (repeaters answer), and listens for responses; it does not secretly run Trace.',
             'Probe sends the DISCOVER_REQ only. The same repeater probe, but no advert, so it surfaces coverage without announcing your identity or being added to other nodes\' contact tables.',
             'Trace sends one mesh-wide broadcast trace probe, then waits for TRACE_DATA and draws any returned hop chain. The amber warning and cooldown are there because this is active mesh traffic.',
@@ -2293,7 +2293,7 @@
         '--- Triggering a collection ---',
         'Press Collect in the collector row. OM sends an OMCOLLECT command to the RPTR over the mesh. The RPTR signals the RP2040 via serial, which responds with all buffered observations as RELAY| messages. The RPTR re-encrypts each one as a DM back to your OM radio. OM stores them automatically as passive observations.',
         '--- Signal heatmap ---',
-        'Enable Signal heatmap with the Heat button in Map/Sense or in Map → Overlays → Data layers. With MC enabled in Map mode or selected in Sense mode, Remote Collector observations are included in the MC heat layer. OM prefers node position when known and falls back to collector position when that is all the observation has. RSSI drives intensity when available; SNR is used as fallback.'
+        'Enable Signal heatmap with the Heat button in Map/Sense or in Map → Overlays → Data layers. With MC enabled in Map mode or selected in Sense mode, the MC heat layer reads the passive store: overheard packets (including the ones your own radio hears) and Remote Collector observations. OM prefers a node position when known and falls back to collector position when that is all the observation has. RSSI drives intensity when available; SNR is used as fallback.'
       ],
       buttons: [
         ['Collect', 'Trigger an observation dump from this remote collector. Sends OMCOLLECT to the RPTR over the mesh.'],
@@ -7819,6 +7819,32 @@ if (targetEl) {
     return points;
   }
 
+  // Stored passive observations -> heat points. `rx` rows are included on purpose:
+  // a LOCAL MC node never produces identity observations (those come only from
+  // Remote Collectors), so its heat layer had no data source at all and always came
+  // up empty. An rx row is filed under the last relay it was heard from and the
+  // flusher stores that relay's position, so one point means "this relay was heard
+  // at this strength from this place".
+  function _mcHeatPointsFromObs(obs, rid) {
+    const points = [];
+    for (const o of (Array.isArray(obs) ? obs : [])) {
+      const key = String(o?.pubkey_pre || '');
+      if (!key || key.startsWith('rx:')) continue;   // rx:unknown carries no identity
+      // A 2-character hop hash matches many contacts: resolving it would plot the
+      // packet at a stranger's position. Only trust 4+ characters, and only when
+      // the row carries no position of its own (which rx rows normally do).
+      const contact = key.length >= 4 ? findMcContactByKeyPrefix(key, rid) : null;
+      const lat = o.lat ?? contact?.adv_lat ?? contact?.latitude ?? contact?.lat ?? o.collector_lat;
+      const lon = o.lon ?? contact?.adv_lon ?? contact?.longitude ?? contact?.lon ?? o.collector_lon;
+      if (lat == null || lon == null) continue;
+      if (!Number.isFinite(Number(lat)) || !Number.isFinite(Number(lon))) continue;
+      const intensity = _signalHeatmapIntensity(o.rssi, o.snr);
+      if (intensity == null) continue;
+      points.push([Number(lat), Number(lon), intensity]);
+    }
+    return points;
+  }
+
   function _isSensePanelOpen() {
     const panel = document.getElementById('sense-panel');
     return !!panel && panel.style.display !== 'none';
@@ -7859,19 +7885,15 @@ if (targetEl) {
     const mcPoints = [];
     if (sources.mc && rid) {
       try {
-        const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/passive_obs?limit=500`);
+        // obs_types is explicit because the endpoint excludes `rx` by default (the
+        // packet timeline is high volume and the other consumers do not want it).
+        // Without rx a local MC node contributes nothing: it stores no identity
+        // observations, only overheard packets and traces.
+        const types = encodeURIComponent('rx,trace,rc_adv,rc_anon,rc_peer');
+        const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/passive_obs?limit=500&obs_types=${types}`);
         if (r.ok) {
           const obs = await r.json();
-          for (const o of obs) {
-            if (!o.pubkey_pre) continue;
-            const contact = findMcContactByKeyPrefix(o.pubkey_pre, rid);
-            const lat = o.lat ?? contact?.adv_lat ?? contact?.latitude ?? contact?.lat ?? o.collector_lat;
-            const lon = o.lon ?? contact?.adv_lon ?? contact?.longitude ?? contact?.lon ?? o.collector_lon;
-            if (lat == null || lon == null || !Number.isFinite(Number(lat)) || !Number.isFinite(Number(lon))) continue;
-            const intensity = _signalHeatmapIntensity(o.rssi, o.snr);
-            if (intensity == null) continue;
-            mcPoints.push([Number(lat), Number(lon), intensity]);
-          }
+          mcPoints.push(..._mcHeatPointsFromObs(obs, rid));
         }
       } catch (e) {
         console.warn('Signal heatmap MC passive source error:', e);

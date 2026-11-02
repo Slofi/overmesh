@@ -12635,7 +12635,7 @@ if (targetEl) {
       </div>
       <div class="mc-route-picker-head">
         <button class="btn" id="mc-route-picker-toggle" onclick="mcRouteTogglePicker()">${st.picker ? 'Hide map picker' : 'Pick on map'}</button>
-        <span class="mc-route-picker-hint">Click a repeater on the map to see it here, then add it to the path.</span>
+        <span class="mc-route-picker-hint">Click a repeater to see it and add it. Click it again, or click empty map, to take it out.</span>
       </div>
       <div id="mc-route-map-slot"></div>
       <div id="mc-route-pick-info"></div>
@@ -12750,7 +12750,7 @@ if (targetEl) {
     const st = _mcRouteEditor;
     const prefix = st.pickTarget;
     if (!prefix) {
-      el.innerHTML = '<div class="mc-route-pick-hint">Click a repeater on the map to see it here, then add it to the path.</div>';
+      el.innerHTML = '<div class="mc-route-pick-hint">Click a repeater on the map to see it here and add it. Clicking it again, or the empty map, takes it out of the path.</div>';
       return;
     }
     const c = findMcContactByKeyPrefix(prefix, st.radioId) || {};
@@ -12773,7 +12773,7 @@ if (targetEl) {
       <div class="mc-route-pick-actions">
         ${selIdx >= 0
           ? `<button class="btn" onclick="mcRouteRemoveHopByPrefix('${jsSafe(key)}')">Remove from path (hop ${selIdx + 1})</button>`
-          : `<button class="btn btn-net-mc active" onclick="mcRouteAddHop('${jsSafe(key)}')">Add to path</button>`}
+          : `<button class="btn btn-net-mc active" onclick="mcRouteAddHop('${jsSafe(key)}','map')">Add to path</button>`}
         <button class="btn" title="Center the picker on this repeater" onclick="mcRouteCenterPicked()">Center</button>
       </div>
     </div>`;
@@ -12846,6 +12846,7 @@ if (targetEl) {
     try { _mcRouteMap.attributionControl.setPrefix(false); } catch(e) {}
     const key = (() => { try { return localStorage.getItem('mapTileLayer') || DEFAULT_TILE_LAYER; } catch(e) { return DEFAULT_TILE_LAYER; } })();
     try { _applyTileLayer(_mcRouteMap, null, key); } catch(e) {}
+    _mcRouteMap.on('click', () => mcRouteClearPick());
     _mcRouteMap.on('moveend', () => {
       if (!_mcRouteMap) return;
       const c = _mcRouteMap.getCenter();
@@ -12921,9 +12922,42 @@ if (targetEl) {
     }
   }
 
+  // Clicking a repeater on the picker is a toggle: a relay that is already in
+  // the route comes out of it, anything else is previewed with the Add button.
   function mcRoutePickRepeater(prefix) {
     if (!_mcRouteEditor || !prefix) return;
+    const idx = _mcRouteSelectedIndex(prefix);
+    if (idx >= 0) {
+      _mcRouteEditor.selected.splice(idx, 1);
+      _mcRouteEditor.pickTarget = null;
+      _mcRouteEditor.pickSource = null;
+      _mcRouteRefresh();
+      return;
+    }
     _mcRouteEditor.pickTarget = prefix;
+    _mcRouteEditor.pickSource = 'map';
+    _mcRouteSyncMapMarkers();
+    _mcRouteRenderPickInfo();
+  }
+
+  // Clicking empty map cancels the current pick: the preview card goes away, and
+  // if that relay had just been added it comes back out of the route (a quick
+  // undo, which is also what "click the empty map to un-select" asks for).
+  function mcRouteClearPick() {
+    const st = _mcRouteEditor;
+    if (!st) return;
+    const prefix = st.pickTarget;
+    if (!prefix) return;
+    const fromMap = st.pickSource === 'map';
+    const idx = _mcRouteSelectedIndex(prefix);
+    st.pickTarget = null;
+    st.pickSource = null;
+    if (fromMap && idx >= 0) {
+      st.selected.splice(idx, 1);
+      _mcRouteRefresh();
+      return;
+    }
+    // A hop added from the search list is not touched by a stray map click.
     _mcRouteSyncMapMarkers();
     _mcRouteRenderPickInfo();
   }
@@ -12963,11 +12997,12 @@ if (targetEl) {
     _mcRouteEditor.pathHashMode = Number.isFinite(mode) ? Math.max(0, Math.min(2, mode)) : 2;
   }
 
-  function mcRouteAddHop(prefix) {
+  function mcRouteAddHop(prefix, source = 'list') {
     if (!_mcRouteEditor || !prefix) return;
     if (_mcRouteSelectedIndex(prefix) >= 0) return;
     _mcRouteEditor.selected.push(prefix);
     _mcRouteEditor.pickTarget = prefix;   // keep the info card on what was just added
+    _mcRouteEditor.pickSource = source === 'map' ? 'map' : 'list';
     _mcRouteRefresh();
   }
 

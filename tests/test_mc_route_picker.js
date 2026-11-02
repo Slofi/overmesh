@@ -38,12 +38,16 @@ const code = [
   extract('_mcRouteSelectedIndex'),
   extract('mcRouteAddHop'),
   extract('mcRouteRemoveHop'),
+  extract('mcRoutePickRepeater'),
+  extract('mcRouteClearPick'),
   `function findMcContactByKeyPrefix(prefix) {
      const p = String(prefix || '').toLowerCase();
      return [RFC1, RFC2].find(c => c.id.startsWith(p) || c.full_key.startsWith(p)) || null;
    }`,
   'function _mcRouteRefresh() {}',
-  'return { index: _mcRouteSelectedIndex, add: mcRouteAddHop, remove: mcRouteRemoveHop, state: () => _mcRouteEditor, setState: (v) => { _mcRouteEditor = v; } };',
+  'function _mcRouteSyncMapMarkers() {}',
+  'function _mcRouteRenderPickInfo() {}',
+  'return { index: _mcRouteSelectedIndex, add: mcRouteAddHop, remove: mcRouteRemoveHop, pick: mcRoutePickRepeater, clear: mcRouteClearPick, state: () => _mcRouteEditor, setState: (v) => { _mcRouteEditor = v; } };',
 ].join('\n');
 
 const api = new Function('RFC1', 'RFC2', 'let _mcRouteEditor = null;' + code + '\n//# sourceURL=route-picker-test.js')(RFC1, RFC2);
@@ -78,4 +82,47 @@ api.remove(0);
 assert(api.state().selected.length === 1, 'remove drops exactly one hop');
 assert(api.state().selected[0] === 'ead8e0aed065', 'remove keeps the remaining hop');
 
-console.log('ok: route hop matching + duplicate prevention');
+// --- clicking a relay on the map toggles it: in the route -> out of it
+api.setState({ radioId: 'r1', selected: ['86a8'], pickTarget: '86a8eedb744b' });
+api.pick('86a8eedb744b5828821a2e36cd9112f983cfd5555e7dba2ce0ed509893d36dc6');
+assert(api.state().selected.length === 0, 'clicking a selected repeater must remove it from the path');
+assert(api.state().pickTarget === null, 'and it must stop being the previewed repeater');
+
+// --- clicking a relay that is NOT in the route only previews it (Add stays a button)
+api.setState({ radioId: 'r1', selected: [], pickTarget: null });
+api.pick('86a8eedb744b5828821a2e36cd9112f983cfd5555e7dba2ce0ed509893d36dc6');
+assert(api.state().selected.length === 0, 'a click on a new repeater must not add it by itself');
+assert(api.state().pickTarget === '86a8eedb744b5828821a2e36cd9112f983cfd5555e7dba2ce0ed509893d36dc6',
+  'a click on a new repeater must preview it');
+
+// --- clicking empty map un-selects what the map selected: a just-added relay comes back out
+api.setState({ radioId: 'r1', selected: ['86a8'], pickTarget: '86a8eedb744b', pickSource: 'map' });
+api.clear();
+assert(api.state().selected.length === 0, 'empty-map click must take a map-picked relay out of the path');
+assert(api.state().pickTarget === null, 'empty-map click must clear the preview');
+
+// --- a relay added from the SEARCH LIST is not removed by a map click
+api.setState({ radioId: 'r1', selected: ['86a8'], pickTarget: '86a8eedb744b', pickSource: 'list' });
+api.clear();
+assert(api.state().selected.length === 1, 'a hop added from the search list must survive a map click');
+assert(api.state().pickTarget === null, 'the preview is still cleared');
+
+// --- ...nor when the previewed relay is not in the route at all
+api.setState({ radioId: 'r1', selected: ['ead8'], pickTarget: '86a8eedb744b', pickSource: 'map' });
+api.clear();
+assert(api.state().selected.length === 1 && api.state().selected[0] === 'ead8',
+  'empty-map click must not remove other hops');
+
+// --- and with nothing previewed it is a no-op
+api.setState({ radioId: 'r1', selected: ['ead8'], pickTarget: null, pickSource: null });
+api.clear();
+assert(api.state().selected.length === 1, 'an empty-map click with no preview changes nothing');
+
+// --- the source is recorded: map pick vs list add
+api.setState({ radioId: 'r1', selected: [], pickTarget: null, pickSource: null });
+api.pick('86a8eedb744b5828821a2e36cd9112f983cfd5555e7dba2ce0ed509893d36dc6');
+assert(api.state().pickSource === 'map', 'a marker click marks the pick as a map pick');
+api.add('ead8e0aed065');
+assert(api.state().pickSource === 'list', 'an add without a source is a list add');
+
+console.log('ok: route hop matching, duplicate prevention and pick toggling');

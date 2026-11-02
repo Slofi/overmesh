@@ -767,6 +767,21 @@ class MeshMcPathHelperTests(unittest.TestCase):
         self.assertEqual(mesh_mc._validate_remote_admin_command("set loop.detect minimal"), "set loop.detect minimal")
         self.assertEqual(mesh_mc._validate_remote_admin_command("OMCOLLECT"), "OMCOLLECT")
 
+    def test_remote_command_timestamp_is_monotonic_per_target(self):
+        """A repeater drops any request whose timestamp is not greater than the last
+        one it accepted. The login is stamped by the radio (now+5) and commands by
+        Python, so "now" alone can be older and the command vanishes with no reply."""
+        key = ("r_cmd_ts", "k" * 64)
+        mesh_mc._remote_cmd_clock_floor.pop(key, None)
+        first = mesh_mc._next_remote_cmd_timestamp(*key, now=1000)
+        second = mesh_mc._next_remote_cmd_timestamp(*key, now=1000)
+        self.assertEqual(second, first + 1, "same second must still advance")
+        mesh_mc._remote_cmd_clock_floor[key] = 1060      # the login's radio-stamped lead
+        after_login = mesh_mc._next_remote_cmd_timestamp(*key, now=1001)
+        self.assertEqual(after_login, 1061, "a command must be newer than the login")
+        other = mesh_mc._next_remote_cmd_timestamp("r_other", key[1], now=1001)
+        self.assertEqual(other, 1001, "targets keep independent floors")
+
     def test_remote_admin_command_accepts_a_plausible_epoch_only(self):
         """`time <epoch>` is how a repeater with an unset clock is fixed.
 

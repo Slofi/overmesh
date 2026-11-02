@@ -52,6 +52,10 @@ _rc_collect_summaries: dict = {}
 # nodes stop returning admin replies until reset.
 _remote_admin_locks: dict = {}
 _remote_login_clock_floor: dict = {}
+# (config_id, full_key) -> last timestamp accepted by that repeater. Commands must
+# strictly increase against the login's, or the repeater silently drops them as a
+# replay (onPeerDataRecv: `if (timestamp > client->last_timestamp)`).
+_remote_cmd_clock_floor: dict = {}
 
 # --- MC flood scope (regions) ---
 # A companion node has ONE device-global flood scope slot (CMD_SET_FLOOD_SCOPE=54).
@@ -5223,6 +5227,23 @@ async def _remote_login_async(mc, full_key, password, timeout=12):
                 task.cancel()
 
 
+def _next_remote_cmd_timestamp(config_id, full_key, now=None):
+    """Timestamp for a CLI command: strictly newer than anything this target accepted.
+
+    The repeater ignores a request whose timestamp is not greater than the one it
+    last stored from us (`onPeerDataRecv`), and that value comes from the LOGIN,
+    which is stamped by the radio clock while commands are stamped here. Two
+    different clocks, so "now" alone can be older than the login's +5 s lead and the
+    command is dropped without any reply. A per-target floor makes the sequence
+    monotonic no matter how the clocks are skewed.
+    """
+    key = (config_id, full_key)
+    now = int(time.time()) if now is None else int(now)
+    ts = max(now, int(_remote_cmd_clock_floor.get(key, 0)) + 1)
+    _remote_cmd_clock_floor[key] = ts
+    return ts
+
+
 async def _sync_remote_login_clock(mc, config_id):
     # The MC radio builds remote-login packets and stamps them with its own RTC.
     # CLI commands are stamped by OM/Python. Keep the radio clock just ahead so a
@@ -5235,6 +5256,7 @@ async def _sync_remote_login_clock(mc, config_id):
         await mc.commands.set_time(ts)
     except Exception as e:
         log.info(f"[MC:{config_id}] pre-login clock sync skipped: {e}")
+    return ts
 
 
 async def _remote_best_effort(label, func):
@@ -5261,9 +5283,14 @@ async def _remote_read_async(config_id, pubkey_prefix, password=None, do_login=F
             "type": contact.get("type", 0),
         }
         if do_login:
-            await _sync_remote_login_clock(mc, config_id)
+            login_ts = await _sync_remote_login_clock(mc, config_id)
             login = await _remote_login_async(mc, full_key, password or "")
             result["login"] = login
+            # The login packet carried `login_ts`; every command after it must be
+            # newer or the repeater treats it as a replay.
+            _remote_cmd_clock_floor[(config_id, full_key)] = max(
+                login_ts, int(_remote_cmd_clock_floor.get((config_id, full_key), 0))
+            )
             if login_only or not login.get("ok"):
                 return result
 
@@ -5449,7 +5476,8 @@ async def _remote_command_async(config_id, pubkey_prefix, command):
             dst.setdefault("type", _remote_dst_type(_contact))
             log.info(f"[MC:{config_id}] remote command {cmd!r} to {full_key[:12]} "
                      f"(dst_type={dst['type']})")
-            sent = await mc.commands.send_cmd(dst, cmd)
+            cmd_ts = _next_remote_cmd_timestamp(config_id, full_key)
+            sent = await mc.commands.send_cmd(dst, cmd, timestamp=cmd_ts)
             _raise_if_mc_error(sent, f"remote command {cmd}")
             reply = None
             if reply_task is not None:

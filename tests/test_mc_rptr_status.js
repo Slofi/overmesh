@@ -189,4 +189,23 @@ nasty.owner.data.owner = '<img src=x onerror=alert(1)>';
 assert(!render(nasty).includes('<img src=x'), 'owner text must be escaped');
 assert(render(nasty).includes('&lt;img'), 'escaped owner text must be visible');
 
+// --- a guest read must not throw away the login clock we already have
+const fakeStore = {};
+const saveApi = new Function('localStorage',
+  'var _mcRemoteManage = { radioId: "r1", pubkeyPrefix: "86a8eedb744b" };\n'
+  + extract('_mcRemoteStatusCacheKey') + '\n' + extract('_mcRemoteSaveStatus') + '\n'
+  + 'return _mcRemoteSaveStatus;')({
+  getItem: k => (k in fakeStore ? fakeStore[k] : null),
+  setItem: (k, v) => { fakeStore[k] = v; },
+});
+saveApi({ login: { ok: true, server_timestamp: 1793650000 }, status: { ok: true, data: {} } });
+const cacheKey = Object.keys(fakeStore)[0];
+const afterLoginRead = JSON.parse(fakeStore[cacheKey]);
+saveApi({ status: { ok: true, data: {} } });          // a guest read carries no login
+const afterGuestRead = JSON.parse(fakeStore[cacheKey]);
+assert(afterLoginRead.login && afterLoginRead.login.server_timestamp === 1793650000,
+  'the login clock must be cached with the reading');
+assert(afterGuestRead.login && afterGuestRead.login.server_timestamp === 1793650000,
+  'a later guest read must keep the cached login clock instead of dropping it');
+
 console.log('ok: RPTR status block renders the live repeater payload (and its warnings)');

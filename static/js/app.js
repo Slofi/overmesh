@@ -16901,8 +16901,15 @@ if (targetEl) {
 
   function _mcRemoteSaveStatus(data) {
     if (!_mcRemoteManage || !data) return;
+    // A guest read carries no login block. Keep the last login clock instead of
+    // dropping it: it is the only trustworthy clock source, and the block already
+    // says how old the reading is.
+    const previous = (() => {
+      try { return JSON.parse(localStorage.getItem(_mcRemoteStatusCacheKey(_mcRemoteManage.pubkeyPrefix, _mcRemoteManage.radioId)) || 'null'); }
+      catch { return null; }
+    })();
     const picked = {
-      login: data.login || null,
+      login: data.login || (previous && previous.login) || null,
       basic: data.basic || null,
       status: data.status || null,
       telemetry: data.telemetry || null,

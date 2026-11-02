@@ -316,7 +316,7 @@
           const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/passive_obs/summary`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({prefixes: unique})
+            body: JSON.stringify({prefixes: unique, include_rx: true})
           });
           if (r.ok) {
             const data = await r.json();
@@ -4150,17 +4150,23 @@ if (targetEl) {
         <div id="mc-share-area" class="modal-loading" style="padding:10px 0;text-align:left">Preparing contact details…</div>
       </div>
     `);
-    // Passive intel section
+    // Passive intel section. Rows are stored under short hop hashes (rx/trace) or
+    // full pubkeys (rc_adv), never under the 12-char contact prefix, so the old
+    // exact `pubkey_pre=<12 chars>` query could never match a single row. Match by
+    // prefix relationship instead, and delete by the stored keys that matched.
     const piArea = document.getElementById('mc-passive-intel-area');
-    fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/passive_obs?pubkey_pre=${encodeURIComponent(pubkeyPre)}&limit=20`)
+    fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/passive_obs?limit=200&obs_types=${_MC_PASSIVE_OBS_TYPES}`)
       .then(r => r.json())
-      .then(obs => {
+      .then(all => {
         if (!piArea) return;
         piArea.className = '';
-        if (!obs || !obs.length) {
+        const matched = (Array.isArray(all) ? all : []).filter(o => _mcPassiveKeyMatches(o.pubkey_pre, fullKey));
+        if (!matched.length) {
           piArea.innerHTML = '<span style="color:var(--muted)">No passive observations recorded yet.</span>';
           return;
         }
+        const keys = [...new Set(matched.map(o => String(o.pubkey_pre || '')).filter(Boolean))];
+        const obs = matched.slice(0, 20);
         const rows = obs.map(o => {
           const t  = o.ts ? _formatAppTime(o.ts, {seconds: true}) : '?';
           const dt = o.ts ? senseTimeAgo(o.ts) : '';
@@ -4178,10 +4184,11 @@ if (targetEl) {
             ${type ? `<span style="color:var(--muted);font-size:10px">${escHtml(type)}</span>` : ''}
           </div>`;
         }).join('');
-        const total = obs.length;
-        piArea.innerHTML = `<div style="color:var(--muted);margin-bottom:4px">${total} recent observation${total !== 1 ? 's' : ''}</div>${rows}
+        const total = matched.length;
+        const keyNote = keys.length > 1 ? ` · ${keys.length} stored keys` : '';
+        piArea.innerHTML = `<div style="color:var(--muted);margin-bottom:4px">${total} recent observation${total !== 1 ? 's' : ''}${keyNote}</div>${rows}
           <div style="margin-top:6px">
-            <button class="btn btn-small" onclick="_clearMcPassiveObs('${jsSafe(rid)}','${jsSafe(pubkeyPre)}',this)" style="font-size:11px;padding:3px 8px">Clear passive data</button>
+            <button class="btn btn-small" onclick="_clearMcPassiveObs('${jsSafe(rid)}','${jsSafe(JSON.stringify(keys))}',this)" style="font-size:11px;padding:3px 8px">Clear passive data</button>
           </div>`;
       })
       .catch(() => { if (piArea) piArea.innerHTML = '<span style="color:var(--muted)">Passive data unavailable.</span>'; });
@@ -4224,16 +4231,24 @@ if (targetEl) {
       });
   }
 
-  function _clearMcPassiveObs(radioId, pubkeyPre, btn) {
+  function _clearMcPassiveObs(radioId, keysJsonOrKey, btn) {
     if (btn) { btn.disabled = true; btn.textContent = 'Clearing…'; }
-    fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/passive_obs`, {
-      method: 'DELETE',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({pubkey_pre: pubkeyPre}),
-    })
-      .then(r => r.json())
+    let keys;
+    try {
+      const parsed = JSON.parse(keysJsonOrKey);
+      keys = Array.isArray(parsed) ? parsed : [String(parsed)];
+    } catch { keys = [String(keysJsonOrKey || '')]; }
+    keys = keys.map(k => String(k || '').trim()).filter(Boolean);
+    if (!keys.length) { if (btn) { btn.disabled = false; btn.textContent = 'Clear passive data'; } return; }
+    Promise.all(keys.map(key =>
+      fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/passive_obs`, {
+        method: 'DELETE',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({pubkey_pre: key}),
+      }).then(r => r.json()).catch(() => null)
+    ))
       .then(() => {
-        if (_mcPassiveSummaryCache[radioId]) delete _mcPassiveSummaryCache[radioId][pubkeyPre];
+        delete _mcPassiveSummaryCache[radioId];   // keyed by contact prefix, cleared per radio
         const piArea = document.getElementById('mc-passive-intel-area');
         if (piArea) piArea.innerHTML = '<span style="color:var(--muted)">Passive data cleared.</span>';
       })
@@ -4251,6 +4266,73 @@ if (targetEl) {
     return ids[0] || null;
   }
 
+  // Observation rows are stored under 4-8 char hop hashes (rx/trace) or full
+  // pubkeys (rc_adv), never under the 12-char contact prefix the UI works with, so
+  // an exact match can never hit anything. Matching is by prefix relationship in
+  // either direction, and a 1-byte hop hash (2 chars) is refused because it
+  // matches many nodes: the same rule the summary endpoint applies server-side.
+  const _MC_PASSIVE_OBS_TYPES = 'rx,trace,rc_adv,rc_anon,rc_peer';
+
+  function _mcPassiveKeyMatches(storedKey, contactKey) {
+    const a = String(storedKey || '').toLowerCase();
+    const b = String(contactKey || '').toLowerCase();
+    if (!a || !b) return false;
+    if (a === b) return true;
+    if (a.length < 4) return false;
+    return a.startsWith(b) || b.startsWith(a);
+  }
+
+  // Group observations per stored key for the Passive Intel list. `rx:unknown`
+  // rows carry no identity at all and 2-char hop hashes are path fragments, so
+  // both are counted separately instead of being shown as nodes.
+  function _mcPassiveIntelGroups(obs) {
+    const groups = new Map();
+    let fragments = 0;
+    let unidentified = 0;
+    for (const o of (Array.isArray(obs) ? obs : [])) {
+      const key = String(o?.pubkey_pre || '');
+      if (!key || key.startsWith('rx:')) { unidentified += 1; continue; }
+      if (key.length < 4) { fragments += 1; continue; }
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(o);
+    }
+    return { groups, fragments, unidentified };
+  }
+
+  // The contact that owns a stored key, resolved against every radio that saw it.
+  function _mcPassiveKeyContact(key, rids) {
+    for (const rid of (rids || [])) {
+      const c = findMcContactByKeyPrefix(key, rid);
+      if (c) return c;
+    }
+    return null;
+  }
+
+  // One node can be stored under several keys: the relay hop hash a packet was
+  // heard from, and its own full pubkey from a Remote Collector. Merge those into a
+  // single entry so the list shows a node once, and keep every stored key so Delete
+  // can clear all of them.
+  function _mcPassiveIntelMergeGroups(groups, resolve) {
+    const merged = new Map();
+    for (const [key, entries] of groups) {
+      const contact = resolve ? resolve(key) : null;
+      const id = (contact && (contact.id || contact.full_key)) || key;
+      if (!merged.has(id)) {
+        merged.set(id, {
+          id,
+          name: (contact && (contact.long_name || contact.name)) || '',
+          keys: [],
+          entries: [],
+        });
+      }
+      const group = merged.get(id);
+      if (!group.keys.includes(key)) group.keys.push(key);
+      group.entries.push(...entries);
+      if (!group.name && contact) group.name = contact.long_name || contact.name || '';
+    }
+    return [...merged.values()];
+  }
+
   async function loadPassiveIntelManager() {
     const rids = Object.keys(mcLastStatus).filter(id => mcLastStatus[id]?.status === 'connected');
     const listEl  = document.getElementById('passive-intel-list');
@@ -4263,9 +4345,11 @@ if (targetEl) {
     }
     listEl.innerHTML = '<div style="color:var(--muted)">Loading…</div>';
     try {
-      // Fetch from all connected radios in parallel
+      // `rx` is requested explicitly: a local MC node produces no identity
+      // observations (those come from Remote Collectors), so without overheard
+      // packets this panel showed only a handful of trace rows.
       const allResults = await Promise.all(rids.map(async rid => {
-        const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/passive_obs?limit=500`);
+        const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/passive_obs?limit=500&obs_types=${_MC_PASSIVE_OBS_TYPES}`);
         const obs = r.ok ? await r.json() : [];
         return obs.map(o => ({...o, _rid: rid}));
       }));
@@ -4277,57 +4361,55 @@ if (targetEl) {
         return;
       }
 
-      // Merge by pubkey_pre across all radios — track which radio(s) saw each node
-      const byKey = {};
-      for (const o of allObs) {
-        if (!byKey[o.pubkey_pre]) byKey[o.pubkey_pre] = {entries: [], rids: new Set()};
-        byKey[o.pubkey_pre].entries.push(o);
-        byKey[o.pubkey_pre].rids.add(o._rid);
+      const { groups, fragments, unidentified } = _mcPassiveIntelGroups(allObs);
+      // Merge keys that belong to one node before counting, so the stats line and
+      // the list agree on how many nodes there are.
+      const merged = _mcPassiveIntelMergeGroups(groups, key => _mcPassiveKeyContact(key, rids));
+      const multiRadio = rids.length > 1;
+      const totalObs = allObs.length;
+      const statsParts = [
+        `${totalObs} observation${totalObs !== 1 ? 's' : ''}`,
+        `${merged.length} node${merged.length !== 1 ? 's' : ''}`,
+      ];
+      if (fragments) statsParts.push(`${fragments} short hop hash${fragments !== 1 ? 'es' : ''} (not listed)`);
+      if (unidentified) statsParts.push(`${unidentified} unidentified`);
+      if (multiRadio) statsParts.push(`${rids.length} radios`);
+      if (statsEl) statsEl.textContent = statsParts.join(' · ');
+
+      if (!merged.length) {
+        listEl.innerHTML = '<div style="color:var(--muted)">Only unidentified packets and short hop hashes so far, no per-node observations.</div>';
+        return;
       }
 
-      // Resolve names from known MC contacts
-      const nameMap = {};
-      Object.values(mcContacts).forEach(radioMap => {
-        Object.values(radioMap || {}).forEach(c => {
-          const pre = (c.full_key || c.id || '').slice(0, 12);
-          if (pre) nameMap[pre] = c.long_name || c.name || pre;
-        });
-      });
-
-      // Deduplicate obs count: count unique (pubkey_pre, ts, obs_type) across radios
-      const totalObs = allObs.length;
-      const uniqueKeys = Object.keys(byKey).length;
-      const multiRadio = rids.length > 1;
-      if (statsEl) statsEl.textContent = `${totalObs} observation${totalObs !== 1 ? 's' : ''} · ${uniqueKeys} unique node${uniqueKeys !== 1 ? 's' : ''}${multiRadio ? ` · ${rids.length} radios` : ''}`;
-
       // Sort by most recent first
-      const sorted = Object.entries(byKey).sort((a, b) => {
-        const at = Math.max(...a[1].entries.map(o => o.ts || 0));
-        const bt = Math.max(...b[1].entries.map(o => o.ts || 0));
+      const sorted = merged.sort((a, b) => {
+        const at = Math.max(...a.entries.map(o => o.ts || 0));
+        const bt = Math.max(...b.entries.map(o => o.ts || 0));
         return bt - at;
       });
 
-      listEl.innerHTML = sorted.map(([pre, {entries, rids: seenByRids}]) => {
-        const name     = nameMap[pre];
+      listEl.innerHTML = sorted.map(group => {
+        const entries = group.entries;
+        const seenByRids = new Set(entries.map(o => o._rid));
+        const name     = group.name;
         const isKnown  = !!name;
-        const label    = isKnown ? escHtml(name) : `<span style="font-family:monospace">${escHtml(pre)}</span>`;
+        const label    = isKnown ? escHtml(name) : `<span style="font-family:monospace">${escHtml(group.keys[0])}</span>`;
         const badge    = isKnown ? '' : ' <span style="font-size:10px;color:var(--muted);background:var(--bg3);padding:1px 5px;border-radius:3px">unknown</span>';
         const count    = entries.length;
         const lastTs   = Math.max(...entries.map(o => o.ts || 0));
         const lastAgo  = lastTs ? senseTimeAgo(lastTs) : '?';
-        const signalEntries = entries.filter(o => ['rx', 'trace', 'rc_adv', 'rc_anon', 'rc_peer'].includes(o.obs_type));
         const typeCounts = entries.reduce((acc, o) => {
           const t = o.obs_type || 'obs';
           acc[t] = (acc[t] || 0) + 1;
           return acc;
         }, {});
-        const bestSnr  = signalEntries.reduce((m, o) => o.snr  != null && o.snr  > m ? o.snr  : m, -Infinity);
-        const bestRssi = signalEntries.reduce((m, o) => o.rssi != null && o.rssi > m ? o.rssi : m, -Infinity);
+        const bestSnr  = entries.reduce((m, o) => o.snr  != null && o.snr  > m ? o.snr  : m, -Infinity);
+        const bestRssi = entries.reduce((m, o) => o.rssi != null && o.rssi > m ? o.rssi : m, -Infinity);
         const snrStr   = isFinite(bestSnr)  ? `SNR ${bestSnr  > 0 ? '+' : ''}${bestSnr.toFixed(1)}` : '';
         const rssiStr  = isFinite(bestRssi) ? `RSSI ${bestRssi}` : '';
         const sigStr   = [snrStr, rssiStr].filter(Boolean).join(' · ');
         const typeStr  = Object.entries(typeCounts).map(([type, n]) => `${n} ${type}`).join(' · ');
-        // Show which radios heard this node only when multiple radios are connected
+        const keyStr   = group.keys.join(', ');
         const radioNames = multiRadio && seenByRids.size > 0
           ? [...seenByRids].map(rid => escHtml(mcLastStatus[rid]?.name || mcLastStatus[rid]?.node_name || rid.slice(-6))).join(', ')
           : '';
@@ -4336,26 +4418,27 @@ if (targetEl) {
         const recent = [...entries].sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 3);
         const recentHtml = recent.map(o => {
           const t   = o.ts ? _formatAppTime(o.ts, {seconds: true}) : '?';
+          const hops = o.path_len != null ? `${o.path_len} hop${o.path_len !== 1 ? 's' : ''}` : '';
           const sig = [
             o.snr  != null ? `SNR ${o.snr > 0 ? '+' : ''}${o.snr.toFixed(1)}` : '',
             o.rssi != null ? `RSSI ${o.rssi}` : '',
-            o.path_len != null ? `${o.path_len}h` : '',
+            hops,
           ].filter(Boolean).join(' ');
           const radioLabel = multiRadio ? ` <span style="color:var(--muted);font-size:10px">${escHtml(mcLastStatus[o._rid]?.name || mcLastStatus[o._rid]?.node_name || '')}</span>` : '';
           return `<span style="color:var(--muted)">${t}</span> <span>${escHtml(sig)}</span> <span style="font-size:10px;color:var(--muted)">${escHtml(o.obs_type || '')}</span>${radioLabel}`;
-        }).map(s => `<div style="padding:1px 0">${s}</div>`).join('');
+        }).map(html => `<div style="padding:1px 0">${html}</div>`).join('');
 
-        // Delete button clears from all radios that saw this node
+        // Delete clears every stored key this node has on every radio that saw it
         const deleteRids = jsSafe(JSON.stringify([...seenByRids]));
         return `<div style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:6px;background:var(--bg2)">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">
             <div>
               <span style="font-weight:600">${label}</span>${badge}
-              <div style="font-size:11px;color:var(--muted);margin-top:2px">${escHtml(pre)} · ${count} obs · last ${lastAgo}${radioNames ? ` · via ${radioNames}` : ''}</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:2px">${escHtml(keyStr)} · ${count} obs · last ${lastAgo}${radioNames ? ` · via ${radioNames}` : ''}</div>
               <div style="font-size:11px;color:var(--muted)">${escHtml(sigStr)}${sigStr && typeStr ? ' · ' : ''}${escHtml(typeStr)}</div>
             </div>
             <button class="btn" style="font-size:11px;padding:2px 8px;flex-shrink:0;color:var(--red);border-color:var(--red)"
-              onclick="passiveIntelDeleteEntry('${deleteRids}','${jsSafe(pre)}',this)" title="Delete all observations for this node">Delete</button>
+              onclick="passiveIntelDeleteEntry('${deleteRids}','${jsSafe(JSON.stringify(group.keys))}',this)" title="Delete all observations for this node">Delete</button>
           </div>
           <div style="margin-top:6px;font-size:11px;border-top:1px solid var(--border);padding-top:4px">${recentHtml}</div>
         </div>`;
@@ -4365,19 +4448,26 @@ if (targetEl) {
     }
   }
 
-  async function passiveIntelDeleteEntry(radioIdsJson, pubkeyPre, btn) {
+  async function passiveIntelDeleteEntry(radioIdsJson, keysJson, btn) {
     if (btn) { btn.disabled = true; btn.textContent = '…'; }
     let radioIds;
     try { radioIds = JSON.parse(radioIdsJson); } catch { radioIds = [radioIdsJson]; }
+    let keys;
     try {
-      await Promise.all(radioIds.map(rid =>
+      const parsed = JSON.parse(keysJson);
+      keys = Array.isArray(parsed) ? parsed : [String(parsed)];
+    } catch { keys = [String(keysJson || '')]; }
+    keys = keys.map(k => String(k || '')).filter(Boolean);
+    if (!radioIds.length || !keys.length) { if (btn) { btn.disabled = false; btn.textContent = 'Delete'; } return; }
+    try {
+      await Promise.all(radioIds.flatMap(rid => keys.map(key =>
         fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/passive_obs`, {
           method: 'DELETE',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({pubkey_pre: pubkeyPre}),
+          body: JSON.stringify({pubkey_pre: key}),
         })
-      ));
-      radioIds.forEach(rid => { if (_mcPassiveSummaryCache[rid]) delete _mcPassiveSummaryCache[rid][pubkeyPre]; });
+      )));
+      radioIds.forEach(rid => { delete _mcPassiveSummaryCache[rid]; });
       loadPassiveIntelManager();
     } catch (e) {
       if (btn) { btn.disabled = false; btn.textContent = 'Delete'; }

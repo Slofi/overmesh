@@ -358,6 +358,11 @@ def load_passive_obs_summary(radio_id, pubkey_prefixes, exclude_obs_types=("rx",
         k = str(key or "").lower()
         if not k:
             continue
+        # A 1-byte hop hash (2 chars) is shared by 1 in 256 nodes: it cannot name a
+        # contact, and crediting it would add a stranger's signal to this node's
+        # count. Only keys that can plausibly identify a node are considered.
+        if len(k) < 4:
+            continue
         matches = [p for p in wanted if k.startswith(p) or p.startswith(k)]
         if len(matches) != 1:
             continue                      # ambiguous hash — do not guess a contact

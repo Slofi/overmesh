@@ -1721,8 +1721,19 @@ def api_mc_passive_obs_summary(radio_id):
         prefixes = [p.strip() for p in prefixes_raw.split(",") if p.strip()]
     if not prefixes:
         return jsonify({})
+    # The eye badge counts what a contact actually contributed. Overheard packets
+    # ('rx') are keyed by the relay that carried them, and the summary's
+    # unique-prefix rule (see load_passive_obs_summary) keeps them from being
+    # credited to unrelated nodes, so a local radio's own traffic can be counted
+    # too instead of showing a badge of zero forever.
+    include_rx_raw = body.get("include_rx")
+    if include_rx_raw is None:
+        include_rx_raw = request.args.get("include_rx", "")
+    include_rx = str(include_rx_raw).strip().lower() in ("1", "true", "yes", "on")
     try:
-        summary = load_passive_obs_summary(radio_id, prefixes)
+        summary = load_passive_obs_summary(
+            radio_id, prefixes, exclude_obs_types=() if include_rx else ("rx",)
+        )
         return jsonify(summary)
     except Exception as e:
         log.warning(f"[MC] passive_obs summary error: {e}")

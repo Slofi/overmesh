@@ -36,6 +36,7 @@ node tests/test_mc_alt_paths.js
 node tests/test_mc_route_picker.js
 node tests/test_mc_rptr_status.js
 node tests/test_mc_heat_points.js
+node tests/test_mc_passive_intel.js
 
 # JS lint (no-undef) — the only check that sees client-side ReferenceErrors,
 # which never reach the server journal. It MUST run with the repo as the base

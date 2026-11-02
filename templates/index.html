@@ -1824,7 +1824,7 @@
           <button class="btn" onclick="loadPassiveIntelManager()" title="Refresh passive observations list">↻ Refresh</button>
         </div>
       </div>
-      <p class="st-intro">OM passively records RF observations from overheard mesh traffic (adverts, messages and trace hops) without transmitting. Stored per MC radio, keyed by node pubkey prefix.</p>
+      <p class="st-intro">OM passively records RF observations from the traffic it hears (adverts, messages and trace hops) without transmitting. Stored per MC radio; rows are filed under the relay a packet arrived from or the node&#39;s own key, and this list merges them per node.</p>
 
       <label class="st-option">
         <input type="checkbox" class="st-switch" id="mc-passive-collection" onchange="saveMcPassiveCollection(this.checked)">

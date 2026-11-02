@@ -14952,7 +14952,7 @@ if (targetEl) {
   // confidence wording the primary path uses above. No per-hop SNR exists for a
   // copy (the radio only reports the signal of the packet it handed us), so the
   // copy header carries RSSI/SNR instead.
-  function _mcAltCopyHopsHtml(copy, entry) {
+  function _mcAltCopyHopsHtml(copy, entry, entryIdx, copyIdx) {
     const hashBytes = Number(copy?.path_hash_size ?? (copy?.path_hash_mode != null ? Number(copy.path_hash_mode) + 1 : 0));
     const charsPerHop = (Number.isFinite(hashBytes) && hashBytes > 0 ? hashBytes : 2) * 2;
     const raw = String(copy?.path || '').toLowerCase();
@@ -14975,11 +14975,17 @@ if (targetEl) {
       const label = contact ? (contact.long_name || contact.id || hash) : hash;
       const confLabel = _mcHopConfidenceLabel(resolution);
       const conf = confLabel ? ` <span class="mc-alt-hop-conf">${escHtml(confLabel)}</span>` : '';
-      rows.push(`<div class="mc-alt-hop">
-        <span class="mc-hop-prefix">${escHtml(hash)}</span>
+      const hopLat = contact?.latitude ?? contact?.lat;
+      const hopLon = contact?.longitude ?? contact?.lon;
+      const inner = `<span class="mc-hop-prefix">${escHtml(hash)}</span>
         <span class="mc-alt-hop-name">${escHtml(label)}${conf}</span>
-        <span class="mc-alt-hop-idx">hop ${i + 1}</span>
-      </div>`);
+        <span class="mc-alt-hop-idx">hop ${i + 1}</span>`;
+      if (hopLat != null && hopLon != null) {
+        rows.push(`<button class="mc-hop-focus mc-alt-hop-btn" title="Center the map on ${escHtml(label)} via this copy's path"
+          onclick="event.stopPropagation();_mcFocusAltCopyHop(event,${entryIdx},${copyIdx},${i})">${inner}</button>`);
+      } else {
+        rows.push(`<div class="mc-alt-hop" title="No GPS position for this hop">${inner}</div>`);
+      }
     }
     return rows.join('');
   }
@@ -15000,13 +15006,83 @@ if (targetEl) {
           <span class="mc-alt-copy-title">Copy ${i + 2} of ${copies.length + 1}</span>
           <span class="mc-alt-copy-meta">${escHtml(meta)}</span>
         </div>
-        ${_mcAltCopyHopsHtml(copy, entry)}
+        ${_mcAltCopyHopsHtml(copy, entry, entryIdx, i)}
       </div>`;
     }).join('');
     return `<details class="mc-hop-details mc-alt-paths" id="mc-alt-paths-${entryIdx}">
       <summary>Alternate paths (${copies.length})</summary>
       <div class="mc-hop-list">${groups}</div>
     </details>`;
+  }
+
+  // The path a given received copy travelled, built with the same decoder the
+  // primary path uses. Null when the copy carries no usable geometry.
+  function _mcAltCopyPathResult(entry, copy) {
+    if (!entry || !copy) return null;
+    const endpointLat = entry.lat ?? null;
+    const endpointLon = entry.lon ?? null;
+    if (endpointLat == null || endpointLon == null) return null;
+    const [radioLat, radioLon] = _mcSenseRadioPos(entry.radioId);
+    const pathResult = decodeMcEventPath({
+      path: copy.path,
+      path_len: copy.path_len,
+      path_hash_mode: copy.path_hash_mode,
+      path_hash_size: copy.path_hash_size,
+    }, endpointLat, endpointLon, radioLat, radioLon, entry.radioId);
+    if (!pathResult) return null;
+    // Incoming message: MeshCore stores the path as received, and the map is
+    // drawn sender -> relays -> us (the same reversal the primary path uses).
+    return pathResult.points ? _mcReversePathResult(pathResult) : pathResult;
+  }
+
+  function _mcAltCopyHashAt(copy, hopIdx) {
+    const hashBytes = Number(copy?.path_hash_size ?? (copy?.path_hash_mode != null ? Number(copy.path_hash_mode) + 1 : 0));
+    const chars = (Number.isFinite(hashBytes) && hashBytes > 0 ? hashBytes : 2) * 2;
+    const raw = String(copy?.path || '').toLowerCase();
+    return { hash: raw.slice(hopIdx * chars, (hopIdx + 1) * chars), chars };
+  }
+
+  // Clicking a repeater inside an alternate copy draws THAT copy's path and
+  // centres the map on the hop: the same gesture the main path offers, so the
+  // alternate list is not a dead end.
+  function _mcFocusAltCopyHop(ev, entryIdx, copyIdx, hopIdx) {
+    if (ev && typeof ev.stopPropagation === 'function') ev.stopPropagation();
+    const entry = _mcSenseLogEntries[entryIdx];
+    if (!entry) return;
+    const copy = _mcAltPathCopies(entry)[copyIdx];
+    if (!copy) return;
+    _mcLogPinnedIdx = entryIdx;
+    const copyPath = _mcAltCopyPathResult(entry, copy);
+    if (copyPath) showMcHoverPath(copyPath, true);
+    const { hash, chars } = _mcAltCopyHashAt(copy, hopIdx);
+    const declared = Number(copy.path_len);
+    const hopCount = Number.isFinite(declared) && declared >= 0 && declared !== 255
+      ? declared
+      : Math.ceil(String(copy.path || '').length / chars);
+    const [radioLat, radioLon] = _mcSenseRadioPos(entry.radioId);
+    const resolution = _mcPickPathHopResolution(hash, entry.radioId, radioLat, radioLon,
+      entry.lat ?? null, entry.lon ?? null, hopIdx, hopCount, { requireGps: false });
+    const contact = resolution?.contact || findMcContactByKeyPrefix(hash, entry.radioId);
+    const hopLat = contact?.latitude ?? contact?.lat;
+    const hopLon = contact?.longitude ?? contact?.lon;
+    const markerId = String(contact?.id || contact?.full_key || '').slice(0, 12);
+    const marker = markerId ? mcMapMarkerById[markerId] : null;
+    if (marker && leafletMap) {
+      leafletMap.setView(marker.getLatLng(), Math.max(leafletMap.getZoom(), 14));
+      marker.openPopup();
+      highlightMcContact(markerId, true);
+      setTimeout(() => highlightMcContact(markerId, false), 1600);
+    } else if (hopLat != null && hopLon != null) {
+      if (leafletMap) leafletMap.setView([hopLat, hopLon], Math.max(leafletMap.getZoom(), 14));
+      else centerMcOnMap(hopLat, hopLon);
+    }
+    const block = ev?.currentTarget?.closest?.('.mc-alt-copy');
+    if (block) {
+      document.querySelectorAll('.mc-alt-copy.mc-alt-copy-active').forEach(el => {
+        if (el !== block) el.classList.remove('mc-alt-copy-active');
+      });
+      block.classList.add('mc-alt-copy-active');
+    }
   }
 
   function _mcOpenAltPaths(entryIdx) {

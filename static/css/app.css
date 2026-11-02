@@ -1155,6 +1155,8 @@
     .mc-alt-copy-title { font-weight:700; font-size:11px; color:var(--mc-color); }
     .mc-alt-copy-meta { color:var(--muted); font-size:10px; }
     .mc-alt-hop { display:flex; align-items:center; gap:6px; padding:2px 0; font-size:11px; }
+    .mc-alt-hop-btn { padding:4px 7px; }
+    .mc-alt-copy-active { border-color:var(--mc-color); background:rgba(56,189,248,0.07); }
     .mc-alt-hop-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .mc-alt-hop-conf { color:var(--muted); font-size:10px; }
     .mc-alt-hop-idx { color:var(--muted); font-size:10px; font-family:monospace; white-space:nowrap; }

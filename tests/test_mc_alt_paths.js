@@ -36,6 +36,7 @@ const NAMES = {
   '86a8': 'SI-LJ-Trnovo II',
   'ead8': '<img src=x onerror=alert(1)>',
 };
+const GPS = { '86a8': [46.06, 14.49], 'ead8': [46.07, 14.51] };
 
 const code = [
   extract('_mcRxCopyKey'),
@@ -49,15 +50,15 @@ const code = [
   // helpers mirrored from app.js (the real ones need the live map/contacts)
   'function _mcSenseRadioPos() { return [46.0409, 14.4981]; }',
   `function _mcPickPathHopResolution(hash) {
-     if (hash === '86a8') return { contact: { long_name: 'SI-LJ-Trnovo II', id: '86a8eedb' }, confidence: 'ambiguous' };
+     if (hash === '86a8') return { contact: { long_name: 'SI-LJ-Trnovo II', id: '86a8eedb', latitude: 46.06, longitude: 14.49 }, confidence: 'ambiguous' };
      return null;
    }`,
-  'function findMcContactByKeyPrefix(hash) { return NAMES[hash] ? { long_name: NAMES[hash], id: hash } : null; }',
+  'function findMcContactByKeyPrefix(hash) { const g = GPS[hash]; return NAMES[hash] ? { long_name: NAMES[hash], id: hash, latitude: g ? g[0] : null, longitude: g ? g[1] : null } : null; }',
   'function _formatAppTime(ts) { return "T" + ts; }',
   'return { copies: _mcAltPathCopies, meta: _mcAltPathMeta, html: _mcAltPathsHtml, hops: _mcAltCopyHopsHtml };',
 ].join('\n');
 
-const api = new Function('NAMES', code)(NAMES);
+const api = new Function('NAMES', 'GPS', code)(NAMES, GPS);
 
 const primary = {
   path: '86a8ead8', path_len: 2, path_hash_size: 2, rx_rssi: -88, rx_snr: 5.5,
@@ -120,6 +121,16 @@ assert(html.includes('hop 1') && html.includes('hop 2'), 'hops must be numbered'
 // --- a contact name cannot inject markup
 assert(!html.includes('<img src=x'), 'contact names must be escaped');
 assert(html.includes('&lt;img'), 'the escaped form must be shown instead');
+
+// --- a hop with GPS is a clickable control, one without GPS is not
+assert(html.includes('_mcFocusAltCopyHop(event,'), 'a hop with a position must be clickable');
+const btnMatch = html.match(/<button class="mc-hop-focus mc-alt-hop-btn"[^>]*onclick="event\.stopPropagation\(\);_mcFocusAltCopyHop\(event,(\d+),(\d+),(\d+)\)"/);
+assert(btnMatch, 'the click handler must carry entry, copy and hop indices');
+assert(btnMatch[3] === '0', 'the first hop of the copy must be index 0');
+
+// --- hops without a position stay plain rows (nothing to centre the map on)
+assert((html.match(/mc-alt-hop-btn/g) || []).length === 2,
+  'only hops with a known position may become controls (2 of 4 here)');
 
 // --- 3-byte hashes split every 6 hex chars
 const wide = api.hops({ path: 'aabbccddeeff', path_len: 2, path_hash_size: 3 }, { radioId: 'mc1' });

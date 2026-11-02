@@ -3974,6 +3974,7 @@ if (targetEl) {
     _editWpId    = null;
     _editNoteId  = null;
     _mcRouteEditor = null;
+    _mcRouteDropMap();
     if (_nodeInfoTimer) { clearInterval(_nodeInfoTimer); _nodeInfoTimer = null; }
   }
 
@@ -12560,6 +12561,23 @@ if (targetEl) {
     };
   }
 
+  // ---- MC route editor: hop list + map picker (S479) ----------------------
+  // The editor keeps a small Leaflet map beside the hop list, so a route can be
+  // built by clicking repeaters instead of only by searching for names. The map
+  // is created once per open and survives hop edits: the list, the candidates,
+  // the info card and the action buttons render into their own slots.
+  let _mcRouteMap = null;       // Leaflet instance inside the modal
+  let _mcRouteMapView = null;   // {lat,lng,zoom}, kept across re-opens this session
+  let _mcRouteOverlays = [];    // markers + polyline currently drawn
+
+  function _mcRouteDropMap() {
+    _mcRouteOverlays = [];
+    if (_mcRouteMap) {
+      try { _mcRouteMap.remove(); } catch(e) {}
+      _mcRouteMap = null;
+    }
+  }
+
   function openMcRouteEditor(contactId, radioId) {
     const contact = mcContacts[radioId]?.[contactId];
     if (!contact) {
@@ -12576,95 +12594,364 @@ if (targetEl) {
       saving: false,
       statusMessage: '',
       statusKind: '',
+      picker: true,     // the map is the point of this screen, so it opens by default
+      pickTarget: null, // repeater prefix currently shown in the picker info card
     };
-    openModal(`MC Route: ${_mcRouteEditor.contactName}`, '<div class="modal-loading">Loading route editor…</div>');
+    _mcRouteDropMap();
+    openModal(`MC Route: ${_mcRouteEditor.contactName}`, '');
     renderMcRouteEditor();
-    setTimeout(() => document.getElementById('mc-route-search')?.focus(), 40);
   }
 
+  function _mcRouteEditorRadioLabel() {
+    const st = _mcRouteEditor;
+    if (!st) return '';
+    return mcLastStatus[st.radioId]?.name || mcLastStatus[st.radioId]?.node_name || st.radioId;
+  }
+
+  // The dialog is built once per open: every part that can change while the user
+  // works (hops, candidates, status, actions, pick info) has its own slot, so
+  // adding a hop never destroys and rebuilds the map.
   function renderMcRouteEditor() {
     if (!_mcRouteEditor) return;
     const body = document.getElementById('modal-body');
     if (!body) return;
-    const { radioId, contactId, contactName, selected, query, saving, pathHashMode } = _mcRouteEditor;
-    const contact = mcContacts[radioId]?.[contactId];
-    const radioLabel = mcLastStatus[radioId]?.name || mcLastStatus[radioId]?.node_name || radioId;
-    const currentSummary = contact ? _mcStoredRouteSummary(contact, radioId) : 'Automatic / flood routing';
-    const hopHtml = selected.length
-      ? `<div class="mc-route-hops">${selected.map((prefix, idx) => {
-          const hop = _mcRouteHopMeta(prefix, radioId);
-          return `<div class="mc-route-hop">
-            <div class="mc-route-hop-label">
-              <div>${escHtml(hop.label)}</div>
-              <div class="mc-route-hop-meta">${escHtml(hop.meta)}</div>
-            </div>
-            <button class="mc-route-hop-btn" title="Move up" ${idx === 0 || saving ? 'disabled' : ''} onclick="mcRouteMoveHop(${idx}, -1)">&#8593;</button>
-            <button class="mc-route-hop-btn" title="Move down" ${idx === selected.length - 1 || saving ? 'disabled' : ''} onclick="mcRouteMoveHop(${idx}, 1)">&#8595;</button>
-            <button class="mc-route-hop-btn" title="Remove hop" ${saving ? 'disabled' : ''} onclick="mcRouteRemoveHop(${idx})">&#10005;</button>
-          </div>`;
-        }).join('')}</div>`
-      : `<div class="mc-route-summary" style="margin-top:10px">No repeaters selected. Click <b>Set Direct Only</b> to force direct delivery, or <b>Clear path</b> to use automatic/flood routing.</div>`;
+    const st = _mcRouteEditor;
+    const mode = Number(st.pathHashMode);
+    body.innerHTML = `
+      <div class="modal-node">${escHtml(st.contactName)} · ${escHtml(st.contactId)} · via ${escHtml(_mcRouteEditorRadioLabel())}</div>
+      <div id="mc-route-summary-slot"></div>
+      <div style="font-size:12px;color:var(--muted);margin-top:10px">Selected repeaters</div>
+      <div id="mc-route-hops-slot"></div>
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin:10px 0">
+        <div>
+          <label class="settings-label">Path hash for this route</label>
+          <select class="settings-select" id="mc-route-hashmode" onchange="mcRouteSetPathHashMode(this.value)" ${st.saving ? 'disabled' : ''}>
+            <option value="0"${mode === 0 ? ' selected' : ''}>1B/hop - legacy compatible</option>
+            <option value="1"${mode === 1 ? ' selected' : ''}>2B/hop - balanced</option>
+            <option value="2"${mode === 2 ? ' selected' : ''}>3B/hop - most specific</option>
+          </select>
+        </div>
+        <div style="font-size:11px;color:var(--muted);max-width:300px">Uses ${escHtml(_mcPathHashModeLabel(st.pathHashMode))} when saving this stored route. Older radios may fall back.</div>
+      </div>
+      <div class="mc-route-picker-head">
+        <button class="btn" id="mc-route-picker-toggle" onclick="mcRouteTogglePicker()">${st.picker ? 'Hide map picker' : 'Pick on map'}</button>
+        <span class="mc-route-picker-hint">Click a repeater on the map to see it here, then add it to the path.</span>
+      </div>
+      <div id="mc-route-map-slot"></div>
+      <div id="mc-route-pick-info"></div>
+      <div style="font-size:12px;color:var(--muted);margin:12px 0 6px">Search known repeaters</div>
+      <div class="mc-route-search-row">
+        <input id="mc-route-search" class="mc-route-search" value="${escHtml(st.query)}" placeholder="Search repeaters..." oninput="mcRouteSetQuery(this.value)" ${st.saving ? 'disabled' : ''}>
+      </div>
+      <div id="mc-route-candidates-slot"></div>
+      <div id="mc-route-status-slot"></div>
+      <div class="mc-route-actions" id="mc-route-actions-slot"></div>`;
+    _mcRouteRefresh();
+    if (st.picker) _mcRouteMountMap();
+    setTimeout(() => {
+      const input = document.getElementById('mc-route-search');
+      if (input && !st.saving) input.focus({ preventScroll: true });
+    }, 40);
+  }
 
-    const candidates = _mcRouteCandidateList(radioId, contactId, query)
-      .filter(c => !selected.some(prefix => (c.full_key || c.id || '').toLowerCase().startsWith(String(prefix).toLowerCase())))
+  function _mcRouteRefresh() {
+    if (!_mcRouteEditor) return;
+    _mcRouteRenderSummary();
+    _mcRouteRenderHops();
+    _mcRouteRenderCandidates();
+    _mcRouteRenderStatus();
+    _mcRouteRenderActions();
+    _mcRouteRenderPickInfo();
+    _mcRouteSyncMapMarkers();
+  }
+
+  function _mcRouteRenderSummary() {
+    const el = document.getElementById('mc-route-summary-slot');
+    if (!el || !_mcRouteEditor) return;
+    const st = _mcRouteEditor;
+    const contact = mcContacts[st.radioId]?.[st.contactId];
+    const summary = contact ? _mcStoredRouteSummary(contact, st.radioId) : 'Automatic / flood routing';
+    el.innerHTML = `<div class="mc-route-summary">
+      <div style="color:var(--muted);font-size:11px;margin-bottom:4px">Current stored route</div>
+      <div>${escHtml(summary)}</div>
+    </div>`;
+  }
+
+  function _mcRouteRenderHops() {
+    const el = document.getElementById('mc-route-hops-slot');
+    if (!el || !_mcRouteEditor) return;
+    const st = _mcRouteEditor;
+    if (!st.selected.length) {
+      el.innerHTML = '<div class="mc-route-summary" style="margin-top:10px">No repeaters selected. Click a repeater on the map or add one below, or use <b>Set Direct Only</b> / <b>Clear path</b>.</div>';
+      return;
+    }
+    el.innerHTML = `<div class="mc-route-hops">${st.selected.map((prefix, idx) => {
+      const hop = _mcRouteHopMeta(prefix, st.radioId);
+      return `<div class="mc-route-hop">
+        <span class="mc-route-hop-order">${idx + 1}</span>
+        <div class="mc-route-hop-label">
+          <div>${escHtml(hop.label)}</div>
+          <div class="mc-route-hop-meta">${escHtml(hop.meta)}</div>
+        </div>
+        <button class="mc-route-hop-btn" title="Move up" ${idx === 0 || st.saving ? 'disabled' : ''} onclick="mcRouteMoveHop(${idx}, -1)">&#8593;</button>
+        <button class="mc-route-hop-btn" title="Move down" ${idx === st.selected.length - 1 || st.saving ? 'disabled' : ''} onclick="mcRouteMoveHop(${idx}, 1)">&#8595;</button>
+        <button class="mc-route-hop-btn" title="Remove hop" ${st.saving ? 'disabled' : ''} onclick="mcRouteRemoveHop(${idx})">&#10005;</button>
+      </div>`;
+    }).join('')}</div>`;
+  }
+
+  function _mcRouteRenderCandidates() {
+    const el = document.getElementById('mc-route-candidates-slot');
+    if (!el || !_mcRouteEditor) return;
+    const st = _mcRouteEditor;
+    const candidates = _mcRouteCandidateList(st.radioId, st.contactId, st.query)
+      .filter(c => _mcRouteSelectedIndex(c.full_key || c.id || '') < 0)
       .slice(0, 24);
-    const candidatesHtml = candidates.length
-      ? candidates.map(c => {
+    el.innerHTML = candidates.length
+      ? `<div class="mc-route-candidates">${candidates.map(c => {
           const label = c.long_name || c.id || '?';
           const seen = _mcContactSeenLabel(c);
-          const meta = `${mcTypeLabel(c.type ?? 0)}${seen && seen !== '-' ? ` · ${seen}` : ''}`;
+          const noGps = (c.latitude ?? c.lat) == null;
+          const meta = `${mcTypeLabel(c.type ?? 0)}${seen && seen !== '-' ? ` · ${seen}` : ''}${noGps ? ' · no GPS' : ''}`;
+          const key = c.full_key || c.id || '';
           return `<div class="mc-route-candidate">
             <div>
               <div>${escHtml(label)}</div>
               <div class="mc-route-hop-meta">${escHtml(meta)}</div>
             </div>
-            <button ${saving ? 'disabled' : ''} onclick="mcRouteAddHop('${jsSafe(c.full_key || c.id || '')}')">Add</button>
+            <button ${st.saving ? 'disabled' : ''} onclick="mcRouteAddHop('${jsSafe(key)}')">Add</button>
           </div>`;
-        }).join('')
-      : `<div style="padding:12px;color:var(--muted);font-size:12px">No known repeaters match this search on ${escHtml(radioLabel)}.</div>`;
-
-    const statusHtml = _mcRouteEditor.statusMessage
-      ? `<div class="modal-${_mcRouteEditor.statusKind === 'error' ? 'error' : _mcRouteEditor.statusKind === 'success' ? 'success' : 'loading'}">${escHtml(_mcRouteEditor.statusMessage)}</div>`
-      : '<div id="mc-route-status"></div>';
-    body.innerHTML = `
-      <div class="modal-node">${escHtml(contactName)} · ${escHtml(contactId)} · via ${escHtml(radioLabel)}</div>
-      <div class="mc-route-summary">
-        <div style="color:var(--muted);font-size:11px;margin-bottom:4px">Current stored route</div>
-        <div>${escHtml(currentSummary)}</div>
-      </div>
-      <div style="font-size:12px;color:var(--muted)">Selected repeaters</div>
-      ${hopHtml}
-      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin:10px 0">
-        <div>
-          <label class="settings-label">Path hash for this route</label>
-          <select class="settings-select" onchange="mcRouteSetPathHashMode(this.value)" ${saving ? 'disabled' : ''}>
-            <option value="0"${Number(pathHashMode) === 0 ? ' selected' : ''}>1B/hop - legacy compatible</option>
-            <option value="1"${Number(pathHashMode) === 1 ? ' selected' : ''}>2B/hop - balanced</option>
-            <option value="2"${Number(pathHashMode) === 2 ? ' selected' : ''}>3B/hop - most specific</option>
-          </select>
-        </div>
-        <div style="font-size:11px;color:var(--muted);max-width:300px">Uses ${escHtml(_mcPathHashModeLabel(pathHashMode))} when saving this stored route. Older radios may fall back.</div>
-      </div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Search known repeaters</div>
-      <div class="mc-route-search-row">
-        <input id="mc-route-search" class="mc-route-search" value="${escHtml(query)}" placeholder="Search repeaters..." oninput="mcRouteSetQuery(this.value)" ${saving ? 'disabled' : ''}>
-      </div>
-      <div class="mc-route-candidates">${candidatesHtml}</div>
-      ${statusHtml}
-      <div class="mc-route-actions">
-        <button class="btn" ${saving ? 'disabled' : ''} onclick="saveMcRouteEditor(true)">Clear path</button>
-        <button class="btn btn-net-mc active" ${saving ? 'disabled' : ''} onclick="saveMcRouteEditor(false)">${saving ? 'Saving…' : selected.length === 0 ? 'Set Direct Only' : 'Save route'}</button>
-      </div>`;
+        }).join('')}</div>`
+      : `<div style="padding:12px;color:var(--muted);font-size:12px">No known repeaters match this search on ${escHtml(_mcRouteEditorRadioLabel())}.</div>`;
   }
 
+  function _mcRouteRenderStatus() {
+    const el = document.getElementById('mc-route-status-slot');
+    if (!el || !_mcRouteEditor) return;
+    const st = _mcRouteEditor;
+    el.innerHTML = st.statusMessage
+      ? `<div class="modal-${st.statusKind === 'error' ? 'error' : st.statusKind === 'success' ? 'success' : 'loading'}">${escHtml(st.statusMessage)}</div>`
+      : '';
+  }
+
+  function _mcRouteRenderActions() {
+    const el = document.getElementById('mc-route-actions-slot');
+    if (!el || !_mcRouteEditor) return;
+    const st = _mcRouteEditor;
+    const saveLabel = st.saving ? 'Saving…' : st.selected.length === 0 ? 'Set Direct Only' : 'Save route';
+    el.innerHTML = `
+      <button class="btn" ${st.saving ? 'disabled' : ''} onclick="saveMcRouteEditor(true)">Clear path</button>
+      <button class="btn btn-net-mc active" ${st.saving ? 'disabled' : ''} onclick="saveMcRouteEditor(false)">${saveLabel}</button>`;
+  }
+
+  function _mcRouteRenderPickInfo() {
+    const el = document.getElementById('mc-route-pick-info');
+    if (!el || !_mcRouteEditor) return;
+    const st = _mcRouteEditor;
+    const prefix = st.pickTarget;
+    if (!prefix) {
+      el.innerHTML = '<div class="mc-route-pick-hint">Click a repeater on the map to see it here, then add it to the path.</div>';
+      return;
+    }
+    const c = findMcContactByKeyPrefix(prefix, st.radioId) || {};
+    const key = c.full_key || c.id || prefix;
+    const name = c.long_name || c.id || prefix;
+    const lat = c.latitude ?? c.lat;
+    const lon = c.longitude ?? c.lon;
+    const seen = _mcContactSeenLabel(c);
+    const meta = [
+      mcTypeLabel(c.type ?? 0),
+      seen && seen !== '-' ? seen : null,
+      lat != null && lon != null ? `${Number(lat).toFixed(5)}, ${Number(lon).toFixed(5)}` : 'no GPS position',
+    ].filter(Boolean).join(' · ');
+    const selIdx = _mcRouteSelectedIndex(key);
+    el.innerHTML = `<div class="mc-route-pick-card">
+      <div class="mc-route-pick-main">
+        <div class="mc-route-pick-name">${escHtml(name)}</div>
+        <div class="mc-route-hop-meta">${escHtml(meta)}</div>
+      </div>
+      <div class="mc-route-pick-actions">
+        ${selIdx >= 0
+          ? `<button class="btn" onclick="mcRouteRemoveHopByPrefix('${jsSafe(key)}')">Remove from path (hop ${selIdx + 1})</button>`
+          : `<button class="btn btn-net-mc active" onclick="mcRouteAddHop('${jsSafe(key)}')">Add to path</button>`}
+        <button class="btn" title="Center the picker on this repeater" onclick="mcRouteCenterPicked()">Center</button>
+      </div>
+    </div>`;
+  }
+
+  function _mcRouteSelectedIndex(prefix) {
+    const st = _mcRouteEditor;
+    if (!st || !prefix) return -1;
+    const c = findMcContactByKeyPrefix(prefix, st.radioId);
+    const key = String((c && (c.full_key || c.id)) || prefix).toLowerCase();
+    return st.selected.findIndex(p => {
+      const sp = String(p || '').toLowerCase();
+      if (!sp) return false;
+      return key === sp || key.startsWith(sp) || sp.startsWith(key);
+    });
+  }
+
+  // ---- picker map ----
+  function mcRouteTogglePicker() {
+    if (!_mcRouteEditor) return;
+    _mcRouteEditor.picker = !_mcRouteEditor.picker;
+    const btn = document.getElementById('mc-route-picker-toggle');
+    if (btn) btn.textContent = _mcRouteEditor.picker ? 'Hide map picker' : 'Pick on map';
+    if (_mcRouteEditor.picker) {
+      _mcRouteMountMap();
+    } else {
+      _mcRouteDropMap();
+      const slot = document.getElementById('mc-route-map-slot');
+      if (slot) slot.innerHTML = '';
+      _mcRouteRenderPickInfo();
+    }
+  }
+
+  function _mcRouteRepeaterList() {
+    const st = _mcRouteEditor;
+    if (!st) return [];
+    return Object.values(mcContacts[st.radioId] || {})
+      .filter(c => (c.type ?? 0) === 2)
+      .filter(c => (c.id || '') !== (st.contactId || ''))
+      .filter(c => (c.latitude ?? c.lat) != null && (c.longitude ?? c.lon) != null)
+      .sort((a, b) => String(a.long_name || a.id || '').localeCompare(String(b.long_name || b.id || '')));
+  }
+
+  function _mcRoutePickIcon(order) {
+    return L.divIcon({
+      className: '',
+      html: `<div class="mc-route-pick-badge">${order + 1}</div>`,
+      iconSize: [22, 22], iconAnchor: [11, 11], popupAnchor: [0, -12],
+    });
+  }
+
+  function _mcRouteTargetIcon() {
+    return L.divIcon({
+      className: '',
+      html: '<div class="mc-route-target-badge">T</div>',
+      iconSize: [22, 22], iconAnchor: [11, 11], popupAnchor: [0, -12],
+    });
+  }
+
+  function _mcRouteMountMap() {
+    const slot = document.getElementById('mc-route-map-slot');
+    if (!slot) return;
+    _mcRouteDropMap();
+    slot.innerHTML = '<div id="mc-route-map"></div>';
+    const fallback = leafletMap
+      ? { lat: leafletMap.getCenter().lat, lng: leafletMap.getCenter().lng, zoom: leafletMap.getZoom() }
+      : { lat: 46.05, lng: 14.5, zoom: 9 };
+    const view = _mcRouteMapView || fallback;
+    _mcRouteMap = L.map('mc-route-map', { zoomSnap: 0.5, zoomDelta: 0.5 }).setView([view.lat, view.lng], view.zoom);
+    try { _mcRouteMap.attributionControl.setPrefix(false); } catch(e) {}
+    const key = (() => { try { return localStorage.getItem('mapTileLayer') || DEFAULT_TILE_LAYER; } catch(e) { return DEFAULT_TILE_LAYER; } })();
+    try { _applyTileLayer(_mcRouteMap, null, key); } catch(e) {}
+    _mcRouteMap.on('moveend', () => {
+      if (!_mcRouteMap) return;
+      const c = _mcRouteMap.getCenter();
+      _mcRouteMapView = { lat: c.lat, lng: c.lng, zoom: _mcRouteMap.getZoom() };
+    });
+    _mcRouteSyncMapMarkers();
+    if (!_mcRouteMapView) {
+      const pts = _mcRouteMapPoints();
+      if (pts.length > 1) _mcRouteMap.fitBounds(pts, { padding: [26, 26], maxZoom: 13 });
+    }
+    setTimeout(() => { try { _mcRouteMap.invalidateSize(); } catch(e) {} }, 80);
+  }
+
+  function _mcRouteMapPoints() {
+    const st = _mcRouteEditor;
+    if (!st) return [];
+    const pts = [];
+    const target = mcContacts[st.radioId]?.[st.contactId];
+    const tLat = target?.latitude ?? target?.lat;
+    const tLon = target?.longitude ?? target?.lon;
+    if (tLat != null && tLon != null) pts.push([tLat, tLon]);
+    _mcRouteRepeaterList().forEach(c => pts.push([c.latitude ?? c.lat, c.longitude ?? c.lon]));
+    return pts;
+  }
+
+  function _mcRouteSyncMapMarkers() {
+    if (!_mcRouteMap || !_mcRouteEditor) return;
+    _mcRouteOverlays.forEach(layer => { try { _mcRouteMap.removeLayer(layer); } catch(e) {} });
+    _mcRouteOverlays = [];
+    const st = _mcRouteEditor;
+
+    const target = mcContacts[st.radioId]?.[st.contactId];
+    const tLat = target?.latitude ?? target?.lat;
+    const tLon = target?.longitude ?? target?.lon;
+    if (tLat != null && tLon != null) {
+      const marker = L.marker([tLat, tLon], { icon: _mcRouteTargetIcon(), title: st.contactName });
+      marker.bindTooltip(st.contactName, { direction: 'right', className: 'map-label', offset: [8, 0] });
+      marker.addTo(_mcRouteMap);
+      _mcRouteOverlays.push(marker);
+    }
+
+    const pickedKey = String(st.pickTarget || '').toLowerCase();
+    _mcRouteRepeaterList().forEach(c => {
+      const key = c.full_key || c.id || '';
+      const lat = c.latitude ?? c.lat;
+      const lon = c.longitude ?? c.lon;
+      const order = _mcRouteSelectedIndex(key);
+      const isPicked = pickedKey && String(key).toLowerCase().startsWith(pickedKey);
+      const icon = order >= 0 ? _mcRoutePickIcon(order) : makeMcIcon(!!isPicked, c.type ?? 0);
+      const marker = L.marker([lat, lon], { icon, title: c.long_name || c.id || key });
+      const hopMeta = order >= 0 ? `hop ${order + 1}` : 'not in path';
+      marker.bindTooltip(`${c.long_name || c.id || key} · ${hopMeta}`, { direction: 'right', className: 'map-label', offset: [8, 0] });
+      marker.on('click', () => mcRoutePickRepeater(key));
+      marker.addTo(_mcRouteMap);
+      _mcRouteOverlays.push(marker);
+    });
+
+    // Draft route, drawn as it is being chosen: our radio -> hops in order -> target.
+    const line = [];
+    const [rLat, rLon] = _mcSenseRadioPos(st.radioId);
+    if (rLat != null && rLon != null) line.push([rLat, rLon]);
+    st.selected.forEach(prefix => {
+      const hop = findMcContactByKeyPrefix(prefix, st.radioId);
+      const hLat = hop?.latitude ?? hop?.lat;
+      const hLon = hop?.longitude ?? hop?.lon;
+      if (hLat != null && hLon != null) line.push([hLat, hLon]);
+    });
+    if (tLat != null && tLon != null) line.push([tLat, tLon]);
+    if (line.length > 1) {
+      const poly = L.polyline(line, { color: '#f59e0b', weight: 3, dashArray: '6,5', opacity: 0.9 });
+      poly.addTo(_mcRouteMap);
+      _mcRouteOverlays.push(poly);
+    }
+  }
+
+  function mcRoutePickRepeater(prefix) {
+    if (!_mcRouteEditor || !prefix) return;
+    _mcRouteEditor.pickTarget = prefix;
+    _mcRouteSyncMapMarkers();
+    _mcRouteRenderPickInfo();
+  }
+
+  function mcRouteCenterPicked() {
+    const st = _mcRouteEditor;
+    if (!st || !_mcRouteMap || !st.pickTarget) return;
+    const c = findMcContactByKeyPrefix(st.pickTarget, st.radioId);
+    const lat = c?.latitude ?? c?.lat;
+    const lon = c?.longitude ?? c?.lon;
+    if (lat == null || lon == null) return;
+    _mcRouteMap.setView([lat, lon], Math.max(_mcRouteMap.getZoom(), 14));
+  }
+
+  function mcRouteRemoveHopByPrefix(prefix) {
+    const idx = _mcRouteSelectedIndex(prefix);
+    if (idx >= 0) mcRouteRemoveHop(idx);
+  }
+
+  // ---- state setters: update their slots, never the map ----
   function mcRouteSetQuery(value) {
     if (!_mcRouteEditor) return;
     _mcRouteEditor.query = value || '';
-    renderMcRouteEditor();
+    _mcRouteRenderCandidates();
     setTimeout(() => {
       const input = document.getElementById('mc-route-search');
       if (input) {
-        input.focus();
+        input.focus({ preventScroll: true });
         input.setSelectionRange(input.value.length, input.value.length);
       }
     }, 0);
@@ -12674,19 +12961,20 @@ if (targetEl) {
     if (!_mcRouteEditor) return;
     const mode = Number(value);
     _mcRouteEditor.pathHashMode = Number.isFinite(mode) ? Math.max(0, Math.min(2, mode)) : 2;
-    renderMcRouteEditor();
   }
 
   function mcRouteAddHop(prefix) {
     if (!_mcRouteEditor || !prefix) return;
+    if (_mcRouteSelectedIndex(prefix) >= 0) return;
     _mcRouteEditor.selected.push(prefix);
-    renderMcRouteEditor();
+    _mcRouteEditor.pickTarget = prefix;   // keep the info card on what was just added
+    _mcRouteRefresh();
   }
 
   function mcRouteRemoveHop(idx) {
     if (!_mcRouteEditor) return;
     _mcRouteEditor.selected.splice(idx, 1);
-    renderMcRouteEditor();
+    _mcRouteRefresh();
   }
 
   function mcRouteMoveHop(idx, delta) {
@@ -12695,7 +12983,7 @@ if (targetEl) {
     if (next < 0 || next >= _mcRouteEditor.selected.length) return;
     const hops = _mcRouteEditor.selected;
     [hops[idx], hops[next]] = [hops[next], hops[idx]];
-    renderMcRouteEditor();
+    _mcRouteRefresh();
   }
 
   async function saveMcRouteEditor(clear = false) {
@@ -12704,7 +12992,7 @@ if (targetEl) {
     state.statusMessage = 'Saving route…';
     state.statusKind = 'loading';
     state.saving = true;
-    renderMcRouteEditor();
+    _mcRouteRefresh();
     try {
       const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(state.radioId)}/contacts/${encodeURIComponent(state.contactId)}/route`, {
         method: 'POST',
@@ -12724,15 +13012,15 @@ if (targetEl) {
       state.statusKind = 'success';
       renderMcMapMarkers();
       if (currentTab === 'nodes') renderLive();
-      renderMcRouteEditor();
+      _mcRouteRefresh();
     } catch(e) {
       state.statusMessage = e.message || 'Request failed.';
       state.statusKind = 'error';
-      renderMcRouteEditor();
+      _mcRouteRefresh();
     } finally {
       if (_mcRouteEditor) {
         _mcRouteEditor.saving = false;
-        renderMcRouteEditor();
+        _mcRouteRefresh();
       }
     }
   }

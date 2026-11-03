@@ -24,6 +24,7 @@ node tests/test_message_notif_layout.js
 node tests/test_mc_scan_results_ui.js
 node tests/test_map_keys_ui.js
 node tests/test_net_choice_ui.js
+node tests/test_sense_map_load_order.js
 node tests/test_tile_download_reason.js
 node tests/test_shared_layer_zoom.js
 node tests/test_pip_traces.js

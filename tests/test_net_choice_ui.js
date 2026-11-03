@@ -104,12 +104,19 @@ const STUBS = [
   'let _updateScanBtnVisibility = null;',
   'let mapShowMt = true;',
   'let mapShowMc = true;',
+  // EST-248: the Sense focus helpers. This harness has no map and no Sense panel, so the panel counts as closed and
+  // the effective-visibility path is a no-op — which is exactly the "Sense closed" case this test is about.
+  'function _isSensePanelOpen(){ return false; }',
+  'function _syncSenseMapFocus(){}',
+  'let _lastMcMapCount = 0;',
 ];
 
 // Connectivity is derived from the two status snapshots exactly as the app derives it — which is what makes the
 // "snapshot has not arrived yet" fault reproducible here at all (MT and MC status come from different payloads).
+// EST-248: the app also remembers whether each payload has ANSWERED, so an empty snapshot is "not yet", not "gone";
+// the setters below mark arrival the way /api/status and /api/mc/status do.
 const STATUS_FNS = [
-  'let lastStatus = {}, mcLastStatus = {};',
+  'let lastStatus = {}, mcLastStatus = {}, _mtStatusReceived = false, _mcStatusReceived = false;',
   'function hasConnectedMtRadios(){ return Object.values(lastStatus).some(s => s && s.enabled !== false && s.status === "connected"); }',
   'function hasConnectedMcRadios(){ return Object.values(mcLastStatus).some(s => s && s.status === "connected"); }',
 ];
@@ -133,10 +140,16 @@ function makeApi(store) {
        get netChoice() { return _netChoice; },
        setChatNetwork, switchSenseNet, boot,
        updatePillVisibility: _updateNetworkPillVisibility,
-       setStatus(mt, mc) { lastStatus = mt || {}; mcLastStatus = mc || {}; },
+       setStatus(mt, mc) {
+         lastStatus = mt || {};
+         _mtStatusReceived = true;
+         // mc === undefined means the MC payload has NOT arrived yet (the boot case this test is about).
+         if (mc !== undefined) { mcLastStatus = mc || {}; _mcStatusReceived = true; }
+       },
        setConnected(mt, mc) {
          lastStatus = { mt1: { status: mt ? 'connected' : 'disconnected', enabled: true } };
          mcLastStatus = { mc1: { status: mc ? 'connected' : 'disconnected' } };
+         _mtStatusReceived = true; _mcStatusReceived = true;
        },
      };`,
   ].join('\n');
@@ -168,8 +181,9 @@ api.switchSenseNet('mt');
 assert(api.chatNetwork === 'mt', 'the Chat pill must follow the Sense choice');
 assert(api.senseNet === 'mt', 'sense choice applied');
 assert(els['chat-net-mt'] && els['chat-net-mt']._cls.has('active'), 'the Chat MT pill is highlighted');
-assert(api.mapShowMc === false && api.mapShowMt === true,
-  'the Sense pill keeps its own map-focus behaviour (unchanged from before)');
+assert(api.mapShowMc === true && api.mapShowMt === true,
+  'the Sense pill must NOT write the ordinary Map filter either: while Sense is open its network is the map focus, '
+  + 'and closing Sense restores the saved filters (EST-248 — writing them here left his map empty after a reload)');
 
 // ── 4. no recursion: a second identical pick is a no-op and terminates ─────
 api.setChatNetwork('mt');

@@ -1037,6 +1037,7 @@
   let activeRadioId                = localStorage.getItem('activeRadioId') || null;
   let selectedRadioIds             = new Set(JSON.parse(localStorage.getItem('selectedRadioIds') || 'null') || (activeRadioId ? [activeRadioId] : []));
   let lastStatus                   = {};
+  let _mtStatusReceived            = false;  // /api/status has answered: an empty snapshot means "not yet", not "gone"
   let _accentColor                 = '#4ade80';  // JS-side accent for canvas/dynamic color refs
   let _accentFreshColor            = '#86efac';  // brighter accent for fresh (<30m) map markers
   let _activeTracerouteController  = null;
@@ -1200,9 +1201,14 @@
     const wantMc = preferred === 'mc';
     const hasMt = hasConnectedMtRadios();
     const hasMc = hasConnectedMcRadios();
-    if (wantMc && hasMc) return 'mc';
-    if (!wantMc && hasMt) return 'mt';
-    if (hasMc) return 'mc';
+    // Only a CONFIRMED absence of the wanted network may override the saved choice, and only once that network's status
+    // has actually answered: before /api/mc/status arrives "no MC radios" is unknown, not gone. Guessing there is what
+    // rewrote an operator's saved MC choice on every page load (EST-248).
+    if (wantMc) {
+      if (_mcStatusReceived && !hasMc && hasMt) return 'mt';
+      return 'mc';
+    }
+    if (_mtStatusReceived && !hasMt && hasMc) return 'mc';
     return 'mt';
   }
 
@@ -1219,7 +1225,7 @@
   }
 
   function updateRadioSelector(status) {
-    if (status) lastStatus = status;
+    if (status) { lastStatus = status; _mtStatusReceived = true; }
     const visibleEntries = Object.entries(lastStatus).filter(([, s]) => s.enabled !== false && (s.status === 'connected' || s.status === 'connecting'));
     const connectedEntries = visibleEntries.filter(([, s]) => s.status === 'connected');
     const sel = document.getElementById('radio-selector');
@@ -1382,7 +1388,11 @@
     else { _updateMtInput(); }
     // Keep the paired Sense pill in step — WITHOUT the map-focus part, because the ordinary Map filter must keep its
     // own independent MT/MC state (his 2026-10-16 note: both networks can stay selected there).
-    if (_senseNet !== net) switchSenseNet(net, { focusMap: false, syncChat: false, remember: opts.remember !== false });
+    // While Sense is open its network IS the map focus, so sync even when the pills already agree: any path that
+    // restores the saved choice must leave the map showing that network's markers (EST-248).
+    if (opts.syncSense !== false && (_isSensePanelOpen() || _senseNet !== net)) {
+      switchSenseNet(net, { syncChat: false, remember: opts.remember !== false });
+    }
   }
 
   function initChat() {
@@ -3169,10 +3179,11 @@ if (targetEl) {
     const mtLegend = document.getElementById('map-legend-mt');
     const mcLegend = document.getElementById('map-legend-mc');
     if (!legend) return;
-    const mcVisible = mapShowMc && localStorage.getItem('mcHide') !== '1' && Object.keys(mcLastStatus).length > 0;
-    if (mtLegend) mtLegend.style.display = mapShowMt ? '' : 'none';
+    const showMt = _effectiveMapShowMt();
+    const mcVisible = _effectiveMapShowMc() && localStorage.getItem('mcHide') !== '1' && Object.keys(mcLastStatus).length > 0;
+    if (mtLegend) mtLegend.style.display = showMt ? '' : 'none';
     if (mcLegend) mcLegend.style.display = mcVisible ? '' : 'none';
-    legend.style.display = (mapShowMt || mcVisible) ? '' : 'none';
+    legend.style.display = (showMt || mcVisible) ? '' : 'none';
   }
 
   function toggleMapFilter(net) {
@@ -3464,7 +3475,20 @@ if (targetEl) {
     _updateMapNodeCount();
   }
 
-  let _lastMtCount = 0, _lastMcCount = 0;
+  let _lastMtCount = 0, _lastMcCount = 0, _lastMcMapCount = 0;
+
+  // While Sense is open its network choice IS the map focus. The operator's saved Map filters (mapShowMt/mapShowMc)
+  // stay untouched in memory, so closing Sense restores them (toggleSensePanel(false)). EST-248.
+  function _effectiveMapShowMc() { return _isSensePanelOpen() ? _senseNet === 'mc' : mapShowMc; }
+  function _effectiveMapShowMt() { return _isSensePanelOpen() ? _senseNet === 'mt' : mapShowMt; }
+
+  function _syncSenseMapFocus() {
+    if (!_isSensePanelOpen()) return;
+    updateMapMarkers(allNodes);
+    renderMcMapMarkers();
+    _updateMapNodeCount();
+  }
+
   function _updateNetworkPillVisibility() {
     const mtConnected = hasConnectedMtRadios();
     const mcConnected = hasConnectedMcRadios() && localStorage.getItem('mcHide') !== '1';
@@ -3472,22 +3496,23 @@ if (targetEl) {
     const senseWrap = document.getElementById('sense-net-filter');
     const mtSense = document.getElementById('sense-net-mt');
     const mcSense = document.getElementById('sense-net-mc');
-    const senseOpen = document.getElementById('sense-panel')?.style.display !== 'none';
+    const senseOpen = _isSensePanelOpen();
     if (mtSense) mtSense.style.display = mtConnected ? '' : 'none';
     if (mcSense) mcSense.style.display = mcConnected ? '' : 'none';
     if (mapWrap) mapWrap.style.display = (!senseOpen && mtConnected && mcConnected) ? '' : 'none';
     if (senseWrap) senseWrap.style.display = (senseOpen && mtConnected && mcConnected) ? '' : 'none';
     // A radio came or went, so the shared choice follows it — through the same path a pill click uses, so the two pills
     // can never disagree. Two guards on purpose:
-    //   * only act on CONFIRMED absence: an empty snapshot means the status has not arrived yet (MT and MC status come
-    //     from different payloads, so at boot one of them is always still missing), and acting on that is what made his
-    //     reload land on MT;
-    //   * a forced move does not overwrite the remembered choice (`remember: false`), so his own pick comes back.
-    const mtKnown = Object.keys(lastStatus).length > 0;
-    const mcKnown = Object.keys(mcLastStatus).length > 0;
-    if (mtKnown && mcKnown) {
-      if (_senseNet === 'mt' && !mtConnected && mcConnected) _setNetChoice('mc', { remember: false });
-      if (_senseNet === 'mc' && !mcConnected && mtConnected) _setNetChoice('mt', { remember: false });
+    //   * only act on CONFIRMED absence: MT and MC status come from different payloads, so at boot one of them is
+    //     always still missing. An empty snapshot means "not arrived yet", not "gone" — acting on it is what made his
+    //     reload land on MT. The flags say whether that payload has actually answered (EST-248);
+    //   * a forced move does not overwrite the remembered choice (`remember: false`), so his own pick comes back, and it
+    //     must never touch the saved Map filters — it only moves the focus.
+    if (_mtStatusReceived && _mcStatusReceived) {
+      let forced = false;
+      if (_senseNet === 'mt' && !mtConnected && mcConnected) { _setNetChoice('mc', { remember: false }); forced = true; }
+      if (_senseNet === 'mc' && !mcConnected && mtConnected) { _setNetChoice('mt', { remember: false }); forced = true; }
+      if (forced) _syncSenseMapFocus();
     }
   }
 
@@ -3495,9 +3520,9 @@ if (targetEl) {
     const el = document.getElementById('map-node-count');
     if (!el) return;
     _updateNetworkPillVisibility();
-    const senseOpen = document.getElementById('sense-panel')?.style.display !== 'none';
-    if (senseOpen) {
-      el.textContent = _senseNet === 'mc' ? `MC: ${_lastMcCount}` : `MT: ${_lastMtCount}`;
+    if (_isSensePanelOpen()) {
+      // Count what is DRAWN on the map, not the Nodes-table totals (those are only refreshed when that tab renders).
+      el.textContent = _senseNet === 'mc' ? `MC: ${_lastMcMapCount}` : `MT: ${_lastMtCount}`;
     } else {
       const parts = [];
       if (_lastMtCount) parts.push(`MT: ${_lastMtCount}`);
@@ -10052,7 +10077,7 @@ if (targetEl) {
 
   function updateMapMarkers(nodes) {
     if (!leafletMap) return;
-    if (!mapShowMt) {
+    if (!_effectiveMapShowMt()) {
       Object.values(mapMarkers).forEach(m => leafletMap.removeLayer(m));
       mapMarkers = {};
       Object.values(clusterMarkers).forEach(m => { if (m && m !== 'fanned') leafletMap.removeLayer(m); });
@@ -11734,6 +11759,7 @@ if (targetEl) {
   // ============================================================
 
   let mcLastStatus  = {};      // {config_id: {name, status, node_id, ...}}
+  let _mcStatusReceived = false;  // /api/mc/status (or an mc_status event) has answered: empty means "not yet", not "gone"
   let mcContacts    = {};      // {config_id: {contact_id: contact, ...}}
   let mcMapMarkerById = {};    // contact_id → Leaflet marker (for MC Sense hover)
   let _senseNet     = _netChoice;   // paired with the Chat pill: one remembered choice, not two
@@ -11912,14 +11938,15 @@ if (targetEl) {
     });
     if (mcSelectionChanged) saveSelectedRadioIds();
     if (!allEntries.length) {
-      // No MC radios configured at all — hide the selector entirely
+      // No MC radios configured at all — hide the selector entirely. Before /api/mc/status answers this list is empty
+      // because nobody has told us yet: treat that as "unknown", never as "MC is gone" (EST-248).
       activeMcRadioId = null;
       localStorage.removeItem('activeMcRadioId');
       sel.innerHTML = '';
       sel.style.display = 'none';
       if (sep) sep.style.display = 'none';
       if (netToggle) netToggle.style.display = 'none';
-      if (chatNetwork === 'mc') setChatNetwork('mt');
+      if (_mcStatusReceived && chatNetwork === 'mc') setChatNetwork('mt');
       applyMcVisibility();
       _updateNetworkPillVisibility();
       return;
@@ -11932,7 +11959,7 @@ if (targetEl) {
       sel.style.display = 'none';
       if (sep) sep.style.display = hasConnectedMtRadios() ? '' : 'none';
       if (netToggle) netToggle.style.display = 'none';
-      if (chatNetwork === 'mc' && hasMt) setChatNetwork('mt');
+      if (_mcStatusReceived && chatNetwork === 'mc' && hasMt) setChatNetwork('mt');
       sel.innerHTML = '';
       applyMcVisibility();
       _updateNetworkPillVisibility();
@@ -12044,7 +12071,9 @@ if (targetEl) {
       if (sep) sep.style.display = 'none';
       if (sel) { sel.innerHTML = ''; sel.style.display = 'none'; }
       if (netToggle) netToggle.style.display = 'none';
-      if (chatNetwork === 'mc') setChatNetwork('mt');
+      // An empty mcLastStatus before /api/mc/status answers is "unknown", not "no MC radios": a forced move here is
+      // what dropped his saved MC choice on every load (EST-248).
+      if (_mcStatusReceived && chatNetwork === 'mc') setChatNetwork('mt');
       // Fall back from hidden settings tabs
       const activeStab = document.querySelector('.settings-tab.active');
       if (activeStab && activeStab.id === 'stab-mc' && forcedHide) switchSettingsTab('mt');
@@ -12082,6 +12111,7 @@ if (targetEl) {
   // -- SSE events from backend (mc_status, mc_node, mc_message) --
   function handleMcSseEvent(data) {
     if (data.type === 'mc_status') {
+      _mcStatusReceived = true;
       const prevStatus = mcLastStatus[data.radio_id]?.status;
       if (!mcLastStatus[data.radio_id]) mcLastStatus[data.radio_id] = {};
       Object.assign(mcLastStatus[data.radio_id], {
@@ -13335,13 +13365,14 @@ if (targetEl) {
 
   function renderMcMapMarkers() {
     updateHeaderMcCount();
-    if (!leafletMap) return;
+    if (!leafletMap) { _lastMcMapCount = 0; _updateMapNodeCount(); return; }
     mcMapMarkers.forEach(m => leafletMap.removeLayer(m));
     mcMapMarkers = [];
     mcMapMarkerById = {};
     Object.values(mcClusterMarkers).forEach(m => leafletMap.removeLayer(m));
     mcClusterMarkers = {};
-    if (!mapShowMc) return;
+    // While Sense is open its network decides what is drawn; the saved Map filter is only used with Sense closed.
+    if (!_effectiveMapShowMc()) { _lastMcMapCount = 0; _updateMapNodeCount(); return; }
 
     const items = [];
     _mcDedupeContacts({ onlyConnected: false }).forEach(c => {
@@ -13475,7 +13506,9 @@ if (targetEl) {
 
     if (_senseNet === 'mc') renderMcPathLines();
     updateHeaderMcCount();
+    _lastMcMapCount = mcMapMarkers.length + Object.keys(mcClusterMarkers).length;
     _refreshAllGeofences();
+    _updateMapNodeCount();
   }
 
   // -- MC chat tabs --
@@ -13957,14 +13990,19 @@ if (targetEl) {
     }
     document.getElementById('sense-net-mt')?.classList.toggle('active', net === 'mt');
     document.getElementById('sense-net-mc')?.classList.toggle('active', net === 'mc');
-    if (opts.syncChat !== false && net !== chatNetwork) setChatNetwork(net, { remember: opts.remember !== false });
+    if (opts.syncChat !== false && net !== chatNetwork) {
+      setChatNetwork(net, { remember: opts.remember !== false, syncSense: false });
+    }
   }
 
   function switchSenseNet(net, opts = {}) {
     _setNetChoice(net, opts);   // state, storage, pill highlights and Chat, all in the one shared place
     _updateNetworkPillVisibility();
-    // Update toolbar counter immediately (without full re-render)
-    _updateMapNodeCount();
+    // A known-disconnected network may have been forced away above: show the net that actually survived, not the one
+    // we asked for (a forced move changes the focus only, never the operator's stored choice or Map filters).
+    net = _senseNet;
+    document.getElementById('sense-net-mt')?.classList.toggle('active', net === 'mt');
+    document.getElementById('sense-net-mc')?.classList.toggle('active', net === 'mc');
     document.getElementById('sense-mt-wrap').style.display     = net === 'mt' ? 'flex' : 'none';
     document.getElementById('sense-mc-wrap').style.display     = net === 'mc' ? 'flex' : 'none';
     document.getElementById('sense-mt-log-wrap').style.display = net === 'mt' ? 'flex' : 'none';
@@ -13975,47 +14013,26 @@ if (targetEl) {
       _activeMtRouteKey = null;
       _activeMtRouteEntryKey = null;
       _mtRefreshSenseRouteSelection();
-      // Show MC markers, hide MT node markers
-      if (opts.focusMap !== false && !mapShowMc) {
-        mapShowMc = true;
-        document.getElementById('map-mc-pill')?.classList.add('active');
-        document.getElementById('nodes-mc-pill')?.classList.add('active');
-      }
-      if (opts.focusMap !== false && mapShowMt) {
-        mapShowMt = false;
-        document.getElementById('map-mt-pill')?.classList.remove('active');
-        document.getElementById('nodes-mt-pill')?.classList.remove('active');
-        updateMapMarkers(allNodes);
-      }
-      _updateMapLegend();
       if (_mcRxTracesOn) { _mcRxStamp = null; _mcRxTracesRefresh(true); }
-      renderMcMapMarkers();   // also calls renderMcPathLines()
       renderMcSensePanel();
     } else {
-      // MT mode: hide MC markers, show MT only
+      // MT mode: overheard MC paths must not linger over the MT view
       clearMcPathLines();
-      _clearMcRxLines();   // overheard MC paths must not linger over the MT view
+      _clearMcRxLines();
       _mcHoverLines.forEach(l => leafletMap && leafletMap.removeLayer(l));
       _mcHoverLines = [];
-      if (opts.focusMap !== false && !mapShowMt) {
-        mapShowMt = true;
-        document.getElementById('map-mt-pill')?.classList.add('active');
-        document.getElementById('nodes-mt-pill')?.classList.add('active');
-        updateMapMarkers(allNodes);
-      }
-      if (opts.focusMap !== false && mapShowMc) {
-        mapShowMc = false;
-        document.getElementById('map-mc-pill')?.classList.remove('active');
-        document.getElementById('nodes-mc-pill')?.classList.remove('active');
-        renderMcMapMarkers();
-        _updateScanBtnVisibility?.();
-      }
-      _updateMapLegend();
     }
+    _updateMapLegend();
+    // Draw the network Sense is focused on. The saved Map filters (mapShowMt/mapShowMc) are deliberately NOT written
+    // here: while Sense is open its network decides the focus, and closing Sense restores the operator's Map filters
+    // (toggleSensePanel(false)). Writing them here is what left his map empty after a reload (EST-248).
+    _syncSenseMapFocus();
     _scheduleSignalHeatmapRefresh(0);
     // Pair back to Chat when the Sense pill was the one clicked (a caller may pass syncChat:false to
     // avoid a loop). Same choice either way, so both pills always agree.
-    if (opts.syncChat !== false && net !== chatNetwork) setChatNetwork(net, { remember: opts.remember !== false });
+    if (opts.syncChat !== false && net !== chatNetwork) {
+      setChatNetwork(net, { remember: opts.remember !== false, syncSense: false });
+    }
   }
 
   // MeshCore CONTACT_TYPENAMES: 0=NONE, 1=CLI, 2=REP, 3=ROOM, 4=SENS
@@ -16148,6 +16165,7 @@ if (targetEl) {
     fetch(BASE_PATH + '/api/mc/status')
       .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(data => {
+        _mcStatusReceived = true;   // the payload answered: an empty mc_nodes now really means "no MC radios"
         (data.mc_nodes || []).forEach(n => {
           mcLastStatus[n.id] = n;
           _loadMcMessageArchive(n.id);
@@ -20577,8 +20595,9 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     resizeMapView();
     if (isOpen) {
       if (_mapLayerDraft) cancelMapLayerDraft();
-      // Apply current network mode (MT or MC)
-      switchSenseNet(_senseNet);
+      // Apply current network mode (MT or MC). Opening/restoring the panel is NOT a new operator choice: a load-time
+      // fallback that put a network in memory must not be written over the saved one (EST-248).
+      switchSenseNet(_senseNet, { remember: false });
       _updateMapNodeCount();
       if (_senseNet === 'mt') senseInit();
       settleMapLayout();

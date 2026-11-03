@@ -121,25 +121,29 @@ def _mc_normalize_region_name(name):
 
 # --- Auto-add / manual contact approval -----------------------------------
 # OM-level preference per MC node (config.json `mc_nodes[].auto_add_contacts`,
-# default True). The firmware holds two linked prefs: `manual_add_contacts`
-# (bit 0) and an `autoadd_config` per-type whitelist. Mapping:
-#   auto_add_contacts True  -> device manual_add_contacts=0 (stock: the radio
-#                              stores every node it hears — this is what fills
-#                              the 350-slot NVS overnight)
+# default False). A radio whose config has no key is manual approval; only an
+# explicit True opts into the stock auto-store. All heard contacts are still
+# saved in OverMesh's contact archive in both modes. The firmware holds two
+# linked prefs: `manual_add_contacts` (bit 0) and an `autoadd_config` per-type
+# whitelist. Mapping:
+#   auto_add_contacts True  -> device manual_add_contacts=0 (opt-in stock: the
+#                              radio stores every node it hears - this is what
+#                              fills the 350-slot NVS overnight)
 #   auto_add_contacts False -> device manual_add_contacts=1 AND autoadd_config=0
-#                              (manual approval: the radio stores NOTHING it only
-#                              hears; OM keeps candidates in its archive and the
-#                              user approves -> stored via cmd 0x09
-#                              update_contact, the "add to radio" action)
+#                              (default manual approval: the radio stores
+#                              NOTHING it only hears; OM keeps candidates in
+#                              its archive and the user approves -> stored via
+#                              cmd 0x09 update_contact, the "add to radio"
+#                              action)
 _mc_auto_add_unsupported: set = set()  # radios that errored on cmd 38/58 (old fw)
 
 
-def _mc_auto_add_configured(config_id, default=True):
-    """The node's configured auto-add preference (config.json), default True."""
+def _mc_auto_add_configured(config_id, default=False):
+    """The node's configured auto-add preference (config.json), default False."""
     with CONFIG_LOCK:
         for n in CONFIG.get("mc_nodes", []):
             if n.get("id") == config_id:
-                return n.get("auto_add_contacts", True) is not False
+                return n.get("auto_add_contacts", False) is not False
     return default
 
 

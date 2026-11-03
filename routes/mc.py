@@ -350,7 +350,7 @@ def api_mc_status():
             "stored_contacts": len(merged_contacts),
             "live_contacts": len(live_contacts),
             "archived_contacts": archived_only_count,
-            "auto_add_contacts": cfg.get("auto_add_contacts", True) is not False,
+            "auto_add_contacts": cfg.get("auto_add_contacts", False) is not False,
             "manual_add_active": aa_manual,
             "auto_add_supported": aa_supported,
             "connect_failures": int(v.get("connect_failures", 0) or 0),

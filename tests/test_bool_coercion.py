@@ -184,11 +184,11 @@ class SettingsBoolCoercionTests(_ConfigStub):
         self.assertEqual(resp.status_code, 200)
         self.assertIs(settings_routes.CONFIG["mc_nodes"][0]["auto_add_contacts"], False)
 
-    def test_auto_add_contacts_missing_defaults_true(self):
+    def test_auto_add_contacts_missing_defaults_false(self):
         settings_routes.CONFIG["mc_nodes"] = [{"id": "mc_1", "name": "M", "enabled": True}]
         resp = self.client.post("/api/settings/mc_nodes/mc_1/auto_add_contacts", json={})
         self.assertEqual(resp.status_code, 200)
-        self.assertIs(settings_routes.CONFIG["mc_nodes"][0]["auto_add_contacts"], True)
+        self.assertIs(settings_routes.CONFIG["mc_nodes"][0]["auto_add_contacts"], False)
 
     def test_passive_collection_string_false(self):
         settings_routes.CONFIG["mc_nodes"] = [{"id": "mc_1", "name": "M", "enabled": True}]
@@ -278,6 +278,25 @@ class McBoolCoercionTests(_ConfigStub):
         self.assertEqual(resp.status_code, 200)
         self.assertIs(resp.get_json()["advert"], False)
         advert.assert_not_called()
+
+
+class AutoAddContactsDefaultOffUiTests(unittest.TestCase):
+    """The Settings control must read OFF unless the config says True. The
+    server-side readers are covered behaviourally above; this guards the UI
+    fallback that runs before (or without) a status payload."""
+
+    def test_js_checkbox_needs_explicit_true(self):
+        src = Path(_REPO, "static/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("autoAddEl.checked = s.auto_add_contacts === true;", src)
+        self.assertIn("if (s.auto_add_contacts !== true)", src)
+
+    def test_settings_label_states_default_off(self):
+        html = Path(_REPO, "templates/index.html").read_text(encoding="utf-8")
+        self.assertIn(
+            "Auto-add heard contacts to the radio (uses radio storage), default OFF",
+            html,
+        )
+        self.assertIn("All heard contacts are always saved in OverMesh", html)
 
 
 if __name__ == "__main__":

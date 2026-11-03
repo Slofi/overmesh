@@ -19517,7 +19517,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     if (passiveCollectionEl) passiveCollectionEl.checked = s.passive_collection !== false;
     const autoAddEl = document.getElementById('mc-auto-add-contacts');
     const autoAddStatusEl = document.getElementById('mc-auto-add-status');
-    if (autoAddEl) autoAddEl.checked = s.auto_add_contacts !== false;
+    if (autoAddEl) autoAddEl.checked = s.auto_add_contacts === true;
     if (autoAddStatusEl) autoAddStatusEl.innerHTML = _mcAutoAddStatusHtml(radioId);
     if (maxEl  && s.max_tx_power != null) maxEl.textContent = `max ${s.max_tx_power} dBm`;
     if (maxEl  && s.max_tx_power != null && txEl) txEl.max = s.max_tx_power;
@@ -20126,8 +20126,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     if (s.manual_add_active) {
       return '<span style="color:var(--accent)">Manual approval active. The radio stores only the contacts you approve in the Contacts list.</span>';
     }
-    if (s.auto_add_contacts === false) {
-      return 'Manual approval is set in the config. It applies on the next radio connect.';
+    if (s.auto_add_contacts !== true) {
+      return 'Manual approval is the default. The radio stores only the contacts you approve in the Contacts list.';
     }
     return 'Auto-add is on. The radio stores every contact it hears (this fills its contact table over time).';
   }

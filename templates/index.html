@@ -1701,8 +1701,8 @@
         <div class="st-group-body">
           <label class="st-option">
             <input type="checkbox" class="st-switch" id="mc-auto-add-contacts" onchange="saveMcAutoAddContacts(this.checked)">
-            <span><b>Auto-store every contact this radio hears</b><br>
-              <span class="st-option-text">ON = stock behaviour: the radio writes every node it hears into its own contact table (the ~350-slot NVS that fills overnight). OFF = manual approval: the radio stores nothing by itself; contacts stay in OM and you approve them with "+ Radio" in the Contacts list. Stored contacts are the only ones this radio can DM.</span>
+            <span><b>Auto-add heard contacts to the radio (uses radio storage), default OFF</b><br>
+              <span class="st-option-text">All heard contacts are always saved in OverMesh. ON = stock behaviour: the radio writes every node it hears into its own contact table (the ~350-slot NVS that fills overnight). OFF = manual approval: the radio stores nothing by itself; contacts stay in OM and you approve them with "+ Radio" in the Contacts list. Stored contacts are the only ones this radio can DM.</span>
             </span>
           </label>
           <div id="mc-auto-add-status" class="st-status" style="padding-left:40px"></div>

@@ -2010,14 +2010,39 @@ class McAutoAddApprovalTests(unittest.TestCase):
 
     # --- config read -------------------------------------------------------
 
-    def test_auto_add_configured_defaults_true(self):
+    def test_auto_add_configured_defaults_false(self):
         CONFIG["mc_nodes"] = [{"id": "mc1", "name": "MC One"}]
+        self.assertFalse(mesh_mc._mc_auto_add_configured("mc1"))
+        self.assertFalse(mesh_mc._mc_auto_add_configured("ghost"))
+
+    def test_auto_add_configured_true_when_enabled(self):
+        CONFIG["mc_nodes"] = [{"id": "mc1", "auto_add_contacts": True}]
         self.assertTrue(mesh_mc._mc_auto_add_configured("mc1"))
-        self.assertTrue(mesh_mc._mc_auto_add_configured("ghost"))
 
     def test_auto_add_configured_false_when_disabled(self):
         CONFIG["mc_nodes"] = [{"id": "mc1", "auto_add_contacts": False}]
         self.assertFalse(mesh_mc._mc_auto_add_configured("mc1"))
+
+    def _status_auto_add(self, node):
+        CONFIG["mc_nodes"] = [dict(node)]
+        app = Flask(__name__)
+        app.register_blueprint(mc_routes.bp)
+        res = app.test_client().get("/api/mc/status")
+        self.assertEqual(res.status_code, 200)
+        payload = res.get_json()
+        row = next(n for n in payload["mc_nodes"] if n["id"] == node["id"])
+        return row["auto_add_contacts"]
+
+    def test_status_treats_missing_setting_as_manual(self):
+        self.assertIs(self._status_auto_add({"id": "mc1", "name": "MC One"}), False)
+
+    def test_status_keeps_explicit_auto_add_true(self):
+        self.assertIs(self._status_auto_add(
+            {"id": "mc1", "name": "MC One", "auto_add_contacts": True}), True)
+
+    def test_status_keeps_explicit_auto_add_false(self):
+        self.assertIs(self._status_auto_add(
+            {"id": "mc1", "name": "MC One", "auto_add_contacts": False}), False)
 
     # --- device command / assert -------------------------------------------
 
@@ -2083,6 +2108,35 @@ class McAutoAddApprovalTests(unittest.TestCase):
                 return SimpleNamespace(type=EventType.OK, payload={})
 
         mc = SimpleNamespace(commands=Cmd())
+        result = asyncio.run(mesh_mc._assert_mc_auto_add_async("mc1", mc=mc))
+        self.assertIs(result, True)
+        self.assertEqual(calls, [("manual", True), ("autoadd", 0)])
+        with mc_connections_lock:
+            self.assertIs(mc_connections["mc1"]["node_info"]["manual_add_contacts"], True)
+
+    def test_assert_writes_manual_mode_when_setting_is_missing(self):
+        CONFIG["mc_nodes"] = [{"id": "mc1", "name": "MC One"}]
+        calls = []
+        with mc_connections_lock:
+            mc_connections["mc1"] = {"status": "connected",
+                                     "node_info": {"manual_add_contacts": False}}
+
+        class Cmd:
+            async def set_manual_add_contacts(self, val):
+                calls.append(("manual", val))
+                return self._evt()
+
+            async def set_autoadd_config(self, val):
+                calls.append(("autoadd", val))
+                return self._evt()
+
+            def _evt(self):
+                from meshcore.events import EventType
+                return SimpleNamespace(type=EventType.OK, payload={})
+
+        mc = SimpleNamespace(commands=Cmd())
+        result = mesh_mc._mc_auto_add_configured("mc1")
+        self.assertIs(result, False)
         result = asyncio.run(mesh_mc._assert_mc_auto_add_async("mc1", mc=mc))
         self.assertIs(result, True)
         self.assertEqual(calls, [("manual", True), ("autoadd", 0)])

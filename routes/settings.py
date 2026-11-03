@@ -1187,10 +1187,11 @@ def api_settings_mc_nodes_auto_add_contacts(node_id):
     auto_add_contacts True  -> the radio stores new contacts it hears (stock).
     auto_add_contacts False -> manual approval: the radio stores nothing it only
     hears; contacts go to OM's store and the user approves ("Add to radio").
+    Default OFF: a request without the field must not turn auto-add on.
     Applied to the device immediately when connected; re-asserted on every
     connect."""
     data = request.get_json(silent=True) or {}
-    enabled = _as_bool(data.get("auto_add_contacts", True))
+    enabled = _as_bool(data.get("auto_add_contacts", False))
 
     with CONFIG_LOCK:
         mc_nodes = CONFIG.get("mc_nodes", [])

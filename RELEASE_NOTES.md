@@ -1,5 +1,15 @@
 # OverMesh Release Notes
 
+## 2026.11.03.1
+
+### Fixed
+
+- **MeshCore contacts no longer vanish from the map after a refresh in Sense mode.** When a page reload landed in Sense, the app guessed "MeshCore not connected" before the radio's status had even arrived, switched the MeshCore map layer off, and could save Meshtastic over your MeshCore choice. The list still said 179 contacts while the map showed none. Now nothing reacts to a radio until its status has actually arrived, Sense never changes your saved map layers, and the Sense counter shows how many MeshCore markers are really drawn. (The same kind of guess was fixed once on 2026.10.16.16 and came back through other code paths; a test now replays this exact load order.)
+
+### Changed
+
+- **A newly added MeshCore radio no longer fills its own contact storage by itself.** "Auto-add heard contacts to the radio" now defaults to OFF: every heard contact is still saved in OverMesh, and goes to the radio only when you press "+ Radio" or switch the setting on. Radios that already have the setting keep it.
+
 ## 2026.10.16.17
 
 ### Fixed

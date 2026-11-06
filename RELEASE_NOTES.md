@@ -1,5 +1,11 @@
 # OverMesh Release Notes
 
+## 2026.11.06.4
+
+### Changed
+
+- **The chat hop list looks like the pop-up you get when you tap a repeater on the map.** An × in the corner instead of a Close button, the same rounded corners, shadow and spacing, a small MC or MT chip beside the title, and a smaller Show on map button. The dark panel stays, so it does not take the map pop-up's white background. The hops keep their order numbers.
+
 ## 2026.11.06.3
 
 ### Fixed

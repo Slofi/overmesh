@@ -331,14 +331,17 @@
     const panel = document.getElementById('alerts-panel');
     if (!panel) return;
     const alerts = _alertsLoad();
+    // One close control everywhere (S487): a bare x, the same one the dialogs and
+    // the hop list use. The panel already closes on an outside tap and on the bell.
+    const closeBtn = `<button type="button" class="alerts-close" onclick="toggleAlertsPanel(event)" title="Close" aria-label="Close alerts">&times;</button>`;
     if (!alerts.length) {
-      panel.innerHTML = `<div class="alerts-header"><span class="alerts-title">Alerts</span></div><div class="alerts-empty">No alerts yet.</div>`;
+      panel.innerHTML = `<div class="alerts-header"><span class="alerts-title">Alerts</span>${closeBtn}</div><div class="alerts-empty">No alerts yet.</div>`;
       return;
     }
     panel.innerHTML = `
       <div class="alerts-header">
         <span class="alerts-title">Alerts</span>
-        <button class="alerts-clear-btn" onclick="clearAllAlerts()">Clear all</button>
+        <span class="alerts-actions"><button class="alerts-clear-btn" onclick="clearAllAlerts()">Clear all</button>${closeBtn}</span>
       </div>
       <div class="alerts-list">
         ${alerts.map(a => {
@@ -14337,7 +14340,7 @@ if (targetEl) {
     if (!panel) {
       panel = document.createElement('div');
       panel.id = 'mc-contact-popup';
-      panel.style.cssText = 'position:fixed;z-index:3000;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px;min-width:180px;max-width:280px;box-shadow:0 2px 12px rgba(0,0,0,.6)';
+      panel.style.cssText = 'position:fixed;z-index:3000;background:var(--bg2);border:1px solid var(--border);border-radius:var(--surface-radius);padding:10px 14px;font-size:12px;min-width:180px;max-width:280px;box-shadow:var(--surface-shadow)';
       document.body.appendChild(panel);
     }
     // Use the resolved contact's id for actions (fromId may be "?" for pubkey-less messages)
@@ -24752,7 +24755,7 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
     if (!panel) {
       panel = document.createElement('div');
       panel.id = 'toc-mt-mention-popup';
-      panel.style.cssText = 'position:fixed;z-index:3000;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px;min-width:180px;max-width:280px;box-shadow:0 2px 12px rgba(0,0,0,.6)';
+      panel.style.cssText = 'position:fixed;z-index:3000;background:var(--bg2);border:1px solid var(--border);border-radius:var(--surface-radius);padding:10px 14px;font-size:12px;min-width:180px;max-width:280px;box-shadow:var(--surface-shadow)';
       document.body.appendChild(panel);
     }
     const hide    = `document.getElementById('toc-mt-mention-popup').style.display='none'`;

@@ -4,8 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OverMesh</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}?v={{ version }}">
+  <!-- Leaflet first: app.css overrides its popup and control colours, and with
+       equal specificity the LATER stylesheet wins. Swapped back in S487. -->
   <link rel="stylesheet" href="{{ url_for('static', filename='leaflet/leaflet.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}?v={{ version }}">
   <script src="{{ url_for('static', filename='leaflet/leaflet.js') }}"></script>
   <script src="{{ url_for('static', filename='js/leaflet-heat.js') }}"></script>
   <link rel="icon" type="image/png" href="/static/favicon.png?v=2">
@@ -30,6 +32,7 @@
   <div class="modal-box" style="width:320px">
     <div class="modal-header">
       <span class="modal-title" id="confirm-title">Confirm</span>
+      <button class="modal-close" onclick="confirmCancel()" title="Close" aria-label="Close">&times;</button>
     </div>
     <div class="modal-body">
       <p id="confirm-msg" style="margin:0 0 16px;font-size:13px;color:var(--text)"></p>
@@ -46,6 +49,7 @@
   <div class="modal-box" style="width:400px">
     <div class="modal-header">
       <span class="modal-title">Remove contact</span>
+      <button class="modal-close" onclick="mcDeleteCancel()" title="Close" aria-label="Close">&times;</button>
     </div>
     <div class="modal-body">
       <p id="mc-delete-msg" style="margin:0 0 14px;font-size:13px;color:var(--text)"></p>
@@ -75,7 +79,7 @@
   <div class="modal-box" style="width:460px;max-width:94vw">
     <div class="modal-header">
       <span class="modal-title">Clean up stale nodes</span>
-      <button class="modal-close" onclick="closeNodeCleanupModal()" title="Close" aria-label="Close">&#10005;</button>
+      <button class="modal-close" onclick="closeNodeCleanupModal()" title="Close" aria-label="Close">&times;</button>
     </div>
     <div class="modal-body">
       <p id="node-cleanup-summary" style="margin:0 0 10px;font-size:13px;color:var(--muted)"></p>
@@ -102,6 +106,7 @@
   <div class="modal-box" style="width:340px;border-top:2px solid var(--red)">
     <div class="modal-header">
       <span class="modal-title" style="color:var(--red)">&#9888; Silent Running Active</span>
+      <button class="modal-close" onclick="srConfirmCancel()" title="Close" aria-label="Close">&times;</button>
     </div>
     <div class="modal-body">
       <p id="sr-confirm-msg" style="margin:0 0 16px;font-size:13px;color:var(--text)"></p>
@@ -117,7 +122,7 @@
   <div class="modal-box" style="width:300px">
     <div class="modal-header">
       <span class="modal-title">Polar Grid</span>
-      <button class="modal-close" onclick="closePolarCustomize()" title="Close" aria-label="Close">&#10005;</button>
+      <button class="modal-close" onclick="closePolarCustomize()" title="Close" aria-label="Close">&times;</button>
     </div>
     <div class="modal-body">
       <div style="margin-bottom:16px">
@@ -156,6 +161,7 @@
   <div class="modal-box" style="width:320px">
     <div class="modal-header">
       <span class="modal-title">Notice</span>
+      <button class="modal-close" onclick="alertClose()" title="Close" aria-label="Close">&times;</button>
     </div>
     <div class="modal-body">
       <p id="alert-msg" style="margin:0 0 16px;font-size:13px;color:var(--text)"></p>
@@ -171,7 +177,7 @@
   <div class="modal-box" style="width:360px;max-width:calc(100vw - 24px)">
     <div class="modal-header">
       <span class="modal-title">Log as...</span>
-      <button class="modal-close" onclick="_tocPickTemplateClose()" title="Close">&#x2715;</button>
+      <button class="modal-close" onclick="_tocPickTemplateClose()" title="Close" aria-label="Close">&times;</button>
     </div>
     <div class="modal-body">
       <div id="toc-tpl-picker-preview" style="font-size:11px;color:var(--muted);margin-bottom:12px;max-height:42px;overflow:hidden;text-overflow:ellipsis;line-height:1.4"></div>
@@ -188,7 +194,7 @@
   <div class="modal-box" style="width:420px;max-width:calc(100vw - 24px)">
     <div class="modal-header">
       <span class="modal-title">OverMesh</span>
-      <button class="modal-close" onclick="closeOmIntro(true)" title="Close">&#x2715;</button>
+      <button class="modal-close" onclick="closeOmIntro(true)" title="Close" aria-label="Close">&times;</button>
     </div>
     <div class="modal-body">
       <div style="font-size:13px;color:var(--text);line-height:1.45">
@@ -214,7 +220,7 @@
   <div class="modal-box" style="width:760px;max-width:calc(100vw - 24px);max-height:calc(100vh - 40px);display:flex;flex-direction:column">
     <div class="modal-header">
       <span class="modal-title">OverMesh Manual</span>
-      <button class="modal-close" onclick="closeOmManual()" title="Close">&#x2715;</button>
+      <button class="modal-close" onclick="closeOmManual()" title="Close" aria-label="Close">&times;</button>
     </div>
     <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;min-height:0">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -231,7 +237,7 @@
   <div class="modal-box">
     <div class="modal-header">
       <span class="modal-title" id="modal-title"></span>
-      <button class="modal-close" onclick="closeModal()" title="Close">&#x2715;</button>
+      <button class="modal-close" onclick="closeModal()" title="Close" aria-label="Close">&times;</button>
     </div>
     <div class="modal-body" id="modal-body"></div>
   </div>
@@ -549,7 +555,7 @@
     <div id="map-dm-window">
       <div id="map-dm-header">
         <span id="map-dm-title">DM</span>
-        <span class="map-dm-close" onclick="closeMapDM()" title="Close" aria-label="Close">✕</span>
+        <span class="map-dm-close" onclick="closeMapDM()" title="Close" aria-label="Close">&times;</span>
       </div>
       <div id="map-dm-msgs"></div>
       <div id="map-dm-input-row">

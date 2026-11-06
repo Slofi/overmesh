@@ -46,6 +46,7 @@ node tests/test_mc_passive_intel.js
 node tests/test_chat_resync.js
 node tests/test_chat_wake_feed.js
 node tests/test_mc_hop_popover.js
+node tests/test_popup_style_consistency.js
 
 # JS lint (no-undef) — the only check that sees client-side ReferenceErrors,
 # which never reach the server journal. It MUST run with the repo as the base

@@ -12,6 +12,37 @@
       --yellow:      #d29922;
       --red:         #f85149;
       --body-zoom:   1;
+
+      /* ONE surface language, S487. Every floating thing in the app (dialogs,
+         the alerts panel, the power menu, the map's DM and panel windows, the
+         Leaflet popups, the chat hop popover, toasts) takes its corners and
+         shadow from here, so they cannot drift apart again. Two shadows on
+         purpose: a dialog floats over the page and needs weight, a bubble
+         anchored to a marker stays light or it looks pasted on. */
+      --surface-radius:   12px;
+      --surface-shadow:   0 8px 28px rgba(0,0,0,0.55);
+      --surface-bubble-shadow: 0 3px 14px rgba(0,0,0,0.4);
+      --close-hit:        44px;
+    }
+    /* The one close control: a bare grey x, transparent, on the panel like
+       Leaflet's own. The glyph stays small; the hit area is padded to 44px so a
+       finger finds it on the CD touchscreen. */
+    .surface-close, .modal-close, .hop-pop-close, .map-dm-close, .alerts-close {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 34px; min-height: 34px; padding: 0;
+      border: 0; background: transparent; color: var(--muted);
+      font-size: 18px; line-height: 1; border-radius: 6px; cursor: pointer;
+      position: relative; -webkit-tap-highlight-color: transparent;
+    }
+    .surface-close::after, .modal-close::after, .hop-pop-close::after,
+    .map-dm-close::after, .alerts-close::after {
+      content: ''; position: absolute; inset: -5px;
+    }
+    .surface-close:hover, .modal-close:hover, .hop-pop-close:hover,
+    .map-dm-close:hover, .alerts-close:hover,
+    .surface-close:focus-visible, .modal-close:focus-visible,
+    .hop-pop-close:focus-visible, .map-dm-close:focus-visible {
+      background: rgba(255,255,255,0.08); color: var(--text);
     }
     .mc-advert-item {
       display: flex; width: 100%; background: none; border: none;
@@ -194,8 +225,8 @@
       background: rgba(13, 17, 23, 0.94);
       border: 1px solid var(--border);
       border-left: 3px solid var(--accent);
-      border-radius: 8px;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+      border-radius: var(--surface-radius);
+      box-shadow: var(--surface-shadow);
       padding: 10px 12px;
       animation: toast-in 0.16s ease-out;
     }
@@ -326,7 +357,7 @@
        inline action button. Two deliberate differences: the panel stays dark
        (var(--bg2), his call: the map popup's white is not to be copied), and the
        × keeps a 44px hit area for the CD touchscreen. */
-    .hop-popover { position:fixed; z-index:4000; display:flex; flex-direction:column; width:min(340px, calc(100vw - 16px)); max-height:min(65vh, 440px); background:var(--bg2); border:1px solid var(--border); border-radius:12px; box-shadow:0 3px 14px rgba(0,0,0,0.4); font-size:12px; line-height:1.6; color:var(--text); }
+    .hop-popover { position:fixed; z-index:4000; display:flex; flex-direction:column; width:min(340px, calc(100vw - 16px)); max-height:min(65vh, 440px); background:var(--bg2); border:1px solid var(--border); border-radius:var(--surface-radius); box-shadow:var(--surface-bubble-shadow); font-size:12px; line-height:1.6; color:var(--text); }
     .hop-pop-head { display:flex; align-items:center; gap:4px; padding:13px 46px 0 20px; flex-shrink:0; }
     .hop-pop-title { font-size:13px; font-weight:600; color:var(--accent); }
     .hop-pop-badge { font-size:10px; font-weight:600; line-height:1.5; padding:0 4px; border-radius:3px; border:1px solid transparent; }
@@ -335,8 +366,7 @@
     /* Leaflet's close button: bare glyph, top right, transparent, grey. Same look
        here, but 44px square, because this one lives in the chat and a finger has
        to hit it. */
-    .hop-pop-close { position:absolute; top:2px; right:2px; width:44px; height:44px; display:flex; align-items:center; justify-content:center; padding:0; border:0; background:transparent; color:var(--muted); font-size:18px; line-height:1; border-radius:12px; cursor:pointer; }
-    .hop-pop-close:hover, .hop-pop-close:active, .hop-pop-close:focus-visible { background:rgba(255,255,255,0.08); color:var(--text); }
+    .hop-pop-close { position:absolute; top:2px; right:2px; }
     .hop-pop-summary { padding:0 20px 6px; color:var(--muted); }
     .hop-pop-list { overflow-y:auto; -webkit-overflow-scrolling:touch; padding:2px 16px 6px; }
     .hop-pop-row { display:flex; align-items:flex-start; gap:8px; padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.05); }
@@ -959,8 +989,8 @@
     #alerts-panel {
       display: none; position: absolute; right: 0; top: calc(100% + 4px);
       width: 320px; max-height: 480px; overflow: hidden;
-      background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
-      z-index: 999; box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+      background: var(--bg2); border: 1px solid var(--border); border-radius: var(--surface-radius);
+      z-index: 999; box-shadow: var(--surface-shadow);
       flex-direction: column;
     }
     #alerts-panel.open { display: flex; }
@@ -968,7 +998,8 @@
       display: flex; align-items: center; justify-content: space-between;
       padding: 10px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0;
     }
-    .alerts-title { font-size: 13px; font-weight: 600; color: var(--text); }
+    .alerts-title { font-size: 13px; font-weight: 600; color: var(--accent); }
+    .alerts-actions { display: flex; align-items: center; gap: 4px; }
     .alerts-clear-btn {
       background: none; border: 1px solid var(--border); border-radius: 4px;
       color: var(--muted); font-size: 11px; padding: 2px 8px; cursor: pointer;
@@ -1034,8 +1065,8 @@
     #shutdown-btn:hover { background: color-mix(in srgb, var(--accent) 14%, var(--bg3)); border-color: var(--accent); color: var(--accent); }
     #power-menu {
       display: none; position: absolute; right: 0; top: calc(100% + 4px);
-      background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
-      min-width: 130px; z-index: 999; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      background: var(--bg2); border: 1px solid var(--border); border-radius: var(--surface-radius);
+      min-width: 130px; z-index: 999; overflow: hidden; box-shadow: var(--surface-shadow);
     }
     #power-menu.open { display: block; }
     #power-menu button {
@@ -1056,20 +1087,14 @@
     .modal-overlay.open { display: flex; }
     .modal-box {
       background: var(--bg2); border: 1px solid var(--border);
-      border-radius: 8px; width: 480px; max-width: 95vw;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+      border-radius: var(--surface-radius); width: 480px; max-width: 95vw;
+      box-shadow: var(--surface-shadow);
     }
     .modal-header {
       display: flex; align-items: center; justify-content: space-between;
       padding: 12px 16px; border-bottom: 1px solid var(--border);
     }
-    .modal-title { font-weight: 600; color: var(--accent); font-size: 14px; }
-    .modal-close {
-      background: none; border: none; color: var(--muted);
-      cursor: pointer; font-size: 18px; line-height: 1;
-      padding: 0 2px; transition: color 0.15s;
-    }
-    .modal-close:hover { color: var(--text); }
+    .modal-title { font-weight: 600; color: var(--accent); font-size: 13px; }
     .modal-body { padding: 16px; }
     #action-modal .modal-box {
       width: min(760px, calc(100vw - 32px));
@@ -1080,11 +1105,7 @@
       overflow: hidden;
     }
     #action-modal .modal-header { flex-shrink: 0; background: var(--bg2); }
-    #action-modal .modal-close {
-      min-width: 32px; min-height: 32px;
-      display: inline-flex; align-items: center; justify-content: center;
-      flex-shrink: 0;
-    }
+    #action-modal .modal-close { flex-shrink: 0; }
     #action-modal .modal-body { overflow-y: auto; min-height: 0; }
     /* Cleanup modal: cap height (zoom-aware) and scroll the list, so the footer
        buttons stay on-screen and clickable regardless of body zoom or list length. */
@@ -1309,7 +1330,7 @@
       display: none; position: absolute; z-index: 1000;
       left: 10px; top: 50%; transform: translateY(-50%); width: 250px; height: 340px;
       background: var(--bg2); border: 1px solid var(--border);
-      border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.7);
+      border-radius: var(--surface-radius); box-shadow: var(--surface-shadow);
       flex-direction: column; overflow: hidden;
     }
     #map-dm-window.visible { display: flex; }
@@ -1318,8 +1339,6 @@
       padding: 9px 12px; border-bottom: 1px solid var(--border);
       font-size: 13px; font-weight: 600; color: var(--accent); flex-shrink: 0;
     }
-    .map-dm-close { cursor: pointer; color: var(--muted); font-size: 14px; padding: 0 2px; }
-    .map-dm-close:hover { color: var(--text); }
     #map-dm-msgs { flex: 1; overflow-y: auto; padding: 8px 12px; display: flex; flex-direction: column; gap: 6px; }
     #map-dm-input-row { display: flex; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--border); flex-shrink: 0; }
     #map-dm-input {
@@ -1341,7 +1360,7 @@
     .map-panel-window {
       width: 260px; flex-shrink: 0;
       background: var(--bg2); border: 1px solid var(--border);
-      border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.7);
+      border-radius: var(--surface-radius); box-shadow: var(--surface-shadow);
       display: flex; flex-direction: column; overflow: hidden;
     }
     .map-panel-header {
@@ -1358,8 +1377,8 @@
     }
     #marks-panel, #notes-panel, #overlay-panel {
       background: var(--bg2); border: 1px solid var(--border);
-      border-radius: 8px; overflow: hidden;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.5);
+      border-radius: var(--surface-radius); overflow: hidden;
+      box-shadow: var(--surface-shadow);
     }
     #overlay-panel { overflow: visible; }
     #marks-panel-hdr, #notes-panel-hdr, #overlay-panel-hdr {
@@ -1427,11 +1446,27 @@
     path.leaflet-interactive:focus { outline: none; }
     .leaflet-popup-content-wrapper {
       background: var(--bg2); color: var(--text);
-      border: 1px solid var(--border); border-radius: 6px;
-      box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+      border: 1px solid var(--border); border-radius: var(--surface-radius);
+      box-shadow: var(--surface-bubble-shadow);
     }
-    .leaflet-popup-tip { background: var(--bg2); }
-    .leaflet-popup-content { margin: 10px 14px; font-size: 12px; line-height: 1.6; }
+    .leaflet-popup-tip { background: var(--bg2); border: 1px solid var(--border); }
+    /* Right inset leaves room for the x, which sits in the corner like every
+       other close in the app. */
+    .leaflet-popup-content { margin: 12px 34px 12px 16px; font-size: 12px; line-height: 1.6; }
+    /* Same close as the chat hop list and the dialogs: bare, grey, muted, with a
+       finger-sized hit area that does not eat the popup's width. */
+    .leaflet-container a.leaflet-popup-close-button {
+      top: 2px; right: 2px; width: 34px; height: 34px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; color: var(--muted); border-radius: 6px;
+    }
+    .leaflet-container a.leaflet-popup-close-button::after {
+      content: ''; position: absolute; inset: -5px;
+    }
+    .leaflet-container a.leaflet-popup-close-button:hover,
+    .leaflet-container a.leaflet-popup-close-button:focus {
+      color: var(--text); background: rgba(255,255,255,0.08);
+    }
     .map-popup-name { font-size: 13px; font-weight: 600; color: var(--accent); margin-bottom: 4px; }
     .map-popup-local { font-size: 10px; color: var(--muted); margin-left: 4px; }
 
@@ -1530,8 +1565,8 @@
     .emoji-btn:hover { background: var(--bg3); color: var(--text); }
     .emoji-picker {
       position: fixed; z-index: 9999; width: 320px; max-height: 380px;
-      background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
-      padding: 10px; box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+      background: var(--bg2); border: 1px solid var(--border); border-radius: var(--surface-radius);
+      padding: 10px; box-shadow: var(--surface-shadow);
       display: flex; flex-direction: column; gap: 8px;
     }
     .emoji-search {
@@ -1598,9 +1633,9 @@
     }
     .map-legend {
       background: var(--bg2); border: 1px solid var(--border);
-      border-radius: 6px; padding: 8px 10px;
+      border-radius: var(--surface-radius); padding: 8px 10px;
       font-size: 12px; color: var(--text);
-      box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+      box-shadow: var(--surface-bubble-shadow);
     }
     .map-legend-title { font-weight: 600; color: var(--muted); margin-bottom: 5px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
     .map-legend-row   { display: flex; align-items: center; gap: 7px; margin-bottom: 3px; }
@@ -1619,8 +1654,8 @@
     #map-layer-panel {
       position: absolute; left: 38px; top: 0;
       background: var(--bg2); border: 1px solid var(--border);
-      border-radius: 8px; padding: 6px 4px;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.6);
+      border-radius: var(--surface-radius); padding: 6px 4px;
+      box-shadow: var(--surface-shadow);
       min-width: 170px; z-index: 5000;
       display: none; flex-direction: column; gap: 2px;
       max-height: min(420px, calc(100vh - 180px)); overflow-y: auto;
@@ -2000,7 +2035,7 @@
       min-width: 150px; min-height: 130px;
       max-width: 50vw; max-height: 60vh;
       background: var(--bg2); border: 1px solid var(--border);
-      border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+      border-radius: var(--surface-radius); box-shadow: var(--surface-shadow);
       overflow: hidden;
     }
     #pip-resize-handle {
@@ -2130,9 +2165,9 @@
     }
     #cpicker-overlay.open { display:flex; }
     #cpicker-modal {
-      background:#1e1e2a; border:1px solid var(--border);
-      border-radius:14px; padding:18px; width:370px;
-      box-shadow:0 12px 40px rgba(0,0,0,0.6);
+      background:var(--bg2); border:1px solid var(--border);
+      border-radius:var(--surface-radius); padding:18px; width:370px;
+      box-shadow:var(--surface-shadow);
       max-height:90vh; overflow-y:auto; overflow-x:hidden;
     }
     #cpicker-header {

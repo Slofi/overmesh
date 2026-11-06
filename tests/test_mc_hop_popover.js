@@ -157,10 +157,17 @@ const cssRule = name => {
 };
 const panel = cssRule('.hop-popover');
 assert(/background:var\(--bg2\)/.test(panel), 'the hop popover must keep the dark background, never the white one');
-assert(/border-radius:12px/.test(panel), 'the hop popover must borrow the map popup\'s 12px corners (Leaflet\'s, which is what the map actually renders)');
-assert(/box-shadow:0 3px 14px rgba\(0,0,0,0\.4\)/.test(panel), 'the hop popover must borrow the map popup\'s shadow');
-assert(/background:transparent/.test(cssRule('.hop-pop-close')), 'the × must sit on the panel like Leaflet\'s, not inside its own button box');
-assert(/width:44px/.test(cssRule('.hop-pop-close')), 'the × must still be a fingertip target on the CD touchscreen');
+assert(/border-radius:var\(--surface-radius\)/.test(panel), 'the hop popover must take its corners from the shared surface token');
+assert(/box-shadow:var\(--surface-bubble-shadow\)/.test(panel), 'the hop popover must take its shadow from the shared bubble token');
+assert(/--surface-radius:\s*12px/.test(css), 'the shared radius token must stay 12px (the map popup and the dialogs use it)');
+assert(/--surface-bubble-shadow:\s*0 3px 14px rgba\(0,0,0,0\.4\)/.test(css), 'the shared bubble shadow must stay the map popup shadow');
+// One close control across the app (S487): the hop popover uses the shared rule,
+// which carries the fingertip-sized hit area for the CD touchscreen.
+const closeGroup = css.slice(css.indexOf('.surface-close, .modal-close'), css.indexOf('.hop-pop-close {'));
+assert(/\.hop-pop-close/.test(closeGroup), 'the hop close must be part of the one shared close rule');
+assert(/min-width:\s*34px/.test(closeGroup), 'the shared close needs a 34px box');
+assert(/inset:\s*-5px/.test(closeGroup), 'the shared close needs a 44px hit area around the 34px box');
+assert(/position:absolute/.test(cssRule('.hop-pop-close')), 'the hop close must still sit in the popup corner');
 
 // --- a hop list belongs to the chat it was opened from (EST-325). A tab
 // switch, a radio switch or a chat-network switch replaces that chat under the

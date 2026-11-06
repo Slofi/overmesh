@@ -1,5 +1,13 @@
 # OverMesh Release Notes
 
+## 2026.11.06.2
+
+### Fixed
+
+- **Messages arrive again after a laptop wakes, even when the live connection died silently.** The page could not tell its live feed was dead, and a laptop waking with the tab showing fired nothing that made it catch up. The server now sends a keepalive the page can see, and a watchdog replaces a dead feed and pulls the stored rows. The page does not reload, so text you are typing stays.
+- **Messages missed while asleep show the unread dot and count on Chat,** on MeshCore and Meshtastic, without a sound or pop-up for the backlog.
+- **A phone returning from another app no longer reloads every radio** unless it was away for 30 seconds or more.
+
 ## 2026.11.06.1
 
 ### Fixed

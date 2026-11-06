@@ -60,6 +60,23 @@ class SseQueueTests(unittest.TestCase):
             self.assertNotIn(q, state.sse_clients)
             self.assertNotIn(id(q), state._sse_queue_last_ok)
 
+    def test_evicted_stream_is_closed_so_the_browser_reconnects(self):
+        """An evicted client must not keep a healthy-looking, unfed stream.
+
+        Old behaviour removed the queue from the broadcast list but left the
+        generator and HTTP response open. The browser never reconnected, so it
+        showed nothing until a manual reload.
+        """
+        q = queue.Queue(maxsize=1)
+        with state.sse_lock:
+            state.sse_clients.append(q)
+            state._sse_queue_last_ok[id(q)] = time.time() - helpers._SSE_QUEUE_TTL - 5
+
+        q.put_nowait("existing")
+        helpers.push_to_sse("next-event")
+
+        self.assertIs(q.get_nowait(), helpers.SSE_CLOSE)
+
 
 if __name__ == "__main__":
     unittest.main()

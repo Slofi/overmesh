@@ -1436,6 +1436,10 @@
     }
     if (chatSSE) return;
     chatSSE = new EventSource(BASE_PATH + '/api/chat/stream');
+    // Every open, including an automatic reconnect, is a chance that the feed
+    // was down while messages were stored. Pull the stored rows instead of
+    // trusting the live stream to have carried everything.
+    chatSSE.onopen = () => _resyncChatFromServer();
     chatSSE.onmessage = e => {
       let data; try { data = JSON.parse(e.data); } catch(err) { return; }
       if (data.type === 'update_available') {
@@ -11930,6 +11934,42 @@ if (targetEl) {
     }
     return mcMessages.length - before;
   }
+  // Merge the MT chat rows the server has stored into the page's live list.
+  // The SSE feed only carries what was sent while this page was connected. A
+  // phone that slept, or a socket that dropped, misses everything in between;
+  // this puts those rows back without notifying, counting unread or duplicating.
+  function _mtMergeHistory(rows) {
+    let added = 0;
+    (rows || []).forEach(raw => {
+      if (!raw || !raw.id) return;
+      const existing = chatMsgs.find(m => m.id === raw.id);
+      if (existing) { Object.assign(existing, raw); return; }
+      chatMsgs.push({ ...raw, is_history: true });
+      added++;
+    });
+    if (!added) return 0;
+    chatMsgs.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    if (chatMsgs.length > 500) chatMsgs.splice(0, chatMsgs.length - 500);
+    renderChannelTabs();
+    if (currentTab === 'chat' && chatNetwork === 'mt') renderMessages();
+    return added;
+  }
+
+  // Catch the page up with both networks after it was asleep, offline or its
+  // SSE connection was closed. MC comes first (Filip's primary network): initMc
+  // reloads each radio's stored rows through _loadMcMessageArchive.
+  let _lastChatResync = 0;
+  function _resyncChatFromServer() {
+    const now = Date.now();
+    if (now - _lastChatResync < 2000) return;
+    _lastChatResync = now;
+    initMc();
+    fetch(BASE_PATH + '/api/chat/messages?limit=500')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) _mtMergeHistory(d.messages || []); })
+      .catch(e => console.warn('MT chat resync failed:', e));
+  }
+
   function _loadMcMessageArchive(radioId) {
     if (!radioId) return;
     fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/messages?limit=500`)
@@ -22512,6 +22552,14 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   updateUnreadDots();
   // Recalculate map height on browser resize so attribution stays visible
   window.addEventListener('resize', resizeMapView);
+  // A sleeping phone or a background tab does not necessarily close its SSE
+  // connection: on wake there may be no reconnect at all. Pull whatever was
+  // stored while the page was hidden, for both networks, before showing it.
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) _resyncChatFromServer();
+  });
+  window.addEventListener('pageshow', e => { if (e.persisted) _resyncChatFromServer(); });
+  window.addEventListener('online', () => _resyncChatFromServer());
 
   // ── Colour Picker ───────────────────────────────────────────────────────────
   const CPICKER_PALETTE = [

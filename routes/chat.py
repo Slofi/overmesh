@@ -8,7 +8,7 @@ from flask import Blueprint, Response, jsonify, request
 
 from config import BASE_DIR, CONFIG
 from db import save_message
-from helpers import _next_msg_id, get_node_name, mt_channel_name, mt_node_id_from_num, push_to_sse
+from helpers import _next_msg_id, get_node_name, mt_channel_name, mt_node_id_from_num, push_to_sse, SSE_CLOSE
 from mesh import get_any_iface, get_any_iface_with_id, get_iface_by_radio
 from state import (
     chat_lock, chat_messages,
@@ -105,6 +105,11 @@ def api_chat_stream():
             while True:
                 try:
                     data = q.get(timeout=25)
+                    if data is SSE_CLOSE:
+                        # push_to_sse evicted this client (asleep too long).
+                        # End the response so the browser reconnects and its
+                        # onopen handler pulls the stored rows it missed.
+                        break
                     yield f"data: {data}\n\n"
                 except queue.Empty:
                     yield ": keepalive\n\n"

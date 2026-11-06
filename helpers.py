@@ -50,6 +50,11 @@ def _next_msg_id():
 
 _SSE_QUEUE_TTL = 600  # seconds before a persistently full queue is treated as a ghost
 
+# Sentinel put into an evicted client's queue so its stream generator ends.
+# Removing the queue alone left the HTTP response open: the browser saw a
+# healthy connection, never reconnected, and stopped receiving anything.
+SSE_CLOSE = object()
+
 def push_to_sse(data):
     if isinstance(data, (dict, list)):
         data = json.dumps(data)
@@ -68,8 +73,22 @@ def push_to_sse(data):
             except Exception:
                 dead.append(q)
         for q in dead:
-            sse_clients.remove(q)
+            try:
+                sse_clients.remove(q)
+            except ValueError:
+                pass
             _sse_queue_last_ok.pop(id(q), None)
+            # Close the response instead of leaving a live-but-unfed stream.
+            # The browser reconnects, and its onopen handler pulls stored rows.
+            try:
+                while True:
+                    q.get_nowait()
+            except _queue.Empty:
+                pass
+            try:
+                q.put_nowait(SSE_CLOSE)
+            except _queue.Full:
+                pass
 
 
 # ---------------------------------------------------------------------------

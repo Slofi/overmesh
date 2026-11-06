@@ -1,5 +1,42 @@
 # OverMesh Release Notes
 
+## 2026.11.06.1
+
+### Fixed
+
+- **A chat hop badge lists the repeaters before the map.** Click or tap the hop
+  count on a MeshCore or Meshtastic message to see the hops in order by name.
+  A hop with no known name shows its raw id, and an ambiguous match says so.
+  Direct and flood messages say they had no named repeaters. Show on map keeps
+  the old click, and a mouse hover lists the names.
+- **Alternate MeshCore message paths can be seen on the map.** Hover a copy in
+  the Activity panel to draw it, click or tap to keep it. Hops with no known
+  position are left out instead of being drawn in the wrong place.
+- **The minimap can be moved with a finger, and its header buttons are finger
+  sized.** The header bar dragged with a mouse only. It now uses the same pointer
+  path as the resize grip, and Traces, Locate and Collapse are easier to hit
+  with a finger.
+- **The minimap stops polling when the page is hidden.** The Traces request kept
+  running in a background tab or a phone on another app. It now stops when the
+  page is hidden and resumes when it is shown.
+- **The minimap own position keeps up with a live fix.** A GPS or local node
+  position event moved the main map only, so the minimap could show the previous
+  spot for up to 15 seconds. It now moves at once, and a lost fix removes the dot
+  at once.
+- **A MeshCore radio no longer shows its previous position after a reconnect.**
+  The status event carries no coordinates, so the old ones stayed and the map
+  marked the radio as current at its old spot. They are cleared on connect and
+  filled again from the fresh status.
+- **Messages that arrived while the page was asleep now appear without a
+  reload.** The page pulls stored rows after a reconnect, on wake, on a back and
+  forward cache restore and when the network comes back. MeshCore first, then
+  Meshtastic. An evicted live feed now closes so the browser reconnects instead
+  of staying silent.
+- **The minimap shows your own position on MeshCore, Meshtastic and with a
+  hand-picked position.** The connected MeshCore radio, the local Meshtastic node
+  and the OM Position are drawn with the same markers the main map uses. Locate
+  uses the same list.
+
 ## 2026.11.03.1
 
 ### Fixed

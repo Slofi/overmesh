@@ -1,16 +1,17 @@
 # S485 handover for Filip
 
 Verdict first: the branch is ready to ship as one batch. The EST-324 sweep found
-four more bugs, all fixed with a test that fails on the code before the fix. They
-sit on top of the two earlier items, EST-319 chat catch-up and EST-320 minimap.
+four more bugs, and EST-321 adds the map gesture for alternate MC message
+paths. Every fix has a test that fails on the code before the fix. They sit on
+top of the two earlier items, EST-319 chat catch-up and EST-320 minimap.
 Nothing here needs a new setting, a migration or a manual step after the update.
 
-Branch `s485-report`, base `cc948e6`, last commit `e05bdc2`. Not pushed, not
+Branch `s485-report`, base `cc948e6`, last commit `a3dac5b`. Not pushed, not
 deployed, VERSION untouched.
 
 Gate after the last commit, real exit code: `tests/run.sh` exit 0, 640 Python
 tests OK, 25 Node test files OK, eslint no-undef clean. The same full gate ran
-before each of the four fix commits.
+before each fix commit.
 
 ## What I swept in EST-324
 
@@ -242,6 +243,39 @@ clamping and the CSS sizes are covered by `tests/test_pip_resize_touch.js`, whic
 fails on `cc948e6` because the grip has no pointerdown listener. The one thing
 left for a real check is the finger feel on the CD itself.
 
+## Item: alternate MC message paths on the map (EST-321)
+
+FIXED. In the MC Activity pop-up, each alternate received copy used to be a
+dead block. Only a hop with a position could be clicked, and a finger had no
+way to see the whole path.
+
+Each alternate copy is now a control. Hovering it draws that copy's path on the
+map; leaving clears it. Clicking or tapping pins it until another copy is
+clicked or the panel closes. A tap also fits the whole copy in view. The copy
+shows a plain status line: "Shown on map", plus "N hops with no known position
+are not drawn" and "1 hop id is ambiguous, so this line is a best guess" when
+they apply. Hops with no position say "unknown position" in the list.
+
+The path uses the existing hop resolver, so ambiguous MC hashes keep their
+confidence note. A hop that cannot be resolved is not bridged: the line stops at
+the last known point and resumes at the next known point, so the map never draws
+the packet somewhere no relay is known to be. Alt copy paths now use the same
+purple message style as the primary path.
+
+How to see it: open Map, or Sense with MC selected, click an MC message in the
+Activity panel that shows "Other copies", expand "Alternate paths", then hover a
+copy. The path appears and goes away when you leave. Click or tap it and it
+stays. Close the panel and it clears. A second click on another copy replaces
+it.
+
+What I could not test: a real radio, a real browser, and a real finger on the CD
+touchscreen. The DOM contract, status words and gap indexing are covered by
+`tests/test_mc_alt_paths.js`, which fails on the old code; Leaflet drawing was
+not run in a browser here.
+
+MT: not applicable. The alternate received copies and this path pop-up exist on
+MC only; MT has no `rx_copies` list in the Activity panel.
+
 ## What no one could test without real radios or a real browser
 
 - A real sleep and wake on the phone, and a real SSE reconnect. The code paths
@@ -258,6 +292,9 @@ left for a real check is the finger feel on the CD itself.
 
 ### Fixed
 
+- **Alternate MeshCore message paths can be seen on the map.** Hover a copy in
+  the Activity panel to draw it, click or tap to keep it. Hops with no known
+  position are left out instead of being drawn in the wrong place.
 - **The minimap can be moved with a finger, and its header buttons are finger
   sized.** The header bar dragged with a mouse only. It now uses the same pointer
   path as the resize grip, and Traces, Locate and Collapse are at least 44 by 44

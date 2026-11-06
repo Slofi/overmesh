@@ -1,5 +1,12 @@
 # OverMesh Release Notes
 
+## 2026.11.06.3
+
+### Fixed
+
+- **Messages missed while asleep reach the bell.** The alerts menu records them once each, with its badge, on MeshCore and Meshtastic, still with no sound and no pop-up.
+- **A missed DM reopens its tab if you had closed it.**
+
 ## 2026.11.06.2
 
 ### Fixed

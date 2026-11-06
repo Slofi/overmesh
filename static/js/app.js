@@ -5555,6 +5555,39 @@ if (targetEl) {
     return any ? {lat: Number(any.lat), lon: Number(any.lon)} : null;
   }
 
+  // Our own positions, as ONE list for every map view: the OM Position chosen in
+  // Settings (hand-picked point, or a live GPS fix, never a fallback), each
+  // connected MC radio's own position, and each MT radio's local node position.
+  // Honest data: a source with no real position adds nothing, and the same spot
+  // is listed once. The minimap draws this list with the main map's marker
+  // builders instead of resolving and drawing a second copy of the same idea.
+  function _omOwnPositions() {
+    const out = [];
+    const seen = new Set();
+    const add = (key, lat, lon, kind, label) => {
+      if (lat == null || lon == null) return;
+      const la = Number(lat), lo = Number(lon);
+      if (!Number.isFinite(la) || !Number.isFinite(lo)) return;
+      if (la === 0 && lo === 0) return;   // an empty radio coordinate, not a place on Earth
+      const pos = `${la.toFixed(6)},${lo.toFixed(6)}`;
+      if (seen.has(pos)) return;
+      seen.add(pos);
+      out.push({ key, lat: la, lon: lo, kind, label });
+    };
+    const origin = _omLocalOrigin();
+    if (origin) add('om', origin.lat, origin.lon, 'om', 'OM Position');
+    Object.entries(mcLastStatus || {}).forEach(([rid, st]) => {
+      if (st?.status !== 'connected') return;
+      add('mc_' + rid, st.lat, st.lon, 'mc-radio', st.name || st.node_name || rid);
+    });
+    (allNodes || []).forEach(n => {
+      if (!n || !n.is_local) return;
+      add('mt_' + (n.id || n.radio_id || ''), n.latitude, n.longitude, 'mt-local',
+          n.short_name || n.long_name || 'This node');
+    });
+    return out;
+  }
+
   function _mtNodeDistanceLabel(node) {
     if (!node || node.latitude == null || node.longitude == null) return '-';
     const origin = _mtLocalPosition(node.radio_id || '');
@@ -10674,28 +10707,48 @@ if (targetEl) {
       e.preventDefault();
     });
 
-    // Top-left resize handle: dragging left/up expands the pip
-    resizeHandle.addEventListener('mousedown', e => {
+    // Top-left resize grip: POINTER events only, so a finger on the CD touchscreen
+    // and a mouse take the same path. touch-action: none in the CSS stops the page
+    // from panning under the grip, pointer capture keeps the move/up events on the
+    // grip when the finger slides over the minimap, and the grip itself is 44px
+    // square in CSS so a fingertip can hit it.
+    let resizePointer = null;
+    const endResize = e => {
+      if (resizePointer == null) return;
+      if (e && e.pointerId != null && e.pointerId !== resizePointer) return;
+      resizing = false;
+      try { resizeHandle.releasePointerCapture(resizePointer); } catch (err) {}
+      resizePointer = null;
+    };
+    resizeHandle.addEventListener('pointerdown', e => {
+      if (e.button != null && e.button !== 0) return;   // mouse: left button only
       resizing = true;
+      resizePointer = e.pointerId;
       rsx = e.clientX; rsy = e.clientY;
       const r = wrap.getBoundingClientRect();
       rwStart = r.width; rhStart = r.height;
-      e.preventDefault(); e.stopPropagation();
+      try { resizeHandle.setPointerCapture(e.pointerId); } catch (err) {}
+      e.preventDefault(); e.stopPropagation();   // do not start a page or map pan
     });
+    resizeHandle.addEventListener('pointermove', e => {
+      if (!resizing || e.pointerId !== resizePointer) return;
+      const newW = Math.min(window.innerWidth * 0.5, Math.max(150, rwStart + (rsx - e.clientX)));
+      const newH = Math.min(window.innerHeight * 0.6, Math.max(130, rhStart + (rsy - e.clientY)));
+      wrap.style.width  = newW + 'px';
+      wrap.style.height = newH + 'px';
+      e.preventDefault();
+    });
+    resizeHandle.addEventListener('pointerup', endResize);
+    resizeHandle.addEventListener('pointercancel', endResize);
+    resizeHandle.addEventListener('lostpointercapture', endResize);
 
     document.addEventListener('mousemove', e => {
       if (dragging) {
         wrap.style.right  = Math.max(0, sr + (sx - e.clientX)) + 'px';
         wrap.style.bottom = Math.max(0, sb + (sy - e.clientY)) + 'px';
       }
-      if (resizing) {
-        const newW = Math.min(window.innerWidth * 0.5, Math.max(150, rwStart + (rsx - e.clientX)));
-        const newH = Math.min(window.innerHeight * 0.6, Math.max(130, rhStart + (rsy - e.clientY)));
-        wrap.style.width  = newW + 'px';
-        wrap.style.height = newH + 'px';
-      }
     });
-    document.addEventListener('mouseup', () => { dragging = false; resizing = false; });
+    document.addEventListener('mouseup', () => { dragging = false; });
 
     // Invalidate Leaflet size on any dimension change
     new ResizeObserver(() => pipMap && pipMap.invalidateSize()).observe(wrap);
@@ -10703,15 +10756,44 @@ if (targetEl) {
     setTimeout(() => { pipMap.invalidateSize(); updatePipMarkers(allNodes); _pipTracesSync(); }, 50);
   }
 
+  // Draw our own position markers on the minimap from the shared own-position
+  // list, with the same icons the main map uses. Returns the marker keys and the
+  // positions it drew, so the node/contact loops skip a second marker on the same
+  // spot and stale own markers can be removed with the rest.
+  function _pipDrawOwnMarkers() {
+    const keys = new Set(), positions = new Set();
+    _omOwnPositions().filter(p =>
+      p.kind === 'om' || (p.kind === 'mc-radio' && mapShowMc) || (p.kind === 'mt-local' && mapShowMt)
+    ).forEach(p => {
+      const key = 'own_' + p.key;
+      const icon = p.kind === 'mc-radio' ? _mcRadioIcon() : makeIcon('#3b82f6', true);
+      keys.add(key);
+      positions.add(`${p.lat.toFixed(6)},${p.lon.toFixed(6)}`);
+      if (pipMarkers[key]) {
+        pipMarkers[key].setLatLng([p.lat, p.lon]).setIcon(icon);
+      } else {
+        pipMarkers[key] = L.marker([p.lat, p.lon], { icon })
+          .bindTooltip(escHtml(p.label), { direction: 'right', offset: [6, 0] })
+          .addTo(pipMap);
+      }
+    });
+    return { keys, positions };
+  }
+
   function updatePipMarkers(nodes) {
     if (!pipMap || !pipInited) return;
     const seen = new Set();
+    const own = _pipDrawOwnMarkers();
+    own.keys.forEach(k => seen.add(k));
+    const ownAt = (lat, lon) => lat != null && lon != null
+      && own.positions.has(`${Number(lat).toFixed(6)},${Number(lon).toFixed(6)}`);
     // MT markers — only when MT pill is active
     if (mapShowMt) {
       // Ignored nodes are blocked from the PiP map too — it used to show them
       // while the main map hid them (pre-existing leak, fixed alongside GH #19).
       nodes.filter(n => n.latitude != null && n.longitude != null
                         && !n.is_ignored && mqttFilterPass(n)).forEach(n => {
+        if (ownAt(n.latitude, n.longitude)) return;   // already marked as our position
         seen.add(n.id);
         const color = markerColor(n);
         const r  = n.is_local ? 7 : 5;
@@ -10738,6 +10820,7 @@ if (targetEl) {
           const lat = c.latitude ?? c.lat;
           const lon = c.longitude ?? c.lon;
           if (lat == null || lon == null) return;
+          if (ownAt(lat, lon)) return;   // our own radio is already marked
           const cid = 'mc_' + (c.id || c.full_key || '');
           seen.add(cid);
           const r = 5; const sz = r * 2 + 2;
@@ -10758,11 +10841,15 @@ if (targetEl) {
     Object.keys(pipMarkers).forEach(id => {
       if (!seen.has(id)) { pipMap.removeLayer(pipMarkers[id]); delete pipMarkers[id]; }
     });
-    // Auto-center on first load
+    // Auto-center on first load: our own position first, then the local node,
+    // then the markers' bounds.
     if (!pipMap._pipFitted && Object.keys(pipMarkers).length) {
       pipMap._pipFitted = true;
+      const own = _omOwnPositions();
       const local = nodes.find(n => n.is_local && n.latitude != null);
-      if (local) {
+      if (own.length) {
+        pipMap.setView([own[0].lat, own[0].lon], 11);
+      } else if (local) {
         pipMap.setView([local.latitude, local.longitude], 11);
       } else {
         const grp = L.featureGroup(Object.values(pipMarkers));
@@ -13363,6 +13450,14 @@ if (targetEl) {
     return L.divIcon({ html: svg, className: '', iconSize: [sz, sz], iconAnchor: [c, c], popupAnchor: [0, -(c+2)] });
   }
 
+  // The green diamond that marks a connected MC radio's OWN position. Shared by
+  // the main map and the minimap so both draw the radio the same way.
+  function _mcRadioIcon() {
+    const glow = 'drop-shadow(0 0 5px #10b981) drop-shadow(0 1px 4px rgba(0,0,0,0.8))';
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30" style="filter:${glow};overflow:visible"><rect x="7" y="7" width="16" height="16" fill="white" transform="rotate(45,15,15)" rx="1.5"/><rect x="10" y="10" width="10" height="10" fill="#10b981" transform="rotate(45,15,15)" rx="1"/></svg>`;
+    return L.divIcon({ html: svg, className: '', iconSize: [30, 30], iconAnchor: [15, 15], popupAnchor: [0, -17] });
+  }
+
   function renderMcMapMarkers() {
     updateHeaderMcCount();
     if (!leafletMap) { _lastMcMapCount = 0; _updateMapNodeCount(); return; }
@@ -13425,9 +13520,7 @@ if (targetEl) {
       if (item._kind === 'radio') {
         const name = escHtml(item.name || item.id);
         const radioDistance = _distanceLabel(_mcDistanceFromLocal(item, item._rid || item.id || ''));
-        const glow = 'drop-shadow(0 0 5px #10b981) drop-shadow(0 1px 4px rgba(0,0,0,0.8))';
-        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30" style="filter:${glow};overflow:visible"><rect x="7" y="7" width="16" height="16" fill="white" transform="rotate(45,15,15)" rx="1.5"/><rect x="10" y="10" width="10" height="10" fill="#10b981" transform="rotate(45,15,15)" rx="1"/></svg>`;
-        const icon = L.divIcon({ html: svg, className: '', iconSize: [30, 30], iconAnchor: [15, 15], popupAnchor: [0, -17] });
+        const icon = _mcRadioIcon();
         const marker = L.marker([item.latitude, item.longitude], { icon });
         marker._omMcMapData = item;
         marker.bindPopup(
@@ -22363,8 +22456,10 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
 
   function pipLocateMe() {
     if (!pipMap) return;
-    const local = _mtLocalPosition();
-    if (local) pipMap.setView([local.lat, local.lon], pipMap.getZoom());
+    // Same own-position list the markers use: OM Position first, then the MC
+    // radio, then the MT local node. No marker, no centring.
+    const own = _omOwnPositions();
+    if (own.length) pipMap.setView([own[0].lat, own[0].lon], pipMap.getZoom());
   }
 
   // ── Init ───────────────────────────────────────────────────────────────────

@@ -1950,19 +1950,23 @@
     }
     #pip-resize-handle {
       position: absolute; top: 0; left: 0;
-      width: 18px; height: 18px;
+      /* 44x44 is the finger target; the corner mark stays small and subtle. */
+      width: 44px; height: 44px;
       cursor: nw-resize; z-index: 10;
+      touch-action: none;                    /* the page must not pan under the grip */
+      -webkit-user-select: none; user-select: none;
+      -webkit-touch-callout: none;
     }
     #pip-resize-handle::after {
       content: '';
-      position: absolute; top: 5px; left: 5px;
-      width: 7px; height: 7px;
+      position: absolute; top: 6px; left: 6px;
+      width: 9px; height: 9px;
       border-top: 2px solid var(--muted);
       border-left: 2px solid var(--muted);
       border-radius: 1px; opacity: 0.45;
       transition: opacity 0.15s;
     }
-    #pip-resize-handle:hover::after { opacity: 0.9; }
+    #pip-resize-handle:hover::after, #pip-resize-handle:active::after { opacity: 0.9; }
     #pip-header {
       display: flex; align-items: center; justify-content: space-between;
       padding: 5px 10px;

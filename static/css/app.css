@@ -316,6 +316,29 @@
     .mc-rx-confidence { border-radius:3px; padding:0 4px; margin-left:4px; font-size:10px; line-height:15px; display:inline-flex; align-items:center; white-space:nowrap; cursor:help; border:1px solid rgba(148,163,184,0.26); color:var(--muted); background:rgba(148,163,184,0.08); }
     .mc-rx-confidence.high { border-color:rgba(34,197,94,0.35); color:#22c55e; background:rgba(34,197,94,0.10); }
     .mc-rx-confidence.low { border-color:rgba(245,158,11,0.35); color:#f59e0b; background:rgba(245,158,11,0.10); }
+
+    /* Chat hop popover: one list for MC and MT. It sits above the chat input bar
+       on the CD screen and shrinks to the phone viewport. */
+    .hop-popover { position:fixed; z-index:4000; display:flex; flex-direction:column; width:min(340px, calc(100vw - 16px)); max-height:min(65vh, 440px); background:var(--bg2); border:1px solid var(--border); border-radius:10px; box-shadow:0 8px 28px rgba(0,0,0,0.65); font-size:12px; color:var(--text); }
+    .hop-pop-head { display:flex; align-items:center; gap:8px; padding:8px 8px 4px 12px; border-bottom:1px solid var(--border); flex-shrink:0; }
+    .hop-pop-title { font-weight:700; color:var(--mc-color); }
+    .hop-pop-close { margin-left:auto; min-width:44px; min-height:44px; padding:0 10px; border-radius:8px; border:1px solid var(--border); background:var(--bg3); color:var(--text); font-size:12px; font-weight:600; cursor:pointer; }
+    .hop-pop-close:active { background:var(--mc-color); border-color:var(--mc-color); color:#000; }
+    .hop-pop-summary { padding:8px 12px 4px; color:var(--muted); line-height:1.45; }
+    .hop-pop-list { overflow-y:auto; -webkit-overflow-scrolling:touch; padding:4px 8px 6px; }
+    .hop-pop-row { display:flex; align-items:flex-start; gap:8px; padding:6px 4px; border-bottom:1px solid rgba(255,255,255,0.05); }
+    .hop-pop-row:last-child { border-bottom:0; }
+    .hop-pop-num { flex-shrink:0; width:20px; height:20px; border-radius:50%; background:var(--mc-color); color:#000; font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center; }
+    .hop-pop-main { display:flex; flex-direction:column; min-width:0; }
+    .hop-pop-name { font-weight:600; overflow-wrap:anywhere; }
+    .hop-pop-detail { color:var(--muted); font-size:10px; overflow-wrap:anywhere; }
+    .hop-pop-row.unresolved .hop-pop-name { color:var(--muted); font-family:ui-monospace,monospace; }
+    .hop-pop-row.ambiguous .hop-pop-name { color:#f59e0b; font-family:ui-monospace,monospace; }
+    .hop-pop-actions { padding:8px 12px 10px; border-top:1px solid var(--border); flex-shrink:0; }
+    .hop-pop-map { width:100%; min-height:44px; font-size:14px; }
+    @media (pointer: coarse) {
+      .mc-route-badge, .mt-route-badge { min-height:44px; min-width:44px; padding:0 8px; font-size:12px; line-height:1; justify-content:center; }
+    }
     #sense-log > .mt-route-selected {
       background: rgba(59,130,246,0.10);
       border-left-color: #3b82f6 !important;

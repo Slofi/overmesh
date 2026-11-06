@@ -50,6 +50,109 @@
     return String(s == null ? '' : s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;');
   }
 
+  // ── Hop list popover (chat message header) ─────────────────────────────────
+  // One popup for both networks. A chat hop badge opens it; the Show on map
+  // button then does what that click used to do. It is positioned above the
+  // badge when the badge is low on the screen, so it never hides under the
+  // chat input bar. Escape, a tap outside and the Close button all dismiss it.
+  let _hopPopoverEl = null;
+  let _hopPopoverEsc = null;
+  let _hopPopoverOutside = null;
+
+  function _closeHopPopover() {
+    if (_hopPopoverEsc) {
+      document.removeEventListener('keydown', _hopPopoverEsc);
+      _hopPopoverEsc = null;
+    }
+    if (_hopPopoverOutside) {
+      document.removeEventListener('pointerdown', _hopPopoverOutside, true);
+      _hopPopoverOutside = null;
+    }
+    if (_hopPopoverEl && _hopPopoverEl.parentNode) {
+      _hopPopoverEl.parentNode.removeChild(_hopPopoverEl);
+    }
+    _hopPopoverEl = null;
+  }
+
+  function _hopPopoverRowsHtml(rows) {
+    return (rows || []).map((row, i) => {
+      const cls = `hop-pop-row${row.unresolved ? ' unresolved' : ''}${row.ambiguous ? ' ambiguous' : ''}`;
+      const detail = row.detail ? `<span class="hop-pop-detail">${escHtml(row.detail)}</span>` : '';
+      return `<div class="${cls}">
+        <span class="hop-pop-num">${i + 1}</span>
+        <span class="hop-pop-main"><span class="hop-pop-name">${escHtml(row.primary || '?')}</span>${detail}</span>
+      </div>`;
+    }).join('');
+  }
+
+  function _hopHoverTitle(model) {
+    if (!model) return '';
+    const names = (model.rows || []).map(row => row.primary).filter(Boolean).join(', ');
+    return `${model.summary || ''}${names ? ` Hops: ${names}.` : ''} Click for the hop list.`.trim();
+  }
+
+  function _openHopPopover(evt, model, mapAction) {
+    _closeHopPopover();
+    if (!model) return;
+    const el = document.createElement('div');
+    el.id = 'hop-list-popover';
+    el.className = 'hop-popover';
+    el.setAttribute('role', 'dialog');
+    el.setAttribute('aria-label', model.title || 'Message hops');
+    const list = model.rows && model.rows.length
+      ? `<div class="hop-pop-list">${_hopPopoverRowsHtml(model.rows)}</div>`
+      : '';
+    el.innerHTML = `
+      <div class="hop-pop-head">
+        <span class="hop-pop-title">${escHtml(model.title || 'Message hops')}</span>
+        <button type="button" class="hop-pop-close" aria-label="Close hop list" onclick="_closeHopPopover()">Close</button>
+      </div>
+      <div class="hop-pop-summary">${escHtml(model.summary || '')}</div>
+      ${list}
+      <div class="hop-pop-actions">
+        <button type="button" class="btn hop-pop-map" onclick="_closeHopPopover();${mapAction}">Show on map</button>
+      </div>`;
+    document.body.appendChild(el);
+    _hopPopoverEl = el;
+    let x = evt?.clientX;
+    let y = evt?.clientY;
+    if (!x && !y && evt?.currentTarget?.getBoundingClientRect) {
+      const rect = evt.currentTarget.getBoundingClientRect();
+      x = rect.left + rect.width / 2;
+      y = rect.top;
+    }
+    if (x == null) x = window.innerWidth / 2;
+    if (y == null) y = window.innerHeight / 2;
+    el.style.visibility = 'hidden';
+    _positionFixedPanel(el, x, y);
+    // The chat input bar lives at the bottom of the screen. If the popup would
+    // reach into it, lift the popup so it stays fully above the bar.
+    const inputGuard = 72;
+    const rect = el.getBoundingClientRect();
+    if (rect.bottom > window.innerHeight - inputGuard) {
+      const zoom = parseFloat(document.body.style.zoom) / 100 || 1;
+      const shift = (rect.bottom - (window.innerHeight - inputGuard)) / zoom + 8;
+      const top = parseFloat(el.style.top) || 0;
+      el.style.top = Math.max(8, top - shift) + 'px';
+    }
+    el.style.visibility = '';
+    _hopPopoverEsc = e => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        _closeHopPopover();
+      }
+    };
+    document.addEventListener('keydown', _hopPopoverEsc);
+    // Defer, so the click that opened the popup is not also an outside tap.
+    setTimeout(() => {
+      if (!_hopPopoverEl) return;
+      _hopPopoverOutside = e => {
+        if (!_hopPopoverEl.contains(e.target)) _closeHopPopover();
+      };
+      document.addEventListener('pointerdown', _hopPopoverOutside, true);
+    }, 0);
+  }
+
   // ── Silent Running ─────────────────────────────────────────────────────────
   let _silentMode = false;
 
@@ -2662,8 +2765,9 @@
       ? `<button class="msg-reply-btn" onclick="replyToMt('${jsSafe(m.from_name || '')}')">↩ Reply</button>`
       : '';
     const routeMeta = _mtMessageRouteMeta(m);
+    const hopTitle = routeMeta ? _hopHoverTitle(_mtMessageHopModel(m, routeMeta)) : '';
     const routeBtn = routeMeta
-      ? `<button class="mt-route-badge ${routeMeta.cached ? 'cached' : ''}" title="${escHtml(routeMeta.detail)}" onclick="event.stopPropagation();showMtMessageRoute('${jsSafe(m.id)}')">${escHtml(routeMeta.label)}</button>`
+      ? `<button class="mt-route-badge ${routeMeta.cached ? 'cached' : ''}" title="${escHtml(hopTitle)}" onclick="event.stopPropagation();openMtHopPopover(event,'${jsSafe(m.id)}')">${escHtml(routeMeta.label)}</button>`
       : '';
     const el = document.createElement('div');
     el.className = `chat-msg ${m.sent ? 'sent' : 'received'}`;
@@ -6324,11 +6428,69 @@ if (targetEl) {
       label,
       hops,
       cached,
+      radioId: m.radio_id || activeRadioId || '',
       source: cached ? (hasHopCount ? 'packet hops + cached route' : 'cached route') : 'packet hop count',
       detail: cached
         ? `Show cached traceroute for ${cached.nodeName || targetId}`
         : `${hops === 0 ? 'Direct packet' : `${hops} hop${hops !== 1 ? 's' : ''}`} reported by packet metadata`,
     };
+  }
+
+  function _mtNodeName(nodeId, radioId = '') {
+    if (!nodeId) return '';
+    if (nodeId === 'local') return 'This radio';
+    const node = allNodes.find(n => n.id === nodeId && (!radioId || n.radio_id === radioId))
+      || allNodes.find(n => n.id === nodeId);
+    return node?.long_name || node?.name || nodeId;
+  }
+
+  // MT packet metadata carries only a hop count, never relay ids. Names can
+  // therefore come only from a cached traceroute; without one the row list is
+  // empty and the summary says so. The order is the direction the message
+  // travelled: routeBack for a received message, route for a sent one.
+  function _mtHopListRows(meta, sent) {
+    const count = Number(meta?.hops);
+    if (!(count > 0) || !meta?.cached?.data) return [];
+    const data = meta.cached.data;
+    const radioId = meta.radioId || meta.cached.radioId || '';
+    const ids = sent
+      ? ((data.routeIds || []).length >= 2 ? data.routeIds : [...(data.routeBackIds || [])].reverse())
+      : ((data.routeBackIds || []).length >= 2 ? data.routeBackIds : [...(data.routeIds || [])].reverse());
+    return ids.slice(1, -1)
+      .filter(id => id && id !== 'local')
+      .map(id => {
+        const name = _mtNodeName(id, radioId);
+        const known = !!name && name !== id;
+        return { primary: known ? name : id, detail: known ? id : '', ambiguous: false, unresolved: !known };
+      });
+  }
+
+  function _mtHopSummary(meta, sent) {
+    const count = Number(meta?.hops);
+    if (count === 0) return sent ? 'Sent direct. No repeater hops.' : 'Heard direct. No repeater hops.';
+    if (!(count > 0)) return 'No hop information for this message.';
+    const word = `${count} hop${count !== 1 ? 's' : ''}`;
+    if (!meta?.cached?.data) return `${word} reported by the packet. The packet does not name the repeaters.`;
+    return `${word} reported by the packet. Repeaters from the cached traceroute:`;
+  }
+
+  function _mtMessageHopModel(m, meta = null) {
+    const routeMeta = meta || _mtMessageRouteMeta(m);
+    if (!routeMeta) return null;
+    return {
+      title: 'Message hops',
+      summary: _mtHopSummary(routeMeta, !!m?.sent),
+      rows: _mtHopListRows(routeMeta, !!m?.sent),
+    };
+  }
+
+  function openMtHopPopover(evt, msgId) {
+    if (evt) evt.stopPropagation();
+    const m = chatMsgs.find(x => x.id === msgId);
+    if (!m) return;
+    const model = _mtMessageHopModel(m);
+    if (!model) return;
+    _openHopPopover(evt, model, `showMtMessageRoute('${jsSafe(msgId)}')`);
   }
 
   function showMtMessageRoute(msgId) {
@@ -14117,8 +14279,9 @@ if (targetEl) {
       const mcReplyBtn = `<button class="msg-reply-btn" onclick="replyToMc('${jsSafe(m.from_id || '')}','${jsSafe(name)}','${m.subtype || 'channel'}')">↩ Reply</button>`;
       const routeMeta = _mcChatRouteMeta(m);
       if (routeMeta) _mcChatRouteByKey[routeKey] = m;
+      const hopTitle = routeMeta ? _hopHoverTitle(_mcChatHopModel(m, routeMeta)) : '';
       const routeBtn = routeMeta
-        ? `<button class="mc-route-badge${Number(m.path_len) === 0 ? ' direct' : ''}" title="${escHtml(routeMeta.detail)}" onclick="event.stopPropagation();showMcChatMessageRoute('${jsSafe(routeKey)}')">${escHtml(routeMeta.label)}</button>`
+        ? `<button class="mc-route-badge${Number(m.path_len) === 0 ? ' direct' : ''}" title="${escHtml(hopTitle)}" onclick="event.stopPropagation();openMcHopPopover(event,'${jsSafe(routeKey)}')">${escHtml(routeMeta.label)}</button>`
         : '';
       const byteMeta = _mcMessageHashByteMeta(m);
       const byteBadge = byteMeta
@@ -15966,7 +16129,87 @@ if (targetEl) {
       label: _mcMessageRouteLabel(hopMeta.label, msg),
       detail: `Show MC message path: ${hopMeta.detail}${source}`,
       entry,
+      path: resolved.path,
     };
+  }
+
+  // One row per hop in the order the packet travelled. Names come from the same
+  // resolver the map and Sense log use. An ambiguous or unknown hop leads with
+  // the raw packet id: we never present a guessed name as if it were known.
+  function _mcHopListRows(entry, pathResult) {
+    const resolved = _mcSortedPathHops(pathResult).filter(hop => hop && hop.hash);
+    const raw = _mcRawHopHashesForEntry(entry);
+    const order = raw.length
+      ? raw.map(hash => String(hash).toLowerCase())
+      : resolved.map(hop => String(hop.hash).toLowerCase());
+    const byHash = {};
+    resolved.forEach(hop => {
+      const key = String(hop.hash || '').toLowerCase();
+      if (key && !byHash[key]) byHash[key] = hop;
+    });
+    const rows = [];
+    const used = new Set();
+    order.forEach(hash => {
+      const key = String(hash || '').toLowerCase();
+      if (!key) return;
+      const hop = byHash[key];
+      if (hop) used.add(key);
+      if (hop && !hop.ambiguous) {
+        rows.push({ primary: hop.name || key, detail: hop.name ? key : '', ambiguous: false, unresolved: false });
+      } else if (hop) {
+        rows.push({
+          primary: key,
+          detail: hop.name ? `possibly ${hop.name}, ambiguous match` : 'ambiguous match',
+          ambiguous: true,
+          unresolved: false,
+        });
+      } else {
+        rows.push({ primary: key, detail: 'no name known', ambiguous: false, unresolved: true });
+      }
+    });
+    // A resolved hop whose hash could not be split from the raw path still gets
+    // a row, in resolver order, rather than silently disappearing.
+    resolved.forEach(hop => {
+      const key = String(hop.hash || '').toLowerCase();
+      if (used.has(key)) return;
+      rows.push(hop.ambiguous
+        ? { primary: key, detail: hop.name ? `possibly ${hop.name}, ambiguous match` : 'ambiguous match', ambiguous: true, unresolved: false }
+        : { primary: hop.name || key, detail: hop.name ? key : '', ambiguous: false, unresolved: false });
+    });
+    return rows;
+  }
+
+  function _mcHopSummary(hopCount, label, pathResult) {
+    const count = Number(hopCount);
+    if (count === 0) return 'Heard direct. No repeater hops.';
+    if (pathResult?.flood || /flood/i.test(String(label || ''))) {
+      return 'Flood mode. The packet did not name any repeaters.';
+    }
+    if (count === 255) return 'Direct route. No repeater hops.';
+    if (count > 0) return `Heard with ${count} hop${count !== 1 ? 's' : ''}.`;
+    return 'No hop information for this message.';
+  }
+
+  function _mcChatHopModel(msg, meta = null) {
+    const routeMeta = meta || _mcChatRouteMeta(msg);
+    if (!routeMeta) return null;
+    const entry = routeMeta.entry || {};
+    const count = Number(entry.hopLen);
+    const pathResult = routeMeta.path || entry.pathResult || null;
+    return {
+      title: 'Message hops',
+      summary: _mcHopSummary(entry.hopLen, routeMeta.label, pathResult),
+      rows: count > 0 && count !== 255 && !pathResult?.flood ? _mcHopListRows(entry, pathResult) : [],
+    };
+  }
+
+  function openMcHopPopover(evt, routeKey) {
+    if (evt) evt.stopPropagation();
+    const msg = _mcChatRouteByKey[routeKey] || mcMessages.find(m => _mcChatRouteKey(m) === routeKey);
+    if (!msg) return;
+    const model = _mcChatHopModel(msg);
+    if (!model) return;
+    _openHopPopover(evt, model, `showMcChatMessageRoute('${jsSafe(routeKey)}')`);
   }
 
   function showMcChatMessageRoute(routeKey) {

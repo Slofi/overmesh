@@ -102,15 +102,17 @@
     const list = model.rows && model.rows.length
       ? `<div class="hop-pop-list">${_hopPopoverRowsHtml(model.rows)}</div>`
       : '';
+    const netLabel = model.net === 'MT' ? 'MT' : 'MC';
     el.innerHTML = `
       <div class="hop-pop-head">
         <span class="hop-pop-title">${escHtml(model.title || 'Message hops')}</span>
-        <button type="button" class="hop-pop-close" aria-label="Close hop list" onclick="_closeHopPopover()">Close</button>
+        <span class="hop-pop-badge hop-pop-badge-${netLabel === 'MT' ? 'mt' : 'mc'}" title="${netLabel} message">${netLabel}</span>
+        <button type="button" class="hop-pop-close" aria-label="Close hop list" title="Close" onclick="_closeHopPopover()">&times;</button>
       </div>
       <div class="hop-pop-summary">${escHtml(model.summary || '')}</div>
       ${list}
       <div class="hop-pop-actions">
-        <button type="button" class="btn hop-pop-map" onclick="_closeHopPopover();${mapAction}">Show on map</button>
+        <button type="button" class="hop-pop-map" onclick="_closeHopPopover();${mapAction}">Show on map</button>
       </div>`;
     document.body.appendChild(el);
     _hopPopoverEl = el;
@@ -6573,6 +6575,7 @@ if (targetEl) {
     if (!routeMeta) return null;
     return {
       title: 'Message hops',
+      net: 'MT',
       summary: _mtHopSummary(routeMeta, !!m?.sent),
       rows: _mtHopListRows(routeMeta, !!m?.sent),
     };
@@ -16465,6 +16468,7 @@ if (targetEl) {
     const pathResult = routeMeta.path || entry.pathResult || null;
     return {
       title: 'Message hops',
+      net: 'MC',
       summary: _mcHopSummary(entry.hopLen, routeMeta.label, pathResult),
       rows: count > 0 && count !== 255 && !pathResult?.flood ? _mcHopListRows(entry, pathResult) : [],
     };

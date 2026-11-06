@@ -318,15 +318,28 @@
     .mc-rx-confidence.low { border-color:rgba(245,158,11,0.35); color:#f59e0b; background:rgba(245,158,11,0.10); }
 
     /* Chat hop popover: one list for MC and MT. It sits above the chat input bar
-       on the CD screen and shrinks to the phone viewport. */
-    .hop-popover { position:fixed; z-index:4000; display:flex; flex-direction:column; width:min(340px, calc(100vw - 16px)); max-height:min(65vh, 440px); background:var(--bg2); border:1px solid var(--border); border-radius:10px; box-shadow:0 8px 28px rgba(0,0,0,0.65); font-size:12px; color:var(--text); }
-    .hop-pop-head { display:flex; align-items:center; gap:8px; padding:8px 8px 4px 12px; border-bottom:1px solid var(--border); flex-shrink:0; }
-    .hop-pop-title { font-weight:700; color:var(--mc-color); }
-    .hop-pop-close { margin-left:auto; min-width:44px; min-height:44px; padding:0 10px; border-radius:8px; border:1px solid var(--border); background:var(--bg3); color:var(--text); font-size:12px; font-weight:600; cursor:pointer; }
-    .hop-pop-close:active { background:var(--mc-color); border-color:var(--mc-color); color:#000; }
-    .hop-pop-summary { padding:8px 12px 4px; color:var(--muted); line-height:1.45; }
-    .hop-pop-list { overflow-y:auto; -webkit-overflow-scrolling:touch; padding:4px 8px 6px; }
-    .hop-pop-row { display:flex; align-items:flex-start; gap:8px; padding:6px 4px; border-bottom:1px solid rgba(255,255,255,0.05); }
+       on the CD screen and shrinks to the phone viewport. Its shape is taken from
+       the popup Filip actually sees when he taps a repeater on the map, so a hop
+       list reads as the same kind of card: 12px corners, the same shadow weight,
+       content inset like Leaflet's, a 13px title with a small network chip, a
+       bare grey × in the top right corner instead of a worded Close, and a small
+       inline action button. Two deliberate differences: the panel stays dark
+       (var(--bg2), his call: the map popup's white is not to be copied), and the
+       × keeps a 44px hit area for the CD touchscreen. */
+    .hop-popover { position:fixed; z-index:4000; display:flex; flex-direction:column; width:min(340px, calc(100vw - 16px)); max-height:min(65vh, 440px); background:var(--bg2); border:1px solid var(--border); border-radius:12px; box-shadow:0 3px 14px rgba(0,0,0,0.4); font-size:12px; line-height:1.6; color:var(--text); }
+    .hop-pop-head { display:flex; align-items:center; gap:4px; padding:13px 46px 0 20px; flex-shrink:0; }
+    .hop-pop-title { font-size:13px; font-weight:600; color:var(--accent); }
+    .hop-pop-badge { font-size:10px; font-weight:600; line-height:1.5; padding:0 4px; border-radius:3px; border:1px solid transparent; }
+    .hop-pop-badge-mc { color:var(--mc-color); background:rgba(56,189,248,0.12); border-color:rgba(56,189,248,0.25); }
+    .hop-pop-badge-mt { color:var(--green); background:rgba(63,185,80,0.12); border-color:rgba(63,185,80,0.25); }
+    /* Leaflet's close button: bare glyph, top right, transparent, grey. Same look
+       here, but 44px square, because this one lives in the chat and a finger has
+       to hit it. */
+    .hop-pop-close { position:absolute; top:2px; right:2px; width:44px; height:44px; display:flex; align-items:center; justify-content:center; padding:0; border:0; background:transparent; color:var(--muted); font-size:18px; line-height:1; border-radius:12px; cursor:pointer; }
+    .hop-pop-close:hover, .hop-pop-close:active, .hop-pop-close:focus-visible { background:rgba(255,255,255,0.08); color:var(--text); }
+    .hop-pop-summary { padding:0 20px 6px; color:var(--muted); }
+    .hop-pop-list { overflow-y:auto; -webkit-overflow-scrolling:touch; padding:2px 16px 6px; }
+    .hop-pop-row { display:flex; align-items:flex-start; gap:8px; padding:5px 4px; border-bottom:1px solid rgba(255,255,255,0.05); }
     .hop-pop-row:last-child { border-bottom:0; }
     .hop-pop-num { flex-shrink:0; width:20px; height:20px; border-radius:50%; background:var(--mc-color); color:#000; font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center; }
     .hop-pop-main { display:flex; flex-direction:column; min-width:0; }
@@ -334,8 +347,12 @@
     .hop-pop-detail { color:var(--muted); font-size:10px; overflow-wrap:anywhere; }
     .hop-pop-row.unresolved .hop-pop-name { color:var(--muted); font-family:ui-monospace,monospace; }
     .hop-pop-row.ambiguous .hop-pop-name { color:#f59e0b; font-family:ui-monospace,monospace; }
-    .hop-pop-actions { padding:8px 12px 10px; border-top:1px solid var(--border); flex-shrink:0; }
-    .hop-pop-map { width:100%; min-height:44px; font-size:14px; }
+    .hop-pop-actions { padding:2px 20px 14px; flex-shrink:0; }
+    /* Shaped like .map-popup-btn, sized for a fingertip: 36px tall, not the
+       popup's 11px-tall 22px. It no longer fills the width, so it sits under the
+       list the way a map popup's buttons sit under its rows. */
+    .hop-pop-map { display:inline-flex; align-items:center; justify-content:center; min-height:36px; padding:6px 12px; background:var(--bg3); border:1px solid var(--border); border-radius:4px; color:var(--accent); font-size:12px; font-weight:600; cursor:pointer; }
+    .hop-pop-map:hover, .hop-pop-map:active { background:var(--accent-dim); }
     /* A hop badge keeps its small look, so a chat stays dense. On a touchscreen an
        invisible area extends the real button to 44px tall for a fingertip. The 1B
        tag is not a button and gets none of this. */

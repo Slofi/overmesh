@@ -139,6 +139,29 @@ assert(src.includes("'pointerdown'"), 'a tap outside must close the popup');
 assert(src.includes('hop-pop-close'), 'the popup must have a close button');
 assert(src.includes('inputGuard'), 'the popup must stay above the chat input bar at the bottom');
 
+// --- the popup's look is the map's own popup (Filip, S487): tapping a repeater
+// on the map is the reference card, so the hop list borrows its design instead
+// of inventing a second one. A bare × in the corner, not a worded Close, the
+// small network chip beside the title, and the existing dark background kept.
+assert(!/>Close</.test(src), 'the close control must no longer be a worded Close button');
+assert(/class="hop-pop-close"[^>]*>&times;</.test(src), 'the close control must be a bare × glyph');
+assert(/class="hop-pop-close"[^>]*aria-label="Close hop list"/.test(src), 'the × must still be named for a screen reader');
+assert(/hop-pop-badge hop-pop-badge-/.test(src), 'the header must carry the small network chip the map popup uses for its network badges');
+assert(src.includes("net: 'MC'") && src.includes("net: 'MT'"), 'each hop model must say which network it came from, so the chip is honest');
+
+const css = fs.readFileSync(path.join(REPO, 'static/css/app.css'), 'utf8');
+const cssRule = name => {
+  const start = css.indexOf(name + ' {');
+  assert(start >= 0, `CSS rule ${name} not found`);
+  return css.slice(start, css.indexOf('\n', start));
+};
+const panel = cssRule('.hop-popover');
+assert(/background:var\(--bg2\)/.test(panel), 'the hop popover must keep the dark background, never the white one');
+assert(/border-radius:12px/.test(panel), 'the hop popover must borrow the map popup\'s 12px corners (Leaflet\'s, which is what the map actually renders)');
+assert(/box-shadow:0 3px 14px rgba\(0,0,0,0\.4\)/.test(panel), 'the hop popover must borrow the map popup\'s shadow');
+assert(/background:transparent/.test(cssRule('.hop-pop-close')), 'the × must sit on the panel like Leaflet\'s, not inside its own button box');
+assert(/width:44px/.test(cssRule('.hop-pop-close')), 'the × must still be a fingertip target on the CD touchscreen');
+
 // --- a hop list belongs to the chat it was opened from (EST-325). A tab
 // switch, a radio switch or a chat-network switch replaces that chat under the
 // popup, so the popup must go with it instead of floating over another screen

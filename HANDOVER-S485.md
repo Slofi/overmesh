@@ -1,16 +1,17 @@
 # S485 handover for Filip
 
-Verdict first: the branch is ready to ship as one batch. The EST-324 sweep found
-four more bugs, and EST-321 adds the map gesture for alternate MC message
-paths. Every fix has a test that fails on the code before the fix. They sit on
-top of the two earlier items, EST-319 chat catch-up and EST-320 minimap.
-Nothing here needs a new setting, a migration or a manual step after the update.
+Verdict first: the branch is ready to ship as one batch. EST-322 adds the hop
+list on chat messages, the EST-324 sweep found four more bugs, and EST-321 adds
+the map gesture for alternate MC message paths. Every fix has a test that fails
+on the code before the fix. They sit on top of the two earlier items, EST-319
+chat catch-up and EST-320 minimap. Nothing here needs a new setting, a migration
+or a manual step after the update.
 
-Branch `s485-report`, base `cc948e6`, last commit `a3dac5b`. Not pushed, not
-deployed, VERSION untouched.
+Branch `s485-report`, base `cc948e6`, last code commit `0f2ba4b`; this handover
+is the commit after it. Not pushed, not deployed, VERSION untouched.
 
-Gate after the last commit, real exit code: `tests/run.sh` exit 0, 640 Python
-tests OK, 25 Node test files OK, eslint no-undef clean. The same full gate ran
+Gate after the last code commit, real exit code: `tests/run.sh` exit 0, 640 Python
+tests OK, 26 Node test files OK, eslint no-undef clean. The same full gate ran
 before each fix commit.
 
 ## What I swept in EST-324
@@ -276,10 +277,56 @@ not run in a browser here.
 MT: not applicable. The alternate received copies and this path pop-up exist on
 MC only; MT has no `rx_copies` list in the Activity panel.
 
+## Item: clicking the hop count opens a list of repeaters (EST-322)
+
+FIXED. The hop badge on an MC or MT chat message used to jump straight to the
+map. Clicking or tapping it now opens a small pop-up first. The pop-up lists the
+hops in the order the packet travelled, numbered, by repeater name. A hop with
+no known name shows its raw packet hash. An ambiguous match leads with the raw
+id and shows the candidate only as "possibly ...", so no name is presented as
+confirmed when it is not. A direct message says "Heard direct. No repeater
+hops." Flood mode says the packet did not name any repeaters. MT packet
+metadata carries a hop count only, so without a cached traceroute the pop-up
+says the packet does not name the repeaters, and it does not invent any.
+
+The Show on map button at the bottom does what the old click did, so nothing is
+lost. The badge hover title now lists the same names for a mouse. Escape, a tap
+outside and the Close button all dismiss the pop-up. It is at most 340 pixels
+wide with a phone-width cap, the list scrolls inside it, and it is lifted above
+the chat input bar when it would reach the bottom. On a coarse pointer the hop
+badges are at least 44 by 44 pixels.
+
+MC is covered first, and MT where it has a route. The MC list uses the same path
+resolver as the map and the Sense log, so names and ambiguous flags match those
+views. MT names come from the cached traceroute, the same source its map route
+uses.
+
+How to see it: on the Chat tab, tap the hop badge on an MC message that shows
+"2 hops" or "3 hops". A list opens with a number per hop. Tap Show on map and
+the map pin opens exactly as before. Tap outside or Close to dismiss, or press
+Escape with a keyboard. Do the same on an MT message with a cached traceroute.
+A direct message opens the list and says it was heard direct.
+
+What I could not test: a real radio, a real browser and a real finger on the CD
+touchscreen. The row order, name and raw-id rules, direct and flood words, MT
+fallback words, escaping and the pop-up contract are covered by
+`tests/test_mc_hop_popover.js`. That test fails on `244ccad` with
+`_mcHopListRows` not found. The CSS width and the input bar lift were checked by
+reading the layout, not in a browser.
+
+Exact next step if a hop name is wrong: compare the raw hash shown under the
+name with the MC contact list for the same radio. If the hash matches a
+different contact, the limit is in `_mcPickPathHopResolution`, not in this
+pop-up. If the raw id is right and the name is missing, the contact is not in
+the radio's contact cache yet.
+
 ## What no one could test without real radios or a real browser
 
 - A real sleep and wake on the phone, and a real SSE reconnect. The code paths
   are covered by tests; the actual browser reconnect is not.
+- A real mouse hover and a real finger tap on the new hop pop-up. The row build
+  and the close paths are tested; the native title display and the finger feel
+  on the CD are not.
 - A real touch drag on the CD touchscreen, including the feel of the 44 pixel
   targets. The geometry is tested, the finger is not.
 - A real GPS losing and regaining a fix, and a real MC radio reconnecting at a
@@ -292,6 +339,11 @@ MC only; MT has no `rx_copies` list in the Activity panel.
 
 ### Fixed
 
+- **A chat hop badge lists the repeaters before the map.** Click or tap the hop
+  count on a MeshCore or Meshtastic message to see the hops in order by name.
+  A hop with no known name shows its raw id, and an ambiguous match says so.
+  Direct and flood messages say they had no named repeaters. Show on map keeps
+  the old click, and a mouse hover lists the names.
 - **Alternate MeshCore message paths can be seen on the map.** Hover a copy in
   the Activity panel to draw it, click or tap to keep it. Hops with no known
   position are left out instead of being drawn in the wrong place.

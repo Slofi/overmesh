@@ -1,8 +1,130 @@
-# S485 handover (EST-320: minimap, EST-319: observer effect)
+# S485 handover for Filip
 
-Branch `s485-report`. Commits `af7367e` (EST-319) and `a2500fc` (EST-320), base `cc948e6`.
-Gate after the last commit: `tests/run.sh` exit 0: 640 Python tests OK, 25 Node test files OK,
-eslint no-undef clean. Not pushed, not deployed, VERSION untouched.
+Verdict first: the branch is ready to ship as one batch. The EST-324 sweep found
+four more bugs, all fixed with a test that fails on the code before the fix. They
+sit on top of the two earlier items, EST-319 chat catch-up and EST-320 minimap.
+Nothing here needs a new setting, a migration or a manual step after the update.
+
+Branch `s485-report`, base `cc948e6`, last commit `e05bdc2`. Not pushed, not
+deployed, VERSION untouched.
+
+Gate after the last commit, real exit code: `tests/run.sh` exit 0, 640 Python
+tests OK, 25 Node test files OK, eslint no-undef clean. The same full gate ran
+before each of the four fix commits.
+
+## What I swept in EST-324
+
+I read `git diff cc948e6..HEAD` against its call sites, not just on its own:
+the new SSE resync, the SSE close sentinel, the minimap own-position resolver,
+the minimap marker loop, the minimap resize grip, and the new lifecycle
+listeners. I looked for the failure modes on your list: duplicates after a
+reconnect, a reload storm, a poll that never stops, a listener added on every
+redraw, a popup or path left behind, MC and MT parity, no-touch and no-hover
+browsers, phone width, and a stale position shown as current.
+
+Found and fixed four:
+
+1. the minimap could not be moved with a finger at all,
+2. the minimap Traces poll kept running in a hidden tab,
+3. the minimap own marker only moved on the 15 second poll, so it showed an old
+   position as current,
+4. an MC radio that reconnected kept the position from its previous session.
+
+The same-cause checks elsewhere found nothing more: the other panels I looked at
+either rebuild their DOM, so their listeners cannot pile up, or already stop
+their timers when the tab or the panel closes.
+
+Not swept, and I am not claiming them: MT send and ACK paths, the bot, RPTR and
+remote collector, settings persistence, the server routes other than the chat
+stream and MC status, and the live databases. Real radios and a real browser are
+also outside what I could test here.
+
+## Item: the minimap cannot be moved with a finger
+
+FIXED. The resize grip had already been moved to pointer events, but the header
+bar beside it still listened to `mousedown`. On the CD touchscreen you could
+resize the minimap but not move it. The header now uses pointer events with
+pointer capture, the same path as the grip, and ends on pointerup, pointercancel
+or lost capture. A press that starts on one of the header buttons is still a
+click, not a drag.
+
+The three header buttons (Traces, Locate, Collapse) were 13 pixel text with 2
+pixels of padding. They are now at least 44 by 44 pixels. The header sets
+`touch-action: none` so a finger drag does not scroll the page underneath.
+
+How to see it: open the minimap on Nodes or Chat on the CD, put a finger on the
+header bar and drag. The whole minimap moves. Tap Traces, Locate and Collapse:
+each is a fingertip target. A mouse still drags it the same way.
+
+Test: `tests/test_pip_resize_touch.js` drives the real `initPipMap()` header
+drag, the button exclusion and the CSS sizes. It fails on `cc948e6`, where the
+grip has no pointerdown listener and the header has no pointer path.
+
+## Item: the minimap Traces poll kept running in a hidden tab
+
+FIXED. The poll gate checked the tab (Nodes or Chat), whether the minimap was
+open, and whether an MC radio was connected, but not whether the browser window
+was visible. A phone left on another app, or the CD showing something else,
+kept asking for passive observations every few seconds in the background. The
+gate now also requires a visible document, and the visibilitychange handler
+re-runs the sync on both edges: hiding stops the poll, showing resumes it. The
+chat resync on wake is unchanged.
+
+How to see it: open the minimap, switch Traces on, then put the browser in the
+background for two minutes. The passive observation requests stop. Bring it
+back and they resume. There is nothing to see in the page itself; if you want
+proof, the server journal shows the `/passive_obs` requests.
+
+Test: `tests/test_pip_traces.js` runs the real `_pipRxActive` with
+`document.hidden` set and checks the timer stops and restarts. The hidden-tab
+assertion fails on the branch before this commit, where `_pipRxActive` ignores
+`document.hidden`.
+
+## Item: the minimap own marker moved only every 15 seconds
+
+FIXED. The new minimap draws our own position, but the live SSE fast path only
+refreshed the main map. A `gps_position` or `local_node_position` event moved the
+main map while the minimap kept the previous spot, so for up to 15 seconds (the
+`loadLive` interval) it showed an old position as current. Losing the GPS fix was
+worse: the stale own marker stayed on the minimap until the next poll.
+
+Both handlers now refresh the minimap with the main map, and `gps_error` removes
+the own marker as soon as the fix is gone. `updatePipMarkers` returns immediately
+when the minimap is closed, so the cost when it is not on screen is one function
+call.
+
+How to see it: open the Map with a GPS source and a live fix, and the minimap
+open on Nodes or Chat. Walk or move the GPS antenna: the blue own dot on the
+minimap moves within a second, not after 15 seconds. Unplug the GPS: the dot
+goes away on the next update instead of lingering.
+
+Test: `tests/test_pip_own_position.js` asserts the three handlers refresh the
+minimap. The GPS assertion fails on `6aad9a6`, the branch just before this fix.
+
+## Item: an MC radio showed its previous position after a reconnect
+
+FIXED. `mc_status` carries the name, the status and the status time, not a
+latitude or longitude. The page merged that event into the remembered status and
+kept the coordinates from the radio's last session. A radio that reconnected
+somewhere else was then marked connected at its old spot. Both maps draw a
+connected MC radio's own position, so they showed an old position as current.
+The status fetch that follows a connect corrected it, but only when that request
+answered, and the old spot stayed if it failed.
+
+A connect event that carries no position now drops the remembered coordinates;
+the status fetch refills the real ones. A payload that does carry a position is
+applied. A disconnect event is left alone, because a disconnected radio is
+already filtered out of the map lists.
+
+How to see it: connect an MC radio and note its green diamond. Disconnect it,
+change its position (or power cycle it after moving it), and reconnect. The old
+spot must not appear as current while the page waits for the fresh status. The
+marker appears only when `/api/mc/status` returns the new coordinates.
+
+Test: `tests/test_pip_own_position.js` drives the real `_mcDropStalePosition`
+with a connect event without a position, a connect event with one, and a
+disconnect event. The helper does not exist on `de0bece`, the branch just before
+this fix.
 
 ## EST-319: messages only appear while a browser is watching (MC and MT)
 
@@ -86,9 +208,11 @@ What it does now: one shared resolver, `_omOwnPositions()`, returns the OM
 Position (hand-picked, or a live GPS fix), each connected MC radio's own position
 and the MT local node. The minimap draws that list with the same marker builders
 the main map uses, so the MC radio keeps its green diamond and our own point its
-blue you-dot. A source with no position adds no marker: no fallback to an old
-point, no guess. The Locate button and the first auto-centre use the same list,
-so Locate works on MC too.
+blue dot. A source with no position adds no marker: no fallback to an old point,
+no guess. The Locate button and the first auto-centre use the same list, so
+Locate works on MC too. EST-324 added the live refresh and the MC reconnect reset
+above, so the list no longer keeps an old position when a fix arrives or a radio
+reconnects.
 
 How Filip can see it: open the minimap on Nodes or Chat. Your own point is on it
 on MC, on MT and with a hand-picked OM Position. If there is no real position,
@@ -100,22 +224,68 @@ marker wiring are covered by `tests/test_pip_own_position.js`, which fails on
 
 ## Minimap on CD: cannot resize with a finger
 
-FIXED.
-
-What was wrong: the top-left grip listened to `mousedown` only, so a touch never
-reached it, and the grip was 18x18, too small for a finger.
-
-What it does now: the grip uses pointer events with pointer capture, so finger
-and mouse take the same path. `pointerdown` calls preventDefault and
-stopPropagation, and the CSS sets `touch-action: none` on the grip, so dragging
-it does not pan the page or the map. The grip is 44x44. The visible corner mark
-stays small. The header mouse drag is unchanged.
+FIXED. The top-left grip listened to `mousedown` only, so a touch never reached
+it, and the grip was 18 by 18, too small for a finger. It now uses pointer events
+with pointer capture, so finger and mouse take the same path. `pointerdown` calls
+preventDefault and stopPropagation, and the CSS sets `touch-action: none` on the
+grip, so dragging it does not pan the page or the map. The grip is 44 by 44, the
+visible corner mark stays small. The header drag now uses the same pointer path
+as well: the earlier note that it was unchanged no longer applies (see the
+EST-324 item above).
 
 How Filip can see it: open the minimap on the CD touchscreen and drag the
 top-left corner with a finger. It should resize, and the page behind should stay
-put. A mouse still works the same way.
+put. Drag the header bar to move it. A mouse still works the same way.
 
 What I could not test: a real touchscreen. The drag maths, pointer capture,
-clamping and the CSS size are covered by `tests/test_pip_resize_touch.js`, which
+clamping and the CSS sizes are covered by `tests/test_pip_resize_touch.js`, which
 fails on `cc948e6` because the grip has no pointerdown listener. The one thing
 left for a real check is the finger feel on the CD itself.
+
+## What no one could test without real radios or a real browser
+
+- A real sleep and wake on the phone, and a real SSE reconnect. The code paths
+  are covered by tests; the actual browser reconnect is not.
+- A real touch drag on the CD touchscreen, including the feel of the 44 pixel
+  targets. The geometry is tested, the finger is not.
+- A real GPS losing and regaining a fix, and a real MC radio reconnecting at a
+  new position. Both are simulated in the tests.
+- MC and MT radios on the air. No packet was sent in this run.
+- The live gandalf databases and the OM service data. Not visible to ds-ro.
+- Phone width was checked in the CSS and test geometry, not on a physical phone.
+
+## Proposed release notes (NOT applied)
+
+### Fixed
+
+- **The minimap can be moved with a finger, and its header buttons are finger
+  sized.** The header bar dragged with a mouse only. It now uses the same pointer
+  path as the resize grip, and Traces, Locate and Collapse are at least 44 by 44
+  pixels.
+- **The minimap stops polling when the page is hidden.** The Traces request kept
+  running in a background tab or a phone on another app. It now stops when the
+  page is hidden and resumes when it is shown.
+- **The minimap own position keeps up with a live fix.** A GPS or local node
+  position event moved the main map only, so the minimap could show the previous
+  spot for up to 15 seconds. It now moves at once, and a lost fix removes the dot
+  at once.
+- **A MeshCore radio no longer shows its previous position after a reconnect.**
+  The status event carries no coordinates, so the old ones stayed and the map
+  marked the radio as current at its old spot. They are cleared on connect and
+  filled again from the fresh status.
+- **Messages that arrived while the page was asleep now appear without a
+  reload.** The page pulls stored rows after a reconnect, on wake, on a back and
+  forward cache restore and when the network comes back. MeshCore first, then
+  Meshtastic. An evicted live feed now closes so the browser reconnects instead
+  of staying silent.
+- **The minimap shows your own position on MeshCore, Meshtastic and with a
+  hand-picked position.** The connected MeshCore radio, the local Meshtastic node
+  and the OM Position are drawn with the same markers the main map uses. Locate
+  uses the same list.
+
+## Proposed VERSION (NOT applied)
+
+`2026.11.06.1`
+
+Current VERSION on this branch is `2026.11.03.1`. The proposal is not applied; it
+is here for you or Claude to set at release time.

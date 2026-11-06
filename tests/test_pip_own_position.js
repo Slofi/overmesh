@@ -114,4 +114,15 @@ const mainMc = extract('renderMcMapMarkers');
 assert(mainMc.includes('_mcRadioIcon()') && !mainMc.includes('transform="rotate(45,15,15)"'),
   'the main MC map uses the shared radio icon, no second copy');
 
+// --- live updates: our own marker must not wait for the 15 s loadLive poll ---
+// The SSE fast path moves the main map immediately. The minimap draws the same
+// own position from the same list, so it must be refreshed on the same events;
+// otherwise it shows the previous spot as current until the next poll.
+assert(/data\.type === 'gps_position'[\s\S]{0,260}updatePipMarkers\(allNodes\)/.test(src),
+  'a GPS fix updates the minimap own marker immediately');
+assert(/data\.type === 'gps_error'[\s\S]{0,300}updatePipMarkers\(allNodes\)/.test(src),
+  'losing the GPS fix removes the stale own marker from the minimap');
+assert(/data\.type === 'local_node_position'[\s\S]{0,600}updatePipMarkers\(allNodes\)/.test(src),
+  'a local node position push updates the minimap own marker immediately');
+
 console.log('OK test_pip_own_position');

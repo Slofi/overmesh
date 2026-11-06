@@ -1459,10 +1459,14 @@
       }
       if (data.type === 'gps_position') {
         _gpsUpdatePosition(data);
+        // The minimap draws our own position too: move or remove that marker now
+        // instead of leaving the old spot until the next 15 s loadLive().
+        updatePipMarkers(allNodes);
         return;
       }
       if (data.type === 'gps_error') {
         _gpsUpdatePosition({enabled: _gpsEnabled, lat: null, lon: null, sats: 0, fix: false, running: false, error: data.message});
+        updatePipMarkers(allNodes);   // no fix means no own marker on the minimap
         return;
       }
       if (data.type === 'local_node_position') {
@@ -1472,6 +1476,7 @@
           n.latitude  = data.lat;
           n.longitude = data.lon;
           updateMapMarkers(allNodes);
+          updatePipMarkers(allNodes);
         }
         return;
       }

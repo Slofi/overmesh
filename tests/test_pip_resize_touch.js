@@ -165,7 +165,8 @@ assert(headerBlock && /touch-action:\s*none/.test(headerBlock[1]),
   'the header sets touch-action: none so a finger drag does not page a scroll');
 const btnBlock = css.match(/#pip-collapse-btn,\s*#pip-locate-btn,\s*#pip-trace-btn\s*\{([^}]*)\}/);
 assert(btnBlock, 'the three header buttons share one rule');
-assert(/min-width:\s*44px/.test(btnBlock[1]) && /min-height:\s*44px/.test(btnBlock[1]),
-  'header buttons are at least 44x44 for a fingertip');
+assert(/min-width:\s*44px/.test(btnBlock[1]) && /min-height:\s*32px/.test(btnBlock[1]),
+  'header buttons are 44 wide and fill the header for a fingertip');
+assert(!/min-height:\s*44px/.test(btnBlock[1]), 'the header must not take the small map height');
 
 console.log('OK test_pip_resize_touch');

@@ -336,8 +336,14 @@
     .hop-pop-row.ambiguous .hop-pop-name { color:#f59e0b; font-family:ui-monospace,monospace; }
     .hop-pop-actions { padding:8px 12px 10px; border-top:1px solid var(--border); flex-shrink:0; }
     .hop-pop-map { width:100%; min-height:44px; font-size:14px; }
+    /* A hop badge keeps its small look, so a chat stays dense. On a touchscreen an
+       invisible area extends the real button to 44px tall for a fingertip. The 1B
+       tag is not a button and gets none of this. */
     @media (pointer: coarse) {
-      .mc-route-badge, .mt-route-badge { min-height:44px; min-width:44px; padding:0 8px; font-size:12px; line-height:1; justify-content:center; }
+      button.mc-route-badge, button.mt-route-badge { position: relative; }
+      button.mc-route-badge::after, button.mt-route-badge::after {
+        content: ''; position: absolute; inset: -14px -4px;
+      }
     }
     #sense-log > .mt-route-selected {
       background: rgba(59,130,246,0.10);
@@ -2001,7 +2007,7 @@
     #pip-resize-handle:hover::after, #pip-resize-handle:active::after { opacity: 0.9; }
     #pip-header {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 5px 10px;
+      padding: 2px 10px;
       background: var(--bg3); border-bottom: 1px solid var(--border);
       font-size: 11px; color: var(--muted);
       flex-shrink: 0; cursor: grab; user-select: none;
@@ -2010,12 +2016,13 @@
     #pip-header:active { cursor: grabbing; }
     /* the title gives way first when the minimap is resized small (S468: one more header button) */
     #pip-header > span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-    /* 44px square buttons: a fingertip target on the CD touchscreen. The header
-       grows to fit them; the minimap map area gives up the height. */
+    /* A fingertip target on the CD touchscreen that leaves the small map its height:
+       44 wide and the full height of a 36px header. An invisible area taller than the
+       header would be cut off by the map below it and the window edge above it. */
     #pip-collapse-btn, #pip-locate-btn, #pip-trace-btn {
       background: none; border: none; color: var(--muted);
       cursor: pointer; font-size: 13px; padding: 0 4px; line-height: 1;
-      min-width: 44px; min-height: 44px;
+      min-width: 44px; min-height: 32px;
       display: inline-flex; align-items: center; justify-content: center;
     }
     #pip-collapse-btn:hover { color: var(--text); }

@@ -211,7 +211,8 @@ function makeMerge(state) {
     'mtIgnoredIdSet', 'dmContactId', '_incrementUnreadCount',
     'updateRadioSelector', 'updateUnreadDots', 'renderChannelTabs', 'renderMessages',
     'renderMcMessages', '_saveMcMessages', '_omLogShareProcessMessages',
-    '_mcRebuildMessageTabs', code
+    '_mcRebuildMessageTabs', 'chatChannels', '_msgNotifParts', '_logAlert', '_mcSenderInfo',
+    '_mcMsgText', 'mcKnownChannels', 'closedMcDmTabs', 'saveMcClosedDmTabs', code
   )(
     state.mcMessages, state.chatMsgs, state.currentTab, state.chatNetwork,
     state.chatChannel, state.mcChatTab, state.activeRadioId, state.document,
@@ -221,7 +222,11 @@ function makeMerge(state) {
     () => new Set(), m => (m.sent ? m.to_id : m.from_id),
     (store, key) => { store[key] = (store[key] || 0) + 1; },
     () => {}, () => {}, () => {}, () => {}, () => {}, () => {},
-    () => {}, () => {}
+    () => {}, () => {},
+    [], (net, o) => ({ title: `${net} ${o.chanName}`, html: o.text, plain: o.text }),
+    (type, title) => { state.alerts.push({ type, title }); },
+    m => ({ name: m.from_name || '' }), m => m.text || '', { 0: 'Public' },
+    state.closedMcDmTabs, () => {}
   );
 }
 
@@ -242,6 +247,8 @@ function newState() {
     inactiveRadioUnread: new Set(),
     radioUnreadChannels: Object.create(null),
     radioUnreadCounts: Object.create(null),
+    alerts: [],
+    closedMcDmTabs: new Set(),
   };
 }
 
@@ -249,6 +256,33 @@ function newState() {
 // answers, so that row reaches the merge as already held. It must count on the replay.
 assert(/if \(data\.is_history\) _mtMarkCatchUpUnread\(data, _mtReplayFloor\);/.test(src),
   'a replayed MT row new to the page is counted unread');
+// S486: a missed row reaches the bell's history too, on both networks, and a missed
+// DM reopens a closed tab. Filip's real sleep test found the bell empty.
+const mcMark = src.slice(src.indexOf('function _mcMarkCatchUpUnread'), src.indexOf('function _mcMergeMessages'));
+assert(/_logAlert\('message', parts\.title, parts\.html/.test(mcMark), 'a missed MC row is logged to the bell');
+assert(/closedMcDmTabs\.delete\(fk\)/.test(mcMark), 'a missed DM reopens its closed tab');
+const mtMark = src.slice(src.indexOf('function _mtMarkCatchUpUnread'), src.indexOf('function _mtMergeHistory'));
+assert(/_logAlert\('message', _p\.title, _p\.html/.test(mtMark), 'a missed MT row is logged to the bell');
+assert(!/playNotificationSound|maybeShowInAppMessage|sendNotif/.test(mcMark + mtMark), 'still no sound and no pop-up');
+// S486, behaviour: the bell logs each missed row once, not on first load, not for a
+// sent row, and a missed DM reopens its closed tab.
+{
+  const s = newState();
+  s.closedMcDmTabs.add('cccccccccccc');
+  const m = makeMerge(s);
+  m.mcMerge([{ id: 'a', radio_id: 'r1', subtype: 'channel', channel: 0, ts: 100, text: 'old' }], { silent: true });
+  assert(s.alerts.length === 0, 'the first load logs nothing to the bell');
+  const rows = [
+    { id: 'b', radio_id: 'r1', subtype: 'channel', channel: 0, ts: 200, text: 'missed' },
+    { id: 'c', radio_id: 'r1', subtype: 'dm', from_id: 'cccccccccccc01', ts: 201, text: 'missed dm' },
+    { id: 'd', radio_id: 'r1', subtype: 'channel', channel: 0, ts: 202, text: 'mine', sent: 1 },
+  ];
+  m.mcMerge(rows, { silent: true, catchUp: true });
+  assert(s.alerts.length === 2, 'two missed rows reach the bell, the sent one does not');
+  assert(!s.closedMcDmTabs.has('cccccccccccc'), 'a missed DM reopens its closed tab');
+  m.mcMerge(rows, { silent: true, catchUp: true });
+  assert(s.alerts.length === 2, 'another catch-up does not log them again');
+}
 // 9. MT: first load counts nothing, a catch-up counts once, silently.
 {
   const s = newState();

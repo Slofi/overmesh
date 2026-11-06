@@ -12204,9 +12204,28 @@ if (targetEl) {
     if (!msgTab) return;
     // Not on the tab being looked at: same condition as a live message, plus a
     // hidden document, which nobody is looking at.
+    // A missed DM on a tab that was closed opens it again, like a live one.
+    if (msg.subtype === 'dm' && msg.from_id) {
+      const fk = msg.from_id.slice(0, 12);
+      if (closedMcDmTabs.has(fk)) { closedMcDmTabs.delete(fk); saveMcClosedDmTabs(); }
+    }
     if (currentTab !== 'chat' || chatNetwork !== 'mc' || mcChatTab !== msgTab || document.hidden) {
       mcUnreadTabs.add(msgTab);
       _incrementUnreadCount(mcUnreadCounts, msgTab);
+      // The bell's history records it too, as a live message does: no sound and
+      // no pop-up, a wake must not blare a backlog, but it must not vanish either.
+      const sender = _mcSenderInfo(msg).name;
+      const parts = _msgNotifParts('MC', {
+        isDm: msg.subtype === 'dm',
+        chanName: mcKnownChannels[msg.channel ?? 0] || ('CH' + (msg.channel ?? 0)),
+        sender,
+        text: _mcMsgText(msg, sender),
+      });
+      _logAlert('message', parts.title, parts.html, {
+        network: 'mc', radioId: msg.radio_id,
+        fromId: msg.subtype === 'dm' ? (msg.from_id || null) : null,
+        channel: msg.channel ?? 0, subtype: msg.subtype,
+      });
     }
   }
   function _mcMergeMessages(incoming, opts = {}) {
@@ -12273,6 +12292,22 @@ if (targetEl) {
       _incrementUnreadCount(unreadChannelCounts, msgCh);
     }
     updateUnreadDots();
+    // The bell's history records it too, as a live message does, without a sound.
+    const chanName = raw.channel_name
+      || (chatChannels.find(c => c.index === raw.channel) || {}).name
+      || ('CH' + raw.channel);
+    const _p = _msgNotifParts('MT', {
+      isDm: !!raw.is_dm,
+      chanName,
+      sender: raw.from_name || raw.from_id,
+      text: raw.text,
+    });
+    _logAlert('message', _p.title, _p.html, {
+      network: 'mt',
+      radioId: raw.radio_id,
+      channel: raw.channel ?? 0,
+      fromId: raw.is_dm ? (raw.from_id || null) : null,
+    });
   }
   // Merge the MT chat rows the server has stored into the page's live list.
   // The SSE feed only carries what was sent while this page was connected. A

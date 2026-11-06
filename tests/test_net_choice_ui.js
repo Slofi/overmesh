@@ -79,6 +79,9 @@ function el() {
 
 const STUBS = [
   'function normalizeChatNetwork(n){ return n === "mc" ? "mc" : "mt"; }',
+  // EST-325: the real setChatNetwork closes the hop pop-over when the network
+  // changes. This harness has no chat DOM, so the close is a no-op here.
+  'function _closeHopPopover(){}',
   'function _updateMcChatRadioLabel(){}',
   'function renderMcMessages(){}',
   'function _updateMcInput(){}',

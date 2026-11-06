@@ -139,4 +139,28 @@ assert(src.includes("'pointerdown'"), 'a tap outside must close the popup');
 assert(src.includes('hop-pop-close'), 'the popup must have a close button');
 assert(src.includes('inputGuard'), 'the popup must stay above the chat input bar at the bottom');
 
+// --- a hop list belongs to the chat it was opened from (EST-325). A tab
+// switch, a radio switch or a chat-network switch replaces that chat under the
+// popup, so the popup must go with it instead of floating over another screen
+// with a Show on map button for a message you can no longer see.
+assert(src.includes('if (name !== currentTab) _closeHopPopover();'),
+  'switching tab must close the hop popup');
+const radioFn = src.slice(src.indexOf('function toggleRadioSelection('), src.indexOf('function switchRadio('));
+assert(radioFn.includes('_closeHopPopover()'), 'switching radio must close the hop popup');
+const netFn = src.slice(src.indexOf('function setChatNetwork('), src.indexOf('function setChatNetwork(') + 2500);
+assert(netFn.includes('_closeHopPopover()'), 'switching the chat network (MC/MT) must close the hop popup');
+
+// --- the same hash twice in one path is two hops, not one (EST-325). The list
+// must show both, in packet order, and never collapse them into one row.
+const repeatRows = api.rows(
+  { kind: 'message', hopLen: 3, rawPath: 'aabbaa', pathHashSize: 1 },
+  { hops: [
+    { hash: 'aa', name: 'RPTR A', pointIndex: 1 },
+    { hash: 'bb', name: 'RPTR B', pointIndex: 2 },
+  ] }
+);
+assert(repeatRows.length === 3, `a repeated hash must keep both rows, got ${repeatRows.length}`);
+assert(repeatRows[0].primary === 'RPTR A' && repeatRows[1].primary === 'RPTR B' && repeatRows[2].primary === 'RPTR A',
+  'the repeated hash must keep its packet position: ' + repeatRows.map(r => r.primary).join(' > '));
+
 console.log('ok: chat hop popover rows, names, summary and close paths');

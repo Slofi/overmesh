@@ -39,10 +39,12 @@ const NAMES = {
 const GPS = { '86a8': [46.06, 14.49], 'ead8': [46.07, 14.51] };
 
 const code = [
+  'let _mcEntryUidSeq = 0;',
   extract('_mcRxCopyKey'),
   extract('_mcAltPathCopies'),
   extract('_mcAltPathMeta'),
   extract('_mcAltCopyPosition'),
+  extract('_mcEntryUid'),
   extract('_mcAltCopyHopsHtml'),
   extract('_mcAltPathsHtml'),
   extract('_mcAltCopyStatusText'),

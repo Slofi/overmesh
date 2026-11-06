@@ -1454,6 +1454,9 @@
       selectedRadioIds.add(id);
     }
     saveSelectedRadioIds();
+    // A radio change swaps the whole chat, so a hop list anchored to the old
+    // chat's badge is stale. Closing it is the only honest option.
+    _closeHopPopover();
     updateRadioSelector();
     updateMcPills();
     updateUnreadDots();
@@ -1467,6 +1470,9 @@
 
   function setChatNetwork(net, opts = {}) {
     net = normalizeChatNetwork(net);
+    // The hop list was opened on the other network's chat: its badge is gone
+    // once this runs, so close it rather than leave it over the new list.
+    if (net !== chatNetwork) _closeHopPopover();
     chatNetwork = net;
     _netChoice = net;
     if (opts.remember !== false) localStorage.setItem('chatNetwork', net);
@@ -2907,6 +2913,10 @@ if (targetEl) {
 
   // ── Tab switching ──────────────────────────────────────────────────────────
   function switchTab(name) {
+    // The hop list points at a badge on the chat you were looking at. On another
+    // tab that badge is gone, so the pop-over would float over unrelated content
+    // with a Show on map button for a message you can no longer see.
+    if (name !== currentTab) _closeHopPopover();
     currentTab = name;
     localStorage.setItem('activeTab', name);
     const names = ['nodes','chat','map','bot','log','settings'];
@@ -14992,13 +15002,18 @@ if (targetEl) {
       let unresolvedHops = 0;
       let partial = false;
       if (radioLat != null && radioLon != null) points.push([radioLat, radioLon]);
+      // Only a point we actually drew can start a gap. An unknown hop seen
+      // before the first known point (our radio has no position yet) has no
+      // segment to suppress, and recording it as gap 0 would cut the line
+      // between the first known relay and the endpoint: a real segment.
+      const addGap = () => { if (points.length) gapAfterPoints.push(points.length - 1); };
       hashes.forEach((hashHex, i) => {
         const hopResolution = _mcPickPathHopResolution(hashHex, radioId, radioLat, radioLon, endpointLat, endpointLon, i, hashes.length);
         const hopContact = hopResolution?.contact || null;
         if (!hopContact) {
           partial = true;
           unresolvedHops++;
-          gapAfterPoints.push(Math.max(0, points.length - 1));
+          addGap();
           return;
         }
         const hLat = hopContact.latitude ?? hopContact.lat;
@@ -15006,7 +15021,7 @@ if (targetEl) {
         if (hLat == null || hLon == null) {
           partial = true;
           unresolvedHops++;
-          gapAfterPoints.push(Math.max(0, points.length - 1));
+          addGap();
           return;
         }
         points.push([hLat, hLon]);
@@ -15654,6 +15669,51 @@ if (targetEl) {
 
   let _mcLogPinnedIdx = null;
 
+  // Every arrival is unshifted onto the activity log, so every index into it
+  // moves by one. The detail panel keeps its index in the inline handlers and
+  // the alternate-path pin used to keep one too: after one new packet a tap in
+  // the open panel drew another message's path. Each entry therefore carries a
+  // uid that is stamped into its controls, and a control resolves the entry by
+  // that uid first. The index is only a fast path for the common case where
+  // nothing moved.
+  let _mcEntryUidSeq = 0;
+  function _mcEntryUid(entry) {
+    if (!entry || typeof entry !== 'object') return '';
+    if (!entry._uid) {
+      _mcEntryUidSeq += 1;
+      entry._uid = `e${Date.now().toString(36)}${_mcEntryUidSeq.toString(36)}`;
+    }
+    return String(entry._uid);
+  }
+
+  function _mcEntryUidFromEvent(ev) {
+    const el = ev?.currentTarget;
+    if (!el) return '';
+    if (el.dataset?.entryUid) return String(el.dataset.entryUid);
+    const host = typeof el.closest === 'function' ? el.closest('[data-entry-uid]') : null;
+    return host?.dataset?.entryUid ? String(host.dataset.entryUid) : '';
+  }
+
+  // The entry a stamped control means now, plus where it sits now. A uid that
+  // no longer exists returns idx -1 and the caller does nothing: better than
+  // drawing the neighbour's path. domIdx stays the index stamped into the open
+  // panel, so status and highlight still find their own elements.
+  function _mcAltEntryArg(entryIdx, ev) {
+    const uid = _mcEntryUidFromEvent(ev);
+    const byIdx = _mcSenseLogEntries[entryIdx] || null;
+    if (!uid) return { entry: byIdx, idx: byIdx ? entryIdx : -1, domIdx: entryIdx };
+    if (byIdx && _mcEntryUid(byIdx) === uid) return { entry: byIdx, idx: entryIdx, domIdx: entryIdx };
+    const idx = _mcSenseLogEntries.findIndex(e => _mcEntryUid(e) === uid);
+    return idx >= 0
+      ? { entry: _mcSenseLogEntries[idx], idx, domIdx: entryIdx }
+      : { entry: null, idx: -1, domIdx: entryIdx };
+  }
+
+  function _mcAltPinIndex() {
+    if (!_mcAltPathPinned) return -1;
+    return _mcSenseLogEntries.indexOf(_mcAltPathPinned.entry);
+  }
+
   function _mcResolveMessageContact(msgLike) {
     if (!msgLike?.radioId && !msgLike?.radio_id) return null;
     const radioId = msgLike.radioId || msgLike.radio_id;
@@ -15879,6 +15939,7 @@ if (targetEl) {
     const copies = _mcAltPathCopies(entry);
     if (!copies.length) return '';
     const total = Array.isArray(entry?.rx_copies) ? entry.rx_copies.length : copies.length + 1;
+    const entryUid = _mcEntryUid(entry);
     const groups = copies.map((copy, i) => {
       const hops = copy.path_len != null ? mcPathHopLabel(Number(copy.path_len)) : 'unknown hops';
       const bytes = copy.path_hash_size != null ? `${copy.path_hash_size}B/hop` : null;
@@ -15888,7 +15949,7 @@ if (targetEl) {
       const when = copy.first_seen ? _formatAppTime(copy.first_seen, { seconds: true }) : null;
       const meta = [hops, bytes, rssi, snr, route, when].filter(Boolean).join(' · ');
       return `<div class="mc-alt-copy" role="button" tabindex="0"
-        data-entry-idx="${entryIdx}" data-copy-idx="${i}"
+        data-entry-idx="${entryIdx}" data-copy-idx="${i}" data-entry-uid="${escHtml(entryUid)}"
         title="Hover or tap to draw this copy's path on the map"
         onmouseenter="_mcAltCopyHover(event,${entryIdx},${i},true)"
         onmouseleave="_mcAltCopyHover(event,${entryIdx},${i},false)"
@@ -15978,6 +16039,10 @@ if (targetEl) {
     if (el) el.textContent = text || '';
   }
 
+  function _mcClearAltCopyStatuses() {
+    document.querySelectorAll('.mc-alt-copy-status').forEach(el => { el.textContent = ''; });
+  }
+
   function _mcSetAltCopyActive(entryIdx, copyIdx) {
     document.querySelectorAll('.mc-alt-copy.mc-alt-copy-active').forEach(el => el.classList.remove('mc-alt-copy-active'));
     const block = document.querySelector(`.mc-alt-copy[data-entry-idx="${entryIdx}"][data-copy-idx="${copyIdx}"]`);
@@ -15986,25 +16051,34 @@ if (targetEl) {
 
   // Draw one alternate copy on the map and update its own status line.
   // Returns the path result, or null when there is nothing honest to draw.
-  function _mcShowAltCopyPath(entryIdx, copyIdx) {
+  //
+  // entryIdx is where the entry sits in the log now; domIdx is the index
+  // stamped into the open panel's markup, which does not move until the panel
+  // is rebuilt. They differ only after a new packet shifted the log.
+  //
+  // Only one copy can be on the map, so only one block may say "Shown on map".
+  // Clearing every status line first stops a block you merely hovered over from
+  // still claiming the map after the pointer left it (or after a pin took over).
+  function _mcShowAltCopyPath(entryIdx, copyIdx, domIdx = entryIdx) {
     const entry = _mcSenseLogEntries[entryIdx];
     const copy = entry ? _mcAltPathCopies(entry)[copyIdx] : null;
     if (!entry || !copy) return null;
+    _mcClearAltCopyStatuses();
     if (!leafletMap) {
-      _mcSetAltCopyStatus(entryIdx, copyIdx, 'Not shown on map: the map is not open.');
+      _mcSetAltCopyStatus(domIdx, copyIdx, 'Not shown on map: the map is not open.');
       return null;
     }
     const pathResult = _mcAltCopyPathResult(entry, copy);
     if (!pathResult) {
       showMcHoverPath(null, false);
-      _mcSetAltCopyStatus(entryIdx, copyIdx, _mcAltCopyNoPathText(entry));
+      _mcSetAltCopyStatus(domIdx, copyIdx, _mcAltCopyNoPathText(entry));
       return null;
     }
     if (pathResult.unresolvedHops) {
       pathResult.warningText = `This copy: ${pathResult.unresolvedHops} hop${pathResult.unresolvedHops !== 1 ? 's have' : ' has'} no known position and ${pathResult.unresolvedHops !== 1 ? 'are' : 'is'} not drawn`;
     }
     showMcHoverPath(pathResult, true);
-    _mcSetAltCopyStatus(entryIdx, copyIdx, _mcAltCopyStatusText(pathResult));
+    _mcSetAltCopyStatus(domIdx, copyIdx, _mcAltCopyStatusText(pathResult));
     return pathResult;
   }
 
@@ -16012,17 +16086,20 @@ if (targetEl) {
   // it clears the map. A finger has no hover, so the click below does the same
   // job and then keeps the path.
   function _mcAltCopyHover(ev, entryIdx, copyIdx, on) {
+    const here = _mcAltEntryArg(entryIdx, ev);
+    if (!here.entry || here.idx < 0) return;
     if (on) {
-      if (_mcAltPathPinned?.entryIdx === entryIdx && _mcAltPathPinned?.copyIdx === copyIdx) return;
-      _mcShowAltCopyPath(entryIdx, copyIdx);
+      if (_mcAltPathPinned?.entry === here.entry && _mcAltPathPinned?.copyIdx === copyIdx) return;
+      _mcShowAltCopyPath(here.idx, copyIdx, here.domIdx);
       return;
     }
-    if (_mcAltPathPinned) {
-      _mcShowAltCopyPath(_mcAltPathPinned.entryIdx, _mcAltPathPinned.copyIdx);
-      _mcSetAltCopyActive(_mcAltPathPinned.entryIdx, _mcAltPathPinned.copyIdx);
+    const pinIdx = _mcAltPinIndex();
+    if (pinIdx >= 0) {
+      _mcShowAltCopyPath(pinIdx, _mcAltPathPinned.copyIdx, _mcAltPathPinned.domIdx);
+      _mcSetAltCopyActive(_mcAltPathPinned.domIdx, _mcAltPathPinned.copyIdx);
     } else {
       showMcHoverPath(null, false);
-      _mcSetAltCopyStatus(entryIdx, copyIdx, '');
+      _mcSetAltCopyStatus(here.domIdx, copyIdx, '');
     }
   }
 
@@ -16030,12 +16107,13 @@ if (targetEl) {
     if (ev && typeof ev.stopPropagation === 'function') ev.stopPropagation();
     // A hop row has its own handler and centres on that hop.
     if (ev?.target?.closest?.('.mc-alt-hop-btn')) return;
-    const entry = _mcSenseLogEntries[entryIdx];
-    if (!entry) return;
-    _mcLogPinnedIdx = entryIdx;
-    _mcAltPathPinned = { entryIdx, copyIdx };
-    const pathResult = _mcShowAltCopyPath(entryIdx, copyIdx);
-    _mcSetAltCopyActive(entryIdx, copyIdx);
+    const here = _mcAltEntryArg(entryIdx, ev);
+    const entry = here.entry;
+    if (!entry || here.idx < 0) return;
+    _mcLogPinnedIdx = here.idx;
+    _mcAltPathPinned = { entry, copyIdx, domIdx: here.domIdx };
+    const pathResult = _mcShowAltCopyPath(here.idx, copyIdx, here.domIdx);
+    _mcSetAltCopyActive(here.domIdx, copyIdx);
     // A tap should put the whole copy in view, not only draw it off screen.
     if (pathResult?.points?.length >= 2 && leafletMap && typeof L.latLngBounds === 'function') {
       leafletMap.fitBounds(L.latLngBounds(pathResult.points), { padding: [40, 40], maxZoom: 14 });
@@ -16054,14 +16132,15 @@ if (targetEl) {
   // alternate list is not a dead end.
   function _mcFocusAltCopyHop(ev, entryIdx, copyIdx, hopIdx) {
     if (ev && typeof ev.stopPropagation === 'function') ev.stopPropagation();
-    const entry = _mcSenseLogEntries[entryIdx];
-    if (!entry) return;
+    const here = _mcAltEntryArg(entryIdx, ev);
+    const entry = here.entry;
+    if (!entry || here.idx < 0) return;
     const copy = _mcAltPathCopies(entry)[copyIdx];
     if (!copy) return;
-    _mcLogPinnedIdx = entryIdx;
-    _mcAltPathPinned = { entryIdx, copyIdx };
-    _mcShowAltCopyPath(entryIdx, copyIdx);
-    _mcSetAltCopyActive(entryIdx, copyIdx);
+    _mcLogPinnedIdx = here.idx;
+    _mcAltPathPinned = { entry, copyIdx, domIdx: here.domIdx };
+    _mcShowAltCopyPath(here.idx, copyIdx, here.domIdx);
+    _mcSetAltCopyActive(here.domIdx, copyIdx);
     const { hash, chars } = _mcAltCopyHashAt(copy, hopIdx);
     const declared = Number(copy.path_len);
     const hopCount = Number.isFinite(declared) && declared >= 0 && declared !== 255
@@ -16294,9 +16373,13 @@ if (targetEl) {
         let pathToShow = _mcFreshPath(refreshed);
         if (pathToShow?.points?.length >= 2) showMcHoverPath(pathToShow, true);
         _showLogEntryDetail(refreshed);
-        if (_mcAltPathPinned?.entryIdx === idx) {
-          _mcShowAltCopyPath(_mcAltPathPinned.entryIdx, _mcAltPathPinned.copyIdx);
-          _mcSetAltCopyActive(_mcAltPathPinned.entryIdx, _mcAltPathPinned.copyIdx);
+        const pinIdx = _mcAltPinIndex();
+        if (pinIdx >= 0 && _mcSenseLogEntries[pinIdx] === refreshed) {
+          // The panel was just rebuilt for this index, so the stamped index is
+          // the current one again.
+          _mcAltPathPinned.domIdx = pinIdx;
+          _mcShowAltCopyPath(pinIdx, _mcAltPathPinned.copyIdx, pinIdx);
+          _mcSetAltCopyActive(pinIdx, _mcAltPathPinned.copyIdx);
         }
       }
       renderMcSenseLog();

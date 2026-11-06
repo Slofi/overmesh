@@ -45,18 +45,22 @@ const code = [
   extract('_mcAltCopyPosition'),
   extract('_mcAltCopyHopsHtml'),
   extract('_mcAltPathsHtml'),
+  extract('_mcAltCopyStatusText'),
+  extract('_mcReversePathResult'),
+  extract('_mcAltCopyPathResult'),
   extract('mcPathHopLabel'),
   extract('_mcHopConfidenceLabel'),
   extract('escHtml'),
   // helpers mirrored from app.js (the real ones need the live map/contacts)
   'function _mcSenseRadioPos() { return [46.0409, 14.4981]; }',
+  'function decodeMcEventPath() { return globalThis.__mcFakePath; }',
   `function _mcPickPathHopResolution(hash) {
      if (hash === '86a8') return { contact: { long_name: 'SI-LJ-Trnovo II', id: '86a8eedb', latitude: 46.06, longitude: 14.49 }, confidence: 'ambiguous' };
      return null;
    }`,
   'function findMcContactByKeyPrefix(hash) { const g = GPS[hash]; return NAMES[hash] ? { long_name: NAMES[hash], id: hash, latitude: g ? g[0] : null, longitude: g ? g[1] : null } : null; }',
   'function _formatAppTime(ts) { return "T" + ts; }',
-  'return { copies: _mcAltPathCopies, meta: _mcAltPathMeta, html: _mcAltPathsHtml, hops: _mcAltCopyHopsHtml };',
+  'return { copies: _mcAltPathCopies, meta: _mcAltPathMeta, html: _mcAltPathsHtml, hops: _mcAltCopyHopsHtml, status: _mcAltCopyStatusText, path: _mcAltCopyPathResult };',
 ].join('\n');
 
 const api = new Function('NAMES', 'GPS', code)(NAMES, GPS);
@@ -156,6 +160,49 @@ assert(btnMatch[3] === '0', 'the first hop of the copy must be index 0');
 // --- hops without a position stay plain rows (nothing to centre the map on)
 assert((html.match(/mc-alt-hop-btn/g) || []).length === 2,
   'only hops with a known position may become controls (2 of 4 here)');
+
+// --- the copy block itself is the map control: hover draws it, a tap pins it.
+// A finger has no hover, so the click handler must be on the block, not only on
+// a hop row.
+assert(html.includes('onmouseenter="_mcAltCopyHover('), 'a copy block must draw its path on hover');
+assert(html.includes('onmouseleave="_mcAltCopyHover('), 'leaving a copy block must clear the hover path');
+assert(html.includes('onclick="_mcAltCopyClick('), 'a tap on a copy block must draw and pin its path');
+assert(html.includes('id="mc-alt-copy-status-7-0"'), 'each copy needs a status line that says what the map drew');
+assert(html.includes('unknown position'), 'a hop with no known position must say so in plain words');
+assert(html.includes('tabindex="0"'), 'the copy block must be reachable by keyboard too');
+
+// --- the status text states unknown and ambiguous hops honestly
+const status = api.status({
+  points: [[46.05, 14.50], [46.06, 14.49]],
+  hops: [{ ambiguous: true }, { confidence: 'estimated' }],
+  unresolvedHops: 2,
+  gapAfterPoints: [0],
+});
+assert(/2 hops with no known position are not drawn/.test(status), 'the status must count unknown hops: ' + status);
+assert(/ambiguous/.test(status), 'the status must mention an ambiguous hop id: ' + status);
+assert(/Shown on map/.test(api.status({ points: [[1,2],[3,4]], hops: [], unresolvedHops: 0 })), 'a clean path must say it is shown');
+
+// --- an unknown hop becomes a gap in the drawn line, and is re-indexed after
+// the incoming path is reversed for the map. Without this the line would bridge
+// over the unknown relay and put the packet where no relay is known to be.
+globalThis.__mcFakePath = {
+  points: [[46.0409, 14.4981], [46.06, 14.49], [46.05, 14.50]],
+  hops: [{ hash: '86a8', name: 'R1', pointIndex: 1 }],
+  gapAfterPoints: [1], unresolvedHops: 1, partial: true,
+};
+const copyPath = api.path({ radioId: 'mc1', lat: 46.05, lon: 14.50 }, { path: '86a8ba90', path_len: 2, path_hash_size: 2 });
+assert(copyPath.kind === 'message', 'an alternate copy must use the message path style');
+assert(JSON.stringify(copyPath.gapAfterPoints) === '[0]',
+  'the unknown-hop gap must follow the reversal: ' + JSON.stringify(copyPath.gapAfterPoints));
+assert(copyPath.unresolvedHops === 1, 'the copy path must carry the unknown hop count');
+assert(/1 hop with no known position is not drawn/.test(api.status(copyPath)), 'the status must name one unknown hop');
+
+globalThis.__mcFakePath = {
+  points: [[46.0409, 14.4981], [46.05, 14.50]],
+  hops: [], gapAfterPoints: [], unresolvedHops: 0, partial: false,
+};
+const cleanPath = api.path({ radioId: 'mc1', lat: 46.05, lon: 14.50 }, { path: '', path_len: 0, path_hash_size: 2 });
+assert(cleanPath.gapAfterPoints.length === 0, 'a path with no unknown hops must have no gaps');
 
 // --- 3-byte hashes split every 6 hex chars
 const wide = api.hops({ path: 'aabbccddeeff', path_len: 2, path_hash_size: 3 }, { radioId: 'mc1' });

@@ -14825,21 +14825,39 @@ if (targetEl) {
     const build = (hashes, orderLabel, hashSize) => {
       const points = [];
       const hops = [];
+      const gapAfterPoints = [];
+      let unresolvedHops = 0;
       let partial = false;
       if (radioLat != null && radioLon != null) points.push([radioLat, radioLon]);
       hashes.forEach((hashHex, i) => {
         const hopResolution = _mcPickPathHopResolution(hashHex, radioId, radioLat, radioLon, endpointLat, endpointLon, i, hashes.length);
         const hopContact = hopResolution?.contact || null;
-        if (!hopContact) { partial = true; return; }
+        if (!hopContact) {
+          partial = true;
+          unresolvedHops++;
+          gapAfterPoints.push(Math.max(0, points.length - 1));
+          return;
+        }
         const hLat = hopContact.latitude ?? hopContact.lat;
         const hLon = hopContact.longitude ?? hopContact.lon;
-        if (hLat == null || hLon == null) { partial = true; return; }
+        if (hLat == null || hLon == null) {
+          partial = true;
+          unresolvedHops++;
+          gapAfterPoints.push(Math.max(0, points.length - 1));
+          return;
+        }
         points.push([hLat, hLon]);
         hops.push(_mcPathHopMeta(hashHex, hopContact, points.length - 1, hopResolution));
         if (hopResolution?.ambiguous) partial = true;
       });
       points.push([endpointLat, endpointLon]);
-      return points.length >= 2 ? { points, partial, hops, rawPathOrder: orderLabel, inferredPathHashSize: hashSize } : null;
+      // gapAfterPoints marks a segment that spans a hop with no known position.
+      // The map must not draw a straight line across it: that would put the
+      // packet where no relay is known to be.
+      return points.length >= 2 ? {
+        points, partial, hops, rawPathOrder: orderLabel, inferredPathHashSize: hashSize,
+        gapAfterPoints: [...new Set(gapAfterPoints)], unresolvedHops,
+      } : null;
     };
     let best = null;
     candidateSizes.forEach(hashSize => {
@@ -15082,6 +15100,9 @@ if (targetEl) {
     const flood   = Array.isArray(pathResult) ? false : !!pathResult.flood;
     const kind    = Array.isArray(pathResult) ? null   : (pathResult.kind || null);
     if (!points || points.length < 2) return;
+    // A gap marks a hop whose position is unknown. The line must stop there
+    // instead of bridging over the hop and putting it where it is not.
+    const gapAfter = new Set(Array.isArray(pathResult) ? [] : (pathResult.gapAfterPoints || []));
 
     let lineColor, lineWeight, lineDash, lineOpacity, dotColor;
     if (kind === 'trace') {
@@ -15103,7 +15124,7 @@ if (targetEl) {
       dotColor = '#3b82f6';
     }
 
-    if (dotColor) {
+    if (dotColor && !gapAfter.size) {
       // Thin dark halo for contrast — always solid so it outlines dots cleanly
       const halo = L.polyline(points, {
         color: '#111', weight: lineWeight + 3, opacity: 0.4,
@@ -15113,8 +15134,15 @@ if (targetEl) {
     }
 
     for (let i = 0; i < points.length - 1; i++) {
+      if (gapAfter.has(i)) continue;  // unknown hop in between: draw no line
       const segSnr = _mcPathSegmentSnr(pathResult, i);
       const segColor = segSnr != null ? _snrLineColor(segSnr) : lineColor;
+      if (dotColor && gapAfter.size) {
+        _mcHoverLines.push(L.polyline([points[i], points[i + 1]], {
+          color: '#111', weight: lineWeight + 3, opacity: 0.4,
+          dashArray: null, lineCap: 'round', lineJoin: 'round', interactive: false
+        }).addTo(leafletMap));
+      }
       const line = L.polyline([points[i], points[i + 1]], {
         color: segColor, weight: lineWeight, opacity: lineOpacity,
         dashArray: lineDash, lineCap: 'round', lineJoin: 'round',
@@ -15148,6 +15176,7 @@ if (targetEl) {
       // Directional wings along each segment — V-shaped tick marks, same color/weight/dash as line
       const arm = _mcWingArm(kind) * 1.28;
       for (let i = 0; i < points.length - 1; i++) {
+        if (gapAfter.has(i)) continue;  // no wings across an unknown hop
         const p1 = points[i], p2 = points[i + 1];
         const wCount = Math.min(12, _mcWingCount(p1, p2) + 1);
         const segSnr = _mcPathSegmentSnr(pathResult, i);
@@ -15167,7 +15196,7 @@ if (targetEl) {
           }
         });
       }
-      const warnText = _mcPathWarningText(pathResult, kind);
+      const warnText = pathResult.warningText || _mcPathWarningText(pathResult, kind);
       if (warnText && points.length) {
         const warnIdx = Number.isInteger(pathResult.warnPointIndex)
           ? pathResult.warnPointIndex
@@ -15607,6 +15636,10 @@ if (targetEl) {
     ].join('|');
   }
 
+  // The alternate copy whose path is pinned on the map, if any. Cleared when
+  // the panel closes or another log entry is opened.
+  let _mcAltPathPinned = null;
+
   // Copies that are NOT the one whose path the popup shows above (that one comes
   // from _best_rx_copy: fewest hops, then strongest). Empty when the packet was
   // heard once, which is the normal case.
@@ -15666,7 +15699,8 @@ if (targetEl) {
         rows.push(`<button class="mc-hop-focus mc-alt-hop-btn" title="Center the map on ${escHtml(label)} via this copy's path"
           onclick="event.stopPropagation();_mcFocusAltCopyHop(event,${entryIdx},${copyIdx},${i})">${inner}</button>`);
       } else {
-        rows.push(`<div class="mc-alt-hop" title="No GPS position for this hop">${inner}</div>`);
+        rows.push(`<div class="mc-alt-hop" title="No GPS position for this hop">${inner}
+          <span class="mc-alt-hop-unknown">unknown position</span></div>`);
       }
     }
     return rows.join('');
@@ -15690,7 +15724,13 @@ if (targetEl) {
       const route = copy.route_type ? String(copy.route_type) : null;
       const when = copy.first_seen ? _formatAppTime(copy.first_seen, { seconds: true }) : null;
       const meta = [hops, bytes, rssi, snr, route, when].filter(Boolean).join(' · ');
-      return `<div class="mc-alt-copy">
+      return `<div class="mc-alt-copy" role="button" tabindex="0"
+        data-entry-idx="${entryIdx}" data-copy-idx="${i}"
+        title="Hover or tap to draw this copy's path on the map"
+        onmouseenter="_mcAltCopyHover(event,${entryIdx},${i},true)"
+        onmouseleave="_mcAltCopyHover(event,${entryIdx},${i},false)"
+        onclick="_mcAltCopyClick(event,${entryIdx},${i})"
+        onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();_mcAltCopyClick(event,${entryIdx},${i});}">
         <div class="mc-alt-copy-head">
           <span class="mc-alt-copy-title">${(() => {
             const pos = _mcAltCopyPosition(entry, copy);
@@ -15699,6 +15739,7 @@ if (targetEl) {
           <span class="mc-alt-copy-meta">${escHtml(meta)}</span>
         </div>
         ${_mcAltCopyHopsHtml(copy, entry, entryIdx, i)}
+        <div class="mc-alt-copy-status" id="mc-alt-copy-status-${entryIdx}-${i}" aria-live="polite"></div>
       </div>`;
     }).join('');
     return `<details class="mc-hop-details mc-alt-paths" id="mc-alt-paths-${entryIdx}">
@@ -15724,7 +15765,118 @@ if (targetEl) {
     if (!pathResult) return null;
     // Incoming message: MeshCore stores the path as received, and the map is
     // drawn sender -> relays -> us (the same reversal the primary path uses).
-    return pathResult.points ? _mcReversePathResult(pathResult) : pathResult;
+    const reversed = pathResult.points ? _mcReversePathResult(pathResult) : pathResult;
+    if (!reversed?.points) return null;
+    // The reverse step keeps the gap list as it was built. Re-index it for the
+    // reversed point array so the map still stops at a hop with no position.
+    const lastIdx = reversed.points.length - 1;
+    const gapAfterPoints = [...new Set((pathResult.gapAfterPoints || [])
+      .map(i => lastIdx - i - 1)
+      .filter(i => i >= 0 && i < lastIdx))];
+    return {
+      ...reversed,
+      kind: 'message',
+      gapAfterPoints,
+      unresolvedHops: pathResult.unresolvedHops || 0,
+    };
+  }
+
+  // Plain words for the copy's own status line: what the map is showing, and
+  // what it had to leave out.
+  function _mcAltCopyStatusText(pathResult) {
+    if (!pathResult?.points?.length) return '';
+    const parts = ['Shown on map'];
+    const unknown = Number(pathResult.unresolvedHops) || 0;
+    if (unknown) {
+      parts.push(`${unknown} hop${unknown !== 1 ? 's' : ''} with no known position ${unknown === 1 ? 'is' : 'are'} not drawn`);
+    }
+    const ambiguous = (pathResult.hops || []).filter(h =>
+      h?.ambiguous || ['estimated', 'likely'].includes(h?.confidence)
+    ).length;
+    if (ambiguous) {
+      parts.push(`${ambiguous} hop id${ambiguous !== 1 ? 's are' : ' is'} ambiguous, so this line is a best guess`);
+    }
+    return parts.join('. ') + '.';
+  }
+
+  function _mcAltCopyNoPathText(entry) {
+    if (entry?.lat == null || entry?.lon == null) return 'Not shown on map: this message has no sender position.';
+    const [radioLat] = _mcSenseRadioPos(entry?.radioId);
+    if (radioLat == null) return 'Not shown on map: our radio has no position.';
+    return 'Not shown on map: no hop in this copy matched a known position.';
+  }
+
+  function _mcAltCopyStatusEl(entryIdx, copyIdx) {
+    return document.getElementById(`mc-alt-copy-status-${entryIdx}-${copyIdx}`);
+  }
+
+  function _mcSetAltCopyStatus(entryIdx, copyIdx, text) {
+    const el = _mcAltCopyStatusEl(entryIdx, copyIdx);
+    if (el) el.textContent = text || '';
+  }
+
+  function _mcSetAltCopyActive(entryIdx, copyIdx) {
+    document.querySelectorAll('.mc-alt-copy.mc-alt-copy-active').forEach(el => el.classList.remove('mc-alt-copy-active'));
+    const block = document.querySelector(`.mc-alt-copy[data-entry-idx="${entryIdx}"][data-copy-idx="${copyIdx}"]`);
+    if (block) block.classList.add('mc-alt-copy-active');
+  }
+
+  // Draw one alternate copy on the map and update its own status line.
+  // Returns the path result, or null when there is nothing honest to draw.
+  function _mcShowAltCopyPath(entryIdx, copyIdx) {
+    const entry = _mcSenseLogEntries[entryIdx];
+    const copy = entry ? _mcAltPathCopies(entry)[copyIdx] : null;
+    if (!entry || !copy) return null;
+    if (!leafletMap) {
+      _mcSetAltCopyStatus(entryIdx, copyIdx, 'Not shown on map: the map is not open.');
+      return null;
+    }
+    const pathResult = _mcAltCopyPathResult(entry, copy);
+    if (!pathResult) {
+      showMcHoverPath(null, false);
+      _mcSetAltCopyStatus(entryIdx, copyIdx, _mcAltCopyNoPathText(entry));
+      return null;
+    }
+    if (pathResult.unresolvedHops) {
+      pathResult.warningText = `This copy: ${pathResult.unresolvedHops} hop${pathResult.unresolvedHops !== 1 ? 's have' : ' has'} no known position and ${pathResult.unresolvedHops !== 1 ? 'are' : 'is'} not drawn`;
+    }
+    showMcHoverPath(pathResult, true);
+    _mcSetAltCopyStatus(entryIdx, copyIdx, _mcAltCopyStatusText(pathResult));
+    return pathResult;
+  }
+
+  // Hover is a preview. Leaving restores a pinned copy if one exists, otherwise
+  // it clears the map. A finger has no hover, so the click below does the same
+  // job and then keeps the path.
+  function _mcAltCopyHover(ev, entryIdx, copyIdx, on) {
+    if (on) {
+      if (_mcAltPathPinned?.entryIdx === entryIdx && _mcAltPathPinned?.copyIdx === copyIdx) return;
+      _mcShowAltCopyPath(entryIdx, copyIdx);
+      return;
+    }
+    if (_mcAltPathPinned) {
+      _mcShowAltCopyPath(_mcAltPathPinned.entryIdx, _mcAltPathPinned.copyIdx);
+      _mcSetAltCopyActive(_mcAltPathPinned.entryIdx, _mcAltPathPinned.copyIdx);
+    } else {
+      showMcHoverPath(null, false);
+      _mcSetAltCopyStatus(entryIdx, copyIdx, '');
+    }
+  }
+
+  function _mcAltCopyClick(ev, entryIdx, copyIdx) {
+    if (ev && typeof ev.stopPropagation === 'function') ev.stopPropagation();
+    // A hop row has its own handler and centres on that hop.
+    if (ev?.target?.closest?.('.mc-alt-hop-btn')) return;
+    const entry = _mcSenseLogEntries[entryIdx];
+    if (!entry) return;
+    _mcLogPinnedIdx = entryIdx;
+    _mcAltPathPinned = { entryIdx, copyIdx };
+    const pathResult = _mcShowAltCopyPath(entryIdx, copyIdx);
+    _mcSetAltCopyActive(entryIdx, copyIdx);
+    // A tap should put the whole copy in view, not only draw it off screen.
+    if (pathResult?.points?.length >= 2 && leafletMap && typeof L.latLngBounds === 'function') {
+      leafletMap.fitBounds(L.latLngBounds(pathResult.points), { padding: [40, 40], maxZoom: 14 });
+    }
   }
 
   function _mcAltCopyHashAt(copy, hopIdx) {
@@ -15744,8 +15896,9 @@ if (targetEl) {
     const copy = _mcAltPathCopies(entry)[copyIdx];
     if (!copy) return;
     _mcLogPinnedIdx = entryIdx;
-    const copyPath = _mcAltCopyPathResult(entry, copy);
-    if (copyPath) showMcHoverPath(copyPath, true);
+    _mcAltPathPinned = { entryIdx, copyIdx };
+    _mcShowAltCopyPath(entryIdx, copyIdx);
+    _mcSetAltCopyActive(entryIdx, copyIdx);
     const { hash, chars } = _mcAltCopyHashAt(copy, hopIdx);
     const declared = Number(copy.path_len);
     const hopCount = Number.isFinite(declared) && declared >= 0 && declared !== 255
@@ -15851,6 +16004,7 @@ if (targetEl) {
     // Toggle: click same entry again to unpin
     if (_mcLogPinnedIdx === idx) {
       _mcLogPinnedIdx = null;
+      _mcAltPathPinned = null;
       showMcHoverPath(null, false);
       const panel = document.getElementById('mc-statusreq-panel');
       if (panel) panel.style.display = 'none';
@@ -15858,6 +16012,7 @@ if (targetEl) {
       return;
     }
     _mcLogPinnedIdx = idx;
+    _mcAltPathPinned = null;
     // Build path to show — re-resolve from fresh contact data, fall back to stored result
     let pathToShow = _mcFreshPath(entry);
     if (!pathToShow || pathToShow.points?.length < 2) pathToShow = null;
@@ -15896,6 +16051,10 @@ if (targetEl) {
         let pathToShow = _mcFreshPath(refreshed);
         if (pathToShow?.points?.length >= 2) showMcHoverPath(pathToShow, true);
         _showLogEntryDetail(refreshed);
+        if (_mcAltPathPinned?.entryIdx === idx) {
+          _mcShowAltCopyPath(_mcAltPathPinned.entryIdx, _mcAltPathPinned.copyIdx);
+          _mcSetAltCopyActive(_mcAltPathPinned.entryIdx, _mcAltPathPinned.copyIdx);
+        }
       }
       renderMcSenseLog();
     } catch(e) {
@@ -16060,6 +16219,7 @@ if (targetEl) {
     if (_mcPingPathActive) { showMcHoverPath(null, false); _mcPingPathActive = false; }
     if (_mcLogPinnedIdx !== null) {
       _mcLogPinnedIdx = null;
+      _mcAltPathPinned = null;
       showMcHoverPath(null, false);
       renderMcSenseLog();
     }
@@ -16197,6 +16357,7 @@ if (targetEl) {
   function clearMcSenseLog() {
     _mcSenseLogEntries = [];
     _mcLogPinnedIdx = null;
+    _mcAltPathPinned = null;
     showMcHoverPath(null, false);
     const panel = document.getElementById('mc-statusreq-panel');
     if (panel) panel.style.display = 'none';

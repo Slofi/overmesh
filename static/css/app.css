@@ -1217,13 +1217,22 @@
     }
     .mc-alt-open:hover { background:rgba(148,163,184,0.20); border-color:var(--mc-color); }
     .mc-alt-caret { color:var(--muted); margin-left:4px; font-size:10px; }
-    .mc-alt-copy { border:1px solid var(--border); border-radius:6px; background:rgba(255,255,255,0.02); padding:6px 8px; }
+    .mc-alt-copy {
+      border:1px solid var(--border); border-radius:6px; background:rgba(255,255,255,0.02);
+      padding:6px 8px; cursor:pointer;
+    }
+    .mc-alt-copy:hover, .mc-alt-copy:focus-visible {
+      border-color:var(--mc-color); background:rgba(56,189,248,0.09); outline:none;
+    }
     .mc-alt-copy-head { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
     .mc-alt-copy-title { font-weight:700; font-size:11px; color:var(--mc-color); }
     .mc-alt-copy-meta { color:var(--muted); font-size:10px; }
-    .mc-alt-hop { display:flex; align-items:center; gap:6px; padding:2px 0; font-size:11px; }
-    .mc-alt-hop-btn { padding:4px 7px; }
+    .mc-alt-hop { display:flex; align-items:center; gap:6px; padding:2px 0; font-size:11px; flex-wrap:wrap; }
+    .mc-alt-hop-btn { padding:6px 7px; min-height:32px; }
     .mc-alt-copy-active { border-color:var(--mc-color); background:rgba(56,189,248,0.07); }
+    .mc-alt-copy-status { margin-top:4px; color:var(--muted); font-size:10px; line-height:1.4; }
+    .mc-alt-copy-status:empty { display:none; }
+    .mc-alt-hop-unknown { color:#f59e0b; font-size:10px; white-space:nowrap; }
     .mc-alt-hop-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .mc-alt-hop-conf { color:var(--muted); font-size:10px; }
     .mc-alt-hop-idx { color:var(--muted); font-size:10px; font-family:monospace; white-space:nowrap; }

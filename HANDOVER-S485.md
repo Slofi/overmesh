@@ -1,5 +1,11 @@
 # S485 handover for Filip
 
+**Claude's check after DS, 2026-11-06 10:25. Verdict: ready to ship as one batch on Filip's word; real radios and a real phone still have to confirm it.** Run in a real browser against this branch on a separate port, empty data, simulated MC data, at CD and phone size with real touch events: a message stored during sleep appears on wake, once, with no reload, no unread count, and a scrolled-up reader stays put · hop list opens on screen with names, closes on an outside tap · minimap shows our radio, a finger resizes and moves it · an alternate path draws and stops at a hop with no position. **It also found one regression every test had passed:** 44 px hop badges and 1B tags turned each chat header into big blocks, and the minimap header took a quarter of the map. Fixed: see the section below. **Not run:** a real sleep of a real browser (the wake was a simulated event), a real SSE eviction, real radios, gandalf. The sweep below (EST-324) ran BEFORE the alternate paths and the hop list landed; Claude read those two instead, and EST-325 sweeps them.
+
+## Item: chat and minimap stay compact on a touchscreen (Claude)
+
+FIXED. Hop badges keep their small look, 17 px tall, with an invisible area that makes the real button a fingertip target; the 1B tag is not a button and stays small. Minimap buttons are 44 wide and fill a 36 px header, about 18 percent of the default minimap, down from 27. The sections below that say "at least 44 by 44" describe the earlier version.
+
 Verdict first: the branch is ready to ship as one batch. EST-322 adds the hop
 list on chat messages, the EST-324 sweep found four more bugs, and EST-321 adds
 the map gesture for alternate MC message paths. Every fix has a test that fails

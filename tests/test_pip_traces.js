@@ -108,7 +108,7 @@ function extract(name, endMarker = '\n  }') {
     'const localStorage = { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } };',
     'const btn = { style: { display: "none" }, textContent: "", cls: new Set(),',
     '              classList: { toggle(c, on) { on ? btn.cls.add(c) : btn.cls.delete(c); } } };',
-    'const document = { getElementById: id => (id === "pip-trace-btn" ? btn : null) };',
+    'const document = { hidden: false, getElementById: id => (id === "pip-trace-btn" ? btn : null) };',
     'let mcLastStatus = { r1: { status: "connected" } };',
     'let pipOpen = true, pipInited = true, pipMap = "MINI", currentTab = "nodes";',
     'const MC_RX_REFRESH_MS = 5000;',
@@ -125,7 +125,7 @@ function extract(name, endMarker = '\n  }') {
     extract('_pipTracesSync'),
     'return {',
     '  sync: _pipTracesSync, toggle: togglePipTraces, btn, store,',
-    '  set: (k, v) => { ({ pipOpen: () => pipOpen = v, currentTab: () => currentTab = v, mcLastStatus: () => mcLastStatus = v })[k](); },',
+    '  set: (k, v) => { ({ pipOpen: () => pipOpen = v, currentTab: () => currentTab = v, mcLastStatus: () => mcLastStatus = v, hidden: () => document.hidden = v })[k](); },',
     '  timers: () => liveTimers.size, refreshCalls, cleared,',
     '};',
   ].join('\n'))();
@@ -156,6 +156,12 @@ function extract(name, endMarker = '\n  }') {
   assert(env.timers() === 0 && env.btn.style.display === 'none', 'MC hidden in settings: no poll, no button');
   delete env.store.mcHide; env.sync();
   assert(env.timers() === 1, 'MC shown again: polling resumes');
+
+  // A hidden tab is not visible either: the poll must stop on hide and resume on show.
+  env.set('hidden', true); env.sync();
+  assert(env.timers() === 0, 'a hidden tab stops the poll');
+  env.set('hidden', false); env.sync();
+  assert(env.timers() === 1, 'showing the tab resumes the poll');
 
   env.toggle();
   assert(env.store.pipMcTraces === '0' && env.timers() === 0, 'toggle off stops the poll and is remembered');
@@ -192,6 +198,8 @@ function section4() {
 // ── 4. wiring ────────────────────────────────────────────────────────────────
 assert(/id="pip-trace-btn"[^>]*onclick="togglePipTraces\(\)"/.test(html), 'minimap header has the Traces button wired to togglePipTraces()');
 assert(/e\.target\.closest\('button'\)/.test(src), 'pressing a header button does not start a minimap drag');
+assert(/addEventListener\('visibilitychange'[\s\S]{0,200}_pipTracesSync\(\)/.test(src),
+  'hiding or showing the page re-syncs the minimap Traces poll');
 assert(extract('updatePipVisibility').includes('_pipTracesSync()'), 'every minimap visibility change re-syncs the poll');
 assert(extract('_updateScanBtnVisibility').includes('_pipTracesSync()'), 'MC connect/disconnect re-syncs the minimap Traces');
 assert(/_mcRxPlay\(_mcRxRows, _mcRxSeen, seed, leafletMap/.test(extract('_mcRxAnimateNew')), 'Sense Traces still play on the main map');

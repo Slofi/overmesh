@@ -10607,7 +10607,9 @@ if (targetEl) {
   }
 
   function _pipRxActive() {
-    return _pipRxOn && pipOpen && pipInited && !!pipMap
+    // A hidden tab is not visible: a phone left on another app must not keep
+    // polling passive_obs. visibilitychange re-runs _pipTracesSync on both edges.
+    return _pipRxOn && pipOpen && pipInited && !!pipMap && !document.hidden
            && ['nodes', 'chat'].includes(currentTab) && _pipMcConnected();
   }
 
@@ -22573,6 +22575,8 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   // connection: on wake there may be no reconnect at all. Pull whatever was
   // stored while the page was hidden, for both networks, before showing it.
   document.addEventListener('visibilitychange', () => {
+    // Both edges matter: hiding stops the minimap Traces poll, showing restarts it.
+    _pipTracesSync();
     if (!document.hidden) _resyncChatFromServer();
   });
   window.addEventListener('pageshow', e => { if (e.persisted) _resyncChatFromServer(); });

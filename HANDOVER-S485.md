@@ -1,6 +1,6 @@
 # S485 handover for Filip
 
-**Claude's check after DS, 2026-11-06 10:25. Verdict: ready to ship as one batch on Filip's word; real radios and a real phone still have to confirm it.** Run in a real browser against this branch on a separate port, empty data, simulated MC data, at CD and phone size with real touch events: a message stored during sleep appears on wake, once, with no reload, no unread count, and a scrolled-up reader stays put · hop list opens on screen with names, closes on an outside tap · minimap shows our radio, a finger resizes and moves it · an alternate path draws and stops at a hop with no position. **It also found one regression every test had passed:** 44 px hop badges and 1B tags turned each chat header into big blocks, and the minimap header took a quarter of the map. Fixed: see the section below. **Not run:** a real sleep of a real browser (the wake was a simulated event), a real SSE eviction, real radios, gandalf. The sweep below (EST-324) ran BEFORE the alternate paths and the hop list landed; Claude read those two instead, and EST-325 sweeps them.
+**Claude's check after DS, 2026-11-06 10:25. Verdict: ready to ship as one batch on Filip's word; real radios and a real phone still have to confirm it.** Run in a real browser against this branch on a separate port, empty data, simulated MC data, at CD and phone size with real touch events: a message stored during sleep appears on wake, once, with no reload, no unread count, and a scrolled-up reader stays put · hop list opens on screen with names, closes on an outside tap · minimap shows our radio, a finger resizes and moves it · an alternate path draws and stops at a hop with no position. **It also found one regression every test had passed:** 44 px hop badges and 1B tags turned each chat header into big blocks, and the minimap header took a quarter of the map. Fixed: see the section below. **Not run:** a real sleep of a real browser (the wake was a simulated event), a real SSE eviction, real radios, gandalf. The sweep below (EST-324) ran BEFORE the alternate paths and the hop list landed; Claude read those two instead, and EST-325 swept them: four defects found and fixed (a path that vanished when our radio had no position, a pin and a tap that pointed at the wrong message after one new packet, a hover status that claimed the map after the pointer left, and a hop list that outlived its chat across a tab or radio switch). The hop title cost was measured at 1.4 ms for 500 messages and left alone. **Verdict after EST-325: still ready to ship as one batch; the new fixes are covered by tests that fail on the code before them, and still need a real browser and real radios to confirm the look and the taps.**
 
 ## Item: chat and minimap stay compact on a touchscreen (Claude)
 
@@ -13,11 +13,12 @@ on the code before the fix. They sit on top of the two earlier items, EST-319
 chat catch-up and EST-320 minimap. Nothing here needs a new setting, a migration
 or a manual step after the update.
 
-Branch `s485-report`, base `cc948e6`, last code commit `0f2ba4b`; this handover
-is the commit after it. Not pushed, not deployed, VERSION untouched.
+Branch `s485-report`, base `cc948e6`, last code commit `a1cc8b1` (the EST-325
+sweep, after Claude's `5b2c968`); this handover is the commit after it. Not
+pushed, not deployed, VERSION untouched.
 
 Gate after the last code commit, real exit code: `tests/run.sh` exit 0, 640 Python
-tests OK, 26 Node test files OK, eslint no-undef clean. The same full gate ran
+tests OK, 29 Node test files OK, eslint no-undef clean. The same full gate ran
 before each fix commit.
 
 ## What I swept in EST-324
@@ -325,6 +326,47 @@ name with the MC contact list for the same radio. If the hash matches a
 different contact, the limit is in `_mcPickPathHopResolution`, not in this
 pop-up. If the raw id is right and the name is missing, the contact is not in
 the radio's contact cache yet.
+
+## Item: EST-325 swept the alternate paths, the hop list and the compact badges
+
+FIXED, four defects, each with a test that fails on the code before the fix.
+
+1. **A path could vanish when our radio had no position yet.** An unknown hop
+   before the first known point was recorded as gap 0, which cut the only real
+   segment, from the first known relay to the sender. That is the map drawing
+   nothing. A gap is now recorded only after a point that was actually drawn.
+2. **The pinned alternate copy pointed at the wrong message after one new
+   packet.** The pin, and every button in the open pop-up, held a position in
+   the activity log; a new arrival moves every position by one. Tapping a copy
+   could draw the next message's path. Each entry now carries an id stamped
+   into the pop-up, and the pin holds the entry itself, so a new packet cannot
+   redirect it.
+3. **Two blocks could both say "Shown on map".** A block you hovered over and
+   then left kept the status line. Drawing now clears every status line first,
+   so exactly one block claims the map.
+4. **The hop list stayed up after its chat was replaced.** Switching tab, radio
+   or between MC and MT left the pop-up over another screen with a Show on map
+   button for a message you could no longer see. It is closed on all three.
+
+Measured, not changed: the hop title now built for every message on every chat
+render costs 1.4 ms for 500 MT messages (2 hops, 300 nodes) and 3.1 ms for the
+MC hop rows (3 hops). That is small against the render, so it stays as it is;
+the new test prints the number and fails if it ever explodes.
+
+Swept, nothing found: the gap list after the reverse step (correct at both ends
+of the array), the same hash twice in one path (kept as two rows in packet
+order), and the compact badge touch area (it stops inside its own message
+header and does not cover another control, so the small badge stays and nothing
+grew back to 44 px).
+
+To see it: open the activity log on MC, tap a message that was heard more than
+once, expand Alternate paths, hover or tap a copy, then wait for the next packet
+and tap the same copy again: it must still draw that copy. On a message hop
+badge, open the hop list and switch tab: it must disappear.
+
+Not tested: a real browser or a real phone, so the pop-up's on-screen position
+and the finger target are read from the code and the CSS, not tapped. A real
+alternate RX copy needs two radios hearing the same packet.
 
 ## What no one could test without real radios or a real browser
 

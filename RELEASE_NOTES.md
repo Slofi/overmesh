@@ -1,5 +1,13 @@
 # OverMesh Release Notes
 
+## 2026.11.06.5
+
+### Changed
+
+- **Every pop-up, dialog and menu now looks like the same piece of the app.** One corner radius, one shadow for dialogs and a lighter one for bubbles on the map, one title size, and one close control: a bare × in the corner instead of a word, on every dialog that has one, including the four that had no close button at all.
+- **The pop-ups on the map are dark now.** They were still the stock white ones; the app's dark theme for them had never applied. They now match the rest, with the same × in the corner.
+- **The alerts panel gained an ×** beside Clear all, and the map's small windows, layer menu, legend, picture-in-picture frame and colour picker follow the same shape.
+
 ## 2026.11.06.4
 
 ### Changed

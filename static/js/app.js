@@ -12259,6 +12259,22 @@ if (targetEl) {
     radioEl.textContent = '📡 ' + (activeName || 'No MC radio');
   }
 
+  // A status event carries no lat/lon. When a radio connects, coordinates still
+  // in memory are from its previous session: using them draws an old spot as
+  // "current" on both maps. Drop them; the status fetch that follows the connect
+  // refills the radio's real values. If a future payload does carry a position,
+  // apply it instead of dropping it.
+  function _mcDropStalePosition(st, data) {
+    if (!st || !data || data.status !== 'connected') return;
+    if (data.lat != null && data.lon != null) {
+      st.lat = data.lat;
+      st.lon = data.lon;
+    } else {
+      delete st.lat;
+      delete st.lon;
+    }
+  }
+
   // -- SSE events from backend (mc_status, mc_node, mc_message) --
   function handleMcSseEvent(data) {
     if (data.type === 'mc_status') {
@@ -12271,6 +12287,7 @@ if (targetEl) {
         status_ts: data.status_ts || Math.floor(Date.now() / 1000),
         radio_id: data.radio_id,
       });
+      _mcDropStalePosition(mcLastStatus[data.radio_id], data);
       if (data.status === 'disconnected') delete mcLastStatus[data.radio_id].node_id;
       if (_mcStatusSoundPrimed && data.status === 'connected' && prevStatus !== 'connected') {
         playNotificationSound('radio');

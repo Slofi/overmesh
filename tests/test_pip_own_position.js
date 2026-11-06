@@ -125,4 +125,21 @@ assert(/data\.type === 'gps_error'[\s\S]{0,300}updatePipMarkers\(allNodes\)/.tes
 assert(/data\.type === 'local_node_position'[\s\S]{0,600}updatePipMarkers\(allNodes\)/.test(src),
   'a local node position push updates the minimap own marker immediately');
 
+// --- a reconnect must not keep the previous session's MC position -----------
+// mc_status carries no lat/lon. Keeping the old values while the radio is
+// marked connected shows an old spot as current on both maps.
+const drop = new Function('return ' + extract('_mcDropStalePosition'))();
+let st = { status: 'connected', lat: 45.1, lon: 13.1 };
+drop(st, { status: 'connected' });
+assert(!('lat' in st) && !('lon' in st),
+  'a connect event without a position drops the previous session coordinates');
+st = { status: 'connected', lat: 45.1, lon: 13.1 };
+drop(st, { status: 'connected', lat: 46.2, lon: 14.2 });
+assert(st.lat === 46.2 && st.lon === 14.2, 'a connect event that carries a position applies it');
+st = { status: 'connected', lat: 45.1, lon: 13.1 };
+drop(st, { status: 'disconnected' });
+assert(st.lat === 45.1, 'other status events are left alone');
+assert(/handleMcSseEvent[\s\S]{0,900}_mcDropStalePosition\(mcLastStatus/.test(src),
+  'the MC status handler uses the reset on every connect');
+
 console.log('OK test_pip_own_position');

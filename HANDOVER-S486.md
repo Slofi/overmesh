@@ -1,5 +1,7 @@
 # S486 handover
 
+**Claude's check, 2026-11-06 12:10. Verdict: ready to ship on Filip's word; only a real laptop sleep can finally prove it.** In a real browser against this branch: with the real server process frozen 85 s and no browser event at all, the page saw the silence and replaced its feed; on thaw the missed MC channel message, DM and MT row appeared with no reload, each unread once, no sound, typed text kept. With the main thread really blocked 36 s (control: timers measured stalled 36.4 s) the feed was replaced, tab showing, no event. A healthy feed is left alone: no reopen in 40 s. **Claude's review found one more defect, fixed:** MT rows replayed by the server arrived before the catch-up fetch, so a missed MT message never counted unread. **Not proven:** a real OS suspend with a real half-dead socket, real radios, gandalf. Lite is unchanged.
+
 One section per item. FIXED means code and tests are in the branch, not that it
 was tried on real radios or in a real browser.
 

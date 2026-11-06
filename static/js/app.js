@@ -1504,6 +1504,83 @@
     }
   }
 
+  // ── Live chat feed ownership ───────────────────────────────────────────────
+  // ONE owner for the chat EventSource. A tab that sleeps with the page visible
+  // fires no visibilitychange, no pageshow and no online event, and a half-dead
+  // TCP connection still reports readyState OPEN. The only honest signal is the
+  // server's named keepalive going quiet, plus a watchdog that remembers when it
+  // last ran. When either goes quiet the feed is replaced; the new feed's onopen
+  // pulls the stored rows that were missed.
+  // Replacing the object must keep every extra message handler alive, so they
+  // live in a registry here instead of on the EventSource.
+  const _LIVE_FEED_TICK_MS   = 10000;   // watchdog period
+  const _LIVE_FEED_STALL_MS  = 30000;   // a timer gap this long means the machine slept
+  const _LIVE_FEED_SILENT_MS = 70000;   // no message and no keepalive for this long
+  const _LIVE_FEED_REOPEN_MS = 30000;   // never replace the feed more often than this
+  const _liveFeedHandlers = new Set();
+  let _liveFeedLastSeen   = 0;          // last message or keepalive, ms
+  let _liveFeedLastTick   = 0;          // last watchdog run, ms
+  let _liveFeedLastReopen = 0;          // last replacement, ms
+  let _liveFeedHadOpen    = false;      // the very first load counts nothing
+  let _liveFeedHiddenAt   = 0;
+
+  function _liveFeedTouch() { _liveFeedLastSeen = Date.now(); }
+
+  function _liveFeedAddHandler(fn) {
+    if (!fn || _liveFeedHandlers.has(fn)) return;
+    _liveFeedHandlers.add(fn);
+    if (chatSSE) chatSSE.addEventListener('message', fn);
+  }
+
+  function _liveFeedRemoveHandler(fn) {
+    _liveFeedHandlers.delete(fn);
+    if (chatSSE) chatSSE.removeEventListener('message', fn);
+  }
+
+  function _liveFeedOpen() {
+    if (chatSSE) { try { chatSSE.close(); } catch (e) {} }
+    chatSSE = new EventSource(BASE_PATH + '/api/chat/stream');
+    const feed = chatSSE;
+    // Per object, because EventSource reconnects by itself and re-fires onopen on
+    // the same object: a second open there is already a catch-up.
+    feed._omHadOpen = _liveFeedHadOpen;
+    feed.onopen = () => {
+      const catchUp = feed._omHadOpen === true;
+      feed._omHadOpen = true;
+      _liveFeedHadOpen = true;
+      _liveFeedTouch();
+      _resyncChatFromServer({ catchUp });
+    };
+    feed.onmessage = e => { _liveFeedTouch(); _liveFeedOnMessage(e); };
+    // Named keepalive from the server. It never reaches onmessage, by design.
+    feed.addEventListener('keepalive', _liveFeedTouch);
+    // Handlers that were registered before this replacement keep working.
+    _liveFeedHandlers.forEach(fn => feed.addEventListener('message', fn));
+    _liveFeedTouch();
+  }
+
+  // Returns true when the feed was replaced. A hidden tab does nothing: its
+  // timers are throttled by the browser and that must not read as a sleep.
+  function _liveFeedCheck(opts = {}) {
+    if (!chatSSE) return false;
+    const now = Date.now();
+    if (document.hidden) return false;
+    const stalled = !opts.fromHidden && _liveFeedLastTick &&
+                    (now - _liveFeedLastTick) > _LIVE_FEED_STALL_MS;
+    _liveFeedLastTick = now;
+    // A short trip to another app is not a sleep: only 30 s or more counts.
+    if (opts.fromHidden && opts.fromHidden < 30000) return false;
+    const silent = _liveFeedLastSeen && (now - _liveFeedLastSeen) > _LIVE_FEED_SILENT_MS;
+    // CLOSED is final in EventSource; it never retries that state by itself.
+    const closed = chatSSE.readyState === 2;
+    if (!stalled && !silent && !closed) return false;
+    // Throttle only after a real reopen; the first repair may happen at once.
+    if (_liveFeedLastReopen && now - _liveFeedLastReopen < _LIVE_FEED_REOPEN_MS) return false;
+    _liveFeedLastReopen = now;
+    _liveFeedOpen();
+    return true;
+  }
+
   function initChat() {
     setChatNetwork(chatNetwork);  // apply MT/MC toggle state
     // …and the Sense pills, which the markup defaults to MT and which setChatNetwork only touches when the value
@@ -1544,12 +1621,12 @@
       _updateMcInput();
     }
     if (chatSSE) return;
-    chatSSE = new EventSource(BASE_PATH + '/api/chat/stream');
-    // Every open, including an automatic reconnect, is a chance that the feed
-    // was down while messages were stored. Pull the stored rows instead of
-    // trusting the live stream to have carried everything.
-    chatSSE.onopen = () => _resyncChatFromServer();
-    chatSSE.onmessage = e => {
+    _liveFeedOpen();
+  }
+
+  // Main live-feed handler. A named function, so the feed owner can attach it to
+  // a replacement EventSource after a sleep without touching the input box.
+  function _liveFeedOnMessage(e) {
       let data; try { data = JSON.parse(e.data); } catch(err) { return; }
       if (data.type === 'update_available') {
         // Server checked upstream and found a newer commit — offer it now.
@@ -1836,7 +1913,6 @@
           }
         }
       }
-    };
   }
 
   function saveClosedDmTabs() {
@@ -5064,7 +5140,7 @@ if (targetEl) {
           }
         } catch (_) {}
       };
-      if (chatSSE) chatSSE.addEventListener('message', sseHandler);
+      _liveFeedAddHandler(sseHandler);
       setTimeout(() => { if (!done) resolve(msgs); }, 30000);
     });
 
@@ -5080,13 +5156,13 @@ if (targetEl) {
       const replyText = d.reply?.text || '';
       if (replyText === 'MSGSTORE_EMPTY') {
         if (out) out.innerHTML = '<span style="color:var(--muted)">No messages stored on collector.</span>';
-        if (sseHandler && chatSSE) chatSSE.removeEventListener('message', sseHandler);
+        _liveFeedRemoveHandler(sseHandler);
         if (btn) btn.disabled = false;
         return;
       }
 
       const received = await ssePromise;
-      if (sseHandler && chatSSE) chatSSE.removeEventListener('message', sseHandler);
+      _liveFeedRemoveHandler(sseHandler);
 
       if (!received || received.length === 0) {
         if (out) out.innerHTML = '<span style="color:var(--muted)">No messages received.</span>';
@@ -5102,7 +5178,7 @@ if (targetEl) {
         if (out) out.innerHTML = `<div style="max-height:280px;overflow-y:auto"><b style="color:var(--green)">${received.length} stored message${received.length!==1?'s':''}</b>${rows}</div>`;
       }
     } catch (e) {
-      if (sseHandler && chatSSE) chatSSE.removeEventListener('message', sseHandler);
+      _liveFeedRemoveHandler(sseHandler);
       if (out) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
     } finally {
       if (btn) btn.disabled = false;
@@ -12101,10 +12177,43 @@ if (targetEl) {
       for (const k of _mcNotifiedMsgKeys) { _mcNotifiedMsgKeys.delete(k); if (--drop <= 0) break; }
     }
   }
+  // Rows that first appear in a catch-up count unread exactly once, like a live
+  // message, but silently: a wake must not blare a backlog. Only rows inside the
+  // window the page already held count; an older row filling in history was not
+  // missed while we were away.
+  function _mcCatchUpTab(msg) {
+    if (msg.subtype === 'channel') return `chan:${msg.channel ?? 0}`;
+    if (msg.subtype === 'dm' && !msg.sent && msg.from_id) return `dm:${msg.from_id.slice(0, 12)}`;
+    return null;
+  }
+  function _mcMarkCatchUpUnread(msg, floorTs) {
+    if (!msg || msg.sent) return;
+    if ((msg.ts || 0) < floorTs) return;
+    const key = msg.id || _mcMessageKey(msg);
+    if (_mcNotifiedMsgKeys.has(key)) return;
+    _mcMarkNotified(key);   // counted or not, it must never ping twice
+    const msgTab = _mcCatchUpTab(msg);
+    if (!msgTab) return;
+    // Not on the tab being looked at: same condition as a live message, plus a
+    // hidden document, which nobody is looking at.
+    if (currentTab !== 'chat' || chatNetwork !== 'mc' || mcChatTab !== msgTab || document.hidden) {
+      mcUnreadTabs.add(msgTab);
+      _incrementUnreadCount(mcUnreadCounts, msgTab);
+    }
+  }
   function _mcMergeMessages(incoming, opts = {}) {
     const before = mcMessages.length;
     const seen = new Set(mcMessages.map(_mcMessageKey));
+    // Highest stored ts per radio BEFORE this merge: the window the page held.
+    const catchUpFloor = Object.create(null);
+    if (opts.catchUp) {
+      mcMessages.forEach(m => {
+        const rid = m.radio_id || '';
+        catchUpFloor[rid] = Math.max(catchUpFloor[rid] || 0, m.ts || 0);
+      });
+    }
     let changed = false;
+    let counted = false;
     (incoming || []).forEach(raw => {
       if (!raw) return;
       const msg = { ...raw, type: raw.type || 'mc_message', network: raw.network || 'mc' };
@@ -12119,9 +12228,17 @@ if (targetEl) {
       seen.add(key);
       mcMessages.push(msg);
       changed = true;
+      if (opts.catchUp) {
+        const rid = msg.radio_id || '';
+        // No held rows for this radio means no window to compare against, so it
+        // counts nothing: that is a first load by another name.
+        _mcMarkCatchUpUnread(msg, rid in catchUpFloor ? catchUpFloor[rid] : Infinity);
+        counted = true;
+      }
     });
     mcMessages.sort((a, b) => (a.ts || 0) - (b.ts || 0));
     if (mcMessages.length > 500) mcMessages.splice(0, mcMessages.length - 500);
+    if (counted) updateUnreadDots();
     if (changed || mcMessages.length !== before) {
       _mcRebuildMessageTabs();
       _saveMcMessages();
@@ -12130,17 +12247,44 @@ if (targetEl) {
     }
     return mcMessages.length - before;
   }
+  function _mtMarkCatchUpUnread(raw, floorTs) {
+    if (!raw || raw.sent) return;
+    if ((raw.ts || 0) < floorTs) return;
+    if (raw.from_id && mtIgnoredIdSet().has(raw.from_id)) return;
+    const msgCh = raw.is_dm ? ('dm:' + dmContactId(raw)) : raw.channel;
+    if (currentTab === 'chat' && chatNetwork === 'mt' && chatChannel === msgCh && !document.hidden) return;
+    if (raw.radio_id && raw.radio_id !== activeRadioId) {
+      inactiveRadioUnread.add(raw.radio_id);
+      if (!radioUnreadChannels[raw.radio_id]) radioUnreadChannels[raw.radio_id] = new Set();
+      radioUnreadChannels[raw.radio_id].add(msgCh);
+      if (!radioUnreadCounts[raw.radio_id]) radioUnreadCounts[raw.radio_id] = {};
+      _incrementUnreadCount(radioUnreadCounts[raw.radio_id], msgCh);
+      updateRadioSelector();
+    } else {
+      unreadChannels.add(msgCh);
+      _incrementUnreadCount(unreadChannelCounts, msgCh);
+    }
+    updateUnreadDots();
+  }
   // Merge the MT chat rows the server has stored into the page's live list.
   // The SSE feed only carries what was sent while this page was connected. A
   // phone that slept, or a socket that dropped, misses everything in between;
-  // this puts those rows back without notifying, counting unread or duplicating.
-  function _mtMergeHistory(rows) {
+  // this puts those rows back without duplicating them. A catch-up also counts
+  // the genuinely new ones unread, silently; the first load counts nothing.
+  function _mtMergeHistory(rows, opts = {}) {
+    const catchUp = opts.catchUp === true;
+    // Highest ts the page already held: rows at or before it are backfill.
+    // With nothing held there is no window, so nothing counts.
+    const floorTs = catchUp && chatMsgs.length
+      ? Math.max(...chatMsgs.map(m => m.ts || 0))
+      : Infinity;
     let added = 0;
     (rows || []).forEach(raw => {
       if (!raw || !raw.id) return;
       const existing = chatMsgs.find(m => m.id === raw.id);
       if (existing) { Object.assign(existing, raw); return; }
       chatMsgs.push({ ...raw, is_history: true });
+      if (catchUp) _mtMarkCatchUpUnread(raw, floorTs);
       added++;
     });
     if (!added) return 0;
@@ -12155,24 +12299,25 @@ if (targetEl) {
   // SSE connection was closed. MC comes first (Filip's primary network): initMc
   // reloads each radio's stored rows through _loadMcMessageArchive.
   let _lastChatResync = 0;
-  function _resyncChatFromServer() {
+  function _resyncChatFromServer(opts = {}) {
     const now = Date.now();
     if (now - _lastChatResync < 2000) return;
     _lastChatResync = now;
-    initMc();
+    const catchUp = opts.catchUp === true;
+    initMc({ catchUp });
     fetch(BASE_PATH + '/api/chat/messages?limit=500')
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d) _mtMergeHistory(d.messages || []); })
+      .then(d => { if (d) _mtMergeHistory(d.messages || [], { catchUp }); })
       .catch(e => console.warn('MT chat resync failed:', e));
   }
 
-  function _loadMcMessageArchive(radioId) {
+  function _loadMcMessageArchive(radioId, opts = {}) {
     if (!radioId) return;
     fetch(BASE_PATH + `/api/mc/${encodeURIComponent(radioId)}/messages?limit=500`)
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (!d) return;
-        _mcMergeMessages(d.messages || [], { silent: true });
+        _mcMergeMessages(d.messages || [], { silent: true, catchUp: opts.catchUp === true });
         if (currentTab === 'chat' && chatNetwork === 'mc') renderMcMessages();
       })
       .catch(e => console.warn('MC message archive load failed:', e));
@@ -16822,14 +16967,14 @@ if (targetEl) {
   }
 
   // -- Fetch MC status on startup --
-  function initMc() {
+  function initMc(opts = {}) {
     fetch(BASE_PATH + '/api/mc/status')
       .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(data => {
         _mcStatusReceived = true;   // the payload answered: an empty mc_nodes now really means "no MC radios"
         (data.mc_nodes || []).forEach(n => {
           mcLastStatus[n.id] = n;
-          _loadMcMessageArchive(n.id);
+          _loadMcMessageArchive(n.id, { catchUp: opts.catchUp === true });
           const shouldLoadContacts = n.status === 'connected' || (n.stored_contacts || n.archived_contacts || 0) > 0;
           if (shouldLoadContacts) {
             fetch(BASE_PATH + `/api/mc/${encodeURIComponent(n.id)}/contacts`)
@@ -18284,7 +18429,7 @@ if (targetEl) {
           }
         } catch (_) {}
       };
-      if (chatSSE) chatSSE.addEventListener('message', sseHandler);
+      _liveFeedAddHandler(sseHandler);
       // Fallback timeout
       setTimeout(() => { if (!done) resolve(msgs); }, 30000);
     });
@@ -18302,14 +18447,14 @@ if (targetEl) {
       const replyText = d.reply?.text || '';
       if (replyText === 'MSGSTORE_EMPTY') {
         if (out) out.innerHTML = '<span style="color:var(--muted)">No messages stored on RPTR.</span>';
-        if (sseHandler && chatSSE) chatSSE.removeEventListener('message', sseHandler);
+        _liveFeedRemoveHandler(sseHandler);
         if (btn) btn.disabled = false;
         return;
       }
 
       // Wait for burst delivery via SSE
       const received = await ssePromise;
-      if (sseHandler && chatSSE) chatSSE.removeEventListener('message', sseHandler);
+      _liveFeedRemoveHandler(sseHandler);
 
       if (!received || received.length === 0) {
         if (out) out.innerHTML = '<span style="color:var(--muted)">No messages received.</span>';
@@ -18325,7 +18470,7 @@ if (targetEl) {
         if (out) out.innerHTML = `<div style="max-height:320px;overflow-y:auto"><b style="color:var(--green)">${received.length} stored message${received.length!==1?'s':''}</b>${rows}</div>`;
       }
     } catch (e) {
-      if (sseHandler && chatSSE) chatSSE.removeEventListener('message', sseHandler);
+      _liveFeedRemoveHandler(sseHandler);
       if (out) out.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
     } finally {
       if (btn) btn.disabled = false;
@@ -23083,13 +23228,26 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
   // A sleeping phone or a background tab does not necessarily close its SSE
   // connection: on wake there may be no reconnect at all. Pull whatever was
   // stored while the page was hidden, for both networks, before showing it.
+  // A short trip to another app is not worth reloading every radio, so only
+  // 30 s or more hidden runs the catch-up (E in EST-326).
   document.addEventListener('visibilitychange', () => {
     // Both edges matter: hiding stops the minimap Traces poll, showing restarts it.
     _pipTracesSync();
-    if (!document.hidden) _resyncChatFromServer();
+    if (document.hidden) { _liveFeedHiddenAt = Date.now(); return; }
+    const hiddenMs = _liveFeedHiddenAt ? Date.now() - _liveFeedHiddenAt : 0;
+    _liveFeedHiddenAt = 0;
+    // The watchdog did not run while hidden; that is throttling, not a sleep.
+    _liveFeedLastTick = Date.now();
+    const reopened = _liveFeedCheck({ fromHidden: hiddenMs });
+    // The feed may still be healthy (keepalives arrived) and need no reopen:
+    // the rows missed while hidden still have to be pulled.
+    if (hiddenMs >= 30000 && !reopened) _resyncChatFromServer({ catchUp: true });
   });
-  window.addEventListener('pageshow', e => { if (e.persisted) _resyncChatFromServer(); });
-  window.addEventListener('online', () => _resyncChatFromServer());
+  window.addEventListener('pageshow', e => { if (e.persisted) _resyncChatFromServer({ catchUp: true }); });
+  window.addEventListener('online', () => _resyncChatFromServer({ catchUp: true }));
+  // The watchdog that catches a tab which slept with the page visible: no
+  // visibilitychange, no pageshow, no online, and a socket that still says OPEN.
+  setInterval(() => _liveFeedCheck(), _LIVE_FEED_TICK_MS);
 
   // ── Colour Picker ───────────────────────────────────────────────────────────
   const CPICKER_PALETTE = [

@@ -44,6 +44,7 @@ node tests/test_mc_rptr_status.js
 node tests/test_mc_heat_points.js
 node tests/test_mc_passive_intel.js
 node tests/test_chat_resync.js
+node tests/test_chat_wake_feed.js
 node tests/test_mc_hop_popover.js
 
 # JS lint (no-undef) — the only check that sees client-side ReferenceErrors,

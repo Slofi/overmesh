@@ -10,26 +10,29 @@ function assert(cond, msg) {
 
 // The page must pull stored rows after a sleep or a reconnect. A live SSE
 // feed alone only carries what was sent while that connection was working.
-const resync = src.match(/function _resyncChatFromServer\(\) \{[\s\S]*?\n  \}/);
+const resync = src.match(/function _resyncChatFromServer\(opts = \{\}\) \{[\s\S]*?\n  \}/);
 assert(resync, '_resyncChatFromServer() must exist');
-assert(/initMc\(\)/.test(resync[0]), 'resync must reload MC stores (initMc -> _loadMcMessageArchive)');
+assert(/initMc\(\{ catchUp \}\)/.test(resync[0]), 'resync must reload MC stores (initMc -> _loadMcMessageArchive)');
 assert(/\/api\/chat\/messages\?limit=500/.test(resync[0]), 'resync must fetch stored MT rows');
 assert(/_mtMergeHistory\(d\.messages/.test(src), 'resync must merge the MT rows it fetched');
 
 // Every EventSource open, including an automatic reconnect, is a resync point.
-assert(/chatSSE\.onopen = \(\) => _resyncChatFromServer\(\)/.test(src),
-       'chat SSE onopen must call the resync');
+assert(/feed\.onopen = \(\) => \{[\s\S]{0,220}_resyncChatFromServer\(\{ catchUp/.test(src),
+       'the feed onopen must call the resync and say whether it is a catch-up');
+assert(/function _liveFeedOpen\(\)/.test(src), 'one function must own the EventSource');
 // A sleeping phone may keep its socket and never fire onopen on wake.
-assert(/document\.addEventListener\('visibilitychange'[\s\S]{0,160}_resyncChatFromServer\(\)/.test(src),
-       'becoming visible must call the resync');
-assert(/addEventListener\('pageshow'[\s\S]{0,120}_resyncChatFromServer\(\)/.test(src),
-       'a bfcache restore must call the resync');
-assert(/addEventListener\('online'[\s\S]{0,120}_resyncChatFromServer\(\)/.test(src),
-       'coming back online must call the resync');
+assert(/document\.addEventListener\('visibilitychange'[\s\S]{0,700}_resyncChatFromServer\(\{ catchUp: true \}\)/.test(src),
+       'becoming visible after a real hide must call the catch-up');
+assert(/hiddenMs >= 30000/.test(src),
+       'a short trip to another app must not rerun the whole catch-up');
+assert(/addEventListener\('pageshow'[\s\S]{0,120}_resyncChatFromServer\(\{ catchUp: true \}\)/.test(src),
+       'a bfcache restore must call the catch-up');
+assert(/addEventListener\('online'[\s\S]{0,120}_resyncChatFromServer\(\{ catchUp: true \}\)/.test(src),
+       'coming back online must call the catch-up');
 
 // Drive the real merge function: it must dedupe by id, keep order and mark the
 // pulled rows as history so they do not notify or count as unread.
-const mergeSrc = src.match(/function _mtMergeHistory\(rows\) \{[\s\S]*?\n  \}/);
+const mergeSrc = src.match(/function _mtMergeHistory\(rows, opts = \{\}\) \{[\s\S]*?\n  \}/);
 assert(mergeSrc, '_mtMergeHistory() must exist');
 const chatMsgs = [
   { id: 'seen-1', ts: 20, text: 'on screen before sleep' },

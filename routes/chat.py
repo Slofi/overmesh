@@ -85,6 +85,41 @@ def api_chat_messages():
     return jsonify({"messages": msgs[-limit:]})
 
 
+SSE_KEEPALIVE_SECS = 25
+
+# A NAMED event, not an SSE comment. A comment line is invisible to JavaScript,
+# so a page whose socket died after a laptop sleep looks OPEN and alive forever.
+# Named events do not reach EventSource.onmessage, which is why app.js and
+# lite.js keep working unchanged; app.js listens for this name on purpose.
+SSE_KEEPALIVE_EVENT = "event: keepalive\ndata: 1\n\n"
+
+
+def _chat_stream_events(q, history=(), keepalive_secs=SSE_KEEPALIVE_SECS):
+    """Yield the SSE payload for one client.
+
+    Kept out of the request handler so the keepalive and close contract can be
+    driven directly in a test, with the same generator the route uses.
+    """
+    # Handshake first: the client compares this with the version its shell
+    # was built with and reloads if they differ, so a restart that lands new
+    # code refreshes every open page (even restarts not started from the UI).
+    yield f"data: {json.dumps(_sse_version_event())}\n\n"
+    for msg in history:
+        yield f"data: {json.dumps({**msg, 'is_history': True})}\n\n"
+    while True:
+        try:
+            data = q.get(timeout=keepalive_secs)
+        except queue.Empty:
+            yield SSE_KEEPALIVE_EVENT
+            continue
+        if data is SSE_CLOSE:
+            # push_to_sse evicted this client (asleep too long).
+            # End the response so the browser reconnects and its
+            # onopen handler pulls the stored rows it missed.
+            break
+        yield f"data: {data}\n\n"
+
+
 @bp.route("/api/chat/stream")
 def api_chat_stream():
     q = queue.Queue(maxsize=100)
@@ -94,25 +129,9 @@ def api_chat_stream():
 
     def generate():
         try:
-            # Handshake first: the client compares this with the version its shell
-            # was built with and reloads if they differ, so a restart that lands new
-            # code refreshes every open page (even restarts not started from the UI).
-            yield f"data: {json.dumps(_sse_version_event())}\n\n"
             with chat_lock:
                 history = list(chat_messages)
-            for msg in history:
-                yield f"data: {json.dumps({**msg, 'is_history': True})}\n\n"
-            while True:
-                try:
-                    data = q.get(timeout=25)
-                    if data is SSE_CLOSE:
-                        # push_to_sse evicted this client (asleep too long).
-                        # End the response so the browser reconnects and its
-                        # onopen handler pulls the stored rows it missed.
-                        break
-                    yield f"data: {data}\n\n"
-                except queue.Empty:
-                    yield ": keepalive\n\n"
+            yield from _chat_stream_events(q, history)
         except GeneratorExit:
             pass
         finally:

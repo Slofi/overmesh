@@ -1523,6 +1523,10 @@
   let _liveFeedLastReopen = 0;          // last replacement, ms
   let _liveFeedHadOpen    = false;      // the very first load counts nothing
   let _liveFeedHiddenAt   = 0;
+  // On every open the server replays its MT history through the feed, which reaches
+  // the page before the catch-up fetch answers. A replayed row that is new to the
+  // page is a missed message too, so it is counted here against the same window.
+  let _mtReplayFloor      = Infinity;
 
   function _liveFeedTouch() { _liveFeedLastSeen = Date.now(); }
 
@@ -1549,6 +1553,9 @@
       feed._omHadOpen = true;
       _liveFeedHadOpen = true;
       _liveFeedTouch();
+      _mtReplayFloor = catchUp && chatMsgs.length
+        ? Math.max(...chatMsgs.map(m => m.ts || 0))
+        : Infinity;
       _resyncChatFromServer({ catchUp });
     };
     feed.onmessage = e => { _liveFeedTouch(); _liveFeedOnMessage(e); };
@@ -1839,6 +1846,7 @@
         updateUnreadDots();
       } else {
         if (!chatMsgs.find(m => m.id === data.id)) {
+          if (data.is_history) _mtMarkCatchUpUnread(data, _mtReplayFloor);
           chatMsgs.push(data);
           if (chatMsgs.length > 500) chatMsgs.splice(0, chatMsgs.length - 500);
           // Ignored senders: keep the message stored (so un-ignore restores it) but

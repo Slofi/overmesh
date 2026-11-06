@@ -245,6 +245,10 @@ function newState() {
   };
 }
 
+// S486: the server replays MT history through the feed before the catch-up fetch
+// answers, so that row reaches the merge as already held. It must count on the replay.
+assert(/if \(data\.is_history\) _mtMarkCatchUpUnread\(data, _mtReplayFloor\);/.test(src),
+  'a replayed MT row new to the page is counted unread');
 // 9. MT: first load counts nothing, a catch-up counts once, silently.
 {
   const s = newState();

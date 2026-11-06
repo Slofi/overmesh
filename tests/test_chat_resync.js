@@ -17,7 +17,7 @@ assert(/\/api\/chat\/messages\?limit=500/.test(resync[0]), 'resync must fetch st
 assert(/_mtMergeHistory\(d\.messages/.test(src), 'resync must merge the MT rows it fetched');
 
 // Every EventSource open, including an automatic reconnect, is a resync point.
-assert(/feed\.onopen = \(\) => \{[\s\S]{0,220}_resyncChatFromServer\(\{ catchUp/.test(src),
+assert(/feed\.onopen = \(\) => \{[\s\S]{0,400}_resyncChatFromServer\(\{ catchUp/.test(src),
        'the feed onopen must call the resync and say whether it is a catch-up');
 assert(/function _liveFeedOpen\(\)/.test(src), 'one function must own the EventSource');
 // A sleeping phone may keep its socket and never fire onopen on wake.

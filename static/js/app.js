@@ -10700,16 +10700,41 @@ if (targetEl) {
     let dragging = false, sx, sy, sr, sb;
     let resizing = false, rsx, rsy, rwStart, rhStart;
 
-    header.addEventListener('mousedown', e => {
-      if (e.target.id === 'pip-collapse-btn' || e.target.id === 'pip-locate-btn'
-          || e.target.id === 'pip-trace-btn') return;
+    // Draggable header: POINTER events, like the resize grip below. A finger on
+    // the CD touchscreen and a mouse take the same path, pointer capture keeps
+    // the move/up events on the header when the pointer slides over the map, and
+    // touch-action: none in the CSS stops the page from panning under the drag.
+    // Buttons in the header keep their own click: a press that starts on one is
+    // not a drag.
+    let dragPointer = null;
+    const endDrag = e => {
+      if (dragPointer == null) return;
+      if (e && e.pointerId != null && e.pointerId !== dragPointer) return;
+      dragging = false;
+      try { header.releasePointerCapture(dragPointer); } catch (err) {}
+      dragPointer = null;
+    };
+    header.addEventListener('pointerdown', e => {
+      if (e.target && e.target.closest && e.target.closest('button')) return;
+      if (e.button != null && e.button !== 0) return;   // mouse: left button only
       dragging = true;
+      dragPointer = e.pointerId;
       const r = wrap.getBoundingClientRect();
       sx = e.clientX; sy = e.clientY;
       sr = window.innerWidth  - r.right;
       sb = window.innerHeight - r.bottom;
+      try { header.setPointerCapture(e.pointerId); } catch (err) {}
       e.preventDefault();
     });
+    header.addEventListener('pointermove', e => {
+      if (!dragging || e.pointerId !== dragPointer) return;
+      wrap.style.right  = Math.max(0, sr + (sx - e.clientX)) + 'px';
+      wrap.style.bottom = Math.max(0, sb + (sy - e.clientY)) + 'px';
+      e.preventDefault();
+    });
+    header.addEventListener('pointerup', endDrag);
+    header.addEventListener('pointercancel', endDrag);
+    header.addEventListener('lostpointercapture', endDrag);
 
     // Top-left resize grip: POINTER events only, so a finger on the CD touchscreen
     // and a mouse take the same path. touch-action: none in the CSS stops the page
@@ -10745,14 +10770,6 @@ if (targetEl) {
     resizeHandle.addEventListener('pointerup', endResize);
     resizeHandle.addEventListener('pointercancel', endResize);
     resizeHandle.addEventListener('lostpointercapture', endResize);
-
-    document.addEventListener('mousemove', e => {
-      if (dragging) {
-        wrap.style.right  = Math.max(0, sr + (sx - e.clientX)) + 'px';
-        wrap.style.bottom = Math.max(0, sb + (sy - e.clientY)) + 'px';
-      }
-    });
-    document.addEventListener('mouseup', () => { dragging = false; });
 
     // Invalidate Leaflet size on any dimension change
     new ResizeObserver(() => pipMap && pipMap.invalidateSize()).observe(wrap);

@@ -1973,19 +1973,23 @@
       background: var(--bg3); border-bottom: 1px solid var(--border);
       font-size: 11px; color: var(--muted);
       flex-shrink: 0; cursor: grab; user-select: none;
+      touch-action: none;                    /* a finger drag must not scroll the page */
     }
     #pip-header:active { cursor: grabbing; }
     /* the title gives way first when the minimap is resized small (S468: one more header button) */
     #pip-header > span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-    #pip-collapse-btn, #pip-locate-btn {
+    /* 44px square buttons: a fingertip target on the CD touchscreen. The header
+       grows to fit them; the minimap map area gives up the height. */
+    #pip-collapse-btn, #pip-locate-btn, #pip-trace-btn {
       background: none; border: none; color: var(--muted);
-      cursor: pointer; font-size: 13px; padding: 0 2px; line-height: 1;
+      cursor: pointer; font-size: 13px; padding: 0 4px; line-height: 1;
+      min-width: 44px; min-height: 44px;
+      display: inline-flex; align-items: center; justify-content: center;
     }
     #pip-collapse-btn:hover { color: var(--text); }
     #pip-locate-btn:hover { color: var(--accent); }
     #pip-trace-btn {
-      background: none; border: none; color: var(--muted);
-      cursor: pointer; font-size: 10px; padding: 0 4px; line-height: 1; white-space: nowrap;
+      font-size: 10px; white-space: nowrap;
     }
     #pip-trace-btn:hover, #pip-trace-btn.on { color: var(--accent); }
     #pip-map-el { flex: 1; min-height: 0; }

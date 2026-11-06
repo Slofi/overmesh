@@ -191,7 +191,7 @@ function extract(name, endMarker = '\n  }') {
 function section4() {
 // ── 4. wiring ────────────────────────────────────────────────────────────────
 assert(/id="pip-trace-btn"[^>]*onclick="togglePipTraces\(\)"/.test(html), 'minimap header has the Traces button wired to togglePipTraces()');
-assert(/e\.target\.id === 'pip-trace-btn'/.test(src), 'pressing the Traces button does not start a minimap drag');
+assert(/e\.target\.closest\('button'\)/.test(src), 'pressing a header button does not start a minimap drag');
 assert(extract('updatePipVisibility').includes('_pipTracesSync()'), 'every minimap visibility change re-syncs the poll');
 assert(extract('_updateScanBtnVisibility').includes('_pipTracesSync()'), 'MC connect/disconnect re-syncs the minimap Traces');
 assert(/_mcRxPlay\(_mcRxRows, _mcRxSeen, seed, leafletMap/.test(extract('_mcRxAnimateNew')), 'Sense Traces still play on the main map');

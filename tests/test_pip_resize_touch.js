@@ -72,8 +72,13 @@ const up    = on('pip-resize-handle', 'pointerup');
 const cancel = on('pip-resize-handle', 'pointercancel');
 assert(env.listeners['pip-resize-handle:mousedown'] === undefined,
   'the grip has no separate mousedown path, pointer events serve mouse and finger');
-assert(env.listeners['pip-header:mousedown'] && env.listeners['pip-header:mousedown'].length,
-  'the header mouse drag is still there');
+assert(env.listeners['pip-header:mousedown'] === undefined,
+  'the header has no separate mousedown path either: a finger can drag the minimap');
+const hdown  = on('pip-header', 'pointerdown');
+const hmove  = on('pip-header', 'pointermove');
+const hup    = on('pip-header', 'pointerup');
+assert(env.listeners['pip-header:pointercancel'] && env.listeners['pip-header:lostpointercapture'],
+  'the header drag also ends on pointercancel and lost capture');
 
 // pointerdown: capture, prevent page pan, stop the map
 let ev = { pointerId: 7, button: 0, clientX: 300, clientY: 300, prevented: 0, stopped: 0,
@@ -117,6 +122,34 @@ const w2 = env.wrap.style.width;
 move({ pointerId: 12, clientX: 100, clientY: 100, preventDefault() {} });
 assert(env.wrap.style.width === w2, 'a non-left mouse button does not resize');
 
+// --- header drag: a finger can move the minimap, a press on a button is not a drag
+env.wrap.style.right = '';
+env.wrap.style.bottom = '';
+let hdrag = { pointerId: 21, button: 0, clientX: 400, clientY: 300,
+              target: { closest: () => null }, prevented: 0,
+              preventDefault() { this.prevented++; } };
+hdown(hdrag);
+assert(hdrag.prevented === 1, 'header pointerdown prevents the page pan');
+assert(env.captured.includes(21), 'header pointerdown captures the pointer');
+hmove({ pointerId: 21, clientX: 370, clientY: 270, preventDefault() {} });
+assert(env.wrap.style.right === '330px' && env.wrap.style.bottom === '230px',
+  `a finger drag moves the minimap, got right=${env.wrap.style.right} bottom=${env.wrap.style.bottom}`);
+hmove({ pointerId: 99, clientX: 0, clientY: 0, preventDefault() {} });
+assert(env.wrap.style.right === '330px' && env.wrap.style.bottom === '230px',
+  'a different pointer id does not drag the header');
+hup({ pointerId: 21 });
+assert(env.released.includes(21), 'header pointerup releases capture');
+hmove({ pointerId: 21, clientX: 100, clientY: 100, preventDefault() {} });
+assert(env.wrap.style.right === '330px' && env.wrap.style.bottom === '230px', 'no drag after pointerup');
+
+const beforeButton = env.wrap.style.right;
+hdown({ pointerId: 22, button: 0, clientX: 450, clientY: 340,
+        target: { closest: sel => sel === 'button' ? {} : null },
+        preventDefault() {}, stopPropagation() {} });
+hmove({ pointerId: 22, clientX: 300, clientY: 200, preventDefault() {} });
+assert(env.wrap.style.right === beforeButton, 'a press that starts on a header button does not drag');
+hup({ pointerId: 22 });
+
 // CSS: finger-sized grip and no page pan
 const block = css.match(/#pip-resize-handle\s*\{([^}]*)\}/);
 assert(block, '#pip-resize-handle rule exists');
@@ -125,5 +158,14 @@ const width = parseInt((body.match(/width:\s*(\d+)px/) || [])[1], 10);
 const height = parseInt((body.match(/height:\s*(\d+)px/) || [])[1], 10);
 assert(width >= 40 && height >= 40, `the grip is finger-sized (>= 40x40), got ${width}x${height}`);
 assert(/touch-action:\s*none/.test(body), 'the grip sets touch-action: none so the page cannot pan under it');
+
+// CSS: header drag must not scroll the page, and its buttons are fingertip targets
+const headerBlock = css.match(/#pip-header\s*\{([^}]*)\}/);
+assert(headerBlock && /touch-action:\s*none/.test(headerBlock[1]),
+  'the header sets touch-action: none so a finger drag does not page a scroll');
+const btnBlock = css.match(/#pip-collapse-btn,\s*#pip-locate-btn,\s*#pip-trace-btn\s*\{([^}]*)\}/);
+assert(btnBlock, 'the three header buttons share one rule');
+assert(/min-width:\s*44px/.test(btnBlock[1]) && /min-height:\s*44px/.test(btnBlock[1]),
+  'header buttons are at least 44x44 for a fingertip');
 
 console.log('OK test_pip_resize_touch');

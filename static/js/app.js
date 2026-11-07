@@ -331,17 +331,18 @@
     const panel = document.getElementById('alerts-panel');
     if (!panel) return;
     const alerts = _alertsLoad();
-    // One close control everywhere (S487): a bare x, the same one the dialogs and
-    // the hop list use. The panel already closes on an outside tap and on the bell.
-    const closeBtn = `<button type="button" class="alerts-close" onclick="toggleAlertsPanel(event)" title="Close" aria-label="Close alerts">&times;</button>`;
+    // No close control here on purpose (Filip, S488): the X was in the way and the
+    // panel already closes on an outside tap and on the bell, so the header carries
+    // only the title and Clear. Deliberate exception to the S487 "one x everywhere"
+    // rule — the dialogs, the hop list and the map DM window keep theirs.
     if (!alerts.length) {
-      panel.innerHTML = `<div class="alerts-header"><span class="alerts-title">Alerts</span>${closeBtn}</div><div class="alerts-empty">No alerts yet.</div>`;
+      panel.innerHTML = `<div class="alerts-header"><span class="alerts-title">Alerts</span></div><div class="alerts-empty">No alerts yet.</div>`;
       return;
     }
     panel.innerHTML = `
       <div class="alerts-header">
         <span class="alerts-title">Alerts</span>
-        <span class="alerts-actions"><button class="alerts-clear-btn" onclick="clearAllAlerts()">Clear all</button>${closeBtn}</span>
+        <span class="alerts-actions"><button class="alerts-clear-btn" onclick="clearAllAlerts()">Clear all</button></span>
       </div>
       <div class="alerts-list">
         ${alerts.map(a => {

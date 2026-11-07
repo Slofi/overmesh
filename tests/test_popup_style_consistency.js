@@ -77,7 +77,7 @@ assert(/\.leaflet-popup-content-wrapper/.test(css), 'the Leaflet popup theme mus
 const closeStart = css.indexOf('.surface-close, .modal-close');
 assert(closeStart > 0, 'the shared close rule must exist');
 const closeGroup = css.slice(closeStart, css.indexOf('.hop-pop-close {'));
-['.modal-close', '.hop-pop-close', '.map-dm-close', '.alerts-close'].forEach(c => {
+['.modal-close', '.hop-pop-close', '.map-dm-close'].forEach(c => {
   assert(closeGroup.includes(c), `${c} must use the shared close look`);
 });
 assert(/font-size:\s*18px/.test(closeGroup), 'the shared close glyph is 18px');
@@ -116,10 +116,17 @@ Object.entries(closers).forEach(([id, fn]) => {
     `the x on ${id} must call ${fn}, the same closer the overlay uses`);
 });
 
-// --- the alerts panel is a popup too: one x, same glyph, no worded Close
-assert(/class="alerts-close"[^>]*>&times;/.test(app), 'the alerts panel header must carry the shared x');
+// --- the alerts panel is the ONE popup with no x, on purpose (Filip, S488):
+//     it closes on an outside tap and on the bell instead, and the header keeps Clear.
+assert(/class="alerts-close"/.test(app) === false, 'the alerts panel must carry no close control (S488)');
+assert(/alerts-close/.test(css) === false, 'the shared close styling must no longer mention .alerts-close');
 assert(/class="alert[^"]*"[^>]*>Close</.test(app) === false, 'no worded Close button in the alerts panel');
-assert(/alerts-actions/.test(app), 'the alerts header keeps Clear and the x in one action group');
+assert(/alerts-clear-btn/.test(app), 'the alerts header keeps Clear all');
+assert(/alerts-actions/.test(app), 'the alerts header keeps its action group');
+assert(/class="alerts-title">Alerts<\/span><\/div>/.test(app), 'the empty-state header is title-only');
+// and the two ways it does close must stay in place
+assert(/getElementById\('alerts-panel'\)\?\.classList\.remove\('open'\)/.test(app), 'an outside tap must still close the alerts panel');
+assert(/id="alerts-btn"[^>]*onclick="toggleAlertsPanel\(event\)"/.test(tpl), 'the bell must still toggle the alerts panel');
 
 // --- the map DM window uses the shared close and the same glyph
 assert(/class="map-dm-close"[^>]*>&times;</.test(tpl), 'the map DM window close must be the shared x');

@@ -27,7 +27,7 @@
     /* The one close control: a bare grey x, transparent, on the panel like
        Leaflet's own. The glyph stays small; the hit area is padded to 44px so a
        finger finds it on the CD touchscreen. */
-    .surface-close, .modal-close, .hop-pop-close, .map-dm-close, .alerts-close {
+    .surface-close, .modal-close, .hop-pop-close, .map-dm-close {
       display: inline-flex; align-items: center; justify-content: center;
       min-width: 34px; min-height: 34px; padding: 0;
       border: 0; background: transparent; color: var(--muted);
@@ -35,11 +35,11 @@
       position: relative; -webkit-tap-highlight-color: transparent;
     }
     .surface-close::after, .modal-close::after, .hop-pop-close::after,
-    .map-dm-close::after, .alerts-close::after {
+    .map-dm-close::after {
       content: ''; position: absolute; inset: -5px;
     }
     .surface-close:hover, .modal-close:hover, .hop-pop-close:hover,
-    .map-dm-close:hover, .alerts-close:hover,
+    .map-dm-close:hover,
     .surface-close:focus-visible, .modal-close:focus-visible,
     .hop-pop-close:focus-visible, .map-dm-close:focus-visible {
       background: rgba(255,255,255,0.08); color: var(--text);

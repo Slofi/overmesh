@@ -1,5 +1,12 @@
 # OverMesh Release Notes
 
+## 2026.11.07.1
+
+### Changed
+
+- **The Alert history panel has no × any more.** The bell's pop-up now carries only its title and **Clear all**; it closes when you tap anywhere else, and the bell toggles it. On an empty list the header is just the title.
+- **Everything else keeps its close button.** This is a deliberate exception to the "one × on every surface" rule from 2026.11.06.5: dialogs, the chat hop list and the small map windows still have theirs.
+
 ## 2026.11.06.5
 
 ### Changed

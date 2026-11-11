@@ -1,15 +1,15 @@
 # About OverMesh
 
-I build things. Meshtastic and Meshcore networks, portable computers, antennas; mostly for the satisfaction of making something that actually works, not just something that looks cool and sort of works..
+I build things. Meshtastic and MeshCore networks, portable computers, antennas, mostly for the satisfaction of making something that actually works, not just something that looks cool and sort of works..
 
-I'd been putting together a Cyberdeck — a portable, self-contained field computer built around a Rock 5B single-board computer. Meshtastic was already part of the setup: several DIY nodes, a small local mesh, the whole thing. The Cyberdeck needed a dashboard. Something to show the network at a glance: who's online, signal quality, active channels, maybe send a message.
+I'd been putting together a cyberdeck: a portable, self-contained field computer built around a Rock 5B single-board computer. Meshtastic was already part of it: several DIY nodes, a small local mesh, the whole thing. The cyberdeck needed a dashboard, something to show the network at a glance: who's online, signal quality, active channels, maybe send a message.
 
-The existing options were fine. Just not quite right. So I built one.
+The existing options were fine, just not quite right for me. So I built one.
 
-OverMesh started as a small Flask app, just enough to show a node list and push a chat message. What it grew into over the following weeks is... a bit more than that. A live map with offline tile caching, multi-radio support, a bot, Mesh Sense (passive listening overlay), Marks (waypoint exchange over the mesh), node configuration directly from the browser. It grew piece by piece, each feature added when it turned out to be needed — which is, I think, the right way to build something.
+OverMesh started as a small Flask app, just enough to show a node list and send a chat message. Over the following weeks it grew into a bit more than that: a live map with offline tiles, several radios at once, a bot, Mesh Sense (a passive listening overlay), Marks (waypoints shared over the mesh) and node settings straight from the browser. Later MeshCore came in too, and these days it's the stronger side of the app, if you ask me. Each piece was added when I actually needed it, which I think is the right way to build something.
 
-It was developed with the help of Claude (Anthropic's AI coding assistant). I'll be honest about that. I have no programming background; the code wasn't going to write itself, and I wasn't going to learn Python fast enough to build this in three weeks. But I directed every decision, tested everything on real hardware against a real mesh, caught a lot of bugs, and pushed back when something didn't work the way it needed to. The ideas, the requirements, the "this is broken" and "that's not what I meant" — that was all me. Claude handled the implementation. I think that's a fair description of how it actually went.
+I have no programming background, and I wasn't going to learn Python fast enough to build this in three weeks. The code was written with AI help: Claude (Anthropic's coding assistant), and later also DeepSeek. The ideas and the requirements were mine, and so were the "this is broken" and "that's not what I meant" moments. I tested everything on real hardware against a real mesh and sent it back until it worked the way it needed to.
 
-The result is a tool I use every day. It runs on the Cyberdeck and on my laptop. It does what I need it to do.
+It's a tool I use every day. It runs on my cyberdeck, my laptop and my home server, and it does what I need it to do.
 
 Maybe it'll do what you need too.

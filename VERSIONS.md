@@ -23,7 +23,7 @@ The version in `VERSION` must be updated every time an OverMesh update is pushed
 
 ## 2026.09.06.5
 
-- Packets heard with **no relay hops** now show as an expanding, fading ring on our own radio instead of nothing at all. A directly-heard packet has no route to draw (the sender is inside the encrypted payload), so the previous release silently dropped it — which is what happened when a message was sent from a nearby node and nothing appeared on the map.
+- Packets heard with **no relay hops** now show as an expanding, fading ring on our own radio instead of nothing at all. A directly-heard packet has no route to draw (the sender is inside the encrypted payload), so the previous release silently dropped it, which is what happened when a message was sent from a nearby node and nothing appeared on the map.
 
 ## 2026.09.06.4
 
@@ -41,7 +41,7 @@ The version in `VERSION` must be updated every time an OverMesh update is pushed
   - a clickable legend shows per-type counts and switches each type on or off
   - refreshes every 5 s, redrawing only when the data actually changed; hops that cannot be resolved unambiguously are skipped rather than guessed
   - hop resolution runs client-side through the existing geographic path scoring, which resolves far more hops than a per-row coordinate can: measured 908 of 915 hops (99.2%) against real captured traffic
-- Removed the broadcast-trace machinery behind the old button (`doMcTrace`, its cooldown, the pending-tag correlation and the mesh-wide warning). The per-contact **Trace Probe** and all TRACE_DATA handling are unchanged — they share the same transport, which is why it was kept.
+- Removed the broadcast-trace machinery behind the old button (`doMcTrace`, its cooldown, the pending-tag correlation and the mesh-wide warning). The per-contact **Trace Probe** and all TRACE_DATA handling are unchanged: they share the same transport, which is why it was kept.
 
 ## 2026.09.06.2
 
@@ -50,7 +50,7 @@ The version in `VERSION` must be updated every time an OverMesh update is pushed
 ## 2026.09.06.1
 
 - MeshCore overheard traffic is now actually captured. `on_rx_log_data` gated storage on a sender pubkey that the RX log never carries (an overheard packet's sender sits inside the encrypted payload; only the header and path hashes are in the clear), so every overheard packet was parsed and then discarded. Confirmed on live data: zero `rx` rows across every passive DB on two hosts.
-  - observations are filed under the **last path hop** — the node we actually heard the packet from, which is what the rssi/snr measured — falling back to a sentinel for packets that arrive with an empty path
+  - observations are filed under the **last path hop** (the node we actually heard the packet from, which is what the rssi/snr measured), falling back to a sentinel for packets that arrive with an empty path
   - writes are **buffered and flushed by a background thread** (`save_passive_obs_bulk`): event handlers run inline on the asyncio loop, and a stalled loop can overflow the serial buffer and drop packets
   - contact-archive lookups moved off the loop thread too, and are built **once per flush batch** instead of once per row
   - timeline retention (24 h / 20 000 rows, scoped to the `rx` type) replaces the per-contact cap, which would let a chatty repeater evict its own recent history

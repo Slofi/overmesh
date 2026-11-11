@@ -14,7 +14,7 @@ Map, Nodes, Chat, Sense, bot tools, radio settings, and the general layout shoul
 
 MeshCore is now a full part of the app, with its own radios, channels, contacts, chat, bot support, and map and Nodes integration.
 
-There are also automation tools now, so other systems can exchange messages with the mesh (outbound webhooks, inbound API) — see Settings → App → Automation Bridge.
+There are also automation tools now, so other systems can exchange messages with the mesh (outbound webhooks, inbound API). See Settings → App → Automation Bridge.
 
 Settings and saved config now include both MT and MC radios, along with newer app features like in-app notifications.
 
@@ -27,7 +27,7 @@ Settings and saved config now include both MT and MC radios, along with newer ap
 
 ## Current limits
 
-Cross-system forwarding was removed in 2026-10 — it was parked and never enabled.
+Cross-system forwarding was removed in 2026-10. It was parked and never enabled.
 
 DM bridging is not implemented.
 

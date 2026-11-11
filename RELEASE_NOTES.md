@@ -1,5 +1,11 @@
 # OverMesh Release Notes
 
+## 2026.11.11.1
+
+### Changed
+
+- **Docs only, no code change.** The README and ABOUT.md are rewritten in a plainer voice. The README no longer claims traffic can be bridged between MT and MC (that feature was removed in 2026-10), and ABOUT.md now credits both AI helpers. The long dashes are gone from the public docs.
+
 ## 2026.11.07.1
 
 ### Changed
@@ -87,32 +93,32 @@
 
 ### Fixed
 
-- **Offline downloads no longer misjudge a locally-served map layer.** The check that runs before a download asked for a tile at the very corner of the world — which a regional map (Slovenia) simply does not contain — so a perfectly healthy layer served by OPS-TOC's local tile server would have been reported as failing. Now a locally-served layer is checked against **the tile server itself**: if it answers, the app tells you the tiles are already stored on the device (there is nothing to download), and if it does not, it names the local tile server that is not answering.
+- **Offline downloads no longer misjudge a locally-served map layer.** The check that runs before a download asked for a tile at the very corner of the world, which a regional map (Slovenia) simply does not contain, so a perfectly healthy layer served by OPS-TOC's local tile server would have been reported as failing. Now a locally-served layer is checked against **the tile server itself**: if it answers, the app tells you the tiles are already stored on the device (there is nothing to download), and if it does not, it names the local tile server that is not answering.
 - The pre-download check also now tests **a tile the download actually needs**, so a limited/regional layer can no longer produce a misleading failure.
 
 ## 2026.10.16.16
 
 ### Fixed
 
-- **Your MT/MC choice now survives a page reload.** Picking MeshCore in Chat and refreshing used to land back on Meshtastic. The cause was an internal guess: while one radio's status had not arrived yet, the app treated the other network as "not connected" and **saved** that guess over your choice — so every refresh went the same way. It now only reacts to a network that is confirmed absent, and never overwrites your choice with it. The Sense pill also shows the remembered network at load instead of always starting on MT.
-- **Tile downloads now say why they fail**, instead of only how many failed. One probe tile per download reports the actual reason: the provider rejected the key, it is rate-limiting you, or it blocks browser downloads (no CORS header) — the last one matters because such a layer still *displays* fine on the map while every download fails. Mid-download failures report the first reason too.
+- **Your MT/MC choice now survives a page reload.** Picking MeshCore in Chat and refreshing used to land back on Meshtastic. The cause was an internal guess: while one radio's status had not arrived yet, the app treated the other network as "not connected" and **saved** that guess over your choice, so every refresh went the same way. It now only reacts to a network that is confirmed absent, and never overwrites your choice with it. The Sense pill also shows the remembered network at load instead of always starting on MT.
+- **Tile downloads now say why they fail**, instead of only how many failed. One probe tile per download reports the actual reason: the provider rejected the key, it is rate-limiting you, or it blocks browser downloads (no CORS header). The last one matters because such a layer still *displays* fine on the map while every download fails. Mid-download failures report the first reason too.
 
 ## 2026.10.16.15
 
 ### Fixed
 
-- **Chat and Sense can no longer end up on different networks.** When a radio connects or disconnects, the MT/MC choice now moves *both* pills together. Before, the Sense side could switch on its own — leaving its pill highlighting a network the app was no longer on, and Chat disagreeing with it. Found in a bug sweep of everything shipped today.
+- **Chat and Sense can no longer end up on different networks.** When a radio connects or disconnects, the MT/MC choice now moves *both* pills together. Before, the Sense side could switch on its own, leaving its pill highlighting a network the app was no longer on, and Chat disagreeing with it. Found in a bug sweep of everything shipped today.
 
 ## 2026.10.16.14
 
 ### Changed
 
-- **History is kept by entry count again, not by age.** 1000 messages per Meshtastic radio, 2000 per MeshCore radio, 50 traceroutes and 150 in-app alerts — the limits that were always there. The 30-day rule now applies only to MeshCore **passive observations**, the one store that had no limit at all, and `app.log_retention_days` in the config sets that window (`0` keeps everything).
-- Measured for the record: one Meshtastic message costs ~416 bytes and one MeshCore message ~659 bytes on disk, so the 1000-entry limit is about 400 KB per radio — the space was never the constraint.
+- **History is kept by entry count again, not by age.** 1000 messages per Meshtastic radio, 2000 per MeshCore radio, 50 traceroutes and 150 in-app alerts, the limits that were always there. The 30-day rule now applies only to MeshCore **passive observations**, the one store that had no limit at all, and `app.log_retention_days` in the config sets that window (`0` keeps everything).
+- Measured for the record: one Meshtastic message costs ~416 bytes and one MeshCore message ~659 bytes on disk, so the 1000-entry limit is about 400 KB per radio. The space was never the constraint.
 
 ### Fixed
 
-- The first run of the 30-day rule this evening (VERSION 2026.10.16.13) deleted **931 Meshtastic messages** older than 30 days from the history. They are **not recoverable** — no backup of the message database exists — and this release makes sure the same rule can never touch message history again.
+- The first run of the 30-day rule this evening (VERSION 2026.10.16.13) deleted **931 Meshtastic messages** older than 30 days from the history. They are **not recoverable** (no backup of the message database exists), and this release makes sure the same rule can never touch message history again.
 
 ## 2026.10.16.13
 
@@ -131,7 +137,7 @@
 ### Fixed
 
 - On the Meshtastic side, **Sense Mesh** and **Active** now say why they do not work while Silent Running is on, with the same pop-up the MeshCore side uses ("Silent Running active…"), instead of doing nothing at all when clicked.
-- **Passive** sensing is deliberately left working while silent — it only listens. Switching **Active** off is also always allowed, so Silent Running cannot trap a radio in the mode that keeps broadcasting.
+- **Passive** sensing is deliberately left working while silent: it only listens. Switching **Active** off is also always allowed, so Silent Running cannot trap a radio in the mode that keeps broadcasting.
 
 ## 2026.10.16.11
 
@@ -147,7 +153,7 @@
 
 ### Changed
 
-- The map layer menu is grouped and ordered: the free maps first (OpenStreetMap, Esri Topo, Esri Streets, Esri Satellite, Esri Dark Gray, Esri Hillshade, OpenTopoMap), then the providers that need an API key, each under its own heading — Thunderforest, MapTiler, CARTO, Stadia Maps.
+- The map layer menu is grouped and ordered: the free maps first (OpenStreetMap, Esri Topo, Esri Streets, Esri Satellite, Esri Dark Gray, Esri Hillshade, OpenTopoMap), then the providers that need an API key, each under its own heading: Thunderforest, MapTiler, CARTO, Stadia Maps.
 - **Esri Topo is the new default layer.** It needs no API key. A layer you chose yourself is kept as it is.
 
 ### Fixed

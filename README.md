@@ -1,20 +1,16 @@
 # OverMesh
 
-**v2.0** — Meshtastic + MeshCore, unified.
+OverMesh is a self-hosted dashboard for Meshtastic and MeshCore radios. It runs on your own machine with your own radios. Everything stays local: no cloud, no account, no subscription.
 
-OverMesh is a self-hosted dashboard for Meshtastic and MeshCore. It runs on your own machine, uses your own radios, and keeps everything local, no cloud, no account, no subscription.
+Both networks live in the same app, with the same map, chat and node views.
 
-This is now the main active OverMesh app. Meshtastic and MeshCore are treated as two equal parts of one tool, not as separate side projects.
-
-> **Active development** This app is actively used and still changing. Expect a few rough edges.
+> **Active development.** I use OverMesh daily and it is still changing, so expect some rough edges.
 
 ---
 
 ## What OverMesh does
 
-OverMesh gives you one place to work with both networks. You can watch nodes on the map, use chat on either system, run Sense, manage radios and channels, use the bot, and bridge traffic between MT and MC when needed.
-
-The app is built around real use, not just setup screens. The idea is simple: one interface where you can actually watch the mesh, talk on it, and manage it.
+You can watch nodes on the map, chat on either network, run Sense, manage radios and channels, and use the bot, all from one browser tab.
 
 ---
 
@@ -35,8 +31,6 @@ The app is built around real use, not just setup screens. The idea is simple: on
 ---
 
 ## Main features
-
-OverMesh covers the main things you actually need in daily use: maps, chat, direct messages, multi-radio support, Sense, bot tools, settings, notifications, and offline map tiles.
 
 ### Meshtastic
 
@@ -76,7 +70,7 @@ OverMesh covers the main things you actually need in daily use: maps, chat, dire
 - Linux is the primary tested platform and the strongest target environment
 - at least one Meshtastic or MeshCore radio
 
-OverMesh is built first around practical Linux use, including Filip's cyberdeck workflow, but the app should stay reasonably usable on Windows and macOS too where the underlying radio tooling allows it.
+I run OverMesh mostly on Linux, including on my cyberdeck. It should also work on Windows and macOS, as far as the radio tooling there allows.
 
 ## Platform support
 
@@ -129,7 +123,7 @@ Then open `http://localhost:8082`. You can add radios from the UI in `Settings`.
 
 ### Windows
 
-1. Install Python 3.9 or newer from [python.org](https://www.python.org/downloads/) — check **Add Python to PATH** during install
+1. Install Python 3.9 or newer from [python.org](https://www.python.org/downloads/) and tick **Add Python to PATH** during install
 2. Clone or download this repo and open the folder in Command Prompt or PowerShell
 3. Set up the environment:
 
@@ -150,9 +144,9 @@ py app.py
 
 Then open `http://localhost:8082` and add your radios from Settings.
 
-For subsequent launches you can use `start-overmesh.bat` — it automatically uses the venv if present, or falls back to system Python.
+After that you can start it with `start-overmesh.bat`. It uses the venv if there is one, otherwise the system Python.
 
-> Serial ports on Windows appear as `COM3`, `COM4`, etc. — not `/dev/tty...` paths. Use Device Manager to find the right port for your radio.
+> On Windows, serial ports show up as `COM3`, `COM4` and so on, not as `/dev/tty...` paths. Device Manager shows which port your radio is on.
 
 ### macOS
 
@@ -202,47 +196,47 @@ If you only use one system, that is fine. If you use both, OverMesh keeps them t
 
 Key values include:
 
-- `nodes` — list of Meshtastic radios
-- `mc_nodes` — list of MeshCore radios
-- `port` — default `8082`
-- `host` — default `127.0.0.1` (localhost only). Set to `0.0.0.0` **only** if you want other devices on your network to reach this instance — see [Security](#security).
-- `app.zoom` — UI zoom level
-- `app.accent_color` — accent color hex
-- `sense_passive` — enable passive Sense logging
-- `sense_active_auto` — auto-run active Sense on connect
-- Cross-system forwarding was removed in 2026-10: it was parked and never enabled, so a stored `cross` key is now ignored
-- `bridge` — webhook, ingest, and MQTT bridge settings
-- `gps` — optional GPS receiver config (`enabled`, `port`); not included in the example config, disabled by default
+- `nodes`: list of Meshtastic radios
+- `mc_nodes`: list of MeshCore radios
+- `port`: default `8082`
+- `host`: default `127.0.0.1` (localhost only). Set it to `0.0.0.0` **only** if other devices on your network should reach this instance. See [Security](#security).
+- `app.zoom`: UI zoom level
+- `app.accent_color`: accent color hex
+- `sense_passive`: enable passive Sense logging
+- `sense_active_auto`: run active Sense automatically on connect
+- `bridge`: webhook, ingest and MQTT bridge settings
+- `gps`: optional GPS receiver (`enabled`, `port`). Not in the example config, off by default
+- Cross-system forwarding was removed in 2026-10 (it would have passed messages between MT and MC). It was never enabled, and a stored `cross` key is now ignored
 
 Environment variables override config file values:
 
-- `OVERMESH_CONFIG` — path to a custom config file
-- `OVERMESH_DATA_DIR` — directory for data files (DBs, etc.)
-- `OVERMESH_HOST` — bind host
-- `OVERMESH_PORT` — bind port
+- `OVERMESH_CONFIG`: path to a custom config file
+- `OVERMESH_DATA_DIR`: directory for data files (databases and so on)
+- `OVERMESH_HOST`: bind host
+- `OVERMESH_PORT`: bind port
 
 ---
 
 ## Security
 
-OverMesh can **send radio traffic** and **control its host service** (restart/shutdown). By default it binds to `127.0.0.1`, so only local users on the machine itself can reach it — that is the safe baseline.
+OverMesh can **send radio traffic** and **control its host service** (restart/shutdown). By default it binds to `127.0.0.1`, so only users on the machine itself can reach it. That is the safe default.
 
 ### If you make it reachable beyond this machine
 
-Set `host` to `0.0.0.0` in `config.json` (or `OVERMESH_HOST`). **Doing so exposes the full API — including RF send and service restart — to anyone who can reach the port.** Before you do:
+Set `host` to `0.0.0.0` in `config.json` (or `OVERMESH_HOST`). **That exposes the full API, including RF send and service restart, to anyone who can reach the port.** Before you do:
 
 1. **Enable the login.** Go to Settings → **Authentication**, set a username + password, and switch it on. Without this, *anyone* on your network can send messages over your radios and restart the instance.
 2. **Prefer a private network.** A Tailscale/VPN address is far safer than a raw port-forward on the public internet. If you must expose it publicly, put it behind a reverse proxy with TLS and strong auth.
-3. **Watch for the warning banner.** When the instance is bound beyond localhost **and** has no login, a red banner is shown at the top of every page — it disappears once you enable a password or bind back to `127.0.0.1`.
+3. **Watch for the warning banner.** When the instance is bound beyond localhost **and** has no login, a red banner shows at the top of every page. It goes away once you enable a password or bind back to `127.0.0.1`.
 
 ### Automating integrations (MQTT / Home Assistant / scripts)
 
 The **Bridge** (Settings → Bridge) is the supported way to let other systems talk to OverMesh:
 
-- **Inbound** (`POST /api/bridge/send`, lets an automation inject a message onto the mesh): disabled by default, and protected by a **token** you set in Settings → Bridge. Keep that token secret — it can transmit RF.
+- **Inbound** (`POST /api/bridge/send`, lets an automation put a message on the mesh): off by default, and protected by a **token** you set in Settings → Bridge. Keep that token secret, because it can transmit RF.
 - **Outbound webhooks** (mesh messages → your automation): OverMesh signs each POST with the `X-OverMesh-Secret` header when you configure a secret. Have the receiving endpoint verify it.
 
-The token/secret are the only credentials that cross network boundaries — the session login only protects the browser UI.
+The token and the secret are the only credentials that cross network boundaries. The session login only protects the browser UI.
 
 ---
 
@@ -261,7 +255,7 @@ systemctl --user daemon-reload
 systemctl --user enable --now overmesh.service
 ```
 
-> Do not `cp` the service file directly — the placeholders will not resolve and the service will fail to start.
+> Do not `cp` the service file as it is. The placeholders will not resolve and the service will fail to start.
 
 Logs:
 
@@ -282,13 +276,7 @@ This is a Linux convenience option. Windows and macOS users run it directly with
 
 ## Update log
 
-Recent work has moved OverMesh much closer to feeling like one real dual-network app instead of two uneven halves.
-
-The big changes were better MC support across the app, cleaner MT and MC UI parity, better heard-recently logic, in-app notifications, and per-channel history deletion on both systems.
-
-OverMesh is now clearly the MT plus MC app.
-
-If you want the short public summary, see `RELEASE_NOTES.md` in this repo.
+What changed in each release is in `RELEASE_NOTES.md`. The version scheme is explained in `VERSIONS.md`.
 
 If you are coming from the older OverMesh setup, see `MIGRATION.md`.
 
@@ -301,7 +289,7 @@ OverMesh has an app-wide accent color setting, so you can change the look withou
 ![OverMesh color variants](screenshots/om-colours.gif)
 *Example of the accent color applied across the app*
 
-For the background story behind the project, see `ABOUT.md`.
+How the project started is in `ABOUT.md`.
 
 ---
 

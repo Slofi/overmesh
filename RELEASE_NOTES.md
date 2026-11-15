@@ -1,5 +1,22 @@
 # OverMesh Release Notes
 
+## 2026.11.15.1
+
+### Added
+
+- **Refresh from radio, on the Nodes tab.** The MeshCore section header now has a button that re-reads the radio's own contact list and takes its word for it. A contact the radio no longer holds stops being listed as "radio" and shows as "app only" instead. Nothing is deleted by a refresh.
+- **The bot's replies now belong to the chat.** A MeshCore bot answer is written to the message archive, so it is still there after a reload or on a device that was switched off when the answer went out.
+
+### Changed
+
+- **MC activity rows say which channel a message came from.** Each chat row in the right hand panel carries a chip with the channel name, `CH n` when the channel has no name, or `DM` for a direct message. Every field the row had before is unchanged.
+- **Pinging is quicker.** The legacy status request (command 27) is not implemented by current companion firmware and was being tried first on every ping. OverMesh remembers that answer per radio and goes straight to the binary status request.
+
+### Fixed
+
+- **"Delete from this radio" no longer fails with `ERR_CODE_NOT_FOUND`.** That answer means the radio did not hold the contact any more, which is exactly what the button was asking for. OverMesh used to keep such a contact listed as "radio" because a background refresh never shrinks that list. It now reconciles the state and says so plainly; the record stays in OverMesh as app only.
+- **A leaked meshcore event task after a disconnect that timed out.** It showed up in the journal as `Task was destroyed but it is pending!`. The task is now cancelled explicitly whenever a radio is torn down, including after a failed connect.
+
 ## 2026.11.11.1
 
 ### Changed

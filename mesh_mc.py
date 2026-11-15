@@ -1201,8 +1201,9 @@ async def _mc_reboot_for_startup_rx_recovery(config_id, name, mc):
         log.warning(f"[MC:{name}] Startup RX watchdog firmware reboot failed: {e}")
     try:
         await mc.disconnect()
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning(f"[MC:{name}] watchdog disconnect failed: {e}")
+        _mc_stop_dispatcher(mc)
 
     now = time.time()
     with mc_connections_lock:
@@ -1220,6 +1221,41 @@ async def _mc_reboot_for_startup_rx_recovery(config_id, name, mc):
     })
 
 
+def _mc_stop_dispatcher(mc):
+    """Cancel a MeshCore dispatcher task that nobody is going to await.
+
+    meshcore's EventDispatcher.stop() cancels `_task` only AFTER `queue.join()`
+    returns. When the join does not finish (a slow in-flight RX callback is
+    enough), the disconnect coroutine is cancelled by its caller's timeout
+    before it ever reaches `_task.cancel()`, and the asyncio loop keeps a live
+    `EventDispatcher._process_events` task for an object nothing references any
+    more. CPython reports it at collection time as
+    "Task was destroyed but it is pending!" — the line seen on gandalf on
+    2026-11-09, 11-11 and 11-12. MeshCore.stop() does the cancel synchronously
+    and is a no-op once the dispatcher stopped cleanly, so it is the cheap
+    safety net after any failed or timed-out disconnect.
+    """
+    if mc is None:
+        return
+    try:
+        mc.stop()
+    except Exception as e:
+        log.warning(f"[MC] dispatcher stop after disconnect failed: {e}")
+
+
+def _mc_disconnect_safely(mc_obj, timeout=5, label=""):
+    """Bounded MC disconnect that always leaves no dispatcher task behind."""
+    if mc_obj is None:
+        return
+    who = f"[MC:{label}]" if label else "[MC]"
+    try:
+        run_mc(mc_obj.disconnect(), timeout=timeout)
+    except Exception as e:
+        log.warning(f"{who} disconnect failed ({e}); cancelling the dispatcher task")
+    finally:
+        _mc_stop_dispatcher(mc_obj)
+
+
 async def _force_close_meshcore(mc):
     """Close a MeshCore transport even if connect failed before normal state was set."""
     if mc is None:
@@ -1229,7 +1265,9 @@ async def _force_close_meshcore(mc):
     try:
         await mc.disconnect()
     except Exception:
-        pass
+        # Nothing else will await this dispatcher: cancel its task now or CPython
+        # reports it later as "Task was destroyed but it is pending!".
+        _mc_stop_dispatcher(mc)
     try:
         if connection is not None:
             await connection.disconnect()
@@ -1282,9 +1320,11 @@ async def _create_meshcore(connection, *, default_timeout=75.0):
     except BaseException:
         cleanup = asyncio.create_task(_force_close_meshcore(mc))
         try:
-            await asyncio.shield(cleanup)
+            # Bounded: a cleanup that hangs must not hang the connect attempt or
+            # leave the caller waiting forever on a dying transport.
+            await asyncio.wait_for(asyncio.shield(cleanup), timeout=5.0)
         except BaseException:
-            pass
+            _mc_stop_dispatcher(mc)
         raise
 
 
@@ -4239,6 +4279,10 @@ async def _set_contact_path_async(config_id, pubkey_prefix, hop_prefixes=None, c
 # Tracks in-flight background advert tasks per radio — prevents stacking.
 _advert_tasks: dict = {}
 _statusreq_tasks: dict = {}
+# Firmware that answered the legacy status request with ERR_CODE_NOT_FOUND does
+# not implement CMD 27 (MeshCore 1.18 companions). Remember that per radio so the
+# next ping skips the doomed attempt (see _mc_try_legacy_statusreq).
+_mc_legacy_statusreq_unsupported = set()
 
 
 async def _send_advert_async(config_id, flood=False):
@@ -4325,18 +4369,35 @@ def remove_mc_contact(config_id, pubkey_prefix, timeout=10):
 
 async def _remove_mc_radio_only_async(config_id, full_key):
     """Remove a contact from the DEVICE only (radio scope). OM's archive and
-    merged state keep the contact, so it stays visible as 'app only'."""
+    merged state keep the contact, so it stays visible as 'app only'.
+
+    ERR_CODE_NOT_FOUND from the device (error code 2) means the radio holds no
+    contact under that key. That is not a failure to report: it is the answer,
+    and it also proves OverMesh's live set was stale, because the contact was
+    listed as "radio". So the state is reconciled and the caller is told, rather
+    than showing Filip a device error he cannot act on (S504).
+    """
     mc, _ = _get_mc(config_id)
     result = await mc.commands.remove_contact(full_key)
-    if result is not None and getattr(result, "type", None) is not None \
-            and getattr(result.type, "name", None) == "ERROR":
-        raise RuntimeError(f"Device rejected contact removal: {getattr(result, 'payload', {})}")
+    rtype = getattr(getattr(result, "type", None), "name", None)
+    payload = getattr(result, "payload", {}) or {}
+    not_found = rtype == "ERROR" and (
+        payload.get("error_code") == 2 or payload.get("code_string") == "ERR_CODE_NOT_FOUND"
+    )
+    if rtype == "ERROR" and not not_found:
+        raise RuntimeError(f"Device rejected contact removal: {payload}")
     with mc_connections_lock:
         state = mc_connections.get(config_id, {})
         state.get("live_contacts", {}).pop(full_key, None)
         # 'contacts' (merged with archive) keeps the entry on purpose — the
         # contact still exists in OM and should list as app-only afterwards.
-    return result
+    if not_found:
+        log.info(
+            f"[MC:{config_id}] radio has no contact {full_key[:12]} any more "
+            f"(ERR_CODE_NOT_FOUND); OM state reconciled, contact is app-only now"
+        )
+        return {"ok": True, "reconciled": True, "reason": "not_on_radio"}
+    return {"ok": True, "reconciled": False}
 
 
 def remove_mc_contact_scoped(config_id, pubkey_prefix, scope="all", timeout=10):
@@ -4587,7 +4648,7 @@ async def _send_statusreq_async(config_id, pubkey_prefix):
     _statusreq_tasks[task_key] = task
 
 
-async def _get_contacts_async(config_id):
+async def _get_contacts_async(config_id, authoritative=False):
     mc, _ = _get_mc(config_id)
     r = await mc.commands.get_contacts()
     if r.type == EventType.CONTACTS:
@@ -4597,9 +4658,13 @@ async def _get_contacts_async(config_id):
                 new_contacts = r.payload or {}
                 old_contacts = mc_connections[config_id].get("contacts", {})
                 old_live_contacts = mc_connections[config_id].get("live_contacts", {})
-                # Don't overwrite a non-empty cache with an empty response —
-                # firmware occasionally returns 0 contacts on a stale/in-progress read.
-                if new_contacts or not old_live_contacts:
+                # A background poll keeps the previous live set when the answer
+                # is empty: firmware occasionally returns 0 contacts on a stale
+                # or in-progress read. An explicit refresh is different — the
+                # user asked the radio what it holds and an empty answer means
+                # it holds nothing, which is exactly how a contact the radio
+                # already purged stops being listed as "radio" (S504).
+                if authoritative or new_contacts or not old_live_contacts:
                     live_contacts = dict(new_contacts or {}) if new_contacts else {}
                     mc_connections[config_id]["live_contacts"] = live_contacts
                     mc_connections[config_id]["contacts"] = _merge_mc_contacts_with_archive(config_id, old_contacts, live_contacts)
@@ -4712,6 +4777,38 @@ def send_discover_req(config_id, tag=None, timeout=10):
 
 def refresh_contacts(config_id, timeout=10):
     return run_mc(_get_contacts_async(config_id), timeout=timeout)
+
+
+def refresh_contacts_authoritative(config_id, timeout=30):
+    """Re-read the radio's own contact list and treat that answer as the truth.
+
+    The background poll deliberately keeps the previous live set when firmware
+    answers with nothing, which is right for a poll and wrong for an explicit
+    refresh. That guard is why a contact the radio had already dropped (NVS
+    purge) kept being listed as "radio" in OverMesh, and why "Delete from this
+    radio" ended in ERR_CODE_NOT_FOUND from the device (S504).
+    """
+    with mc_connections_lock:
+        state = mc_connections.get(config_id) or {}
+        before_live = set((state.get("live_contacts") or {}).keys())
+    result = run_mc(_get_contacts_async(config_id, authoritative=True), timeout=timeout)
+    rtype = getattr(getattr(result, "type", None), "name", None)
+    if rtype != "CONTACTS":
+        raise RuntimeError(f"radio did not return a contact list ({rtype or 'no answer'})")
+    with mc_connections_lock:
+        state = mc_connections.get(config_id) or {}
+        live = set((state.get("live_contacts") or {}).keys())
+        merged = state.get("contacts") or {}
+    gone = sorted(before_live - live)
+    new = sorted(live - before_live)
+    return {
+        "on_radio": len(live),
+        "app_only": len([k for k in merged if k not in live]),
+        "gone_count": len(gone),
+        "new_count": len(new),
+        "gone": [k[:12] for k in gone[:20]],
+        "new": [k[:12] for k in new[:20]],
+    }
 
 
 def set_contact_path(config_id, pubkey_prefix, hop_prefixes=None, clear=False, path_hash_mode=None, timeout=15):
@@ -5521,25 +5618,17 @@ async def _remote_command_async(config_id, pubkey_prefix, command):
                 reply_task.cancel()
 
 
-async def _req_status_async(config_id, pubkey_prefix, prime_trace=False):
-    mc, _ = _get_mc(config_id)
-    with mc_connections_lock:
-        contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
-    full_key, contact = _resolve_mc_contact(contacts, pubkey_prefix)
-    force_flood = await _force_contact_flood_if_configured(mc, config_id, full_key, contact, "status request")
-    log.info(
-        f"[MC:{config_id}] req_status_sync starting for {pubkey_prefix[:12]} "
-        f"(full_key={full_key[:16]}..., out_path_len={contact.get('out_path_len')}, "
-        f"out_path={contact.get('out_path', '')!r}, type={contact.get('type')}, force_flood={force_flood})"
-    )
-    # No pre-advert: manual-only since 2026-10-16 (Filip, S453). This used to flood an advert
-    # and wait 2 s for it to propagate before every status request, so a remote that had
-    # rebooted would still have our pubkey (STATUS_RESPONSE is ECDH). Accepted consequence:
-    # if a multi-hop ping comes back empty, press Advert once, then ping again. Removing it
-    # also takes 2 s off every status request.
-    # First try the legacy companion protocol status request (CMD 27). The
-    # official protocol still documents it separately from binary requests, and
-    # some companion firmware builds may implement only this path reliably.
+async def _mc_try_legacy_statusreq(mc, config_id, full_key, contact, pubkey_prefix):
+    """One attempt at the legacy companion-protocol status request (CMD 27).
+
+    Returns the payload dict when the node answered, else None. Firmware that
+    does not implement CMD 27 answers ERR_CODE_NOT_FOUND; that answer is cached
+    per radio, so the following pings go straight to the binary request. That
+    saves a serial round trip per ping and keeps a misleading "ERROR" line out
+    of the journal: it never meant the node was unreachable.
+    """
+    if config_id in _mc_legacy_statusreq_unsupported:
+        return None
     try:
         legacy_req = b"\x1b" + bytes.fromhex(full_key)
         sent = await mc.commands.send(legacy_req, [EventType.MSG_SENT, EventType.ERROR])
@@ -5583,9 +5672,39 @@ async def _req_status_async(config_id, pubkey_prefix, prime_trace=False):
                     f"rssi={legacy_rx.payload.get('rssi')}, snr={legacy_rx.payload.get('snr')})"
                 )
         elif sent.type == EventType.ERROR:
-            log.warning(f"[MC:{config_id}] legacy statusreq error for {pubkey_prefix[:12]}: {sent.payload}")
+            payload = getattr(sent, "payload", {}) or {}
+            if payload.get("error_code") == 2 or payload.get("code_string") == "ERR_CODE_NOT_FOUND":
+                _mc_legacy_statusreq_unsupported.add(config_id)
+                log.info(
+                    f"[MC:{config_id}] legacy statusreq is not implemented by this firmware "
+                    f"({payload.get('code_string', 'ERR_CODE_NOT_FOUND')}) - using the binary request from now on"
+                )
+            else:
+                log.warning(f"[MC:{config_id}] legacy statusreq error for {pubkey_prefix[:12]}: {payload}")
     except Exception as e:
         log.warning(f"[MC:{config_id}] legacy statusreq failed for {pubkey_prefix[:12]}: {e}")
+    return None
+
+
+async def _req_status_async(config_id, pubkey_prefix, prime_trace=False):
+    mc, _ = _get_mc(config_id)
+    with mc_connections_lock:
+        contacts = dict(mc_connections.get(config_id, {}).get("contacts", {}))
+    full_key, contact = _resolve_mc_contact(contacts, pubkey_prefix)
+    force_flood = await _force_contact_flood_if_configured(mc, config_id, full_key, contact, "status request")
+    log.info(
+        f"[MC:{config_id}] req_status_sync starting for {pubkey_prefix[:12]} "
+        f"(full_key={full_key[:16]}..., out_path_len={contact.get('out_path_len')}, "
+        f"out_path={contact.get('out_path', '')!r}, type={contact.get('type')}, force_flood={force_flood})"
+    )
+    # No pre-advert: manual-only since 2026-10-16 (Filip, S453). This used to flood an advert
+    # and wait 2 s for it to propagate before every status request, so a remote that had
+    # rebooted would still have our pubkey (STATUS_RESPONSE is ECDH). Accepted consequence:
+    # if a multi-hop ping comes back empty, press Advert once, then ping again. Removing it
+    # also takes 2 s off every status request.
+    legacy_payload = await _mc_try_legacy_statusreq(mc, config_id, full_key, contact, pubkey_prefix)
+    if legacy_payload is not None:
+        return legacy_payload
 
     log.info(f"[MC:{config_id}] falling back to binary req_status_sync for {pubkey_prefix[:12]}")
     if prime_trace and not force_flood:
@@ -5834,10 +5953,7 @@ def reboot_device_dtr(config_id):
     import serial as _serial
     # Disconnect MC gracefully to free the serial port
     if mc_obj:
-        try:
-            run_mc(mc_obj.disconnect(), timeout=5)
-        except Exception:
-            pass
+        _mc_disconnect_safely(mc_obj, timeout=5, label=config_id)
     # Mark disconnected explicitly — on_disconnected may not fire on graceful disconnect,
     # so the reconnect loop would never re-trigger without this.
     with mc_connections_lock:
@@ -5862,11 +5978,8 @@ def disconnect_all_mc():
     with mc_connections_lock:
         items = [(cid, v.get("mc")) for cid, v in mc_connections.items() if v.get("mc")]
     for config_id, mc_obj in items:
-        try:
-            run_mc(mc_obj.disconnect(), timeout=5)
-            log.info(f"[MC:{config_id}] disconnected cleanly on shutdown")
-        except Exception as e:
-            log.warning(f"[MC:{config_id}] disconnect on shutdown failed: {e}")
+        _mc_disconnect_safely(mc_obj, timeout=5, label=config_id)
+        log.info(f"[MC:{config_id}] disconnected on shutdown")
 
 
 def get_channels(config_id, count=8, timeout=30):

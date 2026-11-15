@@ -3159,13 +3159,16 @@ if (targetEl) {
       .then(r => r.json()).then(d => {
         if (d.error) { showAlert(d.error); return; }
         if (leafletMap) { try { leafletMap.closePopup(); } catch(e) {} }
-        if (mcContacts[t.radioId]) {
+        // "Only from this radio" keeps the record in OverMesh, listed as app only:
+        // dropping the local row here made it disappear until the next refresh.
+        if (scope !== 'radio' && mcContacts[t.radioId]) {
           delete mcContacts[t.radioId][t.id];
           Object.entries(mcContacts[t.radioId]).forEach(([key, c]) => {
             if (c?.id === t.id || c?.full_key === t.id) delete mcContacts[t.radioId][key];
           });
+          mcIgnored.delete(t.id);
         }
-        mcIgnored.delete(t.id);
+        if (d.note) showToast('Contact removal', escHtml(d.note), 'message', 'mc-contact-removed');
         renderLive();
         if (currentView === 'history') loadHistory();
         renderMcMapMarkers();
@@ -3175,6 +3178,31 @@ if (targetEl) {
         _refreshMcContactsForNotification(t.radioId).then(() => { renderLive(); })
           .catch(() => { renderLive(); });
       }).catch(e => console.error('deleteMcContact failed:', e));
+  }
+
+  // Explicit reconcile with the radio: re-read its own contact list and say what
+  // changed. The background poll never shrinks the live set (an empty read keeps
+  // the old one), so a contact the radio purged kept showing as "radio" and
+  // "Delete from this radio" failed with ERR_CODE_NOT_FOUND (Filip, S504).
+  async function refreshMcContactsFromRadio() {
+    const rid = activeMcRadioId;
+    if (!rid) { showAlert('Select an MC radio first.'); return; }
+    if ((mcLastStatus[rid] || {}).status !== 'connected') { showAlert('That MC radio is not connected.'); return; }
+    try {
+      const r = await fetch(BASE_PATH + `/api/mc/${encodeURIComponent(rid)}/contacts/refresh`, {method: 'POST'});
+      const d = await r.json();
+      if (!r.ok || d.error) { showAlert(d.error || 'Contact refresh failed.'); return; }
+      await _refreshMcContactsForNotification(rid).catch(() => {});
+      renderLive();
+      renderMcMapMarkers();
+      if (pipOpen) updatePipMarkers(allNodes);
+      const bits = [`${d.on_radio} on the radio`, `${d.app_only} app only`];
+      if (d.gone_count) bits.push(`${d.gone_count} no longer on the radio`);
+      if (d.new_count) bits.push(`${d.new_count} new`);
+      showToast('Contacts refreshed', escHtml(bits.join(' · ')), 'message', 'mc-contacts-refresh');
+    } catch (e) {
+      showAlert('Contact refresh failed: ' + ((e && e.message) || e));
+    }
   }
 
   function toggleMcShowIgnored() {
@@ -3589,7 +3617,7 @@ if (targetEl) {
           ? [...mcFiltered.filter(c => mcFavs[c.id || c.full_key]), ...mcFiltered.filter(c => !mcFavs[c.id || c.full_key])]
           : mcFiltered;
       }
-      tbody.innerHTML += `<tr><td colspan="13" style="padding:3px 8px;font-size:11px;font-weight:600;color:var(--mc-color);background:rgba(56,189,248,0.07);border-top:1px solid rgba(56,189,248,0.25)">MeshCore</td></tr>`;
+      tbody.innerHTML += `<tr><td colspan="13" style="padding:3px 8px;font-size:11px;font-weight:600;color:var(--mc-color);background:rgba(56,189,248,0.07);border-top:1px solid rgba(56,189,248,0.25)"><span style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span>MeshCore</span><button class="act-btn" style="font-weight:500" onclick="refreshMcContactsFromRadio()" title="Re-read the radio's own contact list. Contacts the radio no longer holds stop being listed as radio; nothing is deleted here.">Refresh from radio</button></span></td></tr>`;
       tbody.innerHTML += mcSorted.map(c => {
         const cid    = c.id || c.full_key || '';
         const isFav  = !!mcFavs[cid];
@@ -15823,6 +15851,7 @@ if (targetEl) {
           onmouseleave="_mcLogHover(${e._i},false)">
           <span style="color:var(--muted)">${_mcLogTs(e)}</span>
           <span style="margin-left:4px;font-weight:600">${escHtml(e.name)}</span>
+          <span class="mc-route-badge" title="${e.subtype === 'dm' ? 'Direct message' : 'MC channel ' + escHtml(String(e.channel ?? 0))}">${escHtml(e.chanName || (e.subtype === 'dm' ? 'DM' : ('CH ' + (e.channel ?? 0))))}</span>
           ${hopMeta ? `<span class="mc-route-badge${Number(e.hopLen) === 0 ? ' direct' : ''}" title="${escHtml(hopMeta.detail)}">${escHtml(_mcMessageRouteLabel(hopMeta.label, e))}</span>` : ''}
           ${byteHtml}${altHtml}${confHtml}
           ${showQ ? `<span title="Route source" style="margin-left:4px;font-size:9px;color:${qColor};background:${qBg};border:1px solid ${qBorder};border-radius:3px;padding:0 3px">${q}</span>` : ''}
@@ -16891,6 +16920,13 @@ if (targetEl) {
     // Channel messages (from_id='?') don't carry a sender pubkey in the MC protocol.
     // Try a name-based fallback: extract "Name: message" prefix and match against known contacts.
     const isChanAnon = !data.from_id || data.from_id === '?';
+    // Which channel this arrived on: the panel used to drop it, so a channel
+    // message and a DM read the same in the activity log (Filip, S504).
+    const msgSubtype = data.subtype === 'dm' ? 'dm' : 'channel';
+    const msgChannel = data.channel ?? 0;
+    const msgChanName = msgSubtype === 'dm'
+      ? 'DM'
+      : ((typeof mcKnownChannels !== 'undefined' && mcKnownChannels[msgChannel]) || ('CH ' + msgChannel));
     const cached = !isChanAnon && data.radio_id ? (mcContacts[data.radio_id] || {})[data.from_id] : null;
     let realContact = _mcResolveMessageContact(data);
     if (realContact && realContact.latitude == null && realContact.lat == null) realContact = cached || realContact;
@@ -16938,6 +16974,8 @@ if (targetEl) {
       msgId: data.id || null,
       radioId: data.radio_id,
       channel: data.channel ?? 0,
+      subtype: msgSubtype,
+      chanName: msgChanName,
       fromId: data.from_id,
       lat,
       lon,

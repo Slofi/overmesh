@@ -9,7 +9,7 @@ import time
 from datetime import datetime
 
 from config import CONFIG, DATA_DIR
-from db import save_message
+from db import save_message, save_mc_message
 from helpers import (
     _next_msg_id, push_to_sse,
     _radio_id_for_iface,
@@ -811,8 +811,49 @@ def send_mc_bot_response(config_id, text, chan_idx, dest_pre=None, reply_delay=F
         return False
 
 
+def _mc_radio_name(config_id):
+    for node in CONFIG.get("mc_nodes", []) or []:
+        if node.get("id") == config_id:
+            return node.get("name") or config_id
+    return config_id
+
+
+def store_mc_bot_reply(config_id, text, chan_idx, dest_pre=None, to_name=None):
+    """Persist a bot reply in the MC message archive, so a reload shows it.
+
+    Until S504 (2026-11-15) the reply left the server only as an SSE event: it
+    lived in the browser that happened to be listening and nowhere else. A
+    client that was off when the answer was sent never saw it, and any reload
+    dropped it. The row is written with the same shape the send routes use, so
+    `/api/mc/<radio>/messages` returns it on a fresh load.
+    """
+    msg = {
+        "type":       "mc_message",
+        "radio_id":   config_id,
+        "radio_name": _mc_radio_name(config_id),
+        "network":    "mc",
+        "subtype":    "dm" if dest_pre else "channel",
+        "channel":    chan_idx if chan_idx is not None else 0,
+        "from_id":    "bot",
+        "from_name":  "Bot",
+        "text":       text,
+        "ts":         int(time.time()),
+        "sent":       True,
+        "status":     "delivered",
+    }
+    if dest_pre:
+        msg["to_id"] = dest_pre
+        msg["to_name"] = to_name
+    try:
+        save_mc_message(msg)
+    except Exception as e:
+        log.warning(f"[MCBot:{config_id}] could not store bot reply: {e}")
+    return msg
+
+
 def send_and_record_mc_bot_response(config_id, text, chan_idx, dest_pre=None, to_name=None, cmd=""):
     if send_mc_bot_response(config_id, text, chan_idx, dest_pre, reply_delay=True):
+        store_mc_bot_reply(config_id, text, chan_idx, dest_pre, to_name)
         push_to_sse({
             "type": "mc_bot_reply",
             "radio_id": config_id,

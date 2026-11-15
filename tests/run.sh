@@ -36,6 +36,7 @@ node tests/test_mc_scope_none_ui.js
 node tests/test_om_position_source.js
 node tests/test_settings_layout.js
 node tests/test_mc_alt_paths.js
+node tests/test_mc_activity_channel.js
 node tests/test_mc_event_path_gap.js
 node tests/test_mc_alt_pin_sweep.js
 node tests/test_mc_hop_title_cost.js

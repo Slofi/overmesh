@@ -20,6 +20,7 @@ from config import CONFIG, CONFIG_LOCK, save_config
 from helpers import _as_bool, push_to_sse
 from mesh_mc import (MC_PAYLOAD_TYPE_NAMES, MC_ROUTE_TYPE_NAMES,
                      send_chan_msg, send_dm, send_advert, refresh_contacts,
+                     refresh_contacts_authoritative,
                      get_device_info, set_radio_params, set_tx_power,
                      set_device_name, set_device_coords, set_advert_loc_policy,
                      reboot_device, reboot_device_dtr, get_channels, set_channel,
@@ -404,6 +405,25 @@ def api_mc_contacts(radio_id):
     return jsonify({"contacts": contacts, "radio_id": radio_id})
 
 
+@bp.route("/api/mc/<radio_id>/contacts/refresh", methods=["POST"])
+def api_mc_contacts_refresh(radio_id):
+    """Re-read the radio's own contact list and report what changed (S504).
+
+    Explicit and authoritative: unlike the background poll, an empty answer is
+    accepted as the truth (the radio holds nothing), which is what makes a
+    contact the radio already dropped stop being listed as "radio". Nothing is
+    deleted: contacts the radio does not have stay in OverMesh as "app only".
+    """
+    try:
+        report = refresh_contacts_authoritative(radio_id)
+        return jsonify({"ok": True, **report})
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 503
+    except Exception as e:
+        log.warning(f"[MC] contacts refresh {radio_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @bp.route("/api/mc/<radio_id>/contacts/<contact_id>", methods=["DELETE"])
 def api_mc_delete_contact(radio_id, contact_id):
     """Remove a contact, scoped by ?scope=all|app|radio.
@@ -416,8 +436,15 @@ def api_mc_delete_contact(radio_id, contact_id):
     if scope not in ("all", "app", "radio"):
         return jsonify({"error": f"invalid scope: {scope} (use all|app|radio)"}), 400
     try:
-        remove_mc_contact_scoped(radio_id, contact_id, scope=scope)
-        return jsonify({"ok": True, "scope": scope})
+        result = remove_mc_contact_scoped(radio_id, contact_id, scope=scope)
+        payload = {"ok": True, "scope": scope}
+        if isinstance(result, dict) and result.get("reconciled"):
+            # The radio answered ERR_CODE_NOT_FOUND: it never had this contact,
+            # so OM's live state was stale. Say so plainly instead of failing.
+            payload["reconciled"] = True
+            payload["note"] = ("This radio did not have that contact any more. "
+                               "OverMesh updated its state; the contact stays listed as app only.")
+        return jsonify(payload)
     except ValueError as e:
         return jsonify({"error": str(e)}), 404
     except RuntimeError as e:

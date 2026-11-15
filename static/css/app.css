@@ -963,8 +963,18 @@
       white-space: nowrap;
     }
     .act-btn:hover { border-color: var(--accent); color: var(--accent); }
-    .node-actions { white-space: nowrap; }
-    .node-actions .act-btn + .act-btn { margin-left: 3px; }
+    /* 2026-11-15 (S508): the row's action buttons WRAP instead of forcing the table wider than the
+       window. At a wide window they stay on one line (flex-wrap only wraps when it must) with the
+       same 3 px spacing; on a 14" screen or a narrow window they take a second line, which is what
+       makes the whole Nodes table fit without a cut-off last column. */
+    .node-actions {
+      white-space: normal;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 3px;
+    }
+    .node-actions .act-btn + .act-btn { margin-left: 0; }   /* the flex gap is the spacing now */
 
     /* Info modal table */
     .info-table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -2084,6 +2094,87 @@
     }
     #pip-trace-btn:hover, #pip-trace-btn.on { color: var(--accent); }
     #pip-map-el { flex: 1; min-height: 0; }
+
+    /* ── Fit the window (2026-11-15, S508): every width above the 640 px mobile query ───────────
+       Filip, on the Cyberdeck's 14" panel (1920x1200): "the nodes screen is not fitting on it".
+       Above 640 px there was NO width handling at all. The Nodes table is width:100% with
+       `td { white-space: nowrap }`, so its MIN-CONTENT width won: the long action-button row, an
+       uncapped Note and an unbounded Name column pushed the table past the panel, and the last
+       column (Mute / Remove) fell off the right edge with no way to reach it (no scroll container
+       outside the 640 px query). Three parts, no behaviour change:
+         1. the row's action buttons wrap (see .node-actions, above) - the biggest single win;
+         2. the Name and Note columns get a ceiling and ellipsise, so the table can shrink;
+         3. the table area can always scroll sideways as a last resort instead of overflowing. */
+    /* #content is a flex column, and a flex item defaults to min-width:auto: the panel grew to the
+       TABLE's min-content width (measured 1454 px at a 1280 window) instead of letting the scroll
+       container below do its job, so the PAGE scrolled sideways. min-width:0 on the panel and on the
+       scroll containers is what keeps the overflow inside the panel. */
+    /* body is a grid with one IMPLICIT column: an auto column is sized by its items' max-content, so
+       #content grew with the table and the page scrolled sideways. Pinning the single column to the
+       window width is what makes every panel below obey the width it is given. */
+    body { grid-template-columns: minmax(0, 1fr); }
+    #content > .panel { min-width: 0; }
+    #live-view, #history-view { overflow-x: auto; min-width: 0; }
+    #live-view table, #history-view table { width: 100%; }
+
+    /* Name: it already ellipsises (.name-cell-title), but it had no ceiling, so the table handed it
+       everything it asked for and squeezed the Short chip and the two icon buttons into clipping. */
+    #live-table > thead > tr > th:nth-child(2),
+    #live-table > tbody > tr > td:nth-child(2),
+    #history-table > thead > tr > th:nth-child(2),
+    #history-table > tbody > tr > td:nth-child(2) { max-width: 420px; }
+
+    /* Note: two lines of it fit a cell, the rest ellipsises (the cell opens the note editor). */
+    .notes-cell { max-width: 220px; }
+    .notes-cell .note-text,
+    .notes-cell .note-placeholder {
+      display: inline-block; max-width: 190px; vertical-align: bottom;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+
+    /* The last column is two 13 px icon buttons: keep it as narrow as its content so it is never the
+       column that gets clipped (it is the only way to ignore or remove a row). */
+    #live-table > thead > tr > th:last-child,
+    #live-table > tbody > tr > td:last-child { white-space: nowrap; width: 1%; }
+
+    /* The top bar is the other thing that outgrows a narrow window: measured, its content needs about
+       1190 px, so at 1024 the header itself was pushing the page 390 px sideways (the table was inside
+       its own scroll container by then). Two steps down, in the order that loses the least:
+         - the timestamp goes first (the Refresh button stays, and the read-out is also in the tooltip);
+         - then the tabs drop to their own line, exactly as the mobile query already does. */
+    @media (max-width: 1300px) {
+      #last-updated { display: none; }
+      #radio-selector .radio-btn, #mc-radio-selector .radio-btn { padding: 2px 6px; }
+    }
+    @media (max-width: 1300px) {
+      body { grid-template-rows: auto 1fr; }
+      #header { height: auto; min-height: 48px; flex-wrap: wrap; row-gap: 4px; padding: 6px 10px; }
+      .tabs { order: 10; width: 100%; }
+      .tab { flex: 1; text-align: center; }
+      .header-sep { display: none; }
+    }
+
+    /* The Nodes toolbar's own control row is a flex container that could not wrap: measured, it needs
+       1342 px, so a 1280 or 1024 window pushed the whole page sideways by 62 px. The toolbar above it
+       already wraps; this makes its contents do the same (the inline style sets display/gap only). */
+    #live-controls, #history-controls { flex-wrap: wrap; row-gap: 6px; }
+
+    /* Between the mobile query and a full desktop window the table still has to lose width: the Name
+       column gives way first (it ellipsises anyway), then the notes, then the cell padding. Measured
+       at 1366x768 with every row carrying "Add to radio": 1531 px before, about 1190 after, so a
+       normal laptop width fits without scrolling sideways. */
+    @media (max-width: 1530px) {
+      #live-table > thead > tr > th:nth-child(2),
+      #live-table > tbody > tr > td:nth-child(2),
+      #history-table > thead > tr > th:nth-child(2),
+      #history-table > tbody > tr > td:nth-child(2) { max-width: 240px; }
+      .notes-cell { max-width: 150px; }
+      .notes-cell .note-text, .notes-cell .note-placeholder { max-width: 120px; }
+      #live-table > thead > tr > th, #live-table > tbody > tr > td,
+      #history-table > thead > tr > th, #history-table > tbody > tr > td {
+        padding-left: 8px; padding-right: 8px;
+      }
+    }
 
     /* ── Mobile (≤640px) ─────────────────────────────────────────────────── */
     @media (max-width: 640px) {

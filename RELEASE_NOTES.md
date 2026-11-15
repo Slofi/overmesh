@@ -1,5 +1,12 @@
 # OverMesh Release Notes
 
+## 2026.11.15.2
+
+### Changed
+
+- **Choosing a path in the MC activity popup is a selection, not a hover.** Clicking an alternate copy now keeps its line on the map after the pointer leaves it, and the block you picked stays highlighted and says it is on the map.
+- **The alternate list starts with a Main path entry.** Click it to go back and the drawn line returns to the message's own path. Until now, hovering an alternate and moving away also wiped the main path, which made the popup feel like the map had lost the message.
+
 ## 2026.11.15.1
 
 ### Added

@@ -1,5 +1,11 @@
 # OverMesh Release Notes
 
+## 2026.11.15.4
+
+### Changed
+
+- **The MT Sense response log keeps its history.** Running Sense Mesh used to wipe the log and leave a "Listening…" line, so everything the previous run heard was gone. A run now adds a marker line with its start time, and the new responses stack above the old ones. The same packet is still never listed twice, and the log still stops at 200 rows.
+
 ## 2026.11.15.3
 
 ### Fixed

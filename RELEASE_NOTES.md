@@ -1,5 +1,13 @@
 # OverMesh Release Notes
 
+## 2026.11.15.5
+
+### Fixed
+
+- **The Nodes screen fits the window now.** On a 1920-wide screen the table needed 1956 px, so the last column (Mute / Remove) was cut off at the right edge with no way to reach it; at smaller windows the whole page slid sideways. The row's action buttons wrap onto a second line when they must, the Name and Note columns have a ceiling and ellipsise, and the table scrolls inside its own panel instead of pushing the page. Measured before and after at 1920: 1956 -> 1885 px, 35 px to spare.
+- **The top bar no longer drags the page wide.** Under 1300 px the Updated stamp hides, the Nodes toolbar's controls wrap, and the tabs move to their own line under the logo.
+
+
 ## 2026.11.15.4
 
 ### Changed

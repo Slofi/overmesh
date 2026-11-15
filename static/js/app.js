@@ -16224,35 +16224,86 @@ if (targetEl) {
   }
 
   // The path a given received copy travelled, built with the same decoder the
-  // primary path uses. Null when the copy carries no usable geometry.
+  // primary path uses. Null when the copy carries no usable geometry at all.
+  //
+  // A copy used to need BOTH the sender position and our own position, and
+  // returned nothing otherwise. That is why clicking a copy with 4 alternates
+  // drew nothing while the main path was on the map: the main path comes from
+  // the entry's stored result and does not need the endpoints (Filip, S504).
+  // A copy now falls back to the relay chain it does know, labelled as such.
   function _mcAltCopyPathResult(entry, copy) {
     if (!entry || !copy) return null;
     const endpointLat = entry.lat ?? null;
     const endpointLon = entry.lon ?? null;
-    if (endpointLat == null || endpointLon == null) return null;
     const [radioLat, radioLon] = _mcSenseRadioPos(entry.radioId);
-    const pathResult = decodeMcEventPath({
-      path: copy.path,
-      path_len: copy.path_len,
-      path_hash_mode: copy.path_hash_mode,
-      path_hash_size: copy.path_hash_size,
-    }, endpointLat, endpointLon, radioLat, radioLon, entry.radioId);
-    if (!pathResult) return null;
-    // Incoming message: MeshCore stores the path as received, and the map is
-    // drawn sender -> relays -> us (the same reversal the primary path uses).
-    const reversed = pathResult.points ? _mcReversePathResult(pathResult) : pathResult;
-    if (!reversed?.points) return null;
-    // The reverse step keeps the gap list as it was built. Re-index it for the
-    // reversed point array so the map still stops at a hop with no position.
-    const lastIdx = reversed.points.length - 1;
-    const gapAfterPoints = [...new Set((pathResult.gapAfterPoints || [])
-      .map(i => lastIdx - i - 1)
-      .filter(i => i >= 0 && i < lastIdx))];
+    const hasEndpoints = endpointLat != null && endpointLon != null;
+    if (hasEndpoints) {
+      const pathResult = decodeMcEventPath({
+        path: copy.path,
+        path_len: copy.path_len,
+        path_hash_mode: copy.path_hash_mode,
+        path_hash_size: copy.path_hash_size,
+      }, endpointLat, endpointLon, radioLat, radioLon, entry.radioId);
+      if (pathResult?.points) {
+        // Incoming message: MeshCore stores the path as received, and the map is
+        // drawn sender -> relays -> us (the same reversal the primary path uses).
+        const reversed = _mcReversePathResult(pathResult);
+        if (reversed?.points) {
+          // The reverse step keeps the gap list as it was built. Re-index it for
+          // the reversed point array so the map still stops at a hop with no
+          // position.
+          const lastIdx = reversed.points.length - 1;
+          const gapAfterPoints = [...new Set((pathResult.gapAfterPoints || [])
+            .map(i => lastIdx - i - 1)
+            .filter(i => i >= 0 && i < lastIdx))];
+          return {
+            ...reversed,
+            kind: 'message',
+            gapAfterPoints,
+            unresolvedHops: pathResult.unresolvedHops || 0,
+          };
+        }
+      }
+    }
+    return _mcAltCopyRelayChain(entry, copy, radioLat, radioLon);
+  }
+
+  // What is left when the endpoints are unknown: the resolved repeaters of this
+  // copy, in the order the packet collected them. Honest, labelled, and better
+  // than a click that appears to do nothing.
+  function _mcAltCopyRelayChain(entry, copy, radioLat, radioLon) {
+    const hashBytes = Number(copy?.path_hash_size ?? (copy?.path_hash_mode != null ? Number(copy.path_hash_mode) + 1 : 0));
+    const charsPerHop = (Number.isFinite(hashBytes) && hashBytes > 0 ? hashBytes : 2) * 2;
+    const raw = String(copy?.path || '').toLowerCase();
+    const declared = Number(copy?.path_len);
+    const hopCount = Number.isFinite(declared) && declared >= 0 && declared !== 255
+      ? declared
+      : Math.floor(raw.length / charsPerHop);
+    if (!hopCount || !raw) return null;
+    const senderLat = entry?.lat ?? null;
+    const senderLon = entry?.lon ?? null;
+    const points = [];
+    let unresolved = 0;
+    for (let i = 0; i < hopCount; i++) {
+      const hash = raw.slice(i * charsPerHop, (i + 1) * charsPerHop);
+      if (!hash) break;
+      const resolution = _mcPickPathHopResolution(
+        hash, entry?.radioId, radioLat, radioLon, senderLat, senderLon, i, hopCount, { requireGps: false }
+      );
+      const contact = resolution?.contact || findMcContactByKeyPrefix(hash, entry?.radioId);
+      const lat = contact?.latitude ?? contact?.lat;
+      const lon = contact?.longitude ?? contact?.lon;
+      if (lat != null && lon != null) points.push([lat, lon]);
+      else unresolved += 1;
+    }
+    if (points.length < 2) return null;
     return {
-      ...reversed,
+      points,
       kind: 'message',
-      gapAfterPoints,
-      unresolvedHops: pathResult.unresolvedHops || 0,
+      partial: true,
+      relayChainOnly: true,
+      unresolvedHops: unresolved,
+      warningText: 'Relay chain only: the sender or our own position is unknown, so this copy is drawn from its repeaters alone.',
     };
   }
 
@@ -16261,6 +16312,9 @@ if (targetEl) {
   function _mcAltCopyStatusText(pathResult) {
     if (!pathResult?.points?.length) return '';
     const parts = ['Shown on map'];
+    if (pathResult.relayChainOnly) {
+      parts.push('relay chain only, no sender or own position');
+    }
     const unknown = Number(pathResult.unresolvedHops) || 0;
     if (unknown) {
       parts.push(`${unknown} hop${unknown !== 1 ? 's' : ''} with no known position ${unknown === 1 ? 'is' : 'are'} not drawn`);
@@ -16275,9 +16329,11 @@ if (targetEl) {
   }
 
   function _mcAltCopyNoPathText(entry) {
-    if (entry?.lat == null || entry?.lon == null) return 'Not shown on map: this message has no sender position.';
     const [radioLat] = _mcSenseRadioPos(entry?.radioId);
-    if (radioLat == null) return 'Not shown on map: our radio has no position.';
+    const noSender = entry?.lat == null || entry?.lon == null;
+    if (noSender && radioLat == null) return 'Not shown on map: neither this message nor our radio has a known position.';
+    if (noSender) return 'Not shown on map: this message has no sender position, and fewer than two of its repeaters are known.';
+    if (radioLat == null) return 'Not shown on map: our radio has no position, and fewer than two of this copy\'s repeaters are known.';
     return 'Not shown on map: no hop in this copy matched a known position.';
   }
 
@@ -16418,9 +16474,16 @@ if (targetEl) {
       return;
     }
     const pathResult = _mcShowAltCopyPath(here.idx, copyIdx, here.domIdx);
+    if (!pathResult) {
+      // Nothing could be drawn for this copy: do not keep it as the selection, or
+      // hovering it again would hit the "already pinned" path and stay silent.
+      _mcAltPathPinned = null;
+      _mcSetAltCopyActive(here.domIdx, -1);
+      return;
+    }
     _mcSetAltCopyActive(here.domIdx, copyIdx);
     // A tap should put the whole copy in view, not only draw it off screen.
-    if (pathResult?.points?.length >= 2 && leafletMap && typeof L.latLngBounds === 'function') {
+    if (pathResult.points?.length >= 2 && leafletMap && typeof L.latLngBounds === 'function') {
       leafletMap.fitBounds(L.latLngBounds(pathResult.points), { padding: [40, 40], maxZoom: 14 });
     }
   }

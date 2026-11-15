@@ -22030,7 +22030,11 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
         c.style.opacity = '0.6';
         c.dataset.run = _senseRunId - 1;
       });
-      document.getElementById('sense-log').innerHTML = '<span id="sense-log-empty" style="color:var(--muted)">Listening…</span>';
+      // Keep the log across runs (Filip, S504). It used to be wiped here and
+      // replaced with a "Listening…" placeholder, which threw away the previous
+      // run's responses. Rows are deduped by packet key, so appending is safe;
+      // the marker says where the new run starts.
+      senseMarkRunStart();
       document.getElementById('sense-summary').style.display = 'none';
       document.getElementById('sense-stat-responses').textContent = '0';
       document.getElementById('sense-stat-gps').textContent = '0';
@@ -22111,6 +22115,21 @@ async function doMcStatusReq(pubkeyPrefix, radioId, name) {
       const _nodesContainer = document.getElementById('sense-nodes');
       if (_nodesContainer) _nodesContainer.prepend(card);
     }
+  }
+
+  // Marks where a new Sense run starts without touching what is already in the
+  // log (Filip, S504: "change it, so it doesnt clear, just add the new responses
+  // to it"). New rows are prepended, so the marker goes on top of the old ones.
+  function senseMarkRunStart() {
+    const log = document.getElementById('sense-log');
+    if (!log) return;
+    const empty = document.getElementById('sense-log-empty');
+    if (empty) empty.remove();
+    const mark = document.createElement('div');
+    mark.className = 'sense-run-mark';
+    mark.style.cssText = 'color:var(--muted);font-style:italic;font-size:10px;padding:2px 0 3px 6px;border-bottom:1px dashed var(--border)';
+    mark.textContent = `Sense run ${_formatAppTime(new Date(), { seconds: true })} · listening…`;
+    log.prepend(mark);
   }
 
   // Add a log entry for node n. Used by senseAddNode (live) and _restoreSenseState (rebuild).

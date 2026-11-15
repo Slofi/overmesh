@@ -38,6 +38,7 @@ node tests/test_settings_layout.js
 node tests/test_mc_alt_paths.js
 node tests/test_mc_alt_select_persist.js
 node tests/test_mc_alt_copy_fallback.js
+node tests/test_mt_sense_log_keeps_history.js
 node tests/test_mc_activity_channel.js
 node tests/test_mc_event_path_gap.js
 node tests/test_mc_alt_pin_sweep.js

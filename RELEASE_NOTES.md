@@ -1,5 +1,12 @@
 # OverMesh Release Notes
 
+## 2026.11.15.3
+
+### Fixed
+
+- **An alternate copy now draws even when its ends are unknown.** A copy used to need both the sender's position and our own radio's position before it could be drawn, so clicking one appeared to do nothing while the main path stayed on the map. When an end is missing the copy is now drawn from the repeaters it did record, and the line says relay chain only.
+- **A click that cannot draw anything no longer stays silent.** The block reports what was missing, and the failed pick is not remembered, so tapping it again retries instead of doing nothing.
+
 ## 2026.11.15.2
 
 ### Changed

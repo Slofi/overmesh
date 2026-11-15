@@ -15935,6 +15935,14 @@ if (targetEl) {
 
   function _mcAltPinIndex() {
     if (!_mcAltPathPinned) return -1;
+    // Resolve by the entry's uid, not by object identity: a later packet for the
+    // same message re-creates the entry object ({...old, ...new}), so an identity
+    // lookup failed and every hover-leave cleared the map (Filip, S504).
+    const uid = _mcAltPathPinned.uid;
+    if (uid) {
+      const byUid = _mcSenseLogEntries.findIndex(e => _mcEntryUid(e) === uid);
+      if (byUid >= 0) return byUid;
+    }
     return _mcSenseLogEntries.indexOf(_mcAltPathPinned.entry);
   }
 
@@ -16164,6 +16172,25 @@ if (targetEl) {
     if (!copies.length) return '';
     const total = Array.isArray(entry?.rx_copies) ? entry.rx_copies.length : copies.length + 1;
     const entryUid = _mcEntryUid(entry);
+    // The main path is the message's own copy (the one drawn when the row is
+    // clicked). Listing it here makes the choice explicit: clicking an alternate
+    // and then this block returns the map to the main line, and whichever is
+    // picked stays until another is picked (Filip, S504).
+    const mainHops = entry?.hopLen != null && Number(entry.hopLen) >= 0 ? mcPathHopLabel(Number(entry.hopLen)) : null;
+    const mainMeta = [mainHops, 'the path shown at the top of this popup'].filter(Boolean).join(' · ');
+    const mainBlock = `<div class="mc-alt-copy" role="button" tabindex="0"
+        data-entry-idx="${entryIdx}" data-copy-idx="-1" data-entry-uid="${escHtml(entryUid)}"
+        title="Hover or tap to draw the main path for this message"
+        onmouseenter="_mcAltCopyHover(event,${entryIdx},-1,true)"
+        onmouseleave="_mcAltCopyHover(event,${entryIdx},-1,false)"
+        onclick="_mcAltCopyClick(event,${entryIdx},-1)"
+        onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();_mcAltCopyClick(event,${entryIdx},-1);}">
+        <div class="mc-alt-copy-head">
+          <span class="mc-alt-copy-title">Main path</span>
+          <span class="mc-alt-copy-meta">${escHtml(mainMeta)}</span>
+        </div>
+        <div class="mc-alt-copy-status" id="mc-alt-copy-status-${entryIdx}-main" aria-live="polite"></div>
+      </div>`;
     const groups = copies.map((copy, i) => {
       const hops = copy.path_len != null ? mcPathHopLabel(Number(copy.path_len)) : 'unknown hops';
       const bytes = copy.path_hash_size != null ? `${copy.path_hash_size}B/hop` : null;
@@ -16192,7 +16219,7 @@ if (targetEl) {
     }).join('');
     return `<details class="mc-hop-details mc-alt-paths" id="mc-alt-paths-${entryIdx}">
       <summary>Alternate paths (${copies.length})</summary>
-      <div class="mc-hop-list">${groups}</div>
+      <div class="mc-hop-list">${mainBlock}${groups}</div>
     </details>`;
   }
 
@@ -16309,22 +16336,69 @@ if (targetEl) {
   // Hover is a preview. Leaving restores a pinned copy if one exists, otherwise
   // it clears the map. A finger has no hover, so the click below does the same
   // job and then keeps the path.
+  // Draw the message's MAIN path (the copy shown at the top of the popup) and
+  // say so in the alternate list. This is the "back to the main" choice: the
+  // alternate blocks and the main path are one selection, so whichever is
+  // clicked stays on the map until another is clicked (Filip, S504).
+  function _mcShowMainPathForEntry(entryIdx, domIdx = entryIdx) {
+    const entry = _mcSenseLogEntries[entryIdx];
+    if (!entry) return null;
+    _mcClearAltCopyStatuses();
+    if (!leafletMap) return null;
+    let pathToShow = _mcFreshPath(entry);
+    if (!pathToShow || (pathToShow.points?.length || 0) < 2) pathToShow = null;
+    const [radioLat, radioLon] = _mcSenseRadioPos(entry.radioId);
+    if (!pathToShow && entry.lat != null && entry.lon != null && radioLat != null) {
+      pathToShow = { points: [[radioLat, radioLon], [entry.lat, entry.lon]], flood: true };
+    }
+    if (!pathToShow) {
+      showMcHoverPath(null, false);
+      _mcSetAltCopyStatus(domIdx, 'main', 'Not shown on map: no usable path for this message.');
+      _mcSetAltCopyActive(domIdx, -1);
+      return null;
+    }
+    showMcHoverPath(pathToShow, true);
+    _mcSetAltCopyStatus(domIdx, 'main', 'Shown on map');
+    _mcSetAltCopyActive(domIdx, -1);
+    return pathToShow;
+  }
+
+  // copyIdx === -1 is the MAIN path block; a real index is an alternate copy.
+  // Hover is still a preview, but leaving always restores whatever is selected:
+  // a pinned copy, or the main path of the pinned message. Before this, leaving
+  // a copy wiped the map entirely, which is what Filip saw as "the main path is
+  // gone after that" (S504).
   function _mcAltCopyHover(ev, entryIdx, copyIdx, on) {
     const here = _mcAltEntryArg(entryIdx, ev);
     if (!here.entry || here.idx < 0) return;
     if (on) {
-      if (_mcAltPathPinned?.entry === here.entry && _mcAltPathPinned?.copyIdx === copyIdx) return;
-      _mcShowAltCopyPath(here.idx, copyIdx, here.domIdx);
+      const pinnedSame = _mcAltPathPinned
+        && (_mcEntryUid(_mcAltPathPinned.entry) === _mcEntryUid(here.entry))
+        && _mcAltPathPinned.copyIdx === copyIdx;
+      if (pinnedSame) return;
+      if (copyIdx === -1) _mcShowMainPathForEntry(here.idx, here.domIdx);
+      else _mcShowAltCopyPath(here.idx, copyIdx, here.domIdx);
       return;
     }
     const pinIdx = _mcAltPinIndex();
-    if (pinIdx >= 0) {
-      _mcShowAltCopyPath(pinIdx, _mcAltPathPinned.copyIdx, _mcAltPathPinned.domIdx);
-      _mcSetAltCopyActive(_mcAltPathPinned.domIdx, _mcAltPathPinned.copyIdx);
-    } else {
-      showMcHoverPath(null, false);
-      _mcSetAltCopyStatus(here.domIdx, copyIdx, '');
+    if (pinIdx >= 0 && _mcAltPathPinned) {
+      if (_mcAltPathPinned.copyIdx === -1) {
+        _mcShowMainPathForEntry(pinIdx, _mcAltPathPinned.domIdx);
+      } else {
+        _mcShowAltCopyPath(pinIdx, _mcAltPathPinned.copyIdx, _mcAltPathPinned.domIdx);
+        _mcSetAltCopyActive(_mcAltPathPinned.domIdx, _mcAltPathPinned.copyIdx);
+      }
+      return;
     }
+    if (_mcLogPinnedIdx !== null && _mcSenseLogEntries[_mcLogPinnedIdx]) {
+      // The message is pinned but no alternate is: main path is the selection.
+      const mainIdx = _mcLogPinnedIdx;
+      const mainDom = _mcEntryUid(_mcSenseLogEntries[mainIdx]) === _mcEntryUid(here.entry) ? here.domIdx : mainIdx;
+      _mcShowMainPathForEntry(mainIdx, mainDom);
+      return;
+    }
+    showMcHoverPath(null, false);
+    _mcSetAltCopyStatus(here.domIdx, copyIdx, '');
   }
 
   function _mcAltCopyClick(ev, entryIdx, copyIdx) {
@@ -16335,7 +16409,14 @@ if (targetEl) {
     const entry = here.entry;
     if (!entry || here.idx < 0) return;
     _mcLogPinnedIdx = here.idx;
-    _mcAltPathPinned = { entry, copyIdx, domIdx: here.domIdx };
+    _mcAltPathPinned = { entry, uid: _mcEntryUid(entry), copyIdx, domIdx: here.domIdx };
+    if (copyIdx === -1) {
+      const mainPath = _mcShowMainPathForEntry(here.idx, here.domIdx);
+      if (mainPath?.points?.length >= 2 && leafletMap && typeof L.latLngBounds === 'function') {
+        leafletMap.fitBounds(L.latLngBounds(mainPath.points), { padding: [40, 40], maxZoom: 14 });
+      }
+      return;
+    }
     const pathResult = _mcShowAltCopyPath(here.idx, copyIdx, here.domIdx);
     _mcSetAltCopyActive(here.domIdx, copyIdx);
     // A tap should put the whole copy in view, not only draw it off screen.
@@ -16362,7 +16443,7 @@ if (targetEl) {
     const copy = _mcAltPathCopies(entry)[copyIdx];
     if (!copy) return;
     _mcLogPinnedIdx = here.idx;
-    _mcAltPathPinned = { entry, copyIdx, domIdx: here.domIdx };
+    _mcAltPathPinned = { entry, uid: _mcEntryUid(entry), copyIdx, domIdx: here.domIdx };
     _mcShowAltCopyPath(here.idx, copyIdx, here.domIdx);
     _mcSetAltCopyActive(here.domIdx, copyIdx);
     const { hash, chars } = _mcAltCopyHashAt(copy, hopIdx);
@@ -16577,6 +16658,12 @@ if (targetEl) {
     }
     // Open detail panel
     _showLogEntryDetail(entry);
+    // Say which path the map is showing. With alternates listed, the main path is
+    // one choice among them, and it must read as selected after a row click.
+    if (pathToShow) {
+      _mcSetAltCopyStatus(idx, 'main', 'Shown on map');
+      _mcSetAltCopyActive(idx, -1);
+    }
     renderMcSenseLog();
   }
 
@@ -16599,12 +16686,16 @@ if (targetEl) {
         if (pathToShow?.points?.length >= 2) showMcHoverPath(pathToShow, true);
         _showLogEntryDetail(refreshed);
         const pinIdx = _mcAltPinIndex();
-        if (pinIdx >= 0 && _mcSenseLogEntries[pinIdx] === refreshed) {
+        if (pinIdx >= 0 && _mcAltPathPinned) {
           // The panel was just rebuilt for this index, so the stamped index is
-          // the current one again.
+          // the current one again. copyIdx -1 is the main path.
           _mcAltPathPinned.domIdx = pinIdx;
-          _mcShowAltCopyPath(pinIdx, _mcAltPathPinned.copyIdx, pinIdx);
-          _mcSetAltCopyActive(pinIdx, _mcAltPathPinned.copyIdx);
+          if (_mcAltPathPinned.copyIdx === -1) {
+            _mcShowMainPathForEntry(pinIdx, pinIdx);
+          } else {
+            _mcShowAltCopyPath(pinIdx, _mcAltPathPinned.copyIdx, pinIdx);
+            _mcSetAltCopyActive(pinIdx, _mcAltPathPinned.copyIdx);
+          }
         }
       }
       renderMcSenseLog();

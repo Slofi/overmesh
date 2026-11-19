@@ -1,5 +1,15 @@
 # OverMesh Release Notes
 
+## 2026.11.19.1
+
+### Fixed
+
+- **A MeshCore path with a shared repeater hash now picks the repeater that fits the route.** Two repeaters can share the same 2-byte hash (for example SI-LJ-Trnovo II in Ljubljana and Dioniso near Pordenone both use `86a8`). The map and the bot's hop list used to pick each hop on its own, so a path could jump to Italy and back. The whole path is now resolved as one route from our radio: the chain with the shortest believable legs wins, and hops with only one match stay as they are. A path with a hop we have no position for falls back to the old rule.
+
+### Changed
+
+- **The hop list shows each leg's distance** ("leg 41 km"), so a real detour through a far repeater reads as one.
+
 ## 2026.11.15.5
 
 ### Fixed

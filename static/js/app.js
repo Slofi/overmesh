@@ -14835,6 +14835,17 @@ if (targetEl) {
   const MC_PATH_SOFT_BEARING_DELTA_DEG = 55;
   const MC_PATH_HARD_BEARING_DELTA_DEG = 105;
   const MC_PATH_STALE_REMOTE_KM = 120;
+  // Whole-route resolution (S514, EST-460). Same rule as bot.py
+  // (_mc_resolve_path_contacts): a 2-byte hash can name two repeaters 150 km
+  // apart (86a8 Ljubljana / Pordenone). Ranking each hop alone against a
+  // straight line collapses without a sender position and never checks that
+  // two consecutive hops are within radio range. Cost = leg km + a strong
+  // penalty per leg over the longest believable LoRa link + anchors to our
+  // radio and the sender. Real SLO mountain links reach 60-80 km, hence 80.
+  // Keep these three in step with bot.py.
+  const MC_PATH_MAX_LINK_KM = 80;
+  const MC_PATH_LINK_PENALTY_KM = 500;
+  const MC_PATH_AMBIGUOUS_MARGIN_KM = 12;
 
   function _mcPathDirectKm(lat1, lon1, lat2, lon2) {
     if (lat1 == null || lon1 == null || lat2 == null || lon2 == null) return Number.POSITIVE_INFINITY;
@@ -14858,6 +14869,153 @@ if (targetEl) {
     const a = _mcPathDirectKm(radioLat, radioLon, lat, lon);
     const b = _mcPathDirectKm(lat, lon, endpointLat, endpointLon);
     return Math.max(a, b);
+  }
+
+  function _mcPathContactLatLon(contact) {
+    const lat = contact?.latitude ?? contact?.lat;
+    const lon = contact?.longitude ?? contact?.lon;
+    if (lat == null || lon == null) return null;
+    return [Number(lat), Number(lon)];
+  }
+
+  function _mcPathLinkCostKm(a, b) {
+    if (!a || !b) return 0;
+    const km = _mcPathDirectKm(a[0], a[1], b[0], b[1]);
+    if (!Number.isFinite(km)) return 0;
+    return km > MC_PATH_MAX_LINK_KM
+      ? km + MC_PATH_LINK_PENALTY_KM + (km - MC_PATH_MAX_LINK_KM) * 4
+      : km;
+  }
+
+  // Resolve the whole path at once. `hashes` is in draw order: hashes[0] is
+  // the hop nearest startLat/Lon (normally our radio) and the last hash is
+  // nearest endLat/Lon (the sender, when its position is known). Returns one
+  // resolution per hash (same shape as _mcPickPathHopResolution), or null
+  // when any hop has no positioned candidate so the caller can fall back to
+  // the old per-hop behaviour untouched.
+  function _mcResolveWholePath(hashes, radioId, startLat, startLon, endLat, endLon) {
+    if (!Array.isArray(hashes) || !hashes.length) return null;
+    const lists = [];
+    const meta = [];
+    for (const hashHex of hashes) {
+      const hash = String(hashHex || '').toLowerCase();
+      const allMatches = hash ? findMcContactsByKeyPrefix(hash, radioId) : [];
+      const repeaters = allMatches.filter(c => (c.type ?? 0) === 2);
+      const pool = repeaters.length ? repeaters : allMatches;
+      const seen = new Set();
+      const positioned = [];
+      for (const contact of pool) {
+        const ll = _mcPathContactLatLon(contact);
+        if (!ll) continue;
+        const key = String(contact.id || contact.full_key || contact.public_key || '').toLowerCase();
+        if (key && seen.has(key)) continue;
+        if (key) seen.add(key);
+        positioned.push({ contact, ll });
+      }
+      if (!positioned.length) return null;
+      lists.push(positioned);
+      meta.push({
+        hash,
+        hashBytes: Math.max(1, Math.min(3, Math.ceil(hash.length / 2))),
+        matchCount: allMatches.length,
+        selectedCount: positioned.length,
+      });
+    }
+    const n = lists.length;
+    const start = (startLat != null && startLon != null) ? [Number(startLat), Number(startLon)] : null;
+    const end = (endLat != null && endLon != null) ? [Number(endLat), Number(endLon)] : null;
+
+    const costs = [];
+    const prevs = [];
+    costs.push(lists[0].map(c => _mcPathLinkCostKm(start, c.ll)));
+    prevs.push(lists[0].map(() => null));
+    for (let k = 1; k < n; k++) {
+      const row = [];
+      const prow = [];
+      for (let j = 0; j < lists[k].length; j++) {
+        let best = Number.POSITIVE_INFINITY;
+        let bestI = 0;
+        for (let i = 0; i < lists[k - 1].length; i++) {
+          const total = costs[k - 1][i] + _mcPathLinkCostKm(lists[k - 1][i].ll, lists[k][j].ll);
+          if (total < best) { best = total; bestI = i; }
+        }
+        row.push(best);
+        prow.push(bestI);
+      }
+      costs.push(row);
+      prevs.push(prow);
+    }
+
+    const suffix = lists.map(list => list.map(() => 0));
+    for (let j = 0; j < lists[n - 1].length; j++) {
+      suffix[n - 1][j] = _mcPathLinkCostKm(lists[n - 1][j].ll, end);
+    }
+    for (let k = n - 2; k >= 0; k--) {
+      for (let j = 0; j < lists[k].length; j++) {
+        let best = Number.POSITIVE_INFINITY;
+        for (let m = 0; m < lists[k + 1].length; m++) {
+          const total = _mcPathLinkCostKm(lists[k][j].ll, lists[k + 1][m].ll) + suffix[k + 1][m];
+          if (total < best) best = total;
+        }
+        suffix[k][j] = best;
+      }
+    }
+
+    let bestJ = 0;
+    let bestTotal = Number.POSITIVE_INFINITY;
+    for (let j = 0; j < lists[n - 1].length; j++) {
+      const total = costs[n - 1][j] + suffix[n - 1][j];
+      if (total < bestTotal) { bestTotal = total; bestJ = j; }
+    }
+    const chosen = new Array(n);
+    chosen[n - 1] = bestJ;
+    for (let k = n - 1; k > 0; k--) chosen[k - 1] = prevs[k][chosen[k]];
+
+    return lists.map((list, k) => {
+      let altGap = null;
+      if (list.length > 1) {
+        for (let a = 0; a < list.length; a++) {
+          if (a === chosen[k]) continue;
+          const gap = costs[k][a] + suffix[k][a] - bestTotal;
+          if (altGap == null || gap < altGap) altGap = gap;
+        }
+      }
+      const ambiguous = altGap != null && altGap < MC_PATH_AMBIGUOUS_MARGIN_KM;
+      const info = meta[k];
+      const scoreGap = ambiguous ? 0 : Math.min(20, altGap == null ? 20 : Math.max(0, altGap));
+      return {
+        contact: list[chosen[k]].contact,
+        hash: info.hash,
+        hashBytes: info.hashBytes,
+        matchCount: info.matchCount,
+        selectedCount: info.selectedCount,
+        ambiguous,
+        confidence: _mcPathConfidence(info.hashBytes, info.matchCount, info.selectedCount, scoreGap, ambiguous),
+        scoreGap,
+        alternatives: list
+          .map((entry, a) => ({
+            id: entry.contact.id || entry.contact.full_key || '',
+            name: entry.contact.long_name || entry.contact.name || entry.contact.id || '',
+            score: -(costs[k][a] + suffix[k][a]),
+          }))
+          .filter((_, a) => a !== chosen[k])
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 3),
+      };
+    });
+  }
+
+  function _mcAnnotateHopLegs(hops, points) {
+    if (!Array.isArray(hops) || !Array.isArray(points)) return hops;
+    for (const hop of hops) {
+      const idx = Number(hop?.pointIndex);
+      if (!Number.isInteger(idx) || idx <= 0 || idx >= points.length) continue;
+      const a = points[idx - 1];
+      const b = points[idx];
+      const km = _mcPathDirectKm(a?.[0], a?.[1], b?.[0], b?.[1]);
+      if (Number.isFinite(km)) hop.legKm = km;
+    }
+    return hops;
   }
 
   function _mcPathBearingDeg(lat1, lon1, lat2, lon2) {
@@ -15093,7 +15251,8 @@ if (targetEl) {
       ? `<span style="margin-left:4px;color:#f59e0b;font-size:9px">${escHtml(confidence)}</span>`
       : '';
     const title = hop.matchCount && hop.matchCount > 1 ? ` title="${escHtml(`${hop.matchCount} hash matches; ${confidence || 'resolved'}`)}"` : '';
-    return `<span class="mc-hop-prefix"${title}>${escHtml(hop.hash || '?')}</span>${escHtml(hop.name || '?')}${suffix}`;
+    const leg = Number.isFinite(hop.legKm) ? `<span style="margin-left:4px;color:var(--muted);font-size:9px">${escHtml(_distanceLabel(hop.legKm))}</span>` : '';
+    return `<span class="mc-hop-prefix"${title}>${escHtml(hop.hash || '?')}</span>${escHtml(hop.name || '?')}${leg}${suffix}`;
   }
 
   function _mcPathLengthKm(points) {
@@ -15186,20 +15345,26 @@ if (targetEl) {
     let partial = false;
     if (radioLat != null && radioLon != null) points.push([radioLat, radioLon]);
 
+    const hashList = [];
     for (let i = 0; i < hopCount; i++) {
       const hashHex = pathHex.slice(i * hashChars, (i + 1) * hashChars);
       if (!hashHex || hashHex.replace(/0/g, '') === '') break;
-      const hopResolution = _mcPickPathHopResolution(hashHex, radioId, radioLat, radioLon, cLat, cLon, i, hopCount);
+      hashList.push(hashHex);
+    }
+    const whole = _mcResolveWholePath(hashList, radioId, radioLat, radioLon, cLat, cLon);
+    hashList.forEach((hashHex, i) => {
+      const hopResolution = whole ? whole[i] : _mcPickPathHopResolution(hashHex, radioId, radioLat, radioLon, cLat, cLon, i, hopCount);
       const hopContact = hopResolution?.contact || null;
-      if (!hopContact) { partial = true; continue; }  // unknown repeater — skip, draw partial
+      if (!hopContact) { partial = true; return; }  // unknown repeater — skip, draw partial
       const hLat = hopContact.latitude ?? hopContact.lat;
       const hLon = hopContact.longitude ?? hopContact.lon;
-      if (hLat == null || hLon == null) { partial = true; continue; }
+      if (hLat == null || hLon == null) { partial = true; return; }
       points.push([hLat, hLon]);
       hops.push(_mcPathHopMeta(hashHex, hopContact, points.length - 1, hopResolution));
       if (hopResolution?.ambiguous) partial = true;
-    }
+    });
     points.push([cLat, cLon]);
+    _mcAnnotateHopLegs(hops, points);
     return points.length >= 2 ? { points, partial, hops } : null;
   }
 
@@ -15230,8 +15395,9 @@ if (targetEl) {
       // segment to suppress, and recording it as gap 0 would cut the line
       // between the first known relay and the endpoint: a real segment.
       const addGap = () => { if (points.length) gapAfterPoints.push(points.length - 1); };
+      const whole = _mcResolveWholePath(hashes, radioId, radioLat, radioLon, endpointLat, endpointLon);
       hashes.forEach((hashHex, i) => {
-        const hopResolution = _mcPickPathHopResolution(hashHex, radioId, radioLat, radioLon, endpointLat, endpointLon, i, hashes.length);
+        const hopResolution = whole ? whole[i] : _mcPickPathHopResolution(hashHex, radioId, radioLat, radioLon, endpointLat, endpointLon, i, hashes.length);
         const hopContact = hopResolution?.contact || null;
         if (!hopContact) {
           partial = true;
@@ -15252,6 +15418,7 @@ if (targetEl) {
         if (hopResolution?.ambiguous) partial = true;
       });
       points.push([endpointLat, endpointLon]);
+      _mcAnnotateHopLegs(hops, points);
       // gapAfterPoints marks a segment that spans a hop with no known position.
       // The map must not draw a straight line across it: that would put the
       // packet where no relay is known to be.
@@ -15310,8 +15477,9 @@ if (targetEl) {
         const points = [[radioLat, radioLon]];
         const hops = [];
         let unresolved = 0;
+        const whole = _mcResolveWholePath(hashes, radioId, radioLat, radioLon, null, null);
         hashes.forEach((hashHex, i) => {
-          const hopResolution = _mcPickPathHopResolution(hashHex, radioId, radioLat, radioLon, null, null, i, hashes.length);
+          const hopResolution = whole ? whole[i] : _mcPickPathHopResolution(hashHex, radioId, radioLat, radioLon, null, null, i, hashes.length);
           const hopContact = hopResolution?.contact || null;
           if (!hopContact) { unresolved++; return; }
           const hLat = hopContact.latitude ?? hopContact.lat;
@@ -15322,6 +15490,7 @@ if (targetEl) {
           if (hopResolution?.ambiguous) unresolved += 0.5;
         });
         if (points.length < 2) return null;
+        _mcAnnotateHopLegs(hops, points);
         const progressPenalty = _mcRelayProgressPenalty(points);
         const score = (hops.length * 100) - (unresolved * 20) - (Math.abs(hopCount - hops.length) * 12) - (progressPenalty * 10);
         return {
@@ -16853,7 +17022,8 @@ if (targetEl) {
       const meta = [
         fullId,
         conf,
-        point ? `${Number(point[0]).toFixed(5)}, ${Number(point[1]).toFixed(5)}` : 'no GPS'
+        point ? `${Number(point[0]).toFixed(5)}, ${Number(point[1]).toFixed(5)}` : 'no GPS',
+        Number.isFinite(hop.legKm) ? `leg ${_distanceLabel(hop.legKm)}` : null
       ].filter(Boolean).join(' · ');
       rows.push(`<button class="mc-hop-focus" ${point ? '' : 'disabled'} title="${point ? 'Center map on this hop/RPTR' : 'This hop has no resolved GPS position'}"
         onclick="event.stopPropagation();_mcFocusLogHop(${entryIdx},${idx})">

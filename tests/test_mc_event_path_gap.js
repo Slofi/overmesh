@@ -41,6 +41,8 @@ const code = [
   extract('decodeMcEventPath'),
   extract('_mcExplicitPathHashSize'),
   extract('_mcPathHopMeta'),
+  'function _mcResolveWholePath() { return null; }',
+  'function _mcAnnotateHopLegs(h) { return h; }',
   // The geometry score needs the real map maths. Prefer the as-received build
   // so the test pins the exact ordering: the decoder tries both orders, and
   // build() must be right for whichever one it is asked to build.

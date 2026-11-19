@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -745,8 +746,207 @@ def _mc_contacts_by_prefix(config_id, prefix):
     return matches
 
 
-def _mc_resolve_hop_contact(config_id, hop_hash):
+# Whole-route path resolution (S514, EST-460). A 2-byte hash can name two
+# repeaters 150 km apart (86a8: Ljubljana + Pordenone). Resolving each hop on
+# its own, by recency, is how Dioniso ended up in a bot reply on the mesh.
+# The same rule lives in static/js/app.js (_mcResolveWholePath) so the map and
+# the bot cannot disagree: a small Viterbi over the whole path, cost = leg km +
+# a strong penalty per leg over the maximum believable LoRa link + anchors to
+# the sender and to our radio. Real SLO mountain links in the measured data
+# reach 60-80 km, hence 80 km; 500 km-equivalent makes an over-long leg a last
+# resort, never a tie-break. Keep the two constants in step with app.js.
+MC_PATH_MAX_LINK_KM = 80.0
+MC_PATH_LINK_PENALTY_KM = 500.0
+MC_PATH_AMBIGUOUS_MARGIN_KM = 12.0
+
+
+def _mc_contact_latlon(contact):
+    """(lat, lon) from a stored contact, or (None, None). 0/0 means no fix."""
+    for lat_key, lon_key in (("adv_lat", "adv_lon"), ("latitude", "longitude")):
+        lat = (contact or {}).get(lat_key)
+        lon = (contact or {}).get(lon_key)
+        if lat is None or lon is None:
+            continue
+        try:
+            lat, lon = float(lat), float(lon)
+        except (TypeError, ValueError):
+            continue
+        if lat == 0.0 and lon == 0.0:
+            continue
+        return lat, lon
+    return None, None
+
+
+def _mc_distance_km(lat1, lon1, lat2, lon2):
+    if None in (lat1, lon1, lat2, lon2):
+        return None
+    r = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _mc_own_position(config_id):
+    from state import mc_connections, mc_connections_lock
+    with mc_connections_lock:
+        conn = mc_connections.get(config_id, {})
+        node = dict(conn.get("node_info") or {})
+    return _mc_contact_latlon(node)
+
+
+def _mc_sender_position(config_id, msg):
+    prefix = str((msg or {}).get("pubkey_prefix") or (msg or {}).get("pubkey_pre") or "").lower()
+    if not prefix:
+        return None, None
+    matches = _mc_contacts_by_prefix(config_id, prefix)
+    matches = sorted(matches, key=lambda c: _mc_contact_seen_ts(c), reverse=True)
+    for contact in matches:
+        lat, lon = _mc_contact_latlon(contact)
+        if lat is not None:
+            return lat, lon
+    return None, None
+
+
+def _mc_hop_candidates(config_id, hop_hash):
+    """(all matches, positioned candidates, repeaters-first)."""
     matches = _mc_contacts_by_prefix(config_id, hop_hash)
+    repeaters = []
+    for contact in matches:
+        try:
+            contact_type = int(contact.get("type") or 0)
+        except (TypeError, ValueError):
+            contact_type = 0
+        if contact_type == 2:
+            repeaters.append(contact)
+    pool = repeaters or matches
+    positioned = []
+    seen = set()
+    for contact in pool:
+        lat, lon = _mc_contact_latlon(contact)
+        if lat is None:
+            continue
+        key = _mc_contact_key(contact).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        positioned.append(contact)
+    return matches, positioned
+
+
+def _mc_link_cost_km(a, b):
+    """Distance plus the over-long-leg penalty; a and b are (lat, lon)."""
+    if not a or not b:
+        return 0.0
+    km = _mc_distance_km(a[0], a[1], b[0], b[1])
+    if km is None:
+        return 0.0
+    if km > MC_PATH_MAX_LINK_KM:
+        return km + MC_PATH_LINK_PENALTY_KM + (km - MC_PATH_MAX_LINK_KM) * 4.0
+    return km
+
+
+def _mc_resolve_path_contacts(config_id, hop_hashes, start_pos, end_pos):
+    """Resolve the WHOLE path with the shared Viterbi rule.
+
+    hop_hashes are in travel order: hop 0 is next to start_pos (the sender in
+    an as-received MC path), the last hop is next to end_pos (our radio).
+    Returns one dict per hop, or None when any hop has no positioned candidate
+    (the caller then falls back to the old per-hop behaviour, exactly as
+    before). Hops with one candidate are fixed cost-only points.
+    """
+    if not hop_hashes:
+        return None
+    per_hop = []
+    meta = []
+    for hop_hash in hop_hashes:
+        matches, positioned = _mc_hop_candidates(config_id, hop_hash)
+        if not positioned:
+            return None
+        per_hop.append(positioned)
+        meta.append((len(matches), len(positioned)))
+    n = len(per_hop)
+    pos = [[_mc_contact_latlon(c) for c in cands] for cands in per_hop]
+
+    costs = []          # costs[k][j] = cheapest cost from start through hop k=j
+    prevs = []          # prevs[k][j] = index at hop k-1
+    first = []
+    for j in range(len(per_hop[0])):
+        leg = _mc_link_cost_km(start_pos, pos[0][j]) if start_pos and start_pos[0] is not None else 0.0
+        first.append(leg)
+    costs.append(first)
+    prevs.append([None] * len(first))
+    for k in range(1, n):
+        row = []
+        prow = []
+        for j in range(len(per_hop[k])):
+            best = None
+            best_i = None
+            for i in range(len(per_hop[k - 1])):
+                leg = _mc_link_cost_km(pos[k - 1][i], pos[k][j])
+                total = costs[k - 1][i] + leg
+                if best is None or total < best:
+                    best = total
+                    best_i = i
+            row.append(best)
+            prow.append(best_i)
+        costs.append(row)
+        prevs.append(prow)
+
+    suffix = [[0.0] * len(per_hop[k]) for k in range(n)]
+    last_anchor = []
+    for j in range(len(per_hop[n - 1])):
+        leg = _mc_link_cost_km(pos[n - 1][j], end_pos) if end_pos and end_pos[0] is not None else 0.0
+        last_anchor.append(leg)
+        suffix[n - 1][j] = leg
+    for k in range(n - 2, -1, -1):
+        for j in range(len(per_hop[k])):
+            best = None
+            for m in range(len(per_hop[k + 1])):
+                leg = _mc_link_cost_km(pos[k][j], pos[k + 1][m])
+                total = leg + suffix[k + 1][m]
+                if best is None or total < best:
+                    best = total
+            suffix[k][j] = best
+
+    totals = [costs[n - 1][j] + suffix[n - 1][j] for j in range(len(per_hop[n - 1]))]
+    best_j = min(range(len(totals)), key=lambda j: totals[j])
+    best_total = totals[best_j]
+    chosen = [None] * n
+    chosen[n - 1] = best_j
+    for k in range(n - 1, 0, -1):
+        chosen[k - 1] = prevs[k][chosen[k]]
+
+    out = []
+    for k in range(n):
+        alt_gap = None
+        if len(per_hop[k]) > 1:
+            for a in range(len(per_hop[k])):
+                if a == chosen[k]:
+                    continue
+                total = costs[k][a] + suffix[k][a]
+                gap = total - best_total
+                if alt_gap is None or gap < alt_gap:
+                    alt_gap = gap
+        match_count, selected_count = meta[k]
+        out.append({
+            "contact": per_hop[k][chosen[k]],
+            "ambiguous": alt_gap is not None and alt_gap < MC_PATH_AMBIGUOUS_MARGIN_KM,
+            "gap_km": alt_gap,
+            "match_count": match_count,
+            "selected_count": selected_count,
+        })
+    return out
+
+
+def _mc_resolve_hop_contact(config_id, hop_hash):
+    """Single-hop resolver, kept for callers that only have one hash.
+
+    Distance to our radio wins when both sides have a position; recency is
+    only the last tie-break (and the whole rule when nothing is positioned).
+    """
+    matches, positioned = _mc_hop_candidates(config_id, hop_hash)
     if not matches:
         return None
     repeaters = []
@@ -757,8 +957,16 @@ def _mc_resolve_hop_contact(config_id, hop_hash):
             contact_type = 0
         if contact_type == 2:
             repeaters.append(contact)
-    candidates = repeaters or matches
-    return sorted(candidates, key=lambda c: _mc_contact_seen_ts(c), reverse=True)[0]
+    pool = repeaters or matches
+    own = _mc_own_position(config_id)
+    positioned = [c for c in positioned if c in pool]
+    if own[0] is not None and positioned:
+        def sort_key(contact):
+            lat, lon = _mc_contact_latlon(contact)
+            km = _mc_distance_km(own[0], own[1], lat, lon)
+            return (km if km is not None else float("inf"), -_mc_contact_seen_ts(contact))
+        return sorted(positioned, key=sort_key)[0]
+    return sorted(pool, key=lambda c: _mc_contact_seen_ts(c), reverse=True)[0]
 
 
 def _build_mc_test_hops_info(msg, config_id):
@@ -768,9 +976,12 @@ def _build_mc_test_hops_info(msg, config_id):
     if hop_len == 0:
         return f" | Hops(0): direct{byte_suffix}"
     if hashes:
+        start_pos = _mc_sender_position(config_id, msg)
+        end_pos = _mc_own_position(config_id)
+        resolutions = _mc_resolve_path_contacts(config_id, hashes, start_pos, end_pos)
         labels = []
-        for hop_hash in hashes:
-            contact = _mc_resolve_hop_contact(config_id, hop_hash)
+        for idx, hop_hash in enumerate(hashes):
+            contact = resolutions[idx]["contact"] if resolutions else _mc_resolve_hop_contact(config_id, hop_hash)
             labels.append(_mc_hop_short_label(contact, hop_hash))
         return f" | Hops({display_hops}): {', '.join(labels)}{byte_suffix}"
     if hop_len and hop_len > 0:
